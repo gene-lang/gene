@@ -1,0 +1,118 @@
+#!/usr/bin/env gene run
+
+# Benchmark: Method Calls
+# Measures the performance of calling methods on class instances
+
+(var iterations 100000)
+
+# Define a Calculator class with various methods
+(class Calculator
+  (.ctor /value
+    # Constructor body
+  )
+  
+  (.fn add n
+    (/value = (+ /value n))
+    /value
+  )
+  
+  (.fn multiply n
+    (/value = (* /value n))
+    /value
+  )
+  
+  (.fn get _
+    /value
+  )
+  
+  # Method that calls other methods
+  (.fn compound n
+    (self/.add n)
+    (self/.multiply 2)
+    /value
+  )
+)
+
+(println "=== Method Call Benchmark ===")
+(println "Iterations:" iterations)
+(println)
+
+# Create instance once for method call tests
+(var calc (new Calculator 0))
+
+# Benchmark 1: Simple method call
+(println "Test 1: Simple method call (add)")
+(var start (gene/time/now))
+(var i 0)
+(while (< i iterations)
+  ((calc/.add) 1)
+  (i = (+ i 1))
+)
+(var end (gene/time/now))
+(var elapsed (- end start))
+(println "Time:" elapsed "seconds")
+(println "Per call:" (/ (* elapsed 1000000) iterations) "microseconds")
+(println "Final value:" calc/value)
+(println)
+
+# Reset calculator
+(calc/value = 0)
+
+# Benchmark 2: Method with property access
+(println "Test 2: Method with getter")
+(var start2 (gene/time/now))
+(var i2 0)
+(var sum 0)
+(while (< i2 iterations)
+  (sum = (+ sum ((calc/.get))))
+  (i2 = (+ i2 1))
+)
+(var end2 (gene/time/now))
+(var elapsed2 (- end2 start2))
+(println "Time:" elapsed2 "seconds")
+(println "Per call:" (/ (* elapsed2 1000000) iterations) "microseconds")
+(println)
+
+# Benchmark 3: Chained method calls
+(println "Test 3: Chained method calls")
+(calc/value = 0)
+(var start3 (gene/time/now))
+(var i3 0)
+(while (< i3 iterations)
+  ((calc/.compound) 1)
+  (i3 = (+ i3 1))
+)
+(var end3 (gene/time/now))
+(var elapsed3 (- end3 start3))
+(println "Time:" elapsed3 "seconds")
+(println "Per call:" (/ (* elapsed3 1000000) iterations) "microseconds")
+(println "Final value:" calc/value)
+(println)
+
+# Benchmark 4: Direct function call comparison
+(fn add_function [obj n]
+  (var new_val (+ obj/value n))
+  (obj/value = new_val)
+  new_val
+)
+
+(println "Test 4: Direct function call (baseline)")
+(var obj {^value 0})
+(var start4 (gene/time/now))
+(var i4 0)
+(while (< i4 iterations)
+  (add_function obj 1)
+  (i4 = (+ i4 1))
+)
+(var end4 (gene/time/now))
+(var elapsed4 (- end4 start4))
+(println "Time:" elapsed4 "seconds")
+(println "Per call:" (/ (* elapsed4 1000000) iterations) "microseconds")
+(println "Final value:" obj/value)
+(println)
+
+# Summary
+(println "=== Summary ===")
+(println "Method call overhead vs function:" (/ elapsed elapsed4) "x slower")
+(println "Getter method overhead:" (/ elapsed2 elapsed4) "x slower")
+(println "Compound method overhead:" (/ elapsed3 elapsed4) "x slower")

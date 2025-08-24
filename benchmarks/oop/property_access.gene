@@ -1,0 +1,123 @@
+#!/usr/bin/env gene run
+
+# Benchmark: Property Access
+# Measures the performance of accessing and modifying class properties
+
+(var iterations 100000)
+
+# Define a Person class with multiple properties
+(class Person
+  (.ctor /name /age /score
+    # Constructor body
+  )
+  
+  (.fn increment_age _
+    (/age = (+ /age 1))
+  )
+  
+  (.fn full_info _
+    (+ /name " " /age " " /score)
+  )
+)
+
+# Define a nested class structure
+(class Company
+  (.ctor /name /employees
+    # Constructor body
+  )
+)
+
+(println "=== Property Access Benchmark ===")
+(println "Iterations:" iterations)
+(println)
+
+# Create test instances
+(var person (new Person "John" 30 100))
+(var employees [(new Person "Alice" 25 90) (new Person "Bob" 35 85)])
+(var company (new Company "TechCorp" employees))
+
+# Benchmark 1: Simple property read
+(println "Test 1: Simple property read")
+(var start (gene/time/now))
+(var i 0)
+(var sum 0)
+(while (< i iterations)
+  (sum = (+ sum person/age))
+  (i = (+ i 1))
+)
+(var end (gene/time/now))
+(var elapsed (- end start))
+(println "Time:" elapsed "seconds")
+(println "Per access:" (/ (* elapsed 1000000) iterations) "microseconds")
+(println "Sum:" sum)  # Prevent optimization
+(println)
+
+# Benchmark 2: Property write
+(println "Test 2: Property write")
+(var start2 (gene/time/now))
+(var i2 0)
+(while (< i2 iterations)
+  (person/score = i2)
+  (i2 = (+ i2 1))
+)
+(var end2 (gene/time/now))
+(var elapsed2 (- end2 start2))
+(println "Time:" elapsed2 "seconds")
+(println "Per write:" (/ (* elapsed2 1000000) iterations) "microseconds")
+(println)
+
+# Benchmark 3: Nested property access
+(println "Test 3: Nested property access")
+(var start3 (gene/time/now))
+(var i3 0)
+(var name_sum "")
+(while (< i3 iterations)
+  (var first_employee (company/employees 0))
+  (var emp_name first_employee/name)
+  (i3 = (+ i3 1))
+)
+(var end3 (gene/time/now))
+(var elapsed3 (- end3 start3))
+(println "Time:" elapsed3 "seconds")
+(println "Per nested access:" (/ (* elapsed3 1000000) iterations) "microseconds")
+(println)
+
+# Benchmark 4: Map property access (baseline)
+(println "Test 4: Map property access (baseline)")
+(var person_map {^name "John" ^age 30 ^score 100})
+(var start4 (gene/time/now))
+(var i4 0)
+(var sum4 0)
+(while (< i4 iterations)
+  (sum4 = (+ sum4 person_map/age))
+  (i4 = (+ i4 1))
+)
+(var end4 (gene/time/now))
+(var elapsed4 (- end4 start4))
+(println "Time:" elapsed4 "seconds")
+(println "Per access:" (/ (* elapsed4 1000000) iterations) "microseconds")
+(println "Sum:" sum4)
+(println)
+
+# Benchmark 5: Array access (baseline)
+(println "Test 5: Array access (baseline)")
+(var arr [1 2 3 4 5])
+(var start5 (gene/time/now))
+(var i5 0)
+(var sum5 0)
+(while (< i5 iterations)
+  (sum5 = (+ sum5 (arr 2)))
+  (i5 = (+ i5 1))
+)
+(var end5 (gene/time/now))
+(var elapsed5 (- end5 start5))
+(println "Time:" elapsed5 "seconds")
+(println "Per access:" (/ (* elapsed5 1000000) iterations) "microseconds")
+(println)
+
+# Summary
+(println "=== Summary ===")
+(println "Instance property read vs map:" (/ elapsed elapsed4) "x slower")
+(println "Instance property write vs map:" (/ elapsed2 elapsed4) "x slower")
+(println "Nested property access vs map:" (/ elapsed3 elapsed4) "x slower")
+(println "Map access vs array access:" (/ elapsed4 elapsed5) "x slower")

@@ -1,0 +1,179 @@
+#!/usr/bin/env gene run
+
+# Benchmark: OOP vs Functional Comparison
+# Compares performance of OOP patterns vs functional patterns
+
+(var iterations 50000)
+
+# ===== OOP Approach =====
+
+(class BankAccount
+  (.ctor /balance /owner
+    # Constructor body
+  )
+  
+  (.fn deposit amount
+    (/balance = (+ /balance amount))
+    /balance
+  )
+  
+  (.fn withdraw amount
+    (if (>= /balance amount)
+      (do
+        (/balance = (- /balance amount))
+        /balance
+      )
+      (throw "Insufficient funds")
+    )
+  )
+  
+  (.fn transfer target amount
+    (self/.withdraw amount)
+    ((target/.deposit) amount)
+  )
+  
+  (.fn get_balance _
+    /balance
+  )
+)
+
+# ===== Functional Approach =====
+
+(fn create_account [balance owner]
+  {^balance balance ^owner owner}
+)
+
+(fn deposit [account amount]
+  (account/balance = (+ account/balance amount))
+  account/balance
+)
+
+(fn withdraw [account amount]
+  (if (>= account/balance amount)
+    (do
+      (account/balance = (- account/balance amount))
+      account/balance
+    )
+    (throw "Insufficient funds")
+  )
+)
+
+(fn transfer [from to amount]
+  (withdraw from amount)
+  (deposit to amount)
+)
+
+(fn get_balance [account]
+  account/balance
+)
+
+(println "=== OOP vs Functional Benchmark ===")
+(println "Iterations:" iterations)
+(println)
+
+# Test 1: Account creation
+(println "Test 1: Account Creation")
+
+(println "OOP approach:")
+(var start_oop1 (gene/time/now))
+(var i 0)
+(var accounts_oop [])
+(while (< i iterations)
+  (var acc (new BankAccount (* i 100) "User"))
+  (accounts_oop/.add acc)
+  (i = (+ i 1))
+)
+(var end_oop1 (gene/time/now))
+(var elapsed_oop1 (- end_oop1 start_oop1))
+(println "Time:" elapsed_oop1 "seconds")
+
+(println "Functional approach:")
+(var start_func1 (gene/time/now))
+(var j 0)
+(var accounts_func [])
+(while (< j iterations)
+  (var acc (create_account (* j 100) "User"))
+  (accounts_func/.add acc)
+  (j = (+ j 1))
+)
+(var end_func1 (gene/time/now))
+(var elapsed_func1 (- end_func1 start_func1))
+(println "Time:" elapsed_func1 "seconds")
+(println "OOP/Functional ratio:" (/ elapsed_oop1 elapsed_func1) "x")
+(println)
+
+# Test 2: Simple operations (deposit/withdraw)
+(println "Test 2: Deposit Operations")
+
+(var account_oop (new BankAccount 1000 "Test"))
+(var account_func (create_account 1000 "Test"))
+
+(println "OOP approach:")
+(var start_oop2 (gene/time/now))
+(var i2 0)
+(while (< i2 iterations)
+  ((account_oop/.deposit) 10)
+  (i2 = (+ i2 1))
+)
+(var end_oop2 (gene/time/now))
+(var elapsed_oop2 (- end_oop2 start_oop2))
+(println "Time:" elapsed_oop2 "seconds")
+(println "Final balance:" account_oop/balance)
+
+(println "Functional approach:")
+(var start_func2 (gene/time/now))
+(var j2 0)
+(while (< j2 iterations)
+  (deposit account_func 10)
+  (j2 = (+ j2 1))
+)
+(var end_func2 (gene/time/now))
+(var elapsed_func2 (- end_func2 start_func2))
+(println "Time:" elapsed_func2 "seconds")
+(println "Final balance:" account_func/balance)
+(println "OOP/Functional ratio:" (/ elapsed_oop2 elapsed_func2) "x")
+(println)
+
+# Test 3: Complex operations (transfers)
+(println "Test 3: Transfer Operations")
+
+(var acc1_oop (new BankAccount 100000 "Alice"))
+(var acc2_oop (new BankAccount 100000 "Bob"))
+(var acc1_func (create_account 100000 "Alice"))
+(var acc2_func (create_account 100000 "Bob"))
+
+(println "OOP approach:")
+(var start_oop3 (gene/time/now))
+(var i3 0)
+(while (< i3 (/ iterations 10))  # Fewer iterations for complex operation
+  ((acc1_oop/.transfer) acc2_oop 10)
+  ((acc2_oop/.transfer) acc1_oop 10)
+  (i3 = (+ i3 1))
+)
+(var end_oop3 (gene/time/now))
+(var elapsed_oop3 (- end_oop3 start_oop3))
+(println "Time:" elapsed_oop3 "seconds")
+
+(println "Functional approach:")
+(var start_func3 (gene/time/now))
+(var j3 0)
+(while (< j3 (/ iterations 10))
+  (transfer acc1_func acc2_func 10)
+  (transfer acc2_func acc1_func 10)
+  (j3 = (+ j3 1))
+)
+(var end_func3 (gene/time/now))
+(var elapsed_func3 (- end_func3 start_func3))
+(println "Time:" elapsed_func3 "seconds")
+(println "OOP/Functional ratio:" (/ elapsed_oop3 elapsed_func3) "x")
+(println)
+
+# Summary
+(println "=== Summary ===")
+(println "Creation overhead: OOP is" (/ elapsed_oop1 elapsed_func1) "x slower")
+(println "Method call overhead: OOP is" (/ elapsed_oop2 elapsed_func2) "x slower")
+(println "Complex operation overhead: OOP is" (/ elapsed_oop3 elapsed_func3) "x slower")
+(var avg_overhead (/ (+ (/ elapsed_oop1 elapsed_func1) 
+                        (/ elapsed_oop2 elapsed_func2) 
+                        (/ elapsed_oop3 elapsed_func3)) 3))
+(println "Average OOP overhead:" avg_overhead "x")

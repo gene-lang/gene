@@ -1,0 +1,73 @@
+#!/usr/bin/env gene run
+
+# Benchmark: Class Instantiation
+# Measures the performance of creating class instances
+
+(var iterations 100000)
+
+# Define a simple Point class
+(class Point
+  (.ctor /x /y
+    # Constructor body - properties are auto-assigned
+  )
+  
+  (.fn distance_from_origin _
+    (var dx (* /x /x))
+    (var dy (* /y /y))
+    (+ dx dy)  # Return x^2 + y^2 (simplified, no sqrt)
+  )
+)
+
+(println "=== Class Instantiation Benchmark ===")
+(println "Iterations:" iterations)
+(println)
+
+# Benchmark 1: Simple instantiation
+(println "Test 1: Simple class instantiation")
+(var start (gene/time/now))
+(var i 0)
+(while (< i iterations)
+  (var p (new Point i (* i 2)))
+  (i = (+ i 1))
+)
+(var end (gene/time/now))
+(var elapsed (- end start))
+(println "Time:" elapsed "seconds")
+(println "Per instantiation:" (/ (* elapsed 1000000) iterations) "microseconds")
+(println)
+
+# Benchmark 2: Instantiation with property access
+(println "Test 2: Instantiation + property access")
+(var start2 (gene/time/now))
+(var i2 0)
+(var sum 0)
+(while (< i2 iterations)
+  (var p (new Point i2 (* i2 2)))
+  (sum = (+ sum p/x))  # Access property
+  (i2 = (+ i2 1))
+)
+(var end2 (gene/time/now))
+(var elapsed2 (- end2 start2))
+(println "Time:" elapsed2 "seconds")
+(println "Per operation:" (/ (* elapsed2 1000000) iterations) "microseconds")
+(println "Sum:" sum)  # Prevent optimization
+(println)
+
+# Benchmark 3: Compare with simple map creation
+(println "Test 3: Map creation (baseline comparison)")
+(var start3 (gene/time/now))
+(var i3 0)
+(while (< i3 iterations)
+  (var p {^x i3 ^y (* i3 2)})
+  (i3 = (+ i3 1))
+)
+(var end3 (gene/time/now))
+(var elapsed3 (- end3 start3))
+(println "Time:" elapsed3 "seconds")
+(println "Per creation:" (/ (* elapsed3 1000000) iterations) "microseconds")
+(println)
+
+# Summary
+(println "=== Summary ===")
+(println "Class instantiation overhead:" (/ elapsed elapsed3) "x slower than map")
+(println "With property access:" (/ elapsed2 elapsed3) "x slower than map")
