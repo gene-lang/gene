@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  -c, --categories CATS    Run specific categories (comma-separated)"
-            echo "                          Available: computation,allocation,data_structures,vm_internals"
+            echo "                          Available: computation,allocation,data_structures,vm_internals,oop"
             echo "  -v, --verbose           Enable verbose output"
             echo "  -p, --profile           Enable profiling during benchmarks"
             echo "      --compare           Run cross-language comparisons"
@@ -69,7 +69,7 @@ done
 
 # Default to all categories if none specified
 if [ -z "$CATEGORIES" ]; then
-    CATEGORIES="computation,allocation,data_structures,vm_internals"
+    CATEGORIES="computation,allocation,data_structures,vm_internals,oop"
 fi
 
 # Ensure we're in the right directory
@@ -123,12 +123,12 @@ IFS=',' read -ra CATS <<< "$CATEGORIES"
 for category in "${CATS[@]}"; do
     category=$(echo "$category" | xargs)  # trim whitespace
     case "$category" in
-        computation|allocation|data_structures|vm_internals)
+        computation|allocation|data_structures|vm_internals|oop)
             run_category "$category"
             ;;
         *)
             echo "Warning: Unknown category: $category"
-            echo "Available categories: computation, allocation, data_structures, vm_internals"
+            echo "Available categories: computation, allocation, data_structures, vm_internals, oop"
             echo ""
             ;;
     esac
