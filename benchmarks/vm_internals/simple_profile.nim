@@ -35,7 +35,7 @@ when isMainModule:
   for inst in compiled.instructions:
     counts.inc(inst.kind)
   
-  echo "\nInstruction breakdown:"
+  echo "Instruction breakdown:"
   for kind, count in counts:
     echo fmt"  {kind}: {count}"
   
@@ -45,7 +45,7 @@ when isMainModule:
   VM.cu = compiled
   
   # Enable tracing for analysis
-  echo fmt"\n=== Running fib({n}) with tracing ==="
+  echo fmt"=== Running fib({n}) with tracing ==="
   VM.trace = true
   
   # Capture first 100 instructions
@@ -58,7 +58,7 @@ when isMainModule:
   let result = VM.exec()
   let duration = cpuTime() - start
   
-  echo fmt"\nResult: {result.to_int()}"
+  echo fmt"Result: {result.to_int()}"
   echo fmt"Time: {duration:.6f} seconds"
   
   # Performance metrics
@@ -70,14 +70,14 @@ when isMainModule:
     else: 0
   
   if fib_calls > 0:
-    echo fmt"\nPerformance metrics:"
+    echo fmt"Performance metrics:"
     echo fmt"  Function calls: {fib_calls}"
     echo fmt"  Calls/second: {(fib_calls.float / duration).int}"
     echo fmt"  Est. instructions: {fib_calls * 30}"
     echo fmt"  Instructions/second: {(fib_calls.float * 30 / duration).int}"
   
   # Show most common instructions
-  echo "\nMost frequent instructions:"
+  echo "Most frequent instructions:"
   var sorted = newSeq[(InstructionKind, int)]()
   for k, v in counts:
     sorted.add((k, v))

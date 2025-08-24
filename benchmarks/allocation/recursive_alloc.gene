@@ -32,5 +32,5 @@
 (println "Tree2 depth: " tree2/depth)
 (println "Tree3 depth: " tree3/depth)
 
-(println "\nRecursive allocation complete")
+(println "Recursive allocation complete")
 (println "With pooling, subsequent trees should allocate faster")

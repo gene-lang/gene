@@ -69,7 +69,7 @@ when isMainModule:
   for inst in compiled.instructions:
     static_counts.inc(inst.kind)
   
-  echo "\nStatic instruction mix:"
+  echo "Static instruction mix:"
   for kind, count in static_counts:
     echo fmt"  {kind}: {count} ({100.0 * count.float / compiled.instructions.len.float:.1f}%)"
   
@@ -79,7 +79,7 @@ when isMainModule:
   VM.cu = compiled
   VM.trace = false
   
-  echo fmt"\n=== Running fib({n}) ==="
+  echo fmt"=== Running fib({n}) ==="
   let start = cpuTime()
   let result = VM.exec()
   let duration = cpuTime() - start
@@ -88,7 +88,7 @@ when isMainModule:
   echo fmt"Time: {duration:.6f} seconds"
   
   # Estimate performance
-  echo "\n=== Performance Estimates ==="
+  echo "=== Performance Estimates ==="
   # For fib(20), we have 21891 calls
   let fib_calls = case n
     of "10": 177
@@ -107,7 +107,7 @@ when isMainModule:
     echo fmt"Instructions/second: {est_instructions.float / duration:.0f}"
   
   # Show hot spots in code
-  echo "\n=== Code Hot Spots ==="
+  echo "=== Code Hot Spots ==="
   echo "Most common instruction sequences:"
   
   # Analyze instruction pairs

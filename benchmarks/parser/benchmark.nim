@@ -58,7 +58,7 @@ const COMPLEX_EXPRESSIONS = @[
 
 const WHITESPACE_HEAVY = @[
   "   (   +    1    2    )   ",
-  "\n\n\n(\n  if\n  true\n  1\n  2\n)\n\n",
+  "\n\n(\n  if\n  true\n  1\n  2\n)\n\n",
   "  # comment\n  42  # another comment\n  ",
   """
   

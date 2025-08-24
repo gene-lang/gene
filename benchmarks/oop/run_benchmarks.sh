@@ -2,12 +2,16 @@
 
 # Run all OOP benchmarks and generate summary
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 echo "=========================================="
 echo "    Gene OOP Performance Benchmarks"
 echo "=========================================="
 echo ""
 echo "Date: $(date)"
-echo "Gene binary: $(which gene)"
+echo "Gene binary: $(which gene || echo "gene not in PATH")"
+echo "Running from: $SCRIPT_DIR"
 echo ""
 
 # Function to run a benchmark with error handling
@@ -19,10 +23,19 @@ run_benchmark() {
     echo "Running: $name"
     echo "----------------------------------------"
     
-    if [ -f "$file" ]; then
-        timeout 60 gene run "$file" 2>&1 || echo "ERROR: Benchmark failed or timed out"
+    local full_path="$SCRIPT_DIR/$file"
+    
+    if [ -f "$full_path" ]; then
+        # Try to find gene executable
+        if command -v gene &> /dev/null; then
+            timeout 60 gene run "$full_path" 2>&1 || echo "ERROR: Benchmark failed or timed out"
+        elif [ -f "$SCRIPT_DIR/../../bin/gene" ]; then
+            timeout 60 "$SCRIPT_DIR/../../bin/gene" run "$full_path" 2>&1 || echo "ERROR: Benchmark failed or timed out"
+        else
+            echo "ERROR: gene executable not found"
+        fi
     else
-        echo "ERROR: File not found: $file"
+        echo "ERROR: File not found: $full_path"
     fi
     
     echo ""

@@ -51,7 +51,7 @@ when isMainModule:
   echo fmt"Time: {duration:.6f} seconds"
   
   # Analyze the compiled code structure
-  echo "\n=== Compiled Code Structure ==="
+  echo "=== Compiled Code Structure ==="
   echo fmt"Total static instructions: {compiled.instructions.len}"
   
   # Look for key patterns in bytecode
@@ -73,11 +73,11 @@ when isMainModule:
     else:
       discard
   
-  echo fmt"\nDetected {call_count} static call sites"
+  echo fmt"Detected {call_count} static call sites"
   echo fmt"Recursive: {has_recursive_call}"
   
   # Estimate dynamic behavior
-  echo "\n=== Performance Analysis ==="
+  echo "=== Performance Analysis ==="
   
   let fib_value = result.to_int()
   let fib_calls = case n
@@ -97,7 +97,7 @@ when isMainModule:
     echo fmt"Est. MIPS: {(fib_calls * instructions_per_call).float / duration / 1_000_000:.1f}"
   
   # Key bottlenecks
-  echo "\n=== Potential Bottlenecks ==="
+  echo "=== Potential Bottlenecks ==="
   echo "1. Function call overhead (frame creation/destruction)"
   echo "2. Stack operations for each recursive call"
   echo "3. Symbol resolution for 'n' parameter"
@@ -105,7 +105,7 @@ when isMainModule:
   echo "5. Conditional branching (if)"
   
   # Optimization suggestions
-  echo "\n=== Optimization Opportunities ==="
+  echo "=== Optimization Opportunities ==="
   echo "1. Inline small functions to reduce call overhead"
   echo "2. Cache small integer values (0-255)"
   echo "3. Optimize frame allocation with object pools"
