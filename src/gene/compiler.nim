@@ -927,7 +927,7 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
     self.output.instructions.add(Instruction(kind: IkCallInit))
 
 proc compile_method_definition(self: Compiler, gene: ptr Gene) =
-  # Method definition: (.fn name args body...)
+  # Method definition: (.fn name args body...) or (.fn name arg body...)
   if gene.children.len < 3:
     not_allowed("Method definition requires at least name, args and body")
   
@@ -939,7 +939,29 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   # The method is similar to (fn name args body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
-  for i in 0..<gene.children.len:
+  
+  # Add the method name
+  fn_value.gene.children.add(gene.children[0])
+  
+  # Handle args - if it's not an array and there's more than 2 children (name, arg, body+),
+  # wrap the single arg in an array (unless it's _ which means no args)
+  let args = gene.children[1]
+  if args.kind != VkArray and gene.children.len >= 3:
+    # Check if it's _ (no arguments)
+    if args.kind == VkSymbol and args.str == "_":
+      # _ means no arguments - use it as is
+      fn_value.gene.children.add(args)
+    else:
+      # Single argument without brackets - wrap it in an array
+      var args_array = new_array_value()
+      args_array.ref.arr.add(args)
+      fn_value.gene.children.add(args_array)
+  else:
+    # Already an array or no body after it
+    fn_value.gene.children.add(args)
+  
+  # Add the body
+  for i in 2..<gene.children.len:
     fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
@@ -949,7 +971,7 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   self.output.instructions.add(Instruction(kind: IkDefineMethod, arg0: name))
 
 proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
-  # Constructor definition: (.ctor args body...)
+  # Constructor definition: (.ctor args body...) or (.ctor arg body...)
   if gene.children.len < 2:
     not_allowed("Constructor definition requires at least args and body")
   
@@ -959,8 +981,26 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   fn_value.gene.type = "fn".to_symbol_value()
   # Add "new" as the function name
   fn_value.gene.children.add("new".to_symbol_value())
-  # Add remaining children (args and body)
-  for i in 0..<gene.children.len:
+  
+  # Handle args - if it's not an array and there's more than 1 child (arg, body+),
+  # wrap the single arg in an array (unless it's _ which means no args)
+  let args = gene.children[0]
+  if args.kind != VkArray and gene.children.len >= 2:
+    # Check if it's _ (no arguments)
+    if args.kind == VkSymbol and args.str == "_":
+      # _ means no arguments - use it as is
+      fn_value.gene.children.add(args)
+    else:
+      # Single argument without brackets - wrap it in an array
+      var args_array = new_array_value()
+      args_array.ref.arr.add(args)
+      fn_value.gene.children.add(args_array)
+  else:
+    # Already an array or no body after it
+    fn_value.gene.children.add(args)
+  
+  # Add remaining body
+  for i in 1..<gene.children.len:
     fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
@@ -1257,33 +1297,29 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 # self + method_name => bounded_method_object (is composed of self, class, method_object(is composed of name, logic))
 # (bounded_method_object ...arguments)
 proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
+  let start_pos = self.output.instructions.len
+  
   if gene.type.kind == VkSymbol and gene.type.str.starts_with("."):
+    # (.method_name args...) - self is implicit
     self.output.instructions.add(Instruction(kind: IkSelf))
     self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: gene.type.str[1..^1]))
   else:
+    # (obj .method_name args...) - obj is explicit
     self.compile(gene.type)
     let first = gene.children[0]
     gene.children.delete(0)
     self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: first.str[1..^1]))
 
-  let fn_label = new_label()
-  # When there are no children and props, use the same label for both fn and end
-  let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
-  self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
-
-  self.quote_level.inc()
-  for k, v in gene.props:
-    self.compile(v)
-    self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-  for child in gene.children:
-    self.compile(child)
-    self.output.instructions.add(Instruction(kind: IkGeneAddChild))
-  self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
-  self.quote_level.dec()
-
-  # Only add the Noop if fn_label is different from end_label
-  if fn_label != end_label:
-    self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
+  # For method calls, we need to handle them like function calls
+  # We use a single label since methods are never macros
+  let label = new_label()
+  self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: label.to_value()))
+  
+  # Skip the macro path - jump directly to function call
+  self.output.instructions.add(Instruction(kind: IkJump, arg0: label.to_value()))
+  
+  # Function call path - compile arguments as evaluated expressions
+  self.output.instructions.add(Instruction(kind: IkNoop, label: label))
   for k, v in gene.props:
     self.compile(v)
     self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
@@ -1291,17 +1327,10 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     self.compile(child)
     self.output.instructions.add(Instruction(kind: IkGeneAddChild))
 
-  # Use IkTailCall when in tail position
-  # Use fn_label if they're the same, otherwise use end_label
-  let gene_end_label = if fn_label == end_label: fn_label else: end_label
-  if self.tail_position:
-    when DEBUG:
-      echo "DEBUG: Generating IkTailCall in compile_gene_unknown"
-    # For now, we can't determine if it's the same function at compile time
-    # So we'll let the VM decide
-    self.output.instructions.add(Instruction(kind: IkTailCall, label: gene_end_label))
-  else:
-    self.output.instructions.add(Instruction(kind: IkGeneEnd, label: gene_end_label))
+  # Emit the call instruction
+  # Note: We don't use IkTailCall for method calls because the VM's tail call optimization
+  # doesn't handle VkBoundMethod properly yet
+  self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: label))
 
 proc compile_gene(self: Compiler, input: Value) =
   let gene = input.gene
