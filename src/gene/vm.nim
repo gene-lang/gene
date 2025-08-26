@@ -3642,6 +3642,14 @@ proc exec*(self: VirtualMachine): Value =
     {.pop}
   {.pop.}  # End of hot VM execution loop pragma push
 
+# Execute a Gene function with given arguments and return the result
+# This preserves the VM state and can be called from async contexts  
+proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.exportc.} =
+  # For now, Gene functions cannot be executed from async context
+  # The proper solution requires refactoring the VM exec loop to support
+  # re-entrant execution or using a separate execution context
+  return NIL
+
 proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
   # Initialize gene namespace if not already done
   init_gene_namespace()

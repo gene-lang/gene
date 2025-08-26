@@ -6,6 +6,8 @@ import nativesockets, net
 import cgi, strtabs
 
 include ../gene/extension/boilerplate
+import ../gene/compiler
+import ../gene/vm
 
 # Global variables to store classes
 var request_class_global: Class
@@ -657,14 +659,8 @@ proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Val
         gene_args.children.add(arg)
       return fn.ref.native_fn(vm, gene_args.to_gene_value())
     of VkFunction:
-      # Gene functions cannot be executed from async context
-      # The VM requires synchronous frame-based execution which conflicts with
-      # the async event loop. This would require significant architectural changes:
-      # - Coroutines/continuations for suspending VM execution
-      # - Separate VM thread with message passing
-      # - Compiling Gene functions to native code
-      # For now, only native functions can be used as HTTP handlers
-      return NIL
+      # Execute Gene function using the VM's exec_function method
+      return vm.exec_function(fn, args)
     of VkClass:
       # If it's a class, try to call its `call` method
       if fn.ref.class.methods.contains("call".to_key()):

@@ -246,11 +246,23 @@ Get `http_server.gene` fully working with:
 1. **VM Execution Bridge**: Infrastructure added but Gene functions can't execute from async context
    - Queue system implemented
    - Handler detection working
-   - Actual VM execution from async still not functional
+   - VM supports coroutines conceptually (can save/restore CU, PC, Frame, Scope)
+   - **Blocker**: VM's exec() loop uses local `pc` variable instead of `self.pc`
+   - This prevents re-entrant execution needed for coroutines
 
 ### ❌ Not Working:
 1. **Gene Function Handlers**: Can't execute Gene functions as HTTP handlers
 2. **Full http_server.gene Example**: Blocked by Gene function execution issue
+
+### Technical Solution Path:
+To enable Gene functions as HTTP handlers, the VM needs refactoring:
+1. Change `exec()` to use `self.pc` instead of local `pc` variable
+2. Make the execution loop re-entrant (can pause and resume)
+3. Create `exec_continue()` method that continues from current PC
+4. Then `exec_function()` can work by setting up state and calling `exec_continue()`
+
+This is architecturally feasible - the VM already preserves all necessary state,
+it just needs the execution loop to be refactored for re-entrancy.
 
 ## Next Steps
 
