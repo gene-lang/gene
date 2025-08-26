@@ -2791,16 +2791,12 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(v)
 
       of IkResolveMethod:
-        let v = self.frame.pop()
+        # Peek at the object without popping it
+        let v = self.frame.current()
         let class = v.get_class()
         let meth = class.get_method(inst.arg0.str)
-        let r = new_ref(VkBoundMethod)
-        r.bound_method = BoundMethod(
-          self: v,
-          # class: class,
-          `method`: meth,
-        )
-        self.frame.push(r.to_ref_value())
+        # Push the method callable on top of the object
+        self.frame.push(meth.callable)
 
       of IkThrow:
         {.push checks: off}

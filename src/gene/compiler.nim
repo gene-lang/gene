@@ -98,8 +98,18 @@ proc compile_symbol(self: Compiler, input: Value) =
     if input.kind == VkSymbol:
       let symbol_str = input.str
       if symbol_str == "self":
-        # Special handling for self - push the current frame's self
-        self.output.instructions.add(Instruction(kind: IkPushSelf))
+        # Check if self is a local variable (in methods compiled as functions)
+        let key = symbol_str.to_key()
+        let found = self.scope_tracker.locate(key)
+        if found.local_index >= 0:
+          # self is a parameter - resolve it as a variable
+          if found.parent_index == 0:
+            self.output.instructions.add(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
+          else:
+            self.output.instructions.add(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
+        else:
+          # Fall back to IkPushSelf for non-method contexts
+          self.output.instructions.add(Instruction(kind: IkPushSelf))
         return
       elif symbol_str == "super":
         # Special handling for super - will be handled differently when it's a function call
@@ -943,22 +953,24 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   # Add the method name
   fn_value.gene.children.add(gene.children[0])
   
-  # Handle args - if it's not an array and there's more than 2 children (name, arg, body+),
-  # wrap the single arg in an array (unless it's _ which means no args)
+  # Create args array with self as first parameter
+  var method_args = new_array_value()
+  method_args.ref.arr.add("self".to_symbol_value())
+  
+  # Handle original args
   let args = gene.children[1]
-  if args.kind != VkArray and gene.children.len >= 3:
-    # Check if it's _ (no arguments)
-    if args.kind == VkSymbol and args.str == "_":
-      # _ means no arguments - use it as is
-      fn_value.gene.children.add(args)
-    else:
-      # Single argument without brackets - wrap it in an array
-      var args_array = new_array_value()
-      args_array.ref.arr.add(args)
-      fn_value.gene.children.add(args_array)
+  if args.kind == VkSymbol and args.str == "_":
+    # _ means no additional arguments besides self
+    discard
+  elif args.kind == VkArray:
+    # Multiple arguments - add them after self
+    for arg in args.ref.arr:
+      method_args.ref.arr.add(arg)
   else:
-    # Already an array or no body after it
-    fn_value.gene.children.add(args)
+    # Single argument - add it after self
+    method_args.ref.arr.add(args)
+  
+  fn_value.gene.children.add(method_args)
   
   # Add the body
   for i in 2..<gene.children.len:
@@ -1299,37 +1311,52 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   let start_pos = self.output.instructions.len
   
+  var method_name: string
+  var start_index = 0
+  
   if gene.type.kind == VkSymbol and gene.type.str.starts_with("."):
     # (.method_name args...) - self is implicit
+    method_name = gene.type.str[1..^1]
     self.output.instructions.add(Instruction(kind: IkSelf))
-    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: gene.type.str[1..^1]))
+    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_name))
   else:
     # (obj .method_name args...) - obj is explicit
     self.compile(gene.type)
     let first = gene.children[0]
-    gene.children.delete(0)
-    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: first.str[1..^1]))
+    method_name = first.str[1..^1]
+    start_index = 1  # Skip the method name when adding arguments
+    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_name))
 
-  # For method calls, we need to handle them like function calls
-  # We use a single label since methods are never macros
+  # After IkResolveMethod, stack is [object, method] with method on top
+  # IkGeneStartDefault will consume method and create frame
   let label = new_label()
   self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: label.to_value()))
   
   # Skip the macro path - jump directly to function call
   self.output.instructions.add(Instruction(kind: IkJump, arg0: label.to_value()))
   
-  # Function call path - compile arguments as evaluated expressions
+  # Function call path
   self.output.instructions.add(Instruction(kind: IkNoop, label: label))
+  
+  # After IkGeneStartDefault replaces method with frame, stack is [object, frame]
+  # We need to swap to get [frame, object] for IkGeneAddChild
+  self.output.instructions.add(Instruction(kind: IkSwap))
+  
+  # Now add the object as the first argument
+  self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+  
+  # Add properties if any
   for k, v in gene.props:
     self.compile(v)
     self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-  for child in gene.children:
-    self.compile(child)
+    
+  # Add remaining arguments (skip method name if it's in children)
+  for i in start_index..<gene.children.len:
+    self.compile(gene.children[i])
     self.output.instructions.add(Instruction(kind: IkGeneAddChild))
 
   # Emit the call instruction
-  # Note: We don't use IkTailCall for method calls because the VM's tail call optimization
-  # doesn't handle VkBoundMethod properly yet
+  # Note: Tail call optimization seems to have issues with methods, disable for now
   self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: label))
 
 proc compile_gene(self: Compiler, input: Value) =

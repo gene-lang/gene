@@ -1,7 +1,6 @@
-import std/[httpclient, asyncdispatch, uri, tables, strutils, json]
+import std/[httpclient, uri, tables, strutils, json]
 
 import ../types
-import ./async
 
 # HTTP module for Gene
 # Provides Request and Response classes for HTTP operations
@@ -12,207 +11,207 @@ var response_class_global: Class
 
 # Request constructor
 proc request_constructor(self: VirtualMachine, args: Value): Value {.gcsafe.} =
-      # new Request(url, [method], [headers], [body])
-      if args.kind != VkGene or args.gene.children.len < 1:
-        raise new_exception(types.Exception, "Request requires at least a URL")
-      
-      let url = args.gene.children[0]
-      if url.kind != VkString:
-        raise new_exception(types.Exception, "URL must be a string")
-      
-      # Create Request instance
-      let instance = new_ref(VkInstance)
-      {.cast(gcsafe).}:
-        instance.instance_class = request_class_global
-      
-      # Set properties
-      instance.instance_props["url".to_key()] = url
-      
-      # Set method (default to GET)
-      if args.gene.children.len > 1:
-        instance.instance_props["method".to_key()] = args.gene.children[1]
-      else:
-        instance.instance_props["method".to_key()] = "GET".to_value()
-      
-      # Set headers (default to empty map)
-      if args.gene.children.len > 2:
-        instance.instance_props["headers".to_key()] = args.gene.children[2]
-      else:
-        let empty_map = new_ref(VkMap)
-        empty_map.map = Table[Key, Value]()
-        instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
-      
-      # Set body (default to nil)
-      if args.gene.children.len > 3:
-        instance.instance_props["body".to_key()] = args.gene.children[3]
-      else:
-        instance.instance_props["body".to_key()] = NIL
-      
-      return instance.to_ref_value()
-    
+  # new Request(url, [method], [headers], [body])
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "Request requires at least a URL")
+  
+  let url = args.gene.children[0]
+  if url.kind != VkString:
+    raise new_exception(types.Exception, "URL must be a string")
+  
+  # Create Request instance
+  let instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    instance.instance_class = request_class_global
+  
+  # Set properties
+  instance.instance_props["url".to_key()] = url
+  
+  # Set method (default to GET)
+  if args.gene.children.len > 1:
+    instance.instance_props["method".to_key()] = args.gene.children[1]
+  else:
+    instance.instance_props["method".to_key()] = "GET".to_value()
+  
+  # Set headers (default to empty map)
+  if args.gene.children.len > 2:
+    instance.instance_props["headers".to_key()] = args.gene.children[2]
+  else:
+    let empty_map = new_ref(VkMap)
+    empty_map.map = Table[Key, Value]()
+    instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
+  
+  # Set body (default to nil)
+  if args.gene.children.len > 3:
+    instance.instance_props["body".to_key()] = args.gene.children[3]
+  else:
+    instance.instance_props["body".to_key()] = NIL
+  
+  return instance.to_ref_value()
+
 # Request.send method - sends the request and returns a Future[Response]
 proc request_send(self: VirtualMachine, args: Value): Value {.gcsafe.} =
-      if args.kind != VkGene or args.gene.children.len < 1:
-        raise new_exception(types.Exception, "Request.send requires self")
-      
-      let request_obj = args.gene.children[0]
-      if request_obj.kind != VkInstance:
-        raise new_exception(types.Exception, "send can only be called on a Request instance")
-      
-      # Get request properties
-      let url = request_obj.ref.instance_props["url".to_key()]
-      let http_method = request_obj.ref.instance_props["method".to_key()]
-      let headers = request_obj.ref.instance_props["headers".to_key()]
-      let body = request_obj.ref.instance_props["body".to_key()]
-      
-      # Create HTTP client
-      let client = newHttpClient()
-      defer: client.close()
-      
-      # Set headers
-      if headers.kind == VkMap:
-        for k, v in headers.ref.map:
-          if v.kind == VkString:
-            client.headers[cast[Value](k).str] = v.str
-      
-      # Prepare body
-      var bodyStr = ""
-      if body.kind == VkString:
-        bodyStr = body.str
-      elif body.kind == VkMap:
-        # Convert map to JSON
-        var jsonObj = newJObject()
-        for k, v in body.ref.map:
-          let key_str = cast[Value](k).str
-          case v.kind:
-          of VkString:
-            jsonObj[key_str] = newJString(v.str)
-          of VkInt:
-            jsonObj[key_str] = newJInt(v.int)
-          of VkFloat:
-            jsonObj[key_str] = newJFloat(v.float)
-          of VkBool:
-            jsonObj[key_str] = newJBool(v.bool)
-          of VkNil:
-            jsonObj[key_str] = newJNull()
-          else:
-            jsonObj[key_str] = newJString($v)
-        bodyStr = $jsonObj
-        client.headers["Content-Type"] = "application/json"
-      
-      # Send request based on method
-      let methodStr = if http_method.kind == VkString: http_method.str.toUpperAscii() else: "GET"
-      let response = case methodStr:
-        of "GET":
-          client.get(url.str)
-        of "POST":
-          client.post(url.str, body = bodyStr)
-        of "PUT":
-          client.request(url.str, httpMethod = HttpPut, body = bodyStr)
-        of "DELETE":
-          client.request(url.str, httpMethod = HttpDelete, body = bodyStr)
-        of "PATCH":
-          client.request(url.str, httpMethod = HttpPatch, body = bodyStr)
-        of "HEAD":
-          client.request(url.str, httpMethod = HttpHead)
-        of "OPTIONS":
-          client.request(url.str, httpMethod = HttpOptions)
-        else:
-          raise new_exception(types.Exception, "Unsupported HTTP method: " & methodStr)
-      
-      # Create Response instance
-      let response_instance = new_ref(VkInstance)
-      {.cast(gcsafe).}:
-        response_instance.instance_class = response_class_global
-      response_instance.instance_props["status".to_key()] = response.code.int.to_value()
-      response_instance.instance_props["body".to_key()] = response.body.to_value()
-      
-      # Convert headers to Gene map
-      let headers_map = new_ref(VkMap)
-      headers_map.map = Table[Key, Value]()
-      for k, v in response.headers.table:
-        headers_map.map[k.to_key()] = v[0].to_value()  # Take first value for multi-value headers
-      response_instance.instance_props["headers".to_key()] = headers_map.to_ref_value()
-      
-      # Create completed future with response
-      let future = new_future_value()
-      future.ref.future.complete(response_instance.to_ref_value())
-      return future
-    
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "Request.send requires self")
+  
+  let request_obj = args.gene.children[0]
+  if request_obj.kind != VkInstance:
+    raise new_exception(types.Exception, "send can only be called on a Request instance")
+  
+  # Get request properties
+  let url = request_obj.ref.instance_props["url".to_key()]
+  let http_method = request_obj.ref.instance_props["method".to_key()]
+  let headers = request_obj.ref.instance_props["headers".to_key()]
+  let body = request_obj.ref.instance_props["body".to_key()]
+  
+  # Create HTTP client
+  let client = newHttpClient()
+  defer: client.close()
+  
+  # Set headers
+  if headers.kind == VkMap:
+    for k, v in headers.ref.map:
+      if v.kind == VkString:
+        client.headers[cast[Value](k).str] = v.str
+  
+  # Prepare body
+  var bodyStr = ""
+  if body.kind == VkString:
+    bodyStr = body.str
+  elif body.kind == VkMap:
+    # Convert map to JSON
+    var jsonObj = newJObject()
+    for k, v in body.ref.map:
+      let key_str = cast[Value](k).str
+      case v.kind:
+      of VkString:
+        jsonObj[key_str] = newJString(v.str)
+      of VkInt:
+        jsonObj[key_str] = newJInt(v.int)
+      of VkFloat:
+        jsonObj[key_str] = newJFloat(v.float)
+      of VkBool:
+        jsonObj[key_str] = newJBool(v.bool)
+      of VkNil:
+        jsonObj[key_str] = newJNull()
+      else:
+        jsonObj[key_str] = newJString($v)
+    bodyStr = $jsonObj
+    client.headers["Content-Type"] = "application/json"
+  
+  # Send request based on method
+  let methodStr = if http_method.kind == VkString: http_method.str.toUpperAscii() else: "GET"
+  let response = case methodStr:
+    of "GET":
+      client.get(url.str)
+    of "POST":
+      client.post(url.str, body = bodyStr)
+    of "PUT":
+      client.request(url.str, httpMethod = HttpPut, body = bodyStr)
+    of "DELETE":
+      client.request(url.str, httpMethod = HttpDelete, body = bodyStr)
+    of "PATCH":
+      client.request(url.str, httpMethod = HttpPatch, body = bodyStr)
+    of "HEAD":
+      client.request(url.str, httpMethod = HttpHead)
+    of "OPTIONS":
+      client.request(url.str, httpMethod = HttpOptions)
+    else:
+      raise new_exception(types.Exception, "Unsupported HTTP method: " & methodStr)
+  
+  # Create Response instance
+  let response_instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    response_instance.instance_class = response_class_global
+  response_instance.instance_props["status".to_key()] = response.code.int.to_value()
+  response_instance.instance_props["body".to_key()] = response.body.to_value()
+  
+  # Convert headers to Gene map
+  let headers_map = new_ref(VkMap)
+  headers_map.map = Table[Key, Value]()
+  for k, v in response.headers.table:
+    headers_map.map[k.to_key()] = v[0].to_value()  # Take first value for multi-value headers
+  response_instance.instance_props["headers".to_key()] = headers_map.to_ref_value()
+  
+  # Create completed future with response
+  let future = new_future_value()
+  future.ref.future.complete(response_instance.to_ref_value())
+  return future
+
 # Response constructor
 proc response_constructor(self: VirtualMachine, args: Value): Value {.gcsafe.} =
-      # new Response(status, body, [headers])
-      if args.kind != VkGene or args.gene.children.len < 2:
-        raise new_exception(types.Exception, "Response requires status and body")
-      
-      let status = args.gene.children[0]
-      let body = args.gene.children[1]
-      
-      # Create Response instance
-      let instance = new_ref(VkInstance)
-      {.cast(gcsafe).}:
-        instance.instance_class = response_class_global
-      
-      # Set properties
-      instance.instance_props["status".to_key()] = status
-      instance.instance_props["body".to_key()] = body
-      
-      # Set headers (default to empty map)
-      if args.gene.children.len > 2:
-        instance.instance_props["headers".to_key()] = args.gene.children[2]
-      else:
-        let empty_map = new_ref(VkMap)
-        empty_map.map = Table[Key, Value]()
-        instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
-      
-      return instance.to_ref_value()
-    
+  # new Response(status, body, [headers])
+  if args.kind != VkGene or args.gene.children.len < 2:
+    raise new_exception(types.Exception, "Response requires status and body")
+  
+  let status = args.gene.children[0]
+  let body = args.gene.children[1]
+  
+  # Create Response instance
+  let instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    instance.instance_class = response_class_global
+  
+  # Set properties
+  instance.instance_props["status".to_key()] = status
+  instance.instance_props["body".to_key()] = body
+  
+  # Set headers (default to empty map)
+  if args.gene.children.len > 2:
+    instance.instance_props["headers".to_key()] = args.gene.children[2]
+  else:
+    let empty_map = new_ref(VkMap)
+    empty_map.map = Table[Key, Value]()
+    instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
+  
+  return instance.to_ref_value()
+
 # Response.json method - parses body as JSON
 proc response_json(self: VirtualMachine, args: Value): Value {.gcsafe.} =
-      if args.kind != VkGene or args.gene.children.len < 1:
-        raise new_exception(types.Exception, "Response.json requires self")
-      
-      let response_obj = args.gene.children[0]
-      if response_obj.kind != VkInstance:
-        raise new_exception(types.Exception, "json can only be called on a Response instance")
-      
-      let body = response_obj.ref.instance_props["body".to_key()]
-      
-      if body.kind != VkString:
-        raise new_exception(types.Exception, "Response body must be a string to parse as JSON")
-      
-      # Parse JSON string into Gene map
-      try:
-        let jsonNode = parseJson(body.str)
-        
-        proc jsonToValue(node: JsonNode): Value =
-          case node.kind:
-          of JString:
-            return node.str.to_value()
-          of JInt:
-            return node.num.to_value()
-          of JFloat:
-            return node.fnum.to_value()
-          of JBool:
-            return node.bval.to_value()
-          of JNull:
-            return NIL
-          of JObject:
-            let map = new_ref(VkMap)
-            map.map = Table[Key, Value]()
-            for k, v in node.fields:
-              map.map[k.to_key()] = jsonToValue(v)
-            return map.to_ref_value()
-          of JArray:
-            let arr = new_ref(VkArray)
-            arr.arr = @[]
-            for item in node.elems:
-              arr.arr.add(jsonToValue(item))
-            return arr.to_ref_value()
-        
-        return jsonToValue(jsonNode)
-      except JsonParsingError as e:
-        raise new_exception(types.Exception, "Failed to parse JSON: " & e.msg)
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "Response.json requires self")
+  
+  let response_obj = args.gene.children[0]
+  if response_obj.kind != VkInstance:
+    raise new_exception(types.Exception, "json can only be called on a Response instance")
+  
+  let body = response_obj.ref.instance_props["body".to_key()]
+  
+  if body.kind != VkString:
+    raise new_exception(types.Exception, "Response body must be a string to parse as JSON")
+  
+  # Parse JSON string into Gene map
+  try:
+    let jsonNode = parseJson(body.str)
+    
+    proc jsonToValue(node: JsonNode): Value =
+      case node.kind:
+      of JString:
+        return node.str.to_value()
+      of JInt:
+        return node.num.to_value()
+      of JFloat:
+        return node.fnum.to_value()
+      of JBool:
+        return node.bval.to_value()
+      of JNull:
+        return NIL
+      of JObject:
+        let map = new_ref(VkMap)
+        map.map = Table[Key, Value]()
+        for k, v in node.fields:
+          map.map[k.to_key()] = jsonToValue(v)
+        return map.to_ref_value()
+      of JArray:
+        let arr = new_ref(VkArray)
+        arr.arr = @[]
+        for item in node.elems:
+          arr.arr.add(jsonToValue(item))
+        return arr.to_ref_value()
+    
+    return jsonToValue(jsonNode)
+  except JsonParsingError as e:
+    raise new_exception(types.Exception, "Failed to parse JSON: " & e.msg)
     
 # Helper functions for quick HTTP requests
 proc http_get(self: VirtualMachine, args: Value): Value {.gcsafe.} =

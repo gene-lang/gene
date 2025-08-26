@@ -1,0 +1,13 @@
+#!/usr/bin/env gene run
+
+(class FibCalculator
+  (.fn fib n
+    (if (< n 2)
+      n
+      (+ (self .fib (- n 1)) (self .fib (- n 2)))
+    )
+  )
+)
+
+(var calc (new FibCalculator))
+(calc .fib 3)
