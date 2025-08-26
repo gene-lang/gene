@@ -6,7 +6,7 @@ examples/http.gene | json_pp
 
 # See https://mediastack.com/quickstart
 (var base_url "http://api.mediastack.com/v1")
-(var token ((gene/File/read #"#($env "HOME")/temp/mediastack.txt")).trim))
+(var token ((gene/io/read #"#($env "HOME")/temp/mediastack.txt").trim))
 
 (println
   (await

@@ -3616,4 +3616,6 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
 include "./vm/core"
 import "./vm/async"
 import "./vm/generator"
-import "./vm/http"
+# Temporarily import http module until extension loading is fixed
+when not defined(noExtensions):
+  import "../genex/http"
