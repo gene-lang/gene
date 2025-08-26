@@ -1,18 +1,33 @@
 import tables, strutils
 import httpclient, uri
 import std/json
+import asynchttpserver, asyncdispatch
+import nativesockets, net
+import cgi, strtabs
 
 include ../gene/extension/boilerplate
 
 # Global variables to store classes
 var request_class_global: Class
 var response_class_global: Class
+var server_request_class_global: Class
+var server_response_class_global: Class
+
+# Global HTTP server instance
+var http_server: AsyncHttpServer
+var server_handler: proc(req: Value): Value {.gcsafe.}
+var stored_gene_handler: Value  # Store the Gene function/instance
+var stored_vm: VirtualMachine   # Store VM reference for execution
 
 # Forward declarations
 proc request_constructor(self: VirtualMachine, args: Value): Value {.gcsafe.}
 proc request_send(self: VirtualMachine, args: Value): Value {.gcsafe.}
 proc response_constructor(self: VirtualMachine, args: Value): Value {.gcsafe.}
 proc response_json(self: VirtualMachine, args: Value): Value {.gcsafe.}
+proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.}
+proc vm_respond(vm: VirtualMachine, args: Value): Value {.gcsafe.}
+proc vm_run_forever(vm: VirtualMachine, args: Value): Value {.gcsafe.}
+proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 
 proc parse_json_internal(node: json.JsonNode): Value {.gcsafe.}
 
@@ -443,7 +458,7 @@ proc request_send(self: VirtualMachine, args: Value): Value =
       of VkString:
         jsonObj[key_str] = newJString(v.str)
       of VkInt:
-        jsonObj[key_str] = newJInt(v.int)
+        jsonObj[key_str] = newJInt(v.int64)
       of VkFloat:
         jsonObj[key_str] = newJFloat(v.float)
       of VkBool:
@@ -580,6 +595,315 @@ proc init_http_classes*() =
     let post_fn = new_ref(VkNativeFn)
     post_fn.native_fn = vm_http_post_helper
     App.app.global_ns.ref.ns["http_post".to_key()] = post_fn.to_ref_value()
+    
+    # Add server functions to global namespace
+    let start_server_fn = new_ref(VkNativeFn)
+    start_server_fn.native_fn = vm_start_server
+    App.app.global_ns.ref.ns["start_server".to_key()] = start_server_fn.to_ref_value()
+    
+    let respond_fn = new_ref(VkNativeFn)
+    respond_fn.native_fn = vm_respond
+    App.app.global_ns.ref.ns["respond".to_key()] = respond_fn.to_ref_value()
+    
+    # Add run_forever to gene namespace for gene/run_forever
+    if App.app.gene_ns.kind == VkNamespace:
+      let run_forever_fn = new_ref(VkNativeFn)
+      run_forever_fn.native_fn = vm_run_forever
+      App.app.gene_ns.ref.ns["run_forever".to_key()] = run_forever_fn.to_ref_value()
+
+# Queue-based handler execution system
+import locks, deques
+
+type
+  HandlerRequest = object
+    request: Value
+    response: ptr Channel[Value]
+    completed: ptr bool
+
+# Global storage for handler and VM reference
+var gene_handler_global: Value = NIL
+var gene_vm_global: ptr VirtualMachine = nil
+
+# Queue for pending handler requests
+var handler_queue {.threadvar.}: Deque[HandlerRequest]
+var queue_lock: Lock
+initLock(queue_lock)
+
+# Process pending handler requests (called from VM main loop)
+proc process_handler_queue*(vm: VirtualMachine) {.exportc, dynlib.} =
+  {.cast(gcsafe).}:
+    withLock(queue_lock):
+      while handler_queue.len > 0:
+        let req = handler_queue.popFirst()
+        
+        # Execute the handler
+        var result: Value
+        if gene_handler_global.kind != VkNil:
+          result = execute_gene_function(vm, gene_handler_global, @[req.request])
+        else:
+          result = ("404 Not Found").to_value()
+        
+        # Send response back
+        req.response[].send(result)
+        req.completed[] = true
+
+# Execute a Gene function in VM context
+proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    case fn.kind:
+    of VkNativeFn:
+      let gene_args = new_gene(NIL)
+      for arg in args:
+        gene_args.children.add(arg)
+      return fn.ref.native_fn(vm, gene_args.to_gene_value())
+    of VkFunction:
+      # For now, we can't properly execute Gene functions from native context
+      # This would require full VM frame setup and execution
+      # Return NIL to indicate not implemented
+      return NIL
+    of VkClass:
+      # If it's a class, try to call its `call` method
+      if fn.ref.class.methods.contains("call".to_key()):
+        let call_method = fn.ref.class.methods["call".to_key()].callable
+        return execute_gene_function(vm, call_method, args)
+      else:
+        return NIL
+    of VkInstance:
+      # If it's an instance, try to call its `call` method
+      let instance = fn.ref
+      if instance.instance_class.methods.contains("call".to_key()):
+        let call_method = instance.instance_class.methods["call".to_key()].callable
+        # Prepend instance as first argument
+        var new_args = @[fn]
+        new_args.add(args)
+        return execute_gene_function(vm, call_method, new_args)
+      else:
+        return NIL
+    else:
+      return NIL
+
+# HTTP Server implementation
+proc create_server_request(req: asynchttpserver.Request): Value =
+  # Create ServerRequest instance
+  let instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    if server_request_class_global != nil:
+      instance.instance_class = server_request_class_global
+    else:
+      # Create a temporary class if not initialized
+      instance.instance_class = new_class("ServerRequest")
+  
+  # Set properties
+  instance.instance_props["method".to_key()] = ($req.reqMethod).to_value()
+  instance.instance_props["url".to_key()] = req.url.path.to_value()
+  instance.instance_props["path".to_key()] = req.url.path.to_value()
+  
+  # Parse query parameters
+  let params_map = new_ref(VkMap)
+  params_map.map = Table[Key, Value]()
+  if req.url.query != "":
+    for key, val in decodeData(req.url.query):
+      params_map.map[key.to_key()] = val.to_value()
+  instance.instance_props["params".to_key()] = params_map.to_ref_value()
+  
+  # Convert headers to Gene map
+  let headers_map = new_ref(VkMap)
+  headers_map.map = Table[Key, Value]()
+  for k, v in req.headers.table:
+    headers_map.map[k.to_key()] = v[0].to_value()  # Take first value
+  instance.instance_props["headers".to_key()] = headers_map.to_ref_value()
+  
+  # Store body if present
+  instance.instance_props["body".to_key()] = req.body.to_value()
+  
+  return instance.to_ref_value()
+
+proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
+  {.cast(gcsafe).}:
+    # Convert async request to Gene request
+    let gene_req = create_server_request(req)
+    
+    # Call the handler
+    var response: Value = NIL
+    
+    # If we have a native handler, call it directly
+    if server_handler != nil:
+      try:
+        response = server_handler(gene_req)
+      except CatchableError as e:
+        # Return 500 error on exception
+        await req.respond(Http500, "Internal Server Error: " & e.msg)
+        return
+    # If we have a Gene function handler, use the queue system
+    elif gene_handler_global.kind != VkNil:
+      # Create response channel
+      var response_channel: Channel[Value]
+      response_channel.open()
+      var completed = false
+      
+      # Queue the request
+      let handler_req = HandlerRequest(
+        request: gene_req,
+        response: addr response_channel,
+        completed: addr completed
+      )
+      
+      withLock(queue_lock):
+        handler_queue.addLast(handler_req)
+      
+      # Wait for response (with timeout)
+      var timeout = 0
+      while not completed and timeout < 1000:  # 10 second timeout
+        await sleepAsync(10)
+        timeout += 1
+      
+      if completed:
+        response = response_channel.recv()
+      else:
+        response = ("504 Gateway Timeout").to_value()
+      
+      response_channel.close()
+    
+    # Handle the response
+    if response == NIL:
+      # No response, return 404
+      await req.respond(Http404, "Not Found")
+    elif response.kind == VkInstance:
+      # Check if it's a ServerResponse
+      let status_val = response.ref.instance_props.getOrDefault("status".to_key(), 200.to_value())
+      let body_val = response.ref.instance_props.getOrDefault("body".to_key(), "".to_value())
+      let headers_val = response.ref.instance_props.getOrDefault("headers".to_key(), NIL)
+      
+      let status_code = if status_val.kind == VkInt: 
+        HttpCode(status_val.int64.int)
+      else:
+        Http200
+      
+      let body = if body_val.kind == VkString: body_val.str else: $body_val
+      
+      # Prepare headers
+      var headers = newHttpHeaders()
+      if headers_val.kind == VkMap:
+        for k, v in headers_val.ref.map:
+          if v.kind == VkString:
+            headers[cast[Value](k).str] = v.str
+      
+      await req.respond(status_code, body, headers)
+    else:
+      # Unknown response type
+      await req.respond(Http500, "Invalid response type")
+
+# Start HTTP server
+proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "start_server requires at least a port")
+  
+  let port_val = args.gene.children[0]
+  let handler = if args.gene.children.len > 1: args.gene.children[1] else: NIL
+  
+  let port = if port_val.kind == VkInt: port_val.int64.int else: 8080
+  
+  # Store the handler
+  {.cast(gcsafe).}:
+    # Store VM reference and handler globally for queue-based execution
+    gene_vm_global = addr vm
+    gene_handler_global = handler
+    
+    # Check handler type and set up appropriate handler
+    case handler.kind:
+    of VkNativeFn:
+      # Native function - can be called directly
+      let stored_vm = vm
+      let stored_handler = handler
+      
+      server_handler = proc(req: Value): Value {.gcsafe.} =
+        let handler_args = new_gene(NIL)
+        handler_args.children.add(req)
+        return stored_handler.ref.native_fn(stored_vm, handler_args.to_gene_value())
+    of VkFunction, VkClass, VkInstance:
+      # Gene function/class/instance - use queue system
+      server_handler = nil  # Don't use native handler, will use queue
+    of VkNil:
+      # No handler
+      server_handler = nil
+    else:
+      # Other handler types - use queue system
+      server_handler = nil
+  
+  # Create and start server
+  {.cast(gcsafe).}:
+    http_server = newAsyncHttpServer()
+    asyncCheck http_server.serve(Port(port), handle_request)
+  
+  echo "HTTP server started on port ", port
+  return NIL
+
+# Create a response
+proc vm_respond(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "respond requires at least status or body")
+  
+  var status = 200
+  var body = ""
+  var headers = new_ref(VkMap)
+  headers.map = Table[Key, Value]()
+  
+  # Parse arguments
+  if args.gene.children.len == 1:
+    let arg = args.gene.children[0]
+    if arg.kind == VkInt:
+      # Just status code
+      status = arg.int64.int
+    elif arg.kind == VkString:
+      # Just body (200 OK)
+      body = arg.str
+      status = 200
+    else:
+      body = $arg
+  elif args.gene.children.len >= 2:
+    # Status and body
+    if args.gene.children[0].kind == VkInt:
+      status = args.gene.children[0].int64.int
+    if args.gene.children[1].kind == VkString:
+      body = args.gene.children[1].str
+    else:
+      body = $args.gene.children[1]
+    
+    # Optional headers
+    if args.gene.children.len > 2 and args.gene.children[2].kind == VkMap:
+      headers = args.gene.children[2].ref
+  
+  # Create ServerResponse instance
+  let instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    if server_response_class_global != nil:
+      instance.instance_class = server_response_class_global
+    else:
+      # Create temporary class
+      instance.instance_class = new_class("ServerResponse")
+  
+  instance.instance_props["status".to_key()] = status.to_value()
+  instance.instance_props["body".to_key()] = body.to_value()
+  instance.instance_props["headers".to_key()] = headers.to_ref_value()
+  
+  return instance.to_ref_value()
+
+# Run event loop forever
+proc vm_run_forever(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+  echo "Running event loop..."
+  
+  # Start a timer to periodically process the handler queue
+  proc process_queue() {.async, gcsafe.} =
+    while true:
+      {.cast(gcsafe).}:
+        # Process any pending handler requests
+        if gene_vm_global != nil:
+          process_handler_queue(gene_vm_global[])
+      await sleepAsync(10)  # Check every 10ms
+  
+  asyncCheck process_queue()
+  runForever()
+  return NIL
 
 # Call init_http_classes to register the callback
 init_http_classes()

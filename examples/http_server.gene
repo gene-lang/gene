@@ -1,7 +1,7 @@
 #!/usr/bin/env gene run
 
 # Import all members from genex/http to current namespace
-(import genex/http/*)
+# (import genex/http/*)
 
 # The main app class
 (class App
@@ -122,19 +122,17 @@
 
 # Server port defaults to 2080 but can be passed in the command line.
 (var port 2080)
-(if ($cmd_args/.size > 1)
-   (port = $cmd_args/1/.to_i)
-)
+# (if ($cmd_args/.size > 1)
+#    (port = $cmd_args/1/.to_i)
+# )
 
 # Create and initialize the app
-# ($tap <value> <body>) will run <body> with `self` set to <value> and return <value>
-(var app ($tap (new App port)
-   (/middlewares .add auth)
-   (/handler = ($tap (new DummyRouter)
-      (/handlers .add hello)
-      (/handlers .add secret)
-   ))
-))
+(var app (new App port))
+(app/middlewares .add auth)
+(var router = (new DummyRouter))
+(router/handlers .add hello)
+(router/handlers .add secret)
+(app/handler = router)
 
 # Start the app
 (app .start)

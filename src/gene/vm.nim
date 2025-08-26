@@ -1474,6 +1474,65 @@ proc exec*(self: VirtualMachine): Value =
                 continue
               else:
                 not_allowed("Method must be a function, got " & $target.kind)
+          
+          of VkInstance:
+            # Check if instance has a call method
+            let instance = gene_type.ref
+            let call_method_key = "call".to_key()
+            if instance.instance_class.methods.hasKey(call_method_key):
+              # Instance has a call method, create a frame for it
+              let meth = instance.instance_class.methods[call_method_key]
+              let target = meth.callable
+              
+              case target.kind:
+                of VkFunction:
+                  # Create a new frame for the call method
+                  var scope: Scope
+                  let f = target.ref.fn
+                  if f.matcher.is_empty():
+                    scope = f.parent_scope
+                  else:
+                    scope = new_scope(f.scope_tracker, f.parent_scope)
+                  
+                  var r = new_ref(VkFrame)
+                  r.frame = new_frame()
+                  r.frame.kind = FkFunction
+                  r.frame.target = target
+                  r.frame.scope = scope
+                  r.frame.current_method = meth
+                  # Initialize args with instance as first argument (self)
+                  # Additional arguments will be collected by IkGeneAddChild
+                  let args_gene = new_gene(NIL)
+                  args_gene.children.add(gene_type)  # Add instance as self
+                  r.frame.args = args_gene.to_gene_value()
+                  self.frame.replace(r.to_ref_value())
+                  # Continue to collect arguments, don't jump yet
+                  pc = inst.arg0.int64.int
+                  inst = self.cu.instructions[pc].addr
+                  continue
+                of VkNativeFn:
+                  # Handle native function call methods
+                  var nf = new_ref(VkNativeFrame)
+                  nf.native_frame = NativeFrame(
+                    kind: NfMethod,
+                    target: target,
+                    args: new_gene(NIL).to_gene_value()
+                  )
+                  # Add instance as first argument (self)
+                  # Additional arguments will be collected by IkGeneAddChild
+                  nf.native_frame.args.gene.children.add(gene_type)
+                  self.frame.replace(nf.to_ref_value())
+                  # Continue to collect arguments, don't jump yet
+                  pc = inst.arg0.int64.int
+                  inst = self.cu.instructions[pc].addr
+                  continue
+                else:
+                  not_allowed("Call method must be a function, got " & $target.kind)
+            else:
+              # No call method, treat as regular gene
+              var g = new_gene_value()
+              g.gene.type = gene_type
+              self.frame.push(g)
 
           else:
             # For non-callable types (like integers, strings, etc.), 

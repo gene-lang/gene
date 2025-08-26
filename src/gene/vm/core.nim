@@ -1,3 +1,5 @@
+import base64
+
 # Show the code
 # JIT the code (create a temporary block, reuse the frame)
 # Execute the code
@@ -29,6 +31,31 @@ proc gene_assert(self: VirtualMachine, args: Value): Value =
       if args.gene.children.len > 1:
         msg = args.gene.children[1].str
       raise new_exception(types.Exception, msg)
+
+proc base64_encode(self: VirtualMachine, args: Value): Value =
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "base64_encode requires a string argument")
+  
+  let input = args.gene.children[0]
+  if input.kind != VkString:
+    raise new_exception(types.Exception, "base64_encode requires a string argument")
+  
+  let encoded = base64.encode(input.str)
+  return encoded.to_value()
+
+proc base64_decode(self: VirtualMachine, args: Value): Value =
+  if args.kind != VkGene or args.gene.children.len < 1:
+    raise new_exception(types.Exception, "base64_decode requires a string argument")
+  
+  let input = args.gene.children[0]
+  if input.kind != VkString:
+    raise new_exception(types.Exception, "base64_decode requires a string argument")
+  
+  try:
+    let decoded = base64.decode(input.str)
+    return decoded.to_value()
+  except ValueError as e:
+    raise new_exception(types.Exception, "Invalid base64 string: " & e.msg)
 
 proc trace_start(self: VirtualMachine, args: Value): Value =
   self.trace = true
@@ -206,6 +233,33 @@ proc vm_tap(self: VirtualMachine, args: Value): Value =
     discard # Body execution would happen during compilation/evaluation
   
   return original_value
+
+# String interpolation handler
+proc vm_str_interpolation(self: VirtualMachine, args: Value): Value =
+  # #Str concatenates all arguments as strings
+  if args.kind != VkGene:
+    return "".to_value()
+  
+  var result = ""
+  for child in args.gene.children:
+    case child.kind:
+    of VkString:
+      result.add(child.str)
+    of VkInt:
+      result.add($child.int64)
+    of VkBool:
+      result.add(if child.bool: "true" else: "false")
+    of VkNil:
+      result.add("nil")
+    of VkChar:
+      result.add($child.char)
+    of VkFloat:
+      result.add($child.float)
+    else:
+      # For other types, use $ operator
+      result.add($child)
+  
+  return result.to_value()
 
 proc vm_eval(self: VirtualMachine, args: Value): Value {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -550,6 +604,8 @@ proc init_gene_namespace*() =
   App.app.gene_ns.ns["println".to_key()] = println
   App.app.gene_ns.ns["print".to_key()] = print
   App.app.gene_ns.ns["assert".to_key()] = gene_assert
+  App.app.gene_ns.ns["base64_encode".to_key()] = base64_encode
+  App.app.gene_ns.ns["base64_decode".to_key()] = base64_decode
   App.app.gene_ns.ns["trace_start".to_key()] = trace_start
   App.app.gene_ns.ns["trace_end".to_key()] = trace_end
   App.app.gene_ns.ns["print_stack".to_key()] = print_stack
@@ -576,6 +632,7 @@ proc init_gene_namespace*() =
   App.app.global_ns.ns["with".to_key()] = vm_with
   App.app.global_ns.ns["tap".to_key()] = vm_tap
   App.app.global_ns.ns["eval".to_key()] = vm_eval
+  App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation
   
   
 
