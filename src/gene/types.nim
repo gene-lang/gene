@@ -31,6 +31,12 @@ type
     success_callbacks*: seq[Value]  # Success callback functions
     failure_callbacks*: seq[Value]  # Failure callback functions
     
+  GeneratorState* = enum
+    GsPending            # Not yet started
+    GsRunning            # Currently executing
+    GsSuspended          # Suspended at yield
+    GsDone               # Exhausted
+    
   ExceptionData* = ref object
   Interception* = ref object
   Expression* = ref object
@@ -74,6 +80,7 @@ type
     
     # Async types
     VkFuture             # Async future/promise
+    VkGenerator          # Generator instance
     
     # Date and time types
     VkDate               # Date only
@@ -253,6 +260,8 @@ type
         explode_value*: Value
       of VkFuture:
         future*: FutureObj
+      of VkGenerator:
+        generator*: pointer  # Will be cast to ptr GeneratorObj when used
       
       # Language constructs
       of VkApplication:
@@ -419,6 +428,7 @@ type
     macro_class*    : Value
     block_class*    : Value
     future_class*   : Value
+    generator_class*: Value
     thread_class*   : Value
     thread_message_class* : Value
     thread_message_type_class* : Value
@@ -492,6 +502,7 @@ type
 
   Function* = ref object
     async*: bool
+    is_generator*: bool  # True for generator functions
     name*: string
     ns*: Namespace  # the namespace of the module wherein this is defined.
     scope_tracker*: ScopeTracker  # the root scope tracker of the function
@@ -690,6 +701,7 @@ type
 
     IkFunction
     IkReturn
+    IkYield        # Suspend generator and yield value
 
     IkCompileFn
 
@@ -763,8 +775,6 @@ type
     IkReturnNil        # Common pattern: return nil
     IkReturnTrue       # Common pattern: return true
     IkReturnFalse      # Common pattern: return false
-    
-    IkYield
     IkResume
 
   # Keep the size of Instruction to 2*8 = 16 bytes
@@ -900,6 +910,17 @@ type
     stack_index*: uint16
 
   Frame* = ptr FrameObj
+  
+  GeneratorObj* = ref object
+    function*: Function          # The generator function definition
+    state*: GeneratorState       # Current execution state
+    frame*: Frame                # Saved execution frame
+    pc*: int                     # Program counter position
+    scope*: Scope                # Captured scope
+    stack*: seq[Value]           # Saved stack state
+    done*: bool                  # Whether generator is exhausted
+    has_peeked*: bool            # Whether we have a peeked value
+    peeked_value*: Value         # The peeked value from has_next
 
   NativeFrameKind* {.size: sizeof(int16).} = enum
     NfFunction
@@ -1348,7 +1369,11 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
       of VkFloat:
         result = $(cast[float64](self))
       of VkChar:
-        result = $cast[char](cast[int64](self) and 0xFF)
+        # Check if it's the special NOT_FOUND value
+        if self == NOT_FOUND:
+          result = "not_found"
+        else:
+          result = $cast[char](cast[int64](self) and 0xFF)
       of VkString:
         result = $self.str
       of VkSymbol:
@@ -1421,7 +1446,11 @@ proc `$`*(self: Value): string {.gcsafe.} =
       of VkFloat:
         result = $(cast[float64](self))
       of VkChar:
-        result = "'" & $cast[char](cast[int64](self) and 0xFF) & "'"
+        # Check if it's the special NOT_FOUND value
+        if self == NOT_FOUND:
+          result = "not_found"
+        else:
+          result = "'" & $cast[char](cast[int64](self) and 0xFF) & "'"
       of VkString:
         result = "\"" & $self.str & "\""
       of VkSymbol:
@@ -2376,6 +2405,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var name: string
   let matcher = new_arg_matcher()
   var body_start: int
+  var is_generator = false
+  
   if node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"
@@ -2388,8 +2419,14 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     case first.kind:
       of VkSymbol, VkString:
         name = first.str
+        # Check if function name ends with * (generator function)
+        if name.len > 0 and name[^1] == '*':
+          is_generator = true
       of VkComplexSymbol:
         name = first.ref.csymbol[^1]
+        # Check if function name ends with * (generator function)
+        if name.len > 0 and name[^1] == '*':
+          is_generator = true
       else:
         todo($first.kind)
 
@@ -2408,9 +2445,15 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     is_async = true
     discard  # Function is async
   
+  # Check if function has generator flag from properties (^^generator syntax)
+  let generator_key = "generator".to_key()
+  if node.gene.props.has_key(generator_key) and node.gene.props[generator_key] == TRUE:
+    is_generator = true
+  
   # body = wrap_with_try(body)
   result = new_fn(name, matcher, body)
   result.async = is_async
+  result.is_generator = is_generator
 
 # compile method is defined in compiler.nim
 
@@ -2573,6 +2616,11 @@ proc get_class*(val: Value): Class =
     of VkFuture:
       if App.ref.app.future_class.kind == VkClass:
         return App.ref.app.future_class.ref.class
+      else:
+        return nil
+    of VkGenerator:
+      if App.ref.app.generator_class.kind == VkClass:
+        return App.ref.app.generator_class.ref.class
       else:
         return nil
     # of VkThread:

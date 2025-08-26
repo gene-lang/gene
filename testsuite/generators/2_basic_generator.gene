@@ -1,0 +1,21 @@
+# Test basic generator function
+(fn counter* [n]
+  (var i 0)
+  (while (< i n)
+    (yield i)
+    (i = (+ i 1))))
+
+# Create generator instance
+(var gen (counter* 3))
+
+# Test that generator is created - just print it for now
+(println "Generator created:" gen)
+
+# Call next method - should return NOT_FOUND for now
+(var result (gen .next))
+(println "Generator next result:" result)
+(println "Is NOT_FOUND?" (if (== result not_found) "yes" "no"))
+
+# Expected: Generator created: VkGenerator
+# Expected: Generator next result: not_found
+# Expected: Is NOT_FOUND? yes

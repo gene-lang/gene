@@ -1,0 +1,9 @@
+# Simplest possible generator test
+(fn gen* []
+  (yield 1))
+
+(println "Generator function defined successfully")
+
+# Now try calling it
+(var g (gen*))
+(println "Generator created:" g)

@@ -135,6 +135,7 @@ run_category "Strings" "strings"
 run_category "Functions" "functions"
 run_category "Scopes" "scopes"
 run_category "Async Support" "async"
+run_category "Generators" "generators"
 
 # Summary
 echo "================================"

@@ -507,6 +507,37 @@ proc exec*(self: VirtualMachine): Value =
           not_allowed("IkCallDirect requires a function, got " & $target.kind)
         
         let f = target.ref.fn
+        
+        # Check if this is a generator function
+        if f.is_generator:
+          # Collect and discard arguments for now (generators will handle them on first .next)
+          let arg_count = inst.arg1.int64.int
+          var args_gene = new_gene(NIL)
+          for i in 0..<arg_count:
+            args_gene.children.insert(self.frame.pop(), 0)
+          
+          # Create generator instance
+          var gen = new_ref(VkGenerator)
+          var genObj = new(GeneratorObj)
+          genObj.function = f
+          genObj.state = GsPending
+          genObj.frame = nil
+          genObj.pc = 0
+          genObj.scope = nil
+          genObj.stack = @[]
+          genObj.done = false
+          genObj.has_peeked = false
+          genObj.peeked_value = NIL
+          GC_ref(genObj)  # Prevent GC from collecting
+          gen.generator = cast[pointer](genObj)
+          # Store arguments in the generator for later processing
+          genObj.stack = args_gene.children  # Save args for when generator starts
+          self.frame.push(gen.to_ref_value())
+          pc.inc()
+          inst = self.cu.instructions[pc].addr
+          continue
+        
+        # Normal function call
         if f.body_compiled == nil:
           f.compile()
         
@@ -1279,8 +1310,20 @@ proc exec*(self: VirtualMachine): Value =
             #   not_allowed("Macro not allowed here")
             # inst.arg1 = 1
 
-            var scope: Scope
             let f = gene_type.ref.fn
+            
+            # Check if this is a generator function
+            if f.is_generator:
+              # Don't create generator here, just continue to collect arguments
+              # The generator will be created in IkGeneEnd
+              self.frame.push(new_gene_value())
+              self.frame.current().gene.type = gene_type
+              pc.inc()
+              inst = self.cu.instructions[pc].addr
+              continue
+            
+            # Normal function call
+            var scope: Scope
             if f.matcher.is_empty():
               scope = f.parent_scope
             else:
@@ -1731,7 +1774,30 @@ proc exec*(self: VirtualMachine): Value =
                 todo($frame.kind)
 
           else:
-            discard
+            # Check if this is a gene with a generator function as its type
+            let value = self.frame.current()
+            if value.kind == VkGene and value.gene.type.kind == VkFunction:
+              let f = value.gene.type.ref.fn
+              if f.is_generator:
+                # Create generator instance with the arguments from the gene
+                var gen = new_ref(VkGenerator)
+                var genObj = new(GeneratorObj)
+                genObj.function = f
+                genObj.state = GsPending
+                genObj.frame = nil
+                genObj.pc = 0
+                genObj.scope = nil
+                genObj.stack = value.gene.children  # Save arguments
+                genObj.done = false
+                genObj.has_peeked = false
+                genObj.peeked_value = NIL
+                GC_ref(genObj)  # Prevent GC from collecting
+                gen.generator = cast[pointer](genObj)
+                self.frame.replace(gen.to_ref_value())
+              else:
+                discard
+            else:
+              discard
           
         {.pop.}
 
@@ -2617,6 +2683,12 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.push(v)
           continue
         {.pop.}
+      
+      of IkYield:
+        # Yield is only valid inside generator functions
+        # For now, we'll just push NOT_FOUND and continue
+        # The actual implementation will be added when we implement .next method
+        self.frame.push(NOT_FOUND)
 
       of IkNamespace:
         let name = inst.arg0
@@ -3349,6 +3421,27 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method " & method_name & " not found on future")
           else:
             not_allowed("Future class not initialized")
+        of VkGenerator:
+          # Handle generator methods
+          if App.app.generator_class.kind == VkClass:
+            let generator_class = App.app.generator_class.ref.class
+            let method_key = method_name.to_key()
+            if generator_class.methods.hasKey(method_key):
+              let meth = generator_class.methods[method_key]
+              # Call the native method directly
+              case meth.callable.kind:
+              of VkNativeFn:
+                # Create a gene with the generator as the first argument
+                var args_gene = new_gene()
+                args_gene.children.add(obj)  # Add self (the generator) as first argument
+                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                self.frame.push(result)
+              else:
+                not_allowed("Generator method must be a native function")
+            else:
+              not_allowed("Method " & method_name & " not found on generator")
+          else:
+            not_allowed("Generator class not initialized")
         else:
           todo($obj.kind & " method: " & method_name)
       
@@ -3522,4 +3615,5 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
 
 include "./vm/core"
 import "./vm/async"
+import "./vm/generator"
 import "./vm/http"

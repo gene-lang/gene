@@ -261,6 +261,7 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
 proc compile_caller_eval(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_async(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_await(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_yield(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
@@ -1735,6 +1736,9 @@ proc compile_gene(self: Compiler, input: Value) =
       of "await":
         self.compile_await(gene)
         return
+      of "yield":
+        self.compile_yield(gene)
+        return
       of "void":
         # Compile all arguments but return nil
         for child in gene.children:
@@ -1816,7 +1820,7 @@ proc compile*(self: Compiler, input: Value) =
         echo "  gene.type.str = ", input.gene.type.str
   
   case input.kind:
-    of VkInt, VkBool, VkNil, VkFloat:
+    of VkInt, VkBool, VkNil, VkFloat, VkChar:
       self.compile_literal(input)
     of VkString:
       self.compile_literal(input) # TODO
@@ -2358,6 +2362,19 @@ proc compile_await(self: Compiler, gene: ptr Gene) =
       self.output.instructions.add(Instruction(kind: IkAwait))
       self.output.instructions.add(Instruction(kind: IkArrayAddChild))
     self.output.instructions.add(Instruction(kind: IkArrayEnd))
+
+proc compile_yield(self: Compiler, gene: ptr Gene) =
+  # (yield value) - suspend generator and return value
+  if gene.children.len == 0:
+    # Yield without argument yields nil
+    self.output.instructions.add(Instruction(kind: IkPushNil))
+  elif gene.children.len == 1:
+    # Yield single value
+    self.compile(gene.children[0])
+  else:
+    not_allowed("yield expects 0 or 1 argument")
+  
+  self.output.instructions.add(Instruction(kind: IkYield))
 
 proc compile_selector(self: Compiler, gene: ptr Gene) =
   # (./ target property [default])

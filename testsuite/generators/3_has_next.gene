@@ -1,0 +1,29 @@
+# Test has_next method for generators
+(fn simple* []
+  (yield 1))
+
+(var gen (simple*))
+
+# Test has_next on new generator
+(println "Initial has_next:" (gen .has_next))
+
+# has_next should not consume the value
+(println "Second has_next:" (gen .has_next))
+(println "Third has_next:" (gen .has_next))
+
+# Now actually get the value
+(println "Next value:" (gen .next))
+
+# After consuming, has_next should return false (since we only yield once)
+(println "has_next after next:" (gen .has_next))
+
+# Getting next again should return NOT_FOUND
+(println "Second next:" (gen .next))
+
+# Expected output:
+# Initial has_next: false (since we return NOT_FOUND currently)
+# Second has_next: false
+# Third has_next: false
+# Next value: (empty/nil - NOT_FOUND)
+# has_next after next: false
+# Second next: (empty/nil - NOT_FOUND)

@@ -1,0 +1,35 @@
+# Test that has_next preserves peeked value
+# This will be more meaningful once yield is implemented
+
+(fn test_gen* []
+  (yield 42)
+  (yield 100))
+
+(var gen (test_gen*))
+
+# Call has_next multiple times
+(var has1 (gen .has_next))
+(var has2 (gen .has_next))
+(var has3 (gen .has_next))
+
+# Check if all has_next calls return the same value
+(var same12 (== has1 has2))
+(var same23 (== has2 has3))
+(println "All has_next calls return same value:" 
+         (if same12 
+             (if same23 "yes" "no")
+             "no"))
+
+# Get the actual value
+(var val (gen .next))
+
+# Test the complete flow
+(println "Flow test:")
+(var g2 (test_gen*))
+(while (g2 .has_next)
+  (println "  Value:" (g2 .next)))
+(println "  Final value:" (g2 .next))
+
+# Expected: All has_next calls return same value: yes
+# Expected: Flow test:
+# Expected:   Final value: not_found
