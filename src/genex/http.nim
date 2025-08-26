@@ -657,9 +657,13 @@ proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Val
         gene_args.children.add(arg)
       return fn.ref.native_fn(vm, gene_args.to_gene_value())
     of VkFunction:
-      # For now, we can't properly execute Gene functions from native context
-      # This would require full VM frame setup and execution
-      # Return NIL to indicate not implemented
+      # Gene functions cannot be executed from async context
+      # The VM requires synchronous frame-based execution which conflicts with
+      # the async event loop. This would require significant architectural changes:
+      # - Coroutines/continuations for suspending VM execution
+      # - Separate VM thread with message passing
+      # - Compiling Gene functions to native code
+      # For now, only native functions can be used as HTTP handlers
       return NIL
     of VkClass:
       # If it's a class, try to call its `call` method
