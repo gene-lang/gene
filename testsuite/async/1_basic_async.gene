@@ -18,10 +18,10 @@
 
 (println "Test 3: Future state inspection")
 (var future3 (gene/io/read_async test_file))
-(var state_before (future3/.state))
+(var state_before future3/.state)
 (println "State before await:" state_before)
 (var content3 (await future3))
-(var state_after (future3/.state))
+(var state_after future3/.state)
 (println "State after await:" state_after)
 
 (println "=== Test 001 PASSED ===")

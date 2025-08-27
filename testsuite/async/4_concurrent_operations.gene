@@ -19,9 +19,9 @@
 
 (var end_time (gene/time/now))
 (println "Concurrent reads completed in" (end_time - start_time) "seconds")
-(var len1 (r1/.length))
-(var len2 (r2/.length))
-(var len3 (r3/.length))
+(var len1 r1/.length)
+(var len2 r2/.length)
+(var len3 r3/.length)
 (println "Result 1 length:" len1)
 (println "Result 2 length:" len2)
 (println "Result 3 length:" len3)

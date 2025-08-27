@@ -13,6 +13,25 @@ when not defined(noExtensions):
 
 const DEBUG_VM = false
 
+# Native functions for built-in properties
+proc class_name_getter(vm: VirtualMachine, args: Value): Value =
+  # The class object is passed in args as the first child
+  if args.kind == VkGene and args.gene.children.len > 0:
+    let target = args.gene.children[0]
+    if target.kind == VkClass:
+      return target.ref.class.name.to_value()
+  not_allowed("name can only be called on classes")
+
+proc instance_class_getter(vm: VirtualMachine, args: Value): Value =
+  # The instance object is passed in args as the first child
+  if args.kind == VkGene and args.gene.children.len > 0:
+    let target = args.gene.children[0]
+    if target.kind == VkInstance:
+      let r = new_ref(VkClass)
+      r.class = target.ref.instance_class
+      return r.to_ref_value()
+  not_allowed("class can only be called on instances")
+
 # Forward declarations from vm/core
 proc init_gene_namespace*()
 proc register_io_functions*()
@@ -1585,8 +1604,16 @@ proc exec*(self: VirtualMachine): Value =
         var child: Value
         self.frame.pop2(child)
         let v = self.frame.current()
-        if DEBUG_VM:
+        when DEBUG_VM:
           echo "IkGeneAddChild: v.kind = ", v.kind, ", child = ", child
+        # Debug: print stack state when error occurs
+        if v.kind == VkSymbol:
+          echo "ERROR: IkGeneAddChild with Symbol on stack!"
+          echo "  child = ", child
+          echo "  v (stack top) = ", v
+          echo "  Stack trace:"
+          for i in 0..<min(5, self.frame.stack_index.int):
+            echo "    [", i, "] = ", self.frame.stack[i]
         case v.kind:
           of VkFrame:
             # For function calls, we need to set up the args gene with children
@@ -2871,6 +2898,7 @@ proc exec*(self: VirtualMachine): Value =
       of IkClass:
         let name = inst.arg0
         let class = new_class(name.str)
+        class.add_standard_instance_methods()
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
@@ -2977,12 +3005,47 @@ proc exec*(self: VirtualMachine): Value =
       of IkResolveMethod:
         # Peek at the object without popping it
         let v = self.frame.current()
-        let class = v.get_class()
-        let meth = class.get_method(inst.arg0.str)
-        if meth == nil:
-          not_allowed("Method '" & inst.arg0.str & "' not found on " & $v.kind)
-        # Push the method callable on top of the object
-        self.frame.push(meth.callable)
+        let method_name = inst.arg0.str
+        
+        # Check for built-in properties that should return values directly
+        # Properties are different from methods - they return values immediately
+        if v.kind == VkClass and method_name == "name":
+          # For property access, pop the object and push the property value
+          discard self.frame.pop()
+          self.frame.push(v.ref.class.name.to_value())
+        elif v.kind == VkInstance and method_name == "class":
+          # For property access, pop the object and push the property value
+          discard self.frame.pop()
+          let r = new_ref(VkClass)
+          r.class = v.ref.instance_class
+          self.frame.push(r.to_ref_value())
+        elif v.kind == VkFuture and method_name == "state":
+          # For Future.state property, return the state directly
+          discard self.frame.pop()
+          let future_obj = v.ref.future
+          case future_obj.state:
+            of FsPending:
+              self.frame.push("pending".to_symbol_value())
+            of FsSuccess:
+              self.frame.push("success".to_symbol_value())
+            of FsFailure:
+              self.frame.push("failure".to_symbol_value())
+        elif v.kind == VkFuture and method_name == "value":
+          # For Future.value property, return the value directly
+          discard self.frame.pop()
+          let future_obj = v.ref.future
+          if future_obj.state == FsSuccess:
+            self.frame.push(future_obj.value)
+          else:
+            self.frame.push(NIL)
+        else:
+          # Normal method resolution
+          let class = v.get_class()
+          let meth = class.get_method(method_name)
+          if meth == nil:
+            not_allowed("Method '" & method_name & "' not found on " & $v.kind)
+          # Push the method callable on top of the object
+          self.frame.push(meth.callable)
 
       of IkThrow:
         {.push checks: off}

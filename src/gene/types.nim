@@ -2550,7 +2550,7 @@ proc to_block*(node: Value): Block {.gcsafe.} =
 #################### Class #######################
 
 proc new_class*(name: string, parent: Class): Class =
-  return Class(
+  result = Class(
     name: name,
     ns: new_namespace(nil, name),
     parent: parent,
@@ -2732,6 +2732,10 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
     callable: r.to_ref_value(),
     is_macro: true,
   )
+
+proc add_standard_instance_methods*(class: Class) =
+  # Currently no standard methods to add
+  discard
 
 # proc def_native_constructor*(self: Class, f: NativeFn2) =
 #   let r = new_ref(VkNativeFn2)

@@ -27,12 +27,12 @@
 (var all_futures (process_files))
 (println "Created 3 futures in nested scope")
 
-(var r1 (await (all_futures/.get 0)))
-(println "Future 0 result length:" (r1/.length))
-(var r2 (await (all_futures/.get 1)))
-(println "Future 1 result length:" (r2/.length))
-(var r3 (await (all_futures/.get 2)))
-(println "Future 2 result length:" (r3/.length))
+(var r1 (await (all_futures .get 0)))
+(println "Future 0 result length:" r1/.length)
+(var r2 (await (all_futures .get 1)))
+(println "Future 1 result length:" r2/.length)
+(var r3 (await (all_futures .get 2)))
+(println "Future 2 result length:" r3/.length)
 
 (println "Test 3: Deep scope nesting (triggers bug)")
 (fn level1

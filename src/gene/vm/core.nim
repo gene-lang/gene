@@ -682,12 +682,15 @@ proc init_gene_namespace*() =
   App.app.global_ns.ns["tap".to_key()] = vm_tap
   App.app.global_ns.ns["eval".to_key()] = vm_eval
   App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation
+  App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
   
   
 
   let class = new_class("Class")
   class.def_native_macro_method "ctor", class_ctor
   class.def_native_macro_method "fn", class_fn
+  
+  
   r = new_ref(VkClass)
   r.class = class
   App.app.class_class = r.to_ref_value()

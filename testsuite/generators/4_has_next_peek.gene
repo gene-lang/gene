@@ -16,9 +16,9 @@
 (var same12 (== has1 has2))
 (var same23 (== has2 has3))
 (println "All has_next calls return same value:" 
-         (if same12 
-             (if same23 "yes" "no")
-             "no"))
+  (if same12 
+    (if same23 "yes" "no")
+    "no"))
 
 # Get the actual value
 (var val (gen .next))
