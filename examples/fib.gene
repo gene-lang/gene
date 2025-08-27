@@ -6,11 +6,5 @@
     ((fib (n - 1)) + (fib (n - 2)))
   )
 )
-(if ($cmd_args/.size > 1)
-  (var i $cmd_args/1/.to_i)
-  (var start (gene/now))
-  (println "fib(" i ") = " (fib i))
-  (println "Execution time: " start/.elapsed " seconds.")
-else
-  (println "Usage:\nfib.gene <n>")
-)
+
+(println "fib(3) = " (fib 3))

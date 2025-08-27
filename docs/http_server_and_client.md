@@ -243,6 +243,8 @@ Get `http_server.gene` fully working with:
 5. **HTTP Server Infrastructure**: Server starts, handles requests, returns responses
 6. **VM Coroutine Support**: VM refactored to use `self.pc` for re-entrant execution
 7. **Gene Function Handlers**: Gene functions can now be used as HTTP handlers! ✅
+8. **VkComplexSymbol Parsing**: Fixed parsing of `/property` syntax in matchers
+9. **Constructor Scope**: Fixed scope initialization for class constructors
 
 ### ✅ VM Refactoring Complete:
 The VM has been successfully refactored to support coroutine-style execution:
@@ -252,8 +254,11 @@ The VM has been successfully refactored to support coroutine-style execution:
 4. **Gene functions as handlers**: Working! Can execute Gene functions from async HTTP context
 
 ### ⚠️ Remaining Work:
-1. **Full http_server.gene Example**: May need additional fixes for complex scenarios
-2. **Middleware chains**: Need testing with the new VM architecture
+1. **Property Parameter Binding**: Constructor parameters with `/property` syntax don't bind values correctly
+   - The `/property` syntax in constructors should automatically store the parameter value as an instance property
+   - Currently the property is created but the value isn't transferred from the argument
+2. **Full http_server.gene Example**: Still has issues with method resolution
+3. **Middleware chains**: Need testing once basic class functionality works
 
 ### Technical Solution Path:
 To enable Gene functions as HTTP handlers, the VM needs refactoring:

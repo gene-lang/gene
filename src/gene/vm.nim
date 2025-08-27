@@ -2181,9 +2181,6 @@ proc exec*(self: VirtualMachine): Value =
         var second: Value
         self.frame.pop2(second)
         let first = self.frame.current()
-        when not defined(release):
-          if self.trace:
-            echo fmt"IkLt: {first} < {second}"
         # Use proper comparison based on types
         case first.kind:
           of VkInt:
@@ -2883,8 +2880,17 @@ proc exec*(self: VirtualMachine): Value =
             let compiled = class.constructor.ref.fn.body_compiled
             compiled.skip_return = true
 
+            # Create scope for constructor
+            let f = class.constructor.ref.fn
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
             self.pc.inc()
             self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+            self.frame.scope = scope  # Set the scope
             # Pass instance as first argument for constructor
             let args_gene = new_gene(NIL)
             args_gene.children.add(instance.to_ref_value())
@@ -2894,6 +2900,11 @@ proc exec*(self: VirtualMachine): Value =
                 args_gene.children.add(child)
             self.frame.args = args_gene.to_gene_value()
             self.frame.ns = class.constructor.ref.fn.ns
+            
+            # Process arguments if matcher exists  
+            if not f.matcher.is_empty():
+              process_args(f.matcher, self.frame.args, scope)
+            
             self.cu = compiled
             self.pc = 0
             inst = self.cu.instructions[self.pc].addr

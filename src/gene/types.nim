@@ -2339,19 +2339,18 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
             else:
               m.name_key = v.str.to_key()
     of VkComplexSymbol:
-      todo($VkComplexSymbol)
-      # if v.csymbol[0] == '^':
-      #   todo("parse " & $v)
-      # else:
-      #   var m = new_matcher(self, MatchData)
-      #   group.add(m)
-      #   m.is_prop = true
-      #   let name = v.csymbol[1]
-      #   if name.ends_with("..."):
-      #     m.is_splat = true
-      #     m.name = name[0..^4]
-      #   else:
-      #     m.name = name
+      if v.ref.csymbol[0] == "^":
+        todo("parse " & $v)
+      else:
+        var m = new_matcher(self, MatchData)
+        group.add(m)
+        m.is_prop = true
+        let name = v.ref.csymbol[1]
+        if name.ends_with("..."):
+          m.is_splat = true
+          m.name_key = name[0..^4].to_key()
+        else:
+          m.name_key = name.to_key()
     of VkArray:
       var i = 0
       while i < v.ref.arr.len:
