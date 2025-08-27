@@ -3,7 +3,7 @@ import httpclient, uri
 import std/json
 import asynchttpserver, asyncdispatch
 import nativesockets, net
-import cgi, strtabs
+import cgi
 
 include ../gene/extension/boilerplate
 import ../gene/compiler

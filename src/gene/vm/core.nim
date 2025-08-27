@@ -461,6 +461,12 @@ proc init_gene_namespace*() =
   r.class = int_class
   App.app.int_class = r.to_ref_value()
   
+  # float_class
+  let float_class = new_class("Float")
+  r = new_ref(VkClass)
+  r.class = float_class
+  App.app.float_class = r.to_ref_value()
+  
   # string_class
   let string_class = new_class("String")
   
@@ -571,6 +577,18 @@ proc init_gene_namespace*() =
     return 0.to_value()
   
   array_class.def_native_method("size", vm_array_size)
+  
+  proc vm_array_get(self: VirtualMachine, args: Value): Value =
+    # First argument is the array (self), second is the index
+    let arr = args.gene.children[0]
+    let index = if args.gene.children.len > 1: args.gene.children[1] else: 0.to_value()
+    if arr.kind == VkArray and index.kind == VkInt:
+      let idx = index.int64.int
+      if idx >= 0 and idx < arr.ref.arr.len:
+        return arr.ref.arr[idx]
+    return NIL
+  
+  array_class.def_native_method("get", vm_array_get)
   
   # map_class
   let map_class = new_class("Map")

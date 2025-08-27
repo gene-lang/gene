@@ -942,6 +942,7 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(NIL)
           else:
+            echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
             todo($value.kind)
 
       of IkGetMemberOrNil:
@@ -1645,6 +1646,8 @@ proc exec*(self: VirtualMachine): Value =
                   echo fmt"  Function name = {f.name}, has compiled body = {f.body_compiled != nil}"
                 if f.body_compiled == nil:
                   f.compile()
+                  when DEBUG_VM:
+                    echo "  After compile, scope_tracker.mappings = ", f.scope_tracker.mappings
 
                 self.pc.inc()
                 # Pop the VkFrame value from the stack before switching context
@@ -1664,6 +1667,10 @@ proc exec*(self: VirtualMachine): Value =
                 self.cu = f.body_compiled
                 
                 # Process arguments if matcher exists
+                when DEBUG_VM:
+                  echo "  Matcher empty? ", f.matcher.is_empty(), ", matcher.children.len = ", f.matcher.children.len
+                  if not f.matcher.is_empty():
+                    echo "  frame.args = ", frame.args
                 if not f.matcher.is_empty():
                   # For methods, skip the first argument (self) when matching parameters
                   if frame.current_method != nil:
@@ -1705,11 +1712,15 @@ proc exec*(self: VirtualMachine): Value =
                       
                       # Two-argument optimization
                       elif arg_count == 2 and param_count == 2:
+                        when DEBUG_VM:
+                          echo "Two-argument optimization: arg_count = ", arg_count, ", param_count = ", param_count
                         let param1 = f.matcher.children[0]
                         let param2 = f.matcher.children[1]
                         # Check for simple parameter bindings
                         if param1.kind == MatchData and not param1.is_splat and param1.children.len == 0 and
                            param2.kind == MatchData and not param2.is_splat and param2.children.len == 0:
+                          when DEBUG_VM:
+                            echo "  Both params are simple bindings"
                           # Direct assignment for both parameters
                           var all_mapped = true
                           if f.scope_tracker.mappings.has_key(param1.name_key) and
@@ -1717,8 +1728,12 @@ proc exec*(self: VirtualMachine): Value =
                             let idx1 = f.scope_tracker.mappings[param1.name_key]
                             let idx2 = f.scope_tracker.mappings[param2.name_key]
                             let max_idx = max(idx1, idx2)
+                            when DEBUG_VM:
+                              echo "  idx1 = ", idx1, ", idx2 = ", idx2
                             while frame.scope.members.len <= max_idx:
                               frame.scope.members.add(NIL)
+                            when DEBUG_VM:
+                              echo "  Setting args: [0] = ", frame.args.gene.children[0], " [1] = ", frame.args.gene.children[1]
                             frame.scope.members[idx1] = frame.args.gene.children[0]
                             frame.scope.members[idx2] = frame.args.gene.children[1]
                           else:

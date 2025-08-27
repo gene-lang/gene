@@ -73,16 +73,25 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
     if r.csymbol[0] == "SPECIAL_NS":
       # Handle $ns/... specially
       self.output.instructions.add(Instruction(kind: IkResolveSymbol, arg0: cast[Value](SYM_NS)))
-    elif self.scope_tracker.mappings.has_key(key):
-      self.output.instructions.add(Instruction(kind: IkVarResolve, arg0: self.scope_tracker.mappings[key].to_value()))
     else:
-      self.output.instructions.add(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
+      # Use locate to check parent scopes too
+      let found = self.scope_tracker.locate(key)
+      if found.local_index >= 0:
+        if found.parent_index == 0:
+          self.output.instructions.add(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
+        else:
+          self.output.instructions.add(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
+      else:
+        self.output.instructions.add(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
     for s in r.csymbol[1..^1]:
       let (is_int, i) = to_int(s)
       if is_int:
         self.output.instructions.add(Instruction(kind: IkGetChild, arg0: i))
       elif s.starts_with("."):
-        self.output.instructions.add(Instruction(kind: IkCallMethodNoArgs, arg0: s[1..^1]))
+        # For method access, use IkResolveMethod to get the method
+        # without calling it. The actual call will happen when the
+        # gene is executed.
+        self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: s[1..^1].to_symbol_value()))
       elif s == "...":
         # Handle spread operator for variables like "a..."
         self.output.instructions.add(Instruction(kind: IkSpread))
@@ -954,21 +963,33 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   # Add the method name
   fn_value.gene.children.add(gene.children[0])
   
-  # Create args array with self as first parameter
-  var method_args = new_array_value()
-  method_args.ref.arr.add("self".to_symbol_value())
-  
-  # Handle original args
+  # Handle args - check if self is already the first parameter
   let args = gene.children[1]
-  if args.kind == VkSymbol and args.str == "_":
-    # _ means no additional arguments besides self
-    discard
-  elif args.kind == VkArray:
-    # Multiple arguments - add them after self
-    for arg in args.ref.arr:
-      method_args.ref.arr.add(arg)
+  var method_args: Value
+  
+  if args.kind == VkArray and args.ref.arr.len > 0:
+    # Check if first arg is already self
+    if args.ref.arr[0].kind == VkSymbol and args.ref.arr[0].str == "self":
+      # Self is already there, use args as-is
+      method_args = args
+    else:
+      # Need to add self
+      method_args = new_array_value()
+      method_args.ref.arr.add("self".to_symbol_value())
+      for arg in args.ref.arr:
+        method_args.ref.arr.add(arg)
+  elif args.kind == VkSymbol and args.str == "_":
+    # _ means no arguments, but methods need self
+    method_args = new_array_value()
+    method_args.ref.arr.add("self".to_symbol_value())
+  elif args.kind == VkSymbol and args.str == "self":
+    # Just self
+    method_args = new_array_value()
+    method_args.ref.arr.add(args)
   else:
-    # Single argument - add it after self
+    # Single argument that's not self - add self first
+    method_args = new_array_value()
+    method_args.ref.arr.add("self".to_symbol_value())
     method_args.ref.arr.add(args)
   
   fn_value.gene.children.add(method_args)
@@ -1185,6 +1206,40 @@ proc compile_gene_default(self: Compiler, gene: ptr Gene) {.inline.} =
 # * GeneLabel: GeneEnd
 # Similar logic is used for regular method calls and macro-method calls
 proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
+  # Special case: handle method calls like (obj .method ...)
+  # These are parsed as genes with type obj/.method
+  if gene.type.kind == VkComplexSymbol:
+    let csym = gene.type.ref.csymbol
+    # Check if this is a method access (second part starts with ".")
+    if csym.len >= 2 and csym[1].starts_with("."):
+      # This is a method call - compile it specially
+      # The object will be on the stack after compiling the type
+      # We need to ensure it's passed as the first argument
+      self.compile(gene.type)  # This pushes object and method
+      
+      # After compiling obj/.method, stack has [obj, method]
+      # IkGeneStartDefault will pop the method
+      # We need to ensure obj is used as an argument
+      let fn_label = new_label()
+      let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
+      self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
+      
+      # The object is still on the stack - add it as the first child
+      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      
+      # Add any explicit arguments
+      self.quote_level.inc()
+      for k, v in gene.props:
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+      for child in gene.children:
+        self.compile(child)
+        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      self.quote_level.dec()
+      
+      self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
+      self.output.instructions.add(Instruction(kind: IkGeneEnd, label: end_label))
+      return
   # Special case: handle @ selector application
   # ((@ "test") {^test 1}) - gene.type is (@ "test"), children is [{^test 1}]
   if gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
@@ -1403,8 +1458,24 @@ proc compile_gene(self: Compiler, input: Value) =
   # This handles cases like (6 / 2) or (i + 1)
   if gene.children.len >= 1:
     let first_child = gene.children[0]
-    if (first_child.kind == VkSymbol and first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]) or
-       (first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == ""):
+    if first_child.kind == VkSymbol:
+      if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
+        # Don't convert if the type is already an operator or special form
+        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "$", "."]:
+          # Convert infix to prefix notation and compile
+          # (6 / 2) becomes (/ 6 2)
+          # (i + 1) becomes (+ i 1)
+          let prefix_gene = create(Gene)
+          prefix_gene.type = first_child  # operator becomes the type
+          prefix_gene.children = @[`type`] & gene.children[1..^1]  # value and rest of args
+          self.compile_gene(prefix_gene.to_gene_value())
+          return
+      elif first_child.str.starts_with("."):
+        # This is a method call: (obj .method args...)
+        # Transform to method call format
+        self.compile_method_call(gene)
+        return
+    elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == "":
       # Don't convert if the type is already an operator or special form
       if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "$", "."]:
         # Convert infix to prefix notation and compile

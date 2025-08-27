@@ -2644,6 +2644,8 @@ proc get_class*(val: Value): Class =
       return App.ref.app.bool_class.ref.class
     of VkInt:
       return App.ref.app.int_class.ref.class
+    of VkFloat:
+      return App.ref.app.float_class.ref.class
     of VkChar:
       return App.ref.app.char_class.ref.class
     of VkString:

@@ -8,30 +8,31 @@
 
    # Constructor
    # First arg is automatically stored as `port` property in the instance
-   (.ctor /port
+   (.ctor port
+      (/port = port)
       # Initializes `middleware` property as an empty array
       (/middlewares = [])
    )
 
    # Helper method for constructing handlers from /middlewares and /handler
-   (.fn construct_handler middleware_index
-      (if (middleware_index < /middlewares/.size)
-         (var middleware (/middlewares ./ middleware_index))
-         (var handler    (.construct_handler (middleware_index + 1)))
+   (.fn construct_handler [self middleware_index]
+      (if (< middleware_index (self/middlewares .size))
+         (var middleware (self/middlewares .get middleware_index))
+         (var handler    (self .construct_handler (+ middleware_index 1)))
          (middleware handler)
        else
-         /handler
+         self/handler
       )
    )
 
    # Construct the root handler based on /middlewares and /handler
    # Start the HTTP server
-   (.fn start _
+   (.fn start [self]
       # Note: print and println inserts " " between arguments
-      (println "Starting HTTP server at port" /port "...")
+      (println "Starting HTTP server at port" self/port "...")
 
-      (var root_handler (.construct_handler 0))
-      (start_server /port root_handler)
+      (var root_handler (self .construct_handler 0))
+      (start_server self/port root_handler)
       (gene/run_forever)
    )
 )
@@ -40,18 +41,19 @@
 (class DummyRouter
 
    # Constructor
-   (.ctor _
+   (.ctor [_]
       (/handlers = [])
    )
 
    # Define `call` method which enables the router to be invoked like any handler,
    # i.e. (<dummy router> req)
-   (.fn call req
+   (.fn call [self req]
+      (println "Router.call called with self:" self " req:" req)
 
-      (for h in /handlers
+      (for h in self/handlers
          (var result (h req))
          (if result
-            (println result/.status req/.method req/.url)
+            (println result/status req/method req/url)
             (return result)
          )
       )
@@ -64,19 +66,20 @@
       # `_` represents all catchable exceptions.
       # Log the exception and let it bubble up to be handled by a middleware or the
       # HTTP server itself.
-      (println $ex/.to_s)
+      (println ($ex .to_s))
       (throw $ex)
    )
 )
 
 # A simple handler that responds to /hello
-(fn hello req
+(fn hello [req]
+   (println "hello handler called with req:" req)
    # Return if path is not "/hello"
-   (if (req/.path != "/hello")
+   (if (req/path != "/hello")
       (return)
    )
 
-   (var params req/.params)
+   (var params req/params)
    (if (params .contains "name")
       # (respond "any string") will create a 200/OK respoonse with the string as body.
       (respond #"Hello #{params/name}!")
@@ -87,8 +90,8 @@
 
 # A handler that responds to /secret
 # Please note that the authentication is handled in `auth` middleware.
-(fn secret req
-   (if (req/.path != "/secret")
+(fn secret [req]
+   (if (req/path != "/secret")
       (return)
    )
 
@@ -100,17 +103,17 @@
 
 # Middlewares wrap `handler` with some logic.
 # `auth` is a middleware that makes sure access to critical resources are authenticated.
-(fn auth handler
+(fn auth [handler]
 
    # (fnx arg ...) defines an anonymous function.
-   (fnx req
-      (if (req/.path != "/secret")
+   (fnx [req]
+      (if (req/path != "/secret")
          (return (handler req))
       )
 
       (var authenticated
          # Read and check passcode from Authorization header
-         ((gene/base64_decode req/.headers/authorization) == passcode)
+         ((gene/base64_decode req/headers/authorization) == passcode)
       )
       (if authenticated
          (handler req)
@@ -122,9 +125,6 @@
 
 # Server port defaults to 8090 but can be passed in the command line.
 (var port 8090)
-# (if ($cmd_args/.size > 1)
-#    (port = $cmd_args/1/.to_i)
-# )
 
 # Create and initialize the app
 (var app (new App port))

@@ -257,12 +257,13 @@ The VM has been successfully refactored to support coroutine-style execution:
 4. **Gene functions as handlers**: Working! Can execute Gene functions from async HTTP context
 
 ### ⚠️ Remaining Work:
-1. **Multiple Argument Passing Bug**: Functions and constructors only receive the first argument
-   - This affects all function calls with multiple arguments
-   - Second and subsequent arguments are nil
-   - This is a critical bug that needs investigation in the compiler or VM
-2. **Full http_server.gene Example**: Server starts but needs the argument passing bug fixed
-3. **Middleware chains**: Need testing once argument passing works
+1. **Method Argument Passing Bug**: Methods receive incorrect argument values
+   - All method arguments after `self` become 0.0 (float) regardless of input
+   - This affects all method calls like `(obj .method arg)`
+   - Root cause: Method dispatch isn't correctly passing arguments to the function
+   - **FIXED**: Function argument syntax was corrected from `(fn name a b)` to `(fn name [a b])`
+2. **Full http_server.gene Example**: Server starts but crashes due to method argument bug
+3. **Middleware chains**: Need testing once method calls work
 4. **Authentication**: Requires working middleware support
 
 ### Technical Solution Path:
