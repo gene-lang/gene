@@ -245,6 +245,9 @@ Get `http_server.gene` fully working with:
 7. **Gene Function Handlers**: Gene functions can now be used as HTTP handlers! ✅
 8. **VkComplexSymbol Parsing**: Fixed parsing of `/property` syntax in matchers
 9. **Constructor Scope**: Fixed scope initialization for class constructors
+10. **Array Methods**: Implemented `add` and `size` methods for arrays
+11. **Array Method Dispatch**: Added array method handling in VM's IkCallMethodNoArgs
+12. **HTTP Server Startup**: The http_server.gene example now starts successfully!
 
 ### ✅ VM Refactoring Complete:
 The VM has been successfully refactored to support coroutine-style execution:

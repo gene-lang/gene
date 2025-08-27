@@ -120,8 +120,8 @@
    )
 )
 
-# Server port defaults to 2080 but can be passed in the command line.
-(var port 2080)
+# Server port defaults to 8090 but can be passed in the command line.
+(var port 8090)
 # (if ($cmd_args/.size > 1)
 #    (port = $cmd_args/1/.to_i)
 # )
@@ -129,7 +129,7 @@
 # Create and initialize the app
 (var app (new App port))
 (app/middlewares .add auth)
-(var router = (new DummyRouter))
+(var router (new DummyRouter))
 (router/handlers .add hello)
 (router/handlers .add secret)
 (app/handler = router)

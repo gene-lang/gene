@@ -2938,6 +2938,8 @@ proc exec*(self: VirtualMachine): Value =
         let v = self.frame.current()
         let class = v.get_class()
         let meth = class.get_method(inst.arg0.str)
+        if meth == nil:
+          not_allowed("Method '" & inst.arg0.str & "' not found on " & $v.kind)
         # Push the method callable on top of the object
         self.frame.push(meth.callable)
 
@@ -3513,6 +3515,27 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method " & method_name & " not found on generator")
           else:
             not_allowed("Generator class not initialized")
+        of VkArray:
+          # Handle array methods
+          if App.app.array_class.kind == VkClass:
+            let array_class = App.app.array_class.ref.class
+            let method_key = method_name.to_key()
+            if array_class.methods.hasKey(method_key):
+              let meth = array_class.methods[method_key]
+              # Call the native method directly
+              case meth.callable.kind:
+              of VkNativeFn:
+                # Create a gene with the array as the first argument
+                var args_gene = new_gene()
+                args_gene.children.add(obj)  # Add self (the array) as first argument
+                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                self.frame.push(result)
+              else:
+                not_allowed("Array method must be a native function")
+            else:
+              not_allowed("Method " & method_name & " not found on array")
+          else:
+            not_allowed("Array class not initialized")
         else:
           todo($obj.kind & " method: " & method_name)
       

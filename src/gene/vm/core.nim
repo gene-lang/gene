@@ -552,6 +552,26 @@ proc init_gene_namespace*() =
   r.class = array_class
   App.app.array_class = r.to_ref_value()
   
+  # Add array methods
+  proc vm_array_add(self: VirtualMachine, args: Value): Value =
+    # First argument is the array (self), second is the value to add
+    let arr = args.gene.children[0]
+    let value = if args.gene.children.len > 1: args.gene.children[1] else: NIL
+    if arr.kind == VkArray:
+      arr.ref.arr.add(value)
+    return arr
+  
+  array_class.def_native_method("add", vm_array_add)
+  
+  proc vm_array_size(self: VirtualMachine, args: Value): Value =
+    # First argument is the array (self)
+    let arr = args.gene.children[0]
+    if arr.kind == VkArray:
+      return arr.ref.arr.len.to_value()
+    return 0.to_value()
+  
+  array_class.def_native_method("size", vm_array_size)
+  
   # map_class
   let map_class = new_class("Map")
   r = new_ref(VkClass)
