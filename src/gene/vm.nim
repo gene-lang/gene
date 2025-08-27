@@ -2903,7 +2903,20 @@ proc exec*(self: VirtualMachine): Value =
             
             # Process arguments if matcher exists  
             if not f.matcher.is_empty():
-              process_args(f.matcher, self.frame.args, scope)
+              # For constructors, we need to process args without the instance (first arg)
+              var constructor_args = new_gene(NIL)
+              if args.kind == VkGene:
+                for child in args.gene.children:
+                  constructor_args.children.add(child)
+              process_args(f.matcher, constructor_args.to_gene_value(), scope)
+              
+              # For constructors, set properties on the instance for parameters marked with is_prop
+              for i, param in f.matcher.children:
+                if param.is_prop and i < scope.members.len:
+                  let value = scope.members[i]
+                  if value.kind != VkNil:
+                    # Set the property on the instance
+                    instance.instance_props[param.name_key] = value
             
             self.cu = compiled
             self.pc = 0
