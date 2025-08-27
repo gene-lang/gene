@@ -22,18 +22,25 @@ proc normalize_if*(self: ptr Gene) =
     return
   let `type` = self.type
   if `type` == "if".to_symbol_value():
-    # Handle simple 3-argument form: (if cond then else)
-    if self.children.len == 3 and 
+    # Check if there's an explicit else keyword
+    var has_else = false
+    var else_index = -1
+    for i, child in self.children:
+      if child == "else".to_symbol_value():
+        has_else = true
+        else_index = i
+        break
+    
+    # Handle simple 3-argument form: (if cond then else) - only when last arg looks like else
+    if self.children.len == 3 and not has_else and
        not (self.children[1] == "then".to_symbol_value() or 
             self.children[1] == "else".to_symbol_value() or
             self.children[1] == "elif".to_symbol_value()):
-      # Simple form without keywords
-      self.props["cond".to_key()] = self.children[0]
-      self.props["then".to_key()] = new_stream_value(@[self.children[1]])
-      self.props["else".to_key()] = new_stream_value(@[self.children[2]])
-      self.children.reset
-      return
-    elif self.children.len == 2:
+      # Check if the third child starts with "else" keyword or is clearly an else branch
+      # For now, treat 3-arg form as (if cond then else) only for backward compatibility
+      # But this is ambiguous - falling through to state machine is safer
+      discard
+    elif self.children.len == 2 and not has_else:
       # Simple form without else: (if cond then)
       self.props["cond".to_key()] = self.children[0]
       self.props["then".to_key()] = new_stream_value(@[self.children[1]])

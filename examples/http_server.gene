@@ -15,7 +15,7 @@
    )
 
    # Helper method for constructing handlers from /middlewares and /handler
-   (.fn construct_handler [self middleware_index]
+   (.fn construct_handler middleware_index
       (if (< middleware_index (self/middlewares .size))
          (var middleware (self/middlewares .get middleware_index))
          (var handler    (self .construct_handler (+ middleware_index 1)))
@@ -27,7 +27,7 @@
 
    # Construct the root handler based on /middlewares and /handler
    # Start the HTTP server
-   (.fn start [self]
+   (.fn start _
       # Note: print and println inserts " " between arguments
       (println "Starting HTTP server at port" self/port "...")
 
@@ -41,13 +41,13 @@
 (class DummyRouter
 
    # Constructor
-   (.ctor [_]
+   (.ctor _
       (/handlers = [])
    )
 
    # Define `call` method which enables the router to be invoked like any handler,
    # i.e. (<dummy router> req)
-   (.fn call [self req]
+   (.fn call req
       (println "Router.call called with self:" self " req:" req)
 
       (for h in self/handlers
@@ -74,10 +74,14 @@
 # A simple handler that responds to /hello
 (fn hello [req]
    (println "hello handler called with req:" req)
+   (println "  req/path =" req/path)
+   (println "  Comparing with /hello")
    # Return if path is not "/hello"
    (if (req/path != "/hello")
+      (println "  Path doesn't match /hello, returning nil")
       (return)
    )
+   (println "  Path matches /hello!")
 
    (var params req/params)
    (if (params .contains "name")
@@ -91,9 +95,13 @@
 # A handler that responds to /secret
 # Please note that the authentication is handled in `auth` middleware.
 (fn secret [req]
+   (println "secret handler called")
+   (println "  req/path =" req/path)
    (if (req/path != "/secret")
+      (println "  Path doesn't match /secret, returning nil")
       (return)
    )
+   (println "  Path matches /secret!")
 
    (respond "Sssh, do not tell this to anyone!")
 )
@@ -111,9 +119,10 @@
          (return (handler req))
       )
 
-      (var authenticated
-         # Read and check passcode from Authorization header
-         ((gene/base64_decode req/headers/authorization) == passcode)
+      (var authenticated false)
+      # Read and check passcode from Authorization header if it exists
+      (if (req/headers .contains "authorization")
+         (authenticated = ((gene/base64_decode req/headers/authorization) == passcode))
       )
       (if authenticated
          (handler req)
@@ -123,8 +132,8 @@
    )
 )
 
-# Server port defaults to 8090 but can be passed in the command line.
-(var port 8090)
+# Server port defaults to 2080 but can be passed in the command line.
+(var port 2080)
 
 # Create and initialize the app
 (var app (new App port))

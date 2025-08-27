@@ -908,6 +908,7 @@ type
     stack*: array[256, Value]
     current_method*: Method  # Currently executing method (for super calls)
     stack_index*: uint16
+    from_exec_function*: bool  # Set when frame is created by exec_function
 
   Frame* = ptr FrameObj
   

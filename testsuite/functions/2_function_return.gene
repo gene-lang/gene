@@ -1,0 +1,10 @@
+(fn f n
+  (if (n < 0)
+    (var a)
+    (return 0)
+  )
+  (return n)
+)
+
+(assert ((f -1) == 0))
+(assert ((f 1) == 1))

@@ -380,6 +380,9 @@ proc exec*(self: VirtualMachine): Value =
             continue
 
           let skip_return = self.cu.skip_return
+          # Check if we're ending a function called by exec_function
+          let ending_exec_function = self.frame.from_exec_function
+          
           # Check if we're returning from an async function before updating frame
           var result_val = v
           if self.frame.kind == FkFunction and self.frame.target.kind == VkFunction:
@@ -402,6 +405,12 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
           if not skip_return:
             self.frame.push(result_val)
+          
+          # If we were in exec_function, stop the exec loop by returning
+          if ending_exec_function:
+            result = result_val
+            return result
+          
           continue
         {.pop.}
 
@@ -1672,15 +1681,10 @@ proc exec*(self: VirtualMachine): Value =
                   if not f.matcher.is_empty():
                     echo "  frame.args = ", frame.args
                 if not f.matcher.is_empty():
-                  # For methods, skip the first argument (self) when matching parameters
+                  # For methods, the matcher includes self as a parameter
+                  # So we should pass ALL arguments including self
                   if frame.current_method != nil:
-                    # Method call - create args without self for parameter matching
-                    var method_args = new_gene(NIL)
-                    if frame.args.kind == VkGene and frame.args.gene.children.len > 1:
-                      # Copy all args except the first (self)
-                      for i in 1..<frame.args.gene.children.len:
-                        method_args.children.add(frame.args.gene.children[i])
-                    process_args(f.matcher, method_args.to_gene_value(), frame.scope)
+                    process_args(f.matcher, frame.args, frame.scope)
                   else:
                     # Optimization: Fast paths for common argument patterns
                     if frame.args.kind == VkGene:
@@ -2729,6 +2733,9 @@ proc exec*(self: VirtualMachine): Value =
         else:
           var v = self.frame.pop()
           
+          # Check if we're returning from a function called by exec_function
+          let returning_from_exec_function = self.frame.from_exec_function
+          
           # Check if we're returning from an async function
           if self.frame.kind == FkFunction and self.frame.target.kind == VkFunction:
             let f = self.frame.target.ref.fn
@@ -2753,6 +2760,12 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
           self.frame.push(v)
+          
+          # If we were in exec_function, stop the exec loop by returning
+          if returning_from_exec_function:
+            result = v
+            return result
+          
           continue
         {.pop.}
       
@@ -3741,6 +3754,10 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   new_frame.target = fn
   new_frame.scope = scope
   new_frame.ns = f.ns
+  new_frame.caller_frame = saved_frame  # Set the caller frame so return works
+  new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+  # Mark this frame as coming from exec_function
+  new_frame.from_exec_function = true
   
   # Convert args to Gene value
   let args_gene = new_gene(NIL)
@@ -3758,13 +3775,11 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   self.pc = 0
   
   # Execute the function
+  # exec_continue will run until the function returns or completes
+  # The return instruction or IkEnd will detect from_exec_function and stop exec
   let result = self.exec_continue()
   
-  # Restore VM state
-  self.cu = saved_cu
-  self.pc = saved_pc
-  self.frame = saved_frame
-  
+  # The VM state should already be restored by return or IkEnd
   return result
 
 proc exec*(self: VirtualMachine, code: string, module_name: string): Value =

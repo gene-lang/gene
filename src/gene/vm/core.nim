@@ -596,6 +596,17 @@ proc init_gene_namespace*() =
   r.class = map_class
   App.app.map_class = r.to_ref_value()
   
+  # Add map methods
+  proc vm_map_contains(self: VirtualMachine, args: Value): Value =
+    # First argument is the map (self), second is the key
+    let map = args.gene.children[0]
+    let key = if args.gene.children.len > 1: args.gene.children[1] else: NIL
+    if map.kind == VkMap and key.kind == VkString:
+      return map.ref.map.hasKey(key.str.to_key()).to_value()
+    return false.to_value()
+  
+  map_class.def_native_method("contains", vm_map_contains)
+  
   # set_class
   let set_class = new_class("Set")
   r = new_ref(VkClass)
