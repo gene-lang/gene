@@ -624,7 +624,7 @@ type
 
 # Global storage for handler and VM reference
 var gene_handler_global: Value = NIL
-var gene_vm_global: ptr VirtualMachine = nil
+var gene_vm_global: VirtualMachine = nil
 
 # Queue for pending handler requests
 var handler_queue {.threadvar.}: Deque[HandlerRequest]
@@ -806,7 +806,7 @@ proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
   # Store the handler
   {.cast(gcsafe).}:
     # Store VM reference and handler globally for queue-based execution
-    gene_vm_global = addr vm
+    gene_vm_global = vm
     gene_handler_global = handler
     
     # Check handler type and set up appropriate handler
@@ -898,7 +898,7 @@ proc vm_run_forever(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
       {.cast(gcsafe).}:
         # Process any pending handler requests
         if gene_vm_global != nil:
-          process_handler_queue(gene_vm_global[])
+          process_handler_queue(gene_vm_global)
       await sleepAsync(10)  # Check every 10ms
   
   asyncCheck process_queue()

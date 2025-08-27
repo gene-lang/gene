@@ -284,10 +284,11 @@ proc exec*(self: VirtualMachine): Value =
   # Initialize gene namespace if not already done
   init_gene_namespace()
   
-  var pc = 0
-  if pc >= self.cu.instructions.len:
+  # Reset self.pc for new execution
+  self.pc = 0
+  if self.pc >= self.cu.instructions.len:
     raise new_exception(types.Exception, "Empty compilation unit")
-  var inst = self.cu.instructions[pc].addr
+  var inst = self.cu.instructions[self.pc].addr
 
   when not defined(release):
     var indent = ""
@@ -300,7 +301,7 @@ proc exec*(self: VirtualMachine): Value =
         if inst.kind == IkStart: # This is part of INDENT_LOGIC
           indent &= "  "
         # self.print_stack()
-        echo fmt"{indent}{pc:04X} {inst[]}"
+        echo fmt"{indent}{self.pc:04X} {inst[]}"
     
     # Instruction profiling - only declare variables when needed
     when not defined(release):
@@ -315,7 +316,7 @@ proc exec*(self: VirtualMachine): Value =
       of IkNoop:
         when not defined(release):
           if self.trace:
-            echo fmt"{indent}     [Noop at PC {pc:04X}, label: {inst.label.int:04X}]"
+            echo fmt"{indent}     [Noop at PC {self.pc:04X}, label: {inst.label.int:04X}]"
         discard
       
       of IkData:
@@ -323,7 +324,7 @@ proc exec*(self: VirtualMachine): Value =
         # It should not be executed directly - the previous instruction should consume it
         when not defined(release):
           if self.trace:
-            echo fmt"{indent}     [Data at PC {pc:04X}, skipping]"
+            echo fmt"{indent}     [Data at PC {self.pc:04X}, skipping]"
         discard
 
       of IkStart:
@@ -345,7 +346,7 @@ proc exec*(self: VirtualMachine): Value =
         else:
           if self.cu.kind == CkCompileFn:
             # Replace the caller's instructions with what's returned
-            # Point the caller's pc to the first of the new instructions
+            # Point the caller's self.pc to the first of the new instructions
             var cu = self.frame.caller_address.cu
             let end_pos = self.frame.caller_address.pc
             let caller_instr = self.frame.caller_address.cu.instructions[end_pos]
@@ -362,16 +363,16 @@ proc exec*(self: VirtualMachine): Value =
                   todo($item.kind)
             cu.replace_chunk(start_pos, end_pos, new_instructions)
             self.cu = self.frame.caller_address.cu
-            pc = start_pos
-            inst = self.cu.instructions[pc].addr
+            self.pc = start_pos
+            inst = self.cu.instructions[self.pc].addr
             self.frame.update(self.frame.caller_frame)
             self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
             continue
           elif self.cu.kind == CkMacro:
             # Return to caller who will handle macro expansion
             self.cu = self.frame.caller_address.cu
-            pc = self.frame.caller_address.pc
-            inst = self.cu.instructions[pc].addr
+            self.pc = self.frame.caller_address.pc
+            inst = self.cu.instructions[self.pc].addr
             self.frame.update(self.frame.caller_frame)
             self.frame.ref_count.dec()
             # Push the macro result for the caller to process
@@ -395,8 +396,8 @@ proc exec*(self: VirtualMachine): Value =
             self.exit_function()
           
           self.cu = self.frame.caller_address.cu
-          pc = self.frame.caller_address.pc
-          inst = self.cu.instructions[pc].addr
+          self.pc = self.frame.caller_address.pc
+          inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
           if not skip_return:
@@ -533,8 +534,8 @@ proc exec*(self: VirtualMachine): Value =
           # Store arguments in the generator for later processing
           genObj.stack = args_gene.children  # Save args for when generator starts
           self.frame.push(gen.to_ref_value())
-          pc.inc()
-          inst = self.cu.instructions[pc].addr
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
           continue
         
         # Normal function call
@@ -561,7 +562,7 @@ proc exec*(self: VirtualMachine): Value =
         new_frame.args = args_gene.to_gene_value()
         new_frame.caller_frame = self.frame
         self.frame.ref_count.inc()
-        new_frame.caller_address = Address(cu: self.cu, pc: pc + 1)
+        new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
         new_frame.ns = f.ns
         
         # Process arguments if needed
@@ -576,8 +577,8 @@ proc exec*(self: VirtualMachine): Value =
         # Switch to new frame and CU
         self.frame = new_frame
         self.cu = f.body_compiled
-        pc = 0
-        inst = self.cu.instructions[pc].addr
+        self.pc = 0
+        inst = self.cu.instructions[self.pc].addr
         continue
         {.pop}
 
@@ -625,16 +626,16 @@ proc exec*(self: VirtualMachine): Value =
                   self.frame.stack_index = 0
                   
                   # Jump to start of function body
-                  pc = 0
-                  inst = self.cu.instructions[pc].addr
+                  self.pc = 0
+                  inst = self.cu.instructions[self.pc].addr
                   continue
                 else:
                   # Not a tail call - fall back to regular call like IkGeneEnd
-                  pc.inc()
+                  self.pc.inc()
                   discard self.frame.pop()
                   new_frame.caller_frame = self.frame
                   self.frame.ref_count.inc()
-                  new_frame.caller_address = Address(cu: self.cu, pc: pc)
+                  new_frame.caller_address = Address(cu: self.cu, pc: self.pc)
                   new_frame.ns = f.ns
                   self.frame = new_frame
                   self.cu = f.body_compiled
@@ -650,8 +651,8 @@ proc exec*(self: VirtualMachine): Value =
                     else:
                       process_args(f.matcher, new_frame.args, new_frame.scope)
                   
-                  pc = 0
-                  inst = self.cu.instructions[pc].addr
+                  self.pc = 0
+                  inst = self.cu.instructions[self.pc].addr
                   continue
               else:
                 # For other frame kinds, just do regular call
@@ -683,9 +684,9 @@ proc exec*(self: VirtualMachine): Value =
             let name = cast[Key](inst.arg0)
             
             # Inline cache implementation
-            if pc < self.cu.inline_caches.len:
+            if self.pc < self.cu.inline_caches.len:
               # Check if cache hit
-              let cache = self.cu.inline_caches[pc].addr
+              let cache = self.cu.inline_caches[self.pc].addr
               if cache.ns != nil and cache.version == cache.ns.version and name in cache.ns.members:
                 # Cache hit - use cached value
                 self.frame.push(cache.ns.members[name])
@@ -718,7 +719,7 @@ proc exec*(self: VirtualMachine): Value =
                 self.frame.push(value)
             else:
               # Extend cache array if needed
-              while self.cu.inline_caches.len <= pc:
+              while self.cu.inline_caches.len <= self.pc:
                 self.cu.inline_caches.add(InlineCache())
               
               # Do full lookup
@@ -742,9 +743,9 @@ proc exec*(self: VirtualMachine): Value =
               
               # Initialize cache if we found the value
               if value != NIL:
-                self.cu.inline_caches[pc].ns = found_ns
-                self.cu.inline_caches[pc].version = found_ns.version
-                self.cu.inline_caches[pc].value = value
+                self.cu.inline_caches[self.pc].ns = found_ns
+                self.cu.inline_caches[self.pc].version = found_ns.version
+                self.cu.inline_caches[self.pc].value = value
               
               self.frame.push(value)
 
@@ -816,14 +817,14 @@ proc exec*(self: VirtualMachine): Value =
             let compiled = compile_init(value)
             # Save current state
             let saved_cu = self.cu
-            let saved_pc = pc
+            let saved_pc = self.pc
             # Execute the compiled code
             self.cu = compiled
             let eval_result = self.exec()
             # Restore state
             self.cu = saved_cu
-            pc = saved_pc
-            inst = self.cu.instructions[pc].addr
+            self.pc = saved_pc
+            inst = self.cu.instructions[self.pc].addr
             self.frame.push(eval_result)
           of VkQuote:
             # Evaluate a quoted expression by compiling and executing the quoted value
@@ -831,14 +832,14 @@ proc exec*(self: VirtualMachine): Value =
             let compiled = compile_init(quoted_value)
             # Save current state
             let saved_cu = self.cu
-            let saved_pc = pc
+            let saved_pc = self.pc
             # Execute the compiled code
             self.cu = compiled
             let eval_result = self.exec()
             # Restore state
             self.cu = saved_cu
-            pc = saved_pc
-            inst = self.cu.instructions[pc].addr
+            self.pc = saved_pc
+            inst = self.cu.instructions[self.pc].addr
             self.frame.push(eval_result)
           else:
             # For other types, just push them back (already evaluated)
@@ -1121,8 +1122,8 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkJump:
         {.push checks: off}
-        pc = inst.arg0.int64.int
-        inst = self.cu.instructions[pc].addr
+        self.pc = inst.arg0.int64.int
+        inst = self.cu.instructions[self.pc].addr
         continue
         {.pop.}
       of IkJumpIfFalse:
@@ -1130,8 +1131,8 @@ proc exec*(self: VirtualMachine): Value =
         var value: Value
         self.frame.pop2(value)
         if not value.to_bool():
-          pc = inst.arg0.int64.int
-          inst = self.cu.instructions[pc].addr
+          self.pc = inst.arg0.int64.int
+          inst = self.cu.instructions[self.pc].addr
           continue
         {.pop.}
 
@@ -1140,8 +1141,8 @@ proc exec*(self: VirtualMachine): Value =
         # if self.frame.match_result.fields[inst.arg0.int64] == MfSuccess:
         let index = inst.arg0.int
         if self.frame.scope.members.len > index:
-          pc = inst.arg1.int32.int
-          inst = self.cu.instructions[pc].addr
+          self.pc = inst.arg1.int32.int
+          inst = self.cu.instructions[self.pc].addr
           continue
         {.pop.}
 
@@ -1171,8 +1172,8 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("continue used outside of a loop")
         else:
           # Normal continue - jump to the start label
-          pc = label
-          inst = self.cu.instructions[pc].addr
+          self.pc = label
+          inst = self.cu.instructions[self.pc].addr
           continue
         {.pop.}
 
@@ -1199,8 +1200,8 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("break used outside of a loop")
         else:
           # Normal break - jump to the end label
-          pc = label
-          inst = self.cu.instructions[pc].addr
+          self.pc = label
+          inst = self.cu.instructions[self.pc].addr
           continue
         {.pop.}
 
@@ -1318,8 +1319,8 @@ proc exec*(self: VirtualMachine): Value =
               # The generator will be created in IkGeneEnd
               self.frame.push(new_gene_value())
               self.frame.current().gene.type = gene_type
-              pc.inc()
-              inst = self.cu.instructions[pc].addr
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
               continue
             
             # Normal function call
@@ -1335,8 +1336,8 @@ proc exec*(self: VirtualMachine): Value =
             r.frame.target = gene_type
             r.frame.scope = scope
             self.frame.replace(r.to_ref_value())
-            pc = inst.arg0.int64.int
-            inst = self.cu.instructions[pc].addr
+            self.pc = inst.arg0.int64.int
+            inst = self.cu.instructions[self.pc].addr
             continue
 
           of VkMacro:
@@ -1362,8 +1363,8 @@ proc exec*(self: VirtualMachine): Value =
             r.frame.caller_context = self.frame
             
             self.frame.replace(r.to_ref_value())
-            pc.inc()
-            inst = self.cu.instructions[pc].addr
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
             continue
 
           of VkBlock:
@@ -1384,8 +1385,8 @@ proc exec*(self: VirtualMachine): Value =
             r.frame.target = gene_type
             r.frame.scope = scope
             self.frame.replace(r.to_ref_value())
-            pc = inst.arg0.int64.int
-            inst = self.cu.instructions[pc].addr
+            self.pc = inst.arg0.int64.int
+            inst = self.cu.instructions[self.pc].addr
             continue
 
           of VkCompileFn:
@@ -1406,8 +1407,8 @@ proc exec*(self: VirtualMachine): Value =
             r.frame.target = gene_type
             r.frame.scope = scope
             self.frame.replace(r.to_ref_value())
-            pc.inc()
-            inst = self.cu.instructions[pc].addr
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
             continue
 
           of VkNativeFn:
@@ -1419,8 +1420,8 @@ proc exec*(self: VirtualMachine): Value =
             )
             self.frame.replace(r.to_ref_value())
             # Jump to collect arguments (same as regular functions)
-            pc = inst.arg0.int64.int
-            inst = self.cu.instructions[pc].addr
+            self.pc = inst.arg0.int64.int
+            inst = self.cu.instructions[self.pc].addr
             continue
             
           of VkBoundMethod:
@@ -1454,8 +1455,8 @@ proc exec*(self: VirtualMachine): Value =
                     args_gene.children.add(child)
                 r.frame.args = args_gene.to_gene_value()
                 self.frame.replace(r.to_ref_value())
-                pc = inst.arg0.int64.int
-                inst = self.cu.instructions[pc].addr
+                self.pc = inst.arg0.int64.int
+                inst = self.cu.instructions[self.pc].addr
                 continue
               of VkNativeFn:
                 # Handle native function methods
@@ -1469,8 +1470,8 @@ proc exec*(self: VirtualMachine): Value =
                 # Add self as first argument
                 nf.native_frame.args.gene.children.add(bm.self)
                 self.frame.replace(nf.to_ref_value())
-                pc = inst.arg0.int64.int
-                inst = self.cu.instructions[pc].addr
+                self.pc = inst.arg0.int64.int
+                inst = self.cu.instructions[self.pc].addr
                 continue
               else:
                 not_allowed("Method must be a function, got " & $target.kind)
@@ -1507,8 +1508,8 @@ proc exec*(self: VirtualMachine): Value =
                   r.frame.args = args_gene.to_gene_value()
                   self.frame.replace(r.to_ref_value())
                   # Continue to collect arguments, don't jump yet
-                  pc = inst.arg0.int64.int
-                  inst = self.cu.instructions[pc].addr
+                  self.pc = inst.arg0.int64.int
+                  inst = self.cu.instructions[self.pc].addr
                   continue
                 of VkNativeFn:
                   # Handle native function call methods
@@ -1523,8 +1524,8 @@ proc exec*(self: VirtualMachine): Value =
                   nf.native_frame.args.gene.children.add(gene_type)
                   self.frame.replace(nf.to_ref_value())
                   # Continue to collect arguments, don't jump yet
-                  pc = inst.arg0.int64.int
-                  inst = self.cu.instructions[pc].addr
+                  self.pc = inst.arg0.int64.int
+                  inst = self.cu.instructions[self.pc].addr
                   continue
                 else:
                   not_allowed("Call method must be a function, got " & $target.kind)
@@ -1645,13 +1646,13 @@ proc exec*(self: VirtualMachine): Value =
                 if f.body_compiled == nil:
                   f.compile()
 
-                pc.inc()
+                self.pc.inc()
                 # Pop the VkFrame value from the stack before switching context
                 discard self.frame.pop()
                 # Set up caller info and switch to the new frame
                 frame.caller_frame = self.frame
                 self.frame.ref_count.inc()  # Increment ref count since we're storing a reference
-                frame.caller_address = Address(cu: self.cu, pc: pc)
+                frame.caller_address = Address(cu: self.cu, pc: self.pc)
                 frame.ns = f.ns
                 
                 # Profile function entry
@@ -1746,8 +1747,8 @@ proc exec*(self: VirtualMachine): Value =
                     in_finally: false
                   ))
                 
-                pc = 0
-                inst = self.cu.instructions[pc].addr
+                self.pc = 0
+                inst = self.cu.instructions[self.pc].addr
                 continue
 
               of FkMacro:
@@ -1755,9 +1756,9 @@ proc exec*(self: VirtualMachine): Value =
                 if m.body_compiled == nil:
                   m.compile()
 
-                pc.inc()
+                self.pc.inc()
                 frame.caller_frame.update(self.frame)
-                frame.caller_address = Address(cu: self.cu, pc: pc)
+                frame.caller_address = Address(cu: self.cu, pc: self.pc)
                 frame.ns = m.ns
                 # Pop the frame from the stack before switching context
                 discard self.frame.pop()
@@ -1768,8 +1769,8 @@ proc exec*(self: VirtualMachine): Value =
                 if not m.matcher.is_empty():
                   process_args(m.matcher, frame.args, frame.scope)
                 
-                pc = 0
-                inst = self.cu.instructions[pc].addr
+                self.pc = 0
+                inst = self.cu.instructions[self.pc].addr
                 continue
 
               of FkBlock:
@@ -1777,9 +1778,9 @@ proc exec*(self: VirtualMachine): Value =
                 if b.body_compiled == nil:
                   b.compile()
 
-                pc.inc()
+                self.pc.inc()
                 frame.caller_frame.update(self.frame)
-                frame.caller_address = Address(cu: self.cu, pc: pc)
+                frame.caller_address = Address(cu: self.cu, pc: self.pc)
                 frame.ns = b.ns
                 # Pop the frame from the stack before switching context
                 discard self.frame.pop()
@@ -1790,8 +1791,8 @@ proc exec*(self: VirtualMachine): Value =
                 if not b.matcher.is_empty():
                   process_args(b.matcher, frame.args, frame.scope)
                 
-                pc = 0
-                inst = self.cu.instructions[pc].addr
+                self.pc = 0
+                inst = self.cu.instructions[self.pc].addr
                 continue
 
               of FkCompileFn:
@@ -1799,9 +1800,9 @@ proc exec*(self: VirtualMachine): Value =
                 if f.body_compiled == nil:
                   f.compile()
 
-                # pc.inc() # Do not increment pc, the callee will use pc to find current instruction
+                # pc.inc() # Do not increment self.pc, the callee will use self.pc to find current instruction
                 frame.caller_frame.update(self.frame)
-                frame.caller_address = Address(cu: self.cu, pc: pc)
+                frame.caller_address = Address(cu: self.cu, pc: self.pc)
                 frame.ns = f.ns
                 # Pop the frame from the stack before switching context
                 discard self.frame.pop()
@@ -1812,8 +1813,8 @@ proc exec*(self: VirtualMachine): Value =
                 if not f.matcher.is_empty():
                   process_args(f.matcher, frame.args, frame.scope)
                 
-                pc = 0
-                inst = self.cu.instructions[pc].addr
+                self.pc = 0
+                inst = self.cu.instructions[self.pc].addr
                 continue
 
               else:
@@ -2011,8 +2012,8 @@ proc exec*(self: VirtualMachine): Value =
           scope.members[inst.arg0.int64]
         
         # Get literal value from next instruction
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         let literal_value = inst.arg0
         
         # Add variable and literal
@@ -2061,8 +2062,8 @@ proc exec*(self: VirtualMachine): Value =
           scope.members[inst.arg0.int64]
         
         # Get literal value from next instruction
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         let literal_value = inst.arg0
         
         # Subtract literal from variable
@@ -2111,8 +2112,8 @@ proc exec*(self: VirtualMachine): Value =
           scope.members[inst.arg0.int64]
         
         # Get literal value from next instruction
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         let literal_value = inst.arg0
         
         # Multiply variable by literal
@@ -2149,8 +2150,8 @@ proc exec*(self: VirtualMachine): Value =
           scope.members[inst.arg0.int64]
         
         # Get literal value from next instruction
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         let literal_value = inst.arg0
         
         # Divide variable by literal
@@ -2216,8 +2217,8 @@ proc exec*(self: VirtualMachine): Value =
           scope.members[inst.arg0.int64]
         
         # Get literal value from next instruction
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         let literal_value = inst.arg0
         
         # Compare with literal value
@@ -2539,8 +2540,8 @@ proc exec*(self: VirtualMachine): Value =
           else:
             todo($obj.kind)
 
-        pc.inc()
-        self.frame = new_frame(self.frame, Address(cu: self.cu, pc: pc))
+        self.pc.inc()
+        self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
         # Pass the class/namespace as args so methods can access it
         let args_gene = new_gene(NIL)
         args_gene.children.add(obj)
@@ -2551,8 +2552,8 @@ proc exec*(self: VirtualMachine): Value =
         #   echo "  New frame has no self field anymore"
         #   echo "  Init CU has ", compiled.instructions.len, " instructions"
         self.cu = compiled
-        pc = 0
-        inst = self.cu.instructions[pc].addr
+        self.pc = 0
+        inst = self.cu.instructions[self.pc].addr
         continue
         {.pop.}
 
@@ -2582,8 +2583,8 @@ proc exec*(self: VirtualMachine): Value =
         
         f.ns = target_ns
         # More data are stored in the next instruction slot
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkFunction, got {inst.kind}")
@@ -2631,8 +2632,8 @@ proc exec*(self: VirtualMachine): Value =
         let m = to_macro(inst.arg0)
         m.ns = self.frame.ns
         # More data are stored in the next instruction slot
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkMacro, got {inst.kind}")
@@ -2651,8 +2652,8 @@ proc exec*(self: VirtualMachine): Value =
         b.frame = self.frame
         b.ns = self.frame.ns
         # More data are stored in the next instruction slot
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkBlock, got {inst.kind}")
@@ -2674,8 +2675,8 @@ proc exec*(self: VirtualMachine): Value =
         let f = to_compile_fn(inst.arg0)
         f.ns = self.frame.ns
         # More data are stored in the next instruction slot
-        pc.inc()
-        inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkCompileFn, got {inst.kind}")
@@ -2735,8 +2736,8 @@ proc exec*(self: VirtualMachine): Value =
             self.exit_function()
           
           self.cu = self.frame.caller_address.cu
-          pc = self.frame.caller_address.pc
-          inst = self.cu.instructions[pc].addr
+          self.pc = self.frame.caller_address.pc
+          inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
           self.frame.push(v)
@@ -2882,8 +2883,8 @@ proc exec*(self: VirtualMachine): Value =
             let compiled = class.constructor.ref.fn.body_compiled
             compiled.skip_return = true
 
-            pc.inc()
-            self.frame = new_frame(self.frame, Address(cu: self.cu, pc: pc))
+            self.pc.inc()
+            self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
             # Pass instance as first argument for constructor
             let args_gene = new_gene(NIL)
             args_gene.children.add(instance.to_ref_value())
@@ -2894,8 +2895,8 @@ proc exec*(self: VirtualMachine): Value =
             self.frame.args = args_gene.to_gene_value()
             self.frame.ns = class.constructor.ref.fn.ns
             self.cu = compiled
-            pc = 0
-            inst = self.cu.instructions[pc].addr
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
             continue
             
           of VkNil:
@@ -2953,12 +2954,12 @@ proc exec*(self: VirtualMachine): Value =
             
             # Skip to the instruction after IkAsyncEnd
             # We need to find it by scanning forward
-            while pc < self.cu.instructions.len and self.cu.instructions[pc].kind != IkAsyncEnd:
-              pc.inc()
-            if pc < self.cu.instructions.len:
-              pc.inc()  # Skip past IkAsyncEnd
-              inst = self.cu.instructions[pc].addr
-            continue
+            while self.pc < self.cu.instructions.len and self.cu.instructions[self.pc].kind != IkAsyncEnd:
+              self.pc.inc()
+            if self.pc < self.cu.instructions.len:
+              self.pc.inc()  # Skip past IkAsyncEnd
+              inst = self.cu.instructions[self.pc].addr
+              continue
           elif handler.catch_pc == -3:
             # This is an async function - create a failed future and return it
             discard self.exception_handlers.pop()
@@ -2971,8 +2972,8 @@ proc exec*(self: VirtualMachine): Value =
             # Return from the function with the failed future
             if self.frame.caller_frame != nil:
               self.cu = self.frame.caller_address.cu
-              pc = self.frame.caller_address.pc
-              inst = self.cu.instructions[pc].addr
+              self.pc = self.frame.caller_address.pc
+              inst = self.cu.instructions[self.pc].addr
               self.frame.update(self.frame.caller_frame)
               self.frame.ref_count.dec()
               self.frame.push(future_val)
@@ -2981,14 +2982,14 @@ proc exec*(self: VirtualMachine): Value =
             # Regular exception handler
             when not defined(release):
               if self.trace:
-                echo "  Throw: jumping to catch at pc=", handler.catch_pc
+                echo "  Throw: jumping to catch at self.pc=", handler.catch_pc
             # Jump to catch block
             self.cu = handler.cu
-            pc = handler.catch_pc
-            if pc < self.cu.instructions.len:
-              inst = self.cu.instructions[pc].addr
+            self.pc = handler.catch_pc
+            if self.pc < self.cu.instructions.len:
+              inst = self.cu.instructions[self.pc].addr
             else:
-              raise new_exception(types.Exception, "Invalid catch PC: " & $pc)
+              raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
             continue
         else:
           # No handler, raise Nim exception
@@ -3086,13 +3087,13 @@ proc exec*(self: VirtualMachine): Value =
             let handler = self.exception_handlers[^1]
             when not defined(release):
               if self.trace:
-                echo "  FinallyEnd: re-throwing to catch at pc=", handler.catch_pc
+                echo "  FinallyEnd: re-throwing to catch at self.pc=", handler.catch_pc
             self.cu = handler.cu
-            pc = handler.catch_pc
-            if pc < self.cu.instructions.len:
-              inst = self.cu.instructions[pc].addr
+            self.pc = handler.catch_pc
+            if self.pc < self.cu.instructions.len:
+              inst = self.cu.instructions[self.pc].addr
             else:
-              raise new_exception(types.Exception, "Invalid catch PC: " & $pc)
+              raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
             continue
           else:
             raise new_exception(types.Exception, "Gene exception: " & $value)
@@ -3269,7 +3270,7 @@ proc exec*(self: VirtualMachine): Value =
             # Save current state
             let saved_frame = self.frame
             let saved_cu = self.cu
-            let saved_pc = pc
+            let saved_pc = self.pc
             
             # Create a new frame that inherits from caller's frame
             let eval_frame = new_frame(caller_frame, Address(cu: saved_cu, pc: saved_pc))
@@ -3288,8 +3289,8 @@ proc exec*(self: VirtualMachine): Value =
             # Restore macro context
             self.frame = saved_frame
             self.cu = saved_cu
-            pc = saved_pc
-            inst = self.cu.instructions[pc].addr
+            self.pc = saved_pc
+            inst = self.cu.instructions[self.pc].addr
             
             # Push r back to macro's stack
             self.frame.push(r)
@@ -3367,11 +3368,11 @@ proc exec*(self: VirtualMachine): Value =
               let handler = self.exception_handlers[^1]
               # Jump to catch block
               self.cu = handler.cu
-              pc = handler.catch_pc
-              if pc < self.cu.instructions.len:
-                inst = self.cu.instructions[pc].addr
+              self.pc = handler.catch_pc
+              if self.pc < self.cu.instructions.len:
+                inst = self.cu.instructions[self.pc].addr
               else:
-                raise new_exception(types.Exception, "Invalid catch PC: " & $pc)
+                raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
               continue
             else:
               # No handler, raise Nim exception
@@ -3422,8 +3423,8 @@ proc exec*(self: VirtualMachine): Value =
                 else:
                   scope = new_scope(f.scope_tracker, f.parent_scope)
                 
-                pc.inc()
-                self.frame = new_frame(self.frame, Address(cu: self.cu, pc: pc))
+                self.pc.inc()
+                self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
                 self.frame.kind = FkFunction
                 self.frame.target = meth.callable
                 self.frame.scope = scope
@@ -3434,8 +3435,8 @@ proc exec*(self: VirtualMachine): Value =
                 args_gene.children.add(obj)
                 self.frame.args = args_gene.to_gene_value()
                 self.cu = f.body_compiled
-                pc = 0
-                inst = self.cu.instructions[pc].addr
+                self.pc = 0
+                inst = self.cu.instructions[self.pc].addr
                 continue
               else:
                 not_allowed("Method must be a function")
@@ -3578,8 +3579,8 @@ proc exec*(self: VirtualMachine): Value =
           return NIL
         else:
           self.cu = self.frame.caller_address.cu
-          pc = self.frame.caller_address.pc
-          inst = self.cu.instructions[pc].addr
+          self.pc = self.frame.caller_address.pc
+          inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()
           self.frame.push(NIL)
@@ -3591,8 +3592,8 @@ proc exec*(self: VirtualMachine): Value =
           return TRUE
         else:
           self.cu = self.frame.caller_address.cu
-          pc = self.frame.caller_address.pc
-          inst = self.cu.instructions[pc].addr
+          self.pc = self.frame.caller_address.pc
+          inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()
           self.frame.push(TRUE)
@@ -3604,8 +3605,8 @@ proc exec*(self: VirtualMachine): Value =
           return FALSE
         else:
           self.cu = self.frame.caller_address.cu
-          pc = self.frame.caller_address.pc
-          inst = self.cu.instructions[pc].addr
+          self.pc = self.frame.caller_address.pc
+          inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()
           self.frame.push(FALSE)
@@ -3637,18 +3638,72 @@ proc exec*(self: VirtualMachine): Value =
             self.instruction_profile[kind].max_time = elapsed
     
     {.push checks: off}
-    pc.inc()
+    self.pc.inc()
     inst = cast[ptr Instruction](cast[int64](inst) + INST_SIZE)
     {.pop}
   {.pop.}  # End of hot VM execution loop pragma push
 
+# Continue execution from the current PC
+# This allows re-entrant execution for coroutines/async contexts
+proc exec_continue*(self: VirtualMachine): Value =
+  # Call the main exec loop which now uses self.pc
+  return self.exec()
+
 # Execute a Gene function with given arguments and return the result
 # This preserves the VM state and can be called from async contexts  
 proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.exportc.} =
-  # For now, Gene functions cannot be executed from async context
-  # The proper solution requires refactoring the VM exec loop to support
-  # re-entrant execution or using a separate execution context
-  return NIL
+  if fn.kind != VkFunction:
+    return NIL
+  
+  let f = fn.ref.fn
+  
+  # Compile if needed
+  if f.body_compiled == nil:
+    f.compile()
+  
+  # Save current VM state
+  let saved_cu = self.cu
+  let saved_pc = self.pc
+  let saved_frame = self.frame
+  
+  # Create a new scope for the function
+  var scope: Scope
+  if f.matcher.is_empty():
+    scope = f.parent_scope
+  else:
+    scope = new_scope(f.scope_tracker, f.parent_scope)
+  
+  # Create a new frame for the function
+  let new_frame = new_frame()
+  new_frame.kind = FkFunction
+  new_frame.target = fn
+  new_frame.scope = scope
+  new_frame.ns = f.ns
+  
+  # Convert args to Gene value
+  let args_gene = new_gene(NIL)
+  for arg in args:
+    args_gene.children.add(arg)
+  new_frame.args = args_gene.to_gene_value()
+  
+  # Process arguments if matcher exists
+  if not f.matcher.is_empty():
+    process_args(f.matcher, new_frame.args, scope)
+  
+  # Set up VM for function execution
+  self.frame = new_frame
+  self.cu = f.body_compiled
+  self.pc = 0
+  
+  # Execute the function
+  let result = self.exec_continue()
+  
+  # Restore VM state
+  self.cu = saved_cu
+  self.pc = saved_pc
+  self.frame = saved_frame
+  
+  return result
 
 proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
   # Initialize gene namespace if not already done

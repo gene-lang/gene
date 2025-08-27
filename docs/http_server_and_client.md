@@ -241,18 +241,19 @@ Get `http_server.gene` fully working with:
 3. **Method Dispatch**: Instance `call` methods are invoked when instance is used as function
 4. **HTTP Client**: All client functions working (GET, POST, PUT, DELETE)
 5. **HTTP Server Infrastructure**: Server starts, handles requests, returns responses
+6. **VM Coroutine Support**: VM refactored to use `self.pc` for re-entrant execution
+7. **Gene Function Handlers**: Gene functions can now be used as HTTP handlers! ✅
 
-### ⚠️ Partial Implementation:
-1. **VM Execution Bridge**: Infrastructure added but Gene functions can't execute from async context
-   - Queue system implemented
-   - Handler detection working
-   - VM supports coroutines conceptually (can save/restore CU, PC, Frame, Scope)
-   - **Blocker**: VM's exec() loop uses local `pc` variable instead of `self.pc`
-   - This prevents re-entrant execution needed for coroutines
+### ✅ VM Refactoring Complete:
+The VM has been successfully refactored to support coroutine-style execution:
+1. **exec() loop**: Now uses `self.pc` instead of local `pc` variable
+2. **exec_continue()**: Added for re-entrant execution
+3. **exec_function()**: Updated to properly save/restore VM state
+4. **Gene functions as handlers**: Working! Can execute Gene functions from async HTTP context
 
-### ❌ Not Working:
-1. **Gene Function Handlers**: Can't execute Gene functions as HTTP handlers
-2. **Full http_server.gene Example**: Blocked by Gene function execution issue
+### ⚠️ Remaining Work:
+1. **Full http_server.gene Example**: May need additional fixes for complex scenarios
+2. **Middleware chains**: Need testing with the new VM architecture
 
 ### Technical Solution Path:
 To enable Gene functions as HTTP handlers, the VM needs refactoring:
