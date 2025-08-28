@@ -14,29 +14,29 @@ type
   EnumDef* = ref object
     name*: string
     members*: Table[string, EnumMember]
-    
+
   EnumMember* = ref object
     parent*: Value  # The enum this member belongs to
     name*: string
     value*: int
-    
+
   FutureState* = enum
     FsPending
     FsSuccess
     FsFailure
-    
+
   FutureObj* = ref object
     state*: FutureState
     value*: Value              # Result value or exception
     success_callbacks*: seq[Value]  # Success callback functions
     failure_callbacks*: seq[Value]  # Failure callback functions
-    
+
   GeneratorState* = enum
     GsPending            # Not yet started
     GsRunning            # Currently executing
     GsSuspended          # Suspended at yield
     GsDone               # Exhausted
-    
+
   ExceptionData* = ref object
   Interception* = ref object
   Expression* = ref object
@@ -53,11 +53,11 @@ type
     VkVoid
     VkPlaceholder
     VkPointer
-    
+
     # Any and Custom types for extensibility
     VkAny
     VkCustom
-    
+
     # Basic data types
     VkBool
     VkInt
@@ -71,23 +71,23 @@ type
     VkString
     VkSymbol
     VkComplexSymbol
-    
+
     # Pattern and regex types
     VkRegex
     VkRegexMatch
     VkRange
     VkSelector
-    
+
     # Async types
     VkFuture             # Async future/promise
     VkGenerator          # Generator instance
-    
+
     # Date and time types
     VkDate               # Date only
     VkDateTime           # Date + time + timezone
     VkTime               # Time only
     VkTimezone           # Timezone info
-    
+
     # Collection types
     VkArray              # For backward compatibility, will alias to VkVector
     VkVector             # Main sequence type
@@ -97,19 +97,19 @@ type
     VkArguments          # Function argument container
     VkStream
     VkDocument
-    
+
     # File system types
     VkFile
     VkArchiveFile
     VkDirectory
-    
+
     # Meta-programming types
     VkQuote
     VkUnquote
     VkReference
     VkRefTarget
     VkExplode            # For unpacking operations
-    
+
     # Language construct types
     VkApplication
     VkPackage
@@ -132,21 +132,21 @@ type
     VkNativeFn2
     VkNativeMethod
     VkNativeMethod2
-    
+
     # Exception handling
     VkException = 128    # Start exceptions at 128
     VkInterception       # AOP interception
-    
+
     # Expression and evaluation
     VkExpr               # Abstract syntax tree expressions
     VkGeneProcessor      # Gene processing context
-    
+
     # Concurrency types
-    
+
     # JSON integration
     VkJson               # JSON values
     VkNativeFile         # Native file handles
-    
+
     # Internal VM types
     VkCompiledUnit
     VkInstruction
@@ -165,8 +165,8 @@ type
         str*: string
       of VkComplexSymbol:
         csymbol*: seq[string]
-      
-      # Numeric and binary types  
+
+      # Numeric and binary types
       of VkRatio:
         ratio_num*: int64
         ratio_denom*: int64
@@ -181,7 +181,7 @@ type
         byte_bit_size*: uint
       of VkBytes:
         bytes_data*: seq[uint8]
-      
+
       # Pattern and regex types
       of VkRegex:
         regex_pattern*: string
@@ -194,7 +194,7 @@ type
         range_step*: Value
       of VkSelector:
         selector_pattern*: string
-      
+
       # Date and time types
       of VkDate:
         date_year*: int16
@@ -216,7 +216,7 @@ type
       of VkTimezone:
         tz_offset*: int16
         tz_name*: string
-      
+
       # Collection types
       of VkArray, VkVector:
         arr*: seq[Value]
@@ -233,7 +233,7 @@ type
         stream_ended*: bool
       of VkDocument:
         doc*: Document
-      
+
       # File system types
       of VkFile:
         file_path*: string
@@ -245,7 +245,7 @@ type
       of VkDirectory:
         dir_path*: string
         dir_members*: Table[string, Value]
-      
+
       # Meta-programming types
       of VkQuote:
         quote*: Value
@@ -262,7 +262,7 @@ type
         future*: FutureObj
       of VkGenerator:
         generator*: pointer  # Will be cast to ptr GeneratorObj when used
-      
+
       # Language constructs
       of VkApplication:
         app*: Application
@@ -304,27 +304,27 @@ type
         native_fn2*: NativeFn2
       of VkNativeMethod, VkNativeMethod2:
         native_method*: NativeFn
-      
+
       # Exception and interception
       of VkException:
         exception_data*: ExceptionData
       of VkInterception:
         interception*: Interception
-      
+
       # Expression types
       of VkExpr:
         expr*: Expression
       of VkGeneProcessor:
         processor*: GeneProcessor
-      
+
       # Concurrency types
-      
+
       # JSON and file types
       of VkJson:
         json_data*: string  # Serialized JSON
       of VkNativeFile:
         native_file*: File
-      
+
       # Internal VM types
       of VkCompiledUnit:
         cu*: CompilationUnit
@@ -338,7 +338,7 @@ type
         frame*: Frame
       of VkNativeFrame:
         native_frame*: NativeFrame
-      
+
       # Any and Custom types
       of VkAny:
         any_data*: pointer
@@ -346,7 +346,7 @@ type
       of VkCustom:
         custom_data*: CustomValue
         custom_class*: Class
-      
+
       else:
         discard
     ref_count*: int32
@@ -738,7 +738,7 @@ type
     IkGeneAddChild
     IkGeneAddChildValue       # args: literal value
     IkGeneEnd
-    
+
     # Fast function call instructions
     IkCallDirect      # Direct function call with known target
     IkTailCall        # Tail call optimization
@@ -843,19 +843,19 @@ type
     self_time*: float64   # Time excluding sub-calls
     min_time*: float64
     max_time*: float64
-  
+
   InstructionProfile* = object
     count*: int64
     total_time*: float64  # Total time in seconds
     min_time*: float64
     max_time*: float64
-    
+
   # Inline cache for symbol resolution
   InlineCache* = object
     version*: uint64      # Namespace version when cached
     value*: Value         # Cached value
     ns*: Namespace        # Namespace where value was found
-    
+
   VirtualMachine* = ref object
     cu*: CompilationUnit
     pc*: int
@@ -911,7 +911,7 @@ type
     from_exec_function*: bool  # Set when frame is created by exec_function
 
   Frame* = ptr FrameObj
-  
+
   GeneratorObj* = ref object
     function*: Function          # The generator function definition
     state*: GeneratorState       # Current execution state
@@ -1234,15 +1234,32 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
   if cast[uint64](a) == cast[uint64](b):
     return true
 
-  let u1 = cast[uint64](a)
-  let u2 = cast[uint64](b)
-  
-  # Only references can be equal with different bit patterns
-  if (u1 and 0xFFFF_0000_0000_0000u64) == REF_TAG and
-     (u2 and 0xFFFF_0000_0000_0000u64) == REF_TAG:
-    return a.ref == b.ref
-  
+  {.cast(gcsafe).}:
+    let u1 = cast[uint64](a)
+    let u2 = cast[uint64](b)
+
+    # Check if both are strings (short or long) and compare them
+    let tag1 = u1 and 0xFFFF_0000_0000_0000u64
+    let tag2 = u2 and 0xFFFF_0000_0000_0000u64
+    if tag1 != tag2:
+      return false
+
+    # Both short strings
+    if tag1 == SHORT_STR_TAG:
+      # For short strings, if they're not bit-identical (already checked above),
+      # they're not equal
+      return false
+    # Both long strings
+    elif tag1 == LONG_STR_TAG:
+      let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
+      let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+      return str1.str == str2.str
+    # Only references can be equal with different bit patterns
+    elif tag1 == REF_TAG:
+      return a.ref == b.ref
+
   # Default to false
+  return false
 
 proc is_float*(v: Value): bool {.inline, noSideEffect.} =
   let u = cast[uint64](v)
@@ -1293,11 +1310,11 @@ proc kind_slow(v: Value, u: uint64, tag: uint64): ValueKind {.noinline.} =
 proc kind*(v: Value): ValueKind {.inline.} =
   {.cast(gcsafe).}:
     let u = cast[uint64](v)
-    
+
     # Fast path: Check if it's a float first (most common case)
     if (u and NAN_MASK) != NAN_MASK:
       return VkFloat
-    
+
     # Fast path: Check most common NaN-boxed types with single comparisons
     let tag = u and 0xFFFF_0000_0000_0000u64
     case tag:
@@ -1318,11 +1335,11 @@ proc kind*(v: Value): ValueKind {.inline.} =
 proc is_literal*(self: Value): bool =
   {.cast(gcsafe).}:
     let u = cast[uint64](self)
-    
+
     # Floats and integers are literals
     if not ((u and NAN_MASK) == NAN_MASK):
       return true  # Regular float
-    
+
     # Check NaN-boxed values
     case u and 0xFFFF_0000_0000_0000u64:
       of SMALL_INT_TAG, SHORT_STR_TAG, LONG_STR_TAG:
@@ -1422,7 +1439,7 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
       of VkDate:
         result = $self.ref.date_year & "-" & $self.ref.date_month & "-" & $self.ref.date_day
       of VkDateTime:
-        result = $self.ref.dt_year & "-" & $self.ref.dt_month & "-" & $self.ref.dt_day & 
+        result = $self.ref.dt_year & "-" & $self.ref.dt_month & "-" & $self.ref.dt_day &
                  " " & $self.ref.dt_hour & ":" & $self.ref.dt_minute & ":" & $self.ref.dt_second
       of VkTime:
         result = $self.ref.time_hour & ":" & $self.ref.time_minute & ":" & $self.ref.time_second
@@ -1499,7 +1516,7 @@ proc `$`*(self: Value): string {.gcsafe.} =
       of VkDate:
         result = $self.ref.date_year & "-" & $self.ref.date_month & "-" & $self.ref.date_day
       of VkDateTime:
-        result = $self.ref.dt_year & "-" & $self.ref.dt_month & "-" & $self.ref.dt_day & 
+        result = $self.ref.dt_year & "-" & $self.ref.dt_month & "-" & $self.ref.dt_day &
                  " " & $self.ref.dt_hour & ":" & $self.ref.dt_minute & ":" & $self.ref.dt_second
       of VkTime:
         result = $self.ref.time_hour & ":" & $self.ref.time_minute & ":" & $self.ref.time_second
@@ -1558,11 +1575,11 @@ converter to_value*(v: pointer): Value {.inline.} =
 # Applicable to array, vector, string, symbol, gene etc
 proc `[]`*(self: Value, i: int): Value =
   let u = cast[uint64](self)
-  
+
   # Check for special values first
   if u == cast[uint64](NIL):
     return NIL
-  
+
   # Check if it's in NaN space
   if (u and NAN_MASK) == NAN_MASK:
     case u and 0xFFFF_0000_0000_0000u64:
@@ -1591,9 +1608,9 @@ proc `[]`*(self: Value, i: int): Value =
             let start_int = r.range_start.int64
             let step_int = if r.range_step == NIL: 1.int64 else: r.range_step.int64
             let end_int = r.range_end.int64
-            
+
             let value = start_int + (i.int64 * step_int)
-            
+
             # Check if the value is within the range bounds
             if step_int > 0:
               if value >= start_int and value < end_int:
@@ -1636,11 +1653,11 @@ proc `[]`*(self: Value, i: int): Value =
 # Applicable to array, vector, string, symbol, gene etc
 proc size*(self: Value): int =
   let u = cast[uint64](self)
-  
+
   # Check for special values first
   if u == cast[uint64](NIL):
     return 0
-  
+
   # Check if it's in NaN space
   if (u and NAN_MASK) == NAN_MASK:
     case u and 0xFFFF_0000_0000_0000u64:
@@ -1754,7 +1771,7 @@ converter to_value*(v: char): Value {.inline.} =
 proc str*(v: Value): string =
   {.cast(gcsafe).}:
     let u = cast[uint64](v)
-    
+
     # Check if it's in NaN space
     if (u and NAN_MASK) == NAN_MASK:
       case u and 0xFFFF_0000_0000_0000u64:
@@ -2406,7 +2423,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   let matcher = new_arg_matcher()
   var body_start: int
   var is_generator = false
-  
+
   if node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"
@@ -2444,12 +2461,12 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   if node.gene.props.has_key(async_key) and node.gene.props[async_key] == TRUE:
     is_async = true
     discard  # Function is async
-  
+
   # Check if function has generator flag from properties (^^generator syntax)
   let generator_key = "generator".to_key()
   if node.gene.props.has_key(generator_key) and node.gene.props[generator_key] == TRUE:
     is_generator = true
-  
+
   # body = wrap_with_try(body)
   result = new_fn(name, matcher, body)
   result.async = is_async
@@ -3066,20 +3083,20 @@ proc init_app_and_vm*() =
     current_exception: NIL,
     symbols: addr SYMBOLS,
   )
-  
+
   # Pre-allocate frame and scope pools
   if FRAMES.len == 0:
     FRAMES = newSeqOfCap[Frame](INITIAL_FRAME_POOL_SIZE)
     for i in 0..<INITIAL_FRAME_POOL_SIZE:
       FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
       FRAME_ALLOCS.inc()  # Count the pre-allocated frames
-  
-  
+
+
   if REF_POOL.len == 0:
     REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
     for i in 0..<INITIAL_REF_POOL_SIZE:
       REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
-  
+
   let r = new_ref(VkApplication)
   r.app = new_app()
   r.app.global_ns = new_namespace("global").to_value()
@@ -3094,20 +3111,20 @@ proc init_app_and_vm*() =
   exception_ref.class = exception_class
   # Add to global namespace so it's accessible everywhere
   App.app.global_ns.ref.ns["GeneException".to_key()] = exception_ref.to_ref_value()
-  
+
   # Add genex to global namespace (similar to gene-new)
   App.app.global_ns.ref.ns["genex".to_key()] = App.app.genex_ns
-  
+
   # Pre-populate genex with commonly used extensions
   # This creates the namespace entry but doesn't load the extension yet
   App.app.genex_ns.ref.ns["http".to_key()] = NIL
-  
+
   # Add time namespace stub to prevent errors
   let time_ns = new_namespace("time")
   # Simple time function that returns current timestamp
   proc time_now(self: VirtualMachine, args: Value): Value =
     return epochTime().to_value()
-  
+
   var time_now_fn = new_ref(VkNativeFn)
   time_now_fn.native_fn = time_now
   time_ns["now".to_key()] = time_now_fn.to_ref_value()
@@ -3119,8 +3136,8 @@ proc init_app_and_vm*() =
   # Functions will be registered later by register_io_functions
   let io_ns = new_namespace("io")
   App.app.gene_ns.ns["io".to_key()] = io_ns.to_value()
-  
-  
+
+
   for callback in VmCreatedCallbacks:
     callback()
 
