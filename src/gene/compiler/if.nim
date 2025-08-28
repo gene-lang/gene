@@ -36,10 +36,12 @@ proc normalize_if*(self: ptr Gene) =
        not (self.children[1] == "then".to_symbol_value() or 
             self.children[1] == "else".to_symbol_value() or
             self.children[1] == "elif".to_symbol_value()):
-      # Check if the third child starts with "else" keyword or is clearly an else branch
-      # For now, treat 3-arg form as (if cond then else) only for backward compatibility
-      # But this is ambiguous - falling through to state machine is safer
-      discard
+      # Simple 3-argument form without keywords: (if cond then-expr else-expr)
+      self.props["cond".to_key()] = self.children[0]
+      self.props["then".to_key()] = new_stream_value(@[self.children[1]])
+      self.props["else".to_key()] = new_stream_value(@[self.children[2]])
+      self.children.reset
+      return
     elif self.children.len == 2 and not has_else:
       # Simple form without else: (if cond then)
       self.props["cond".to_key()] = self.children[0]

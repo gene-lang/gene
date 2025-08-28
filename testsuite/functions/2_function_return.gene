@@ -1,7 +1,9 @@
 (fn f n
-  (if (n < 0)
-    (var a)
-    (return 0)
+  (if (n < 0) then
+    (do
+      (var a)
+      (return 0)
+    )
   )
   (return n)
 )
