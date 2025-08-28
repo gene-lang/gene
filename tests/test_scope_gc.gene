@@ -1,0 +1,34 @@
+#!/usr/bin/env gene run
+
+# Simple test to reproduce scope GC issue
+# The outer scope is freed when inner function returns,
+# but the returned closure still needs it
+
+(println "=== Testing Scope GC Issue ===")
+
+(var module_var "module level")
+
+(fn create_handler [param]
+  (println "create_handler called with:" param)
+  
+  # Return a closure that captures param
+  (fnx [arg]
+    (println "Handler called with arg:" arg)
+    (println "Accessing captured param:" param)
+    (println "Accessing module_var:" module_var)
+    param
+  )
+)
+
+(println "\n1. Creating handler...")
+(var handler (create_handler "captured_value"))
+
+(println "\n2. Calling handler immediately:")
+(var result1 (handler "test1"))
+(println "Result1:" result1)
+
+(println "\n3. Calling handler again:")
+(var result2 (handler "test2"))
+(println "Result2:" result2)
+
+(println "\n=== Test completed ===")

@@ -2126,7 +2126,8 @@ proc free*(self: Scope) =
   self.ref_count.dec()
   if self.ref_count == 0:
     if self.parent != nil:
-      self.parent.free()
+      # When this scope is destroyed, release the reference to parent
+      self.parent.free()  # This will decrement parent's ref_count and free if needed
     dealloc(self)
   {.pop.}
 
@@ -2884,7 +2885,10 @@ proc free*(self: var Frame) =
   if self.ref_count <= 0:
     if self.caller_frame != nil:
       self.caller_frame.free()
-    if self.scope != nil:
+    # Only free scope if frame owns it (functions without parameters borrow parent scope)
+    # For now, we rely on IkScopeEnd to manage scopes properly
+    # TODO: Track whether frame owns or borrows its scope
+    if self.scope != nil and false:  # Disabled for now - IkScopeEnd handles it
       self.scope.free()
     self.reset_frame()
     FRAMES.add(self)

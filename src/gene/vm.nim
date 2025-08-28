@@ -438,14 +438,25 @@ proc exec*(self: VirtualMachine): Value =
           # For GIR files, create a new scope with empty tracker
           let tracker = new_scope_tracker()
           self.frame.scope = new_scope(tracker, self.frame.scope)
+          # Scope created with ref_count=1
         elif inst.arg0.kind == VkScopeTracker:
           self.frame.scope = new_scope(inst.arg0.ref.scope_tracker, self.frame.scope)
+          # Scope created with ref_count=1
         else:
           not_allowed("IkScopeStart: expected ScopeTracker or Nil, got " & $inst.arg0.kind)
       of IkScopeEnd:
         var old_scope = self.frame.scope
         self.frame.scope = self.frame.scope.parent
-        old_scope.free()
+        # Check ref_count before freeing
+        # Only free if ref_count will drop to 0
+        # The initial ref_count is 1 from new_scope(), so we only free if it's exactly 1
+        if old_scope.ref_count == 1:
+          # Freeing scope with ref_count=1
+          old_scope.free()
+        else:
+          # Just decrement the ref_count since something else is holding a reference
+          old_scope.ref_count.dec()
+          # Scope not freed, still referenced
 
       of IkVar:
         {.push checks: off.}
@@ -499,15 +510,27 @@ proc exec*(self: VirtualMachine): Value =
         var scope = self.frame.scope
         while parent_index > 0:
           parent_index.dec()
+          if scope.parent == nil:
+            raise new_exception(types.Exception, fmt"IkVarResolveInherited: scope.parent is nil at parent_index {parent_index}")
           scope = scope.parent
+        if scope == nil:
+          raise new_exception(types.Exception, fmt"IkVarResolveInherited: scope is nil after traversing {inst.arg1.int32} parent levels")
+        let index = inst.arg0.int64.int
+        if index >= scope.members.len:
+          raise new_exception(types.Exception, fmt"IkVarResolveInherited: index {index} >= scope.members.len {scope.members.len}")
         {.push checks: off}
-        self.frame.push(scope.members[inst.arg0.int64.int])
+        self.frame.push(scope.members[index])
         {.pop.}
 
       of IkVarAssign:
         {.push checks: off}
         let value = self.frame.current()
-        self.frame.scope.members[inst.arg0.int64.int] = value
+        if self.frame.scope == nil:
+          raise new_exception(types.Exception, "IkVarAssign: frame.scope is nil")
+        let index = inst.arg0.int64.int
+        if index >= self.frame.scope.members.len:
+          raise new_exception(types.Exception, fmt"IkVarAssign: index {index} >= scope.members.len {self.frame.scope.members.len}")
+        self.frame.scope.members[index] = value
         {.pop.}
 
       of IkVarAssignInherited:
@@ -580,6 +603,9 @@ proc exec*(self: VirtualMachine): Value =
         var scope: Scope
         if f.matcher.is_empty():
           scope = f.parent_scope
+          # Increment ref_count since the frame will own this reference
+          if scope != nil:
+            scope.ref_count.inc()
         else:
           scope = new_scope(f.scope_tracker, f.parent_scope)
         
@@ -637,6 +663,9 @@ proc exec*(self: VirtualMachine): Value =
                   # Reset scope
                   if f.matcher.is_empty():
                     self.frame.scope = f.parent_scope
+                    # Increment ref_count since the frame will own this reference
+                    if self.frame.scope != nil:
+                      self.frame.scope.ref_count.inc()
                   else:
                     self.frame.scope = new_scope(f.scope_tracker, f.parent_scope)
                     # Process arguments
@@ -1356,6 +1385,9 @@ proc exec*(self: VirtualMachine): Value =
             var scope: Scope
             if f.matcher.is_empty():
               scope = f.parent_scope
+              # Increment ref_count since the frame will own this reference
+              if scope != nil:
+                scope.ref_count.inc()
             else:
               scope = new_scope(f.scope_tracker, f.parent_scope)
 
@@ -1427,6 +1459,9 @@ proc exec*(self: VirtualMachine): Value =
             let f = gene_type.ref.compile_fn
             if f.matcher.is_empty():
               scope = f.parent_scope
+              # Increment ref_count since the frame will own this reference
+              if scope != nil:
+                scope.ref_count.inc()
             else:
               scope = new_scope(f.scope_tracker, f.parent_scope)
 
@@ -1466,6 +1501,9 @@ proc exec*(self: VirtualMachine): Value =
                 let f = target.ref.fn
                 if f.matcher.is_empty():
                   scope = f.parent_scope
+                  # Increment ref_count since the frame will own this reference
+                  if scope != nil:
+                    scope.ref_count.inc()
                 else:
                   scope = new_scope(f.scope_tracker, f.parent_scope)
                 
@@ -1521,6 +1559,9 @@ proc exec*(self: VirtualMachine): Value =
                   let f = target.ref.fn
                   if f.matcher.is_empty():
                     scope = f.parent_scope
+                    # Increment ref_count since the frame will own this reference
+                    if scope != nil:
+                      scope.ref_count.inc()
                   else:
                     scope = new_scope(f.scope_tracker, f.parent_scope)
                   
@@ -2631,7 +2672,11 @@ proc exec*(self: VirtualMachine): Value =
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkFunction, got {inst.kind}")
-        f.parent_scope.update(self.frame.scope)
+        # Capture parent scope with proper reference counting
+        if self.frame.scope != nil:
+          self.frame.scope.ref_count.inc()
+          # Function captured scope, ref_count incremented
+        f.parent_scope = self.frame.scope
         
         f.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
 
@@ -2680,7 +2725,10 @@ proc exec*(self: VirtualMachine): Value =
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkMacro, got {inst.kind}")
-        m.parent_scope.update(self.frame.scope)
+        # Capture parent scope with proper reference counting
+        if self.frame.scope != nil:
+          self.frame.scope.ref_count.inc()
+        m.parent_scope = self.frame.scope
         m.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
         
         let r = new_ref(VkMacro)
@@ -2723,10 +2771,11 @@ proc exec*(self: VirtualMachine): Value =
         when not defined(release):
           if inst.kind != IkData:
             raise new_exception(types.Exception, fmt"Expected IkData after IkCompileFn, got {inst.kind}")
-        # Initialize parent_scope if it doesn't exist
-        if f.parent_scope == nil:
-          f.parent_scope = new_scope(new_scope_tracker())
-        f.parent_scope.update(self.frame.scope)
+        # Capture parent scope with proper reference counting
+        if self.frame.scope != nil:
+          self.frame.scope.ref_count.inc()
+          # Function captured scope, ref_count incremented
+        f.parent_scope = self.frame.scope
         f.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
 
         if not f.matcher.is_empty():
@@ -2941,6 +2990,9 @@ proc exec*(self: VirtualMachine): Value =
             var scope: Scope
             if f.matcher.is_empty():
               scope = f.parent_scope
+              # Increment ref_count since the frame will own this reference
+              if scope != nil:
+                scope.ref_count.inc()
             else:
               scope = new_scope(f.scope_tracker, f.parent_scope)
 
@@ -3537,6 +3589,9 @@ proc exec*(self: VirtualMachine): Value =
                 var scope: Scope
                 if f.matcher.is_empty():
                   scope = f.parent_scope
+                  # Increment ref_count since the frame will own this reference
+                  if scope != nil:
+                    scope.ref_count.inc()
                 else:
                   scope = new_scope(f.scope_tracker, f.parent_scope)
                 
@@ -3808,6 +3863,9 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   var scope: Scope
   if f.matcher.is_empty():
     scope = f.parent_scope
+    # Increment ref_count since the frame will own this reference
+    if scope != nil:
+      scope.ref_count.inc()
   else:
     scope = new_scope(f.scope_tracker, f.parent_scope)
   
