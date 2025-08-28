@@ -261,7 +261,7 @@ type
       of VkFuture:
         future*: FutureObj
       of VkGenerator:
-        generator*: pointer  # Will be cast to ptr GeneratorObj when used
+        generator*: GeneratorObj  # Store the generator ref object directly
 
       # Language constructs
       of VkApplication:
@@ -863,6 +863,7 @@ type
     trace*: bool
     exception_handlers*: seq[ExceptionHandler]
     current_exception*: Value
+    current_generator*: GeneratorObj  # Currently executing generator
     symbols*: ptr ManagedSymbols  # Pointer to global symbol table
     # Profiling
     profiling*: bool
@@ -909,6 +910,7 @@ type
     current_method*: Method  # Currently executing method (for super calls)
     stack_index*: uint16
     from_exec_function*: bool  # Set when frame is created by exec_function
+    is_generator*: bool  # Set when executing in generator context
 
   Frame* = ptr FrameObj
 
@@ -916,6 +918,7 @@ type
     function*: Function          # The generator function definition
     state*: GeneratorState       # Current execution state
     frame*: Frame                # Saved execution frame
+    cu*: CompilationUnit         # Saved compilation unit
     pc*: int                     # Program counter position
     scope*: Scope                # Captured scope
     stack*: seq[Value]           # Saved stack state

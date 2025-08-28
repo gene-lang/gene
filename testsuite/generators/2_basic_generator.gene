@@ -19,5 +19,5 @@
 
 # TODO: Once yield is implemented, this should return 0
 # Expected: Generator created: VkGenerator
-# Expected: Generator next result: not_found
-# Expected: Is NOT_FOUND? yes
+# Expected: Generator next result: 0
+# Expected: Is NOT_FOUND? no

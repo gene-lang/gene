@@ -303,9 +303,13 @@ proc exec*(self: VirtualMachine): Value =
   # Initialize gene namespace if not already done
   init_gene_namespace()
   
-  # Reset self.pc for new execution
-  self.pc = 0
+  # Reset self.pc for new execution (unless we're resuming a generator)
+  # Generators set their PC before calling exec and need to preserve it
+  if self.frame == nil or not self.frame.is_generator:
+    self.pc = 0
   if self.pc >= self.cu.instructions.len:
+    if self.frame != nil and self.frame.is_generator:
+      return NOT_FOUND  # Generator is done
     raise new_exception(types.Exception, "Empty compilation unit")
   var inst = self.cu.instructions[self.pc].addr
 
@@ -570,20 +574,19 @@ proc exec*(self: VirtualMachine): Value =
           
           # Create generator instance
           var gen = new_ref(VkGenerator)
-          var genObj = new(GeneratorObj)
+          var genObj: GeneratorObj
+          new(genObj)
           genObj.function = f
           genObj.state = GsPending
           genObj.frame = nil
+          genObj.cu = nil
           genObj.pc = 0
           genObj.scope = nil
-          genObj.stack = @[]
+          genObj.stack = args_gene.children  # Save args for when generator starts
           genObj.done = false
           genObj.has_peeked = false
           genObj.peeked_value = NIL
-          GC_ref(genObj)  # Prevent GC from collecting
-          gen.generator = cast[pointer](genObj)
-          # Store arguments in the generator for later processing
-          genObj.stack = args_gene.children  # Save args for when generator starts
+          gen.generator = genObj
           self.frame.push(gen.to_ref_value())
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
@@ -1928,18 +1931,19 @@ proc exec*(self: VirtualMachine): Value =
               if f.is_generator:
                 # Create generator instance with the arguments from the gene
                 var gen = new_ref(VkGenerator)
-                var genObj = new(GeneratorObj)
+                var genObj: GeneratorObj
+                new(genObj)
                 genObj.function = f
                 genObj.state = GsPending
                 genObj.frame = nil
+                genObj.cu = nil
                 genObj.pc = 0
                 genObj.scope = nil
                 genObj.stack = value.gene.children  # Save arguments
                 genObj.done = false
                 genObj.has_peeked = false
                 genObj.peeked_value = NIL
-                GC_ref(genObj)  # Prevent GC from collecting
-                gen.generator = cast[pointer](genObj)
+                gen.generator = genObj
                 self.frame.replace(gen.to_ref_value())
               else:
                 discard
@@ -2847,9 +2851,30 @@ proc exec*(self: VirtualMachine): Value =
       
       of IkYield:
         # Yield is only valid inside generator functions
-        # For now, we'll just push NOT_FOUND and continue
-        # The actual implementation will be added when we implement .next method
-        self.frame.push(NOT_FOUND)
+        if self.frame.is_generator and self.current_generator != nil:
+          
+          # Pop the value to yield
+          let yielded_value = if self.frame.stack_index > 0:
+            self.frame.pop()
+          else:
+            NIL
+          
+          # Save generator state
+          let gen = self.current_generator
+          # Skip past the yield instruction AND the following Pop
+          # The compiler generates Pop after yield to clean up the stack,
+          # but in a generator we don't want to execute that Pop
+          gen.pc = self.pc + 2  # Skip yield and the Pop that follows
+          gen.frame = self.frame
+          gen.cu = self.cu  # Save the compilation unit
+          
+          
+          # Return the yielded value from exec
+          return yielded_value
+        else:
+          # Not in a generator context - this is an error
+          raise new_exception(types.Exception, "yield used outside of generator function")
+          self.frame.push(NOT_FOUND)
 
       of IkNamespace:
         let name = inst.arg0
@@ -3932,6 +3957,113 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
   self.cu = compiled
 
   self.exec()
+
+# Generator execution implementation
+proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.exportc.} =
+  # Check for nil generator
+  if gen == nil:
+    raise new_exception(types.Exception, "exec_generator_impl: generator is nil")
+  
+  # Check for nil function
+  if gen.function == nil:
+    raise new_exception(types.Exception, "exec_generator_impl: generator function is nil")
+  
+  
+  # If generator hasn't started, initialize it
+  if gen.state == GsPending:
+    # Compile the function if needed
+    if gen.function.body_compiled == nil:
+      gen.function.compile()
+    
+    # Save the compilation unit
+    gen.cu = gen.function.body_compiled
+    
+    # Create a new frame for the generator
+    gen.frame = new_frame()
+    gen.frame.kind = FkFunction
+    let fn_ref = new_ref(VkFunction)
+    fn_ref.fn = gen.function
+    gen.frame.target = fn_ref.to_ref_value()
+    
+    # Create scope for the generator
+    var scope: Scope
+    if gen.function.matcher.is_empty():
+      scope = gen.function.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(gen.function.scope_tracker, gen.function.parent_scope)
+    gen.frame.scope = scope
+    gen.frame.ns = gen.function.ns
+    
+    # Process arguments if any
+    if gen.stack.len > 0:
+      let args_gene = new_gene(NIL)
+      for arg in gen.stack:
+        args_gene.children.add(arg)
+      gen.frame.args = args_gene.to_gene_value()
+      
+      # Process arguments through matcher if needed
+      if not gen.function.matcher.is_empty():
+        process_args(gen.function.matcher, args_gene.to_gene_value(), scope)
+    
+    # Initialize execution state
+    gen.pc = 0
+    gen.state = GsRunning
+  
+  # Check if generator is done
+  if gen.done:
+    return NOT_FOUND
+  
+  # Save current VM state
+  let saved_cu = self.cu
+  let saved_pc = self.pc
+  let saved_frame = self.frame
+  let saved_exception_handlers = self.exception_handlers
+  
+  # Set up generator execution context
+  self.cu = gen.cu  # Use saved compilation unit
+  self.pc = gen.pc
+  self.frame = gen.frame
+  self.exception_handlers = @[]  # Clear exception handlers for generator
+  
+  # Mark that we're in a generator
+  self.frame.is_generator = true
+  
+  # Store the generator in the VM so IkYield can access it
+  self.current_generator = gen
+  
+  # Execute using exec_continue which doesn't reset PC
+  # The exec loop will handle IkYield specially when is_generator is true
+  var result = self.exec_continue()
+  
+  # Check if generator yielded (IkYield will return a value) or completed
+  # The IkYield handler already saved the state, we just need to check if done
+  # Generators that complete normally return NIL or hit the end of instructions
+  if self.pc >= self.cu.instructions.len:
+    # Generator completed - hit end of instructions
+    gen.done = true
+    gen.state = GsDone
+    result = NOT_FOUND  # Return NOT_FOUND for completed generators
+  elif result == NIL:
+    # Generator returned NIL - check if this is from normal completion
+    # When a generator ends with IkEnd, it returns NIL
+    # We need to mark it as done and return NOT_FOUND
+    gen.done = true
+    gen.state = GsDone  
+    result = NOT_FOUND  # Return NOT_FOUND for completed generators
+  else:
+    # Generator yielded a value - state was already saved by IkYield
+    gen.state = GsRunning
+  
+  # Restore original VM state
+  self.cu = saved_cu
+  self.pc = saved_pc
+  self.frame = saved_frame
+  self.exception_handlers = saved_exception_handlers
+  self.current_generator = nil
+  
+  return result
 
 include "./vm/core"
 import "./vm/async"

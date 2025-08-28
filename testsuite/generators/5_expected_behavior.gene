@@ -1,5 +1,4 @@
-# This test documents the expected behavior once generators are fully implemented
-# Currently marked as TODO since yield is not yet working
+# Test generator expected behavior - yield is now implemented!
 
 (fn range* [n]
   (var i 0)
@@ -7,16 +6,25 @@
     (yield i)
     (i = (+ i 1))))
 
-# Once implemented, this should work:
-# (var gen (range* 3))
-# (assert ((gen .next) == 0))
-# (assert ((gen .next) == 1))
-# (assert ((gen .next) == 2))
-# (assert ((gen .next) == not_found))
+# Test that generators work correctly
+(var gen (range* 3))
+(assert ((gen .next) == 0))
+(assert ((gen .next) == 1))
+(assert ((gen .next) == 2))
+(assert ((gen .next) == not_found))
 
-# For now, just document the expected behavior
-(println "Generator expected behavior test")
-(println "TODO: Implement yield to make generators functional")
+(println "Generator test passed - all assertions succeeded!")
 
-# Expected: Generator expected behavior test
-# Expected: TODO: Implement yield to make generators functional
+# Test with has_next
+(var gen2 (range* 2))
+(assert (gen2 .has_next))
+(assert ((gen2 .next) == 0))
+(assert (gen2 .has_next))
+(assert ((gen2 .next) == 1))
+(assert (not (gen2 .has_next)))
+(assert ((gen2 .next) == not_found))
+
+(println "has_next test passed!")
+
+# Expected: Generator test passed - all assertions succeeded!
+# Expected: has_next test passed!

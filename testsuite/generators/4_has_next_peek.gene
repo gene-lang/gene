@@ -32,4 +32,6 @@
 
 # Expected: All has_next calls return same value: yes
 # Expected: Flow test:
+# Expected:   Value: 42
+# Expected:   Value: 100
 # Expected:   Final value: not_found

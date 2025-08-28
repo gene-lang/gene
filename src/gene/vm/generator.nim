@@ -1,6 +1,9 @@
 import ../types
 import strformat
 
+# Forward declaration
+proc exec_generator*(self: VirtualMachine, gen: GeneratorObj): Value {.gcsafe.}
+
 # Initialize generator support
 proc init_generator*() =
   VmCreatedCallbacks.add proc() =
@@ -11,7 +14,7 @@ proc init_generator*() =
     let generator_class = new_class("Generator")
     
     # Add next method - for now just returns VOID
-    proc generator_next(self: VirtualMachine, args: Value): Value =
+    proc generator_next(self: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
       # Get next value from generator
       if args.kind != VkGene:
         raise new_exception(types.Exception, fmt"Generator.next expects Gene args, got {args.kind}")
@@ -22,12 +25,12 @@ proc init_generator*() =
       if gen_arg.kind != VkGenerator:
         raise new_exception(types.Exception, "next can only be called on a Generator")
       
-      # Cast the generator pointer to GeneratorObj
-      let gen = cast[ptr GeneratorObj](gen_arg.ref.generator)
+      # Get the generator object
+      let gen = gen_arg.ref.generator
       
       # Check if generator is nil
       if gen == nil:
-        return NOT_FOUND
+        raise new_exception(types.Exception, "Generator object is nil")
       
       # If we have a peeked value, return it and clear the peek
       if gen != nil and gen.has_peeked:
@@ -40,14 +43,12 @@ proc init_generator*() =
       if gen.done:
         return NOT_FOUND
       
-      # Execute the generator until next yield
-      # This requires running the generator function and catching yield
       
-      # For now, return NOT_FOUND as yield isn't fully implemented
-      # TODO: Implement proper generator execution with state saving
-      return NOT_FOUND
+      # Execute the generator until next yield
+      let result = exec_generator(self, gen)
+      return result
 
-    proc generator_has_next(self: VirtualMachine, args: Value): Value =
+    proc generator_has_next(self: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
       # Check if generator has a next value without consuming it
       if args.kind != VkGene:
         raise new_exception(types.Exception, fmt"Generator.has_next expects Gene args, got {args.kind}")
@@ -58,12 +59,12 @@ proc init_generator*() =
       if gen_arg.kind != VkGenerator:
         raise new_exception(types.Exception, "has_next can only be called on a Generator")
       
-      # Cast the generator pointer to GeneratorObj
-      let gen = cast[ptr GeneratorObj](gen_arg.ref.generator)
+      # Get the generator object
+      let gen = gen_arg.ref.generator
       
       # Check if generator is nil
       if gen == nil:
-        return FALSE
+        raise new_exception(types.Exception, "Generator object is nil")
       
       # If we already have a peeked value, return true
       if gen.has_peeked:
@@ -74,12 +75,13 @@ proc init_generator*() =
         return FALSE
       
       # Otherwise, try to get the next value without consuming it
-      # For now, since we always return NOT_FOUND, peek that
-      let next_val = NOT_FOUND  # TODO: Actually execute generator to get next value
+      let next_val = exec_generator(self, gen)
+      
       
       # Store the peeked value
       if next_val == NOT_FOUND:
-        gen.done = true
+        # Generator is exhausted, don't store NOT_FOUND as peeked
+        # gen.done was already set by exec_generator
         return FALSE
       else:
         gen.has_peeked = true
@@ -101,3 +103,11 @@ proc init_generator*() =
 
 # Call init_generator to register the callback
 init_generator()
+
+# Declare exec_generator_impl which will be in vm.nim
+proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.importc, gcsafe.}
+
+# Execute generator until it yields or completes
+proc exec_generator*(self: VirtualMachine, gen: GeneratorObj): Value {.gcsafe.} =
+  # Use the implementation in vm.nim
+  return exec_generator_impl(self, gen)
