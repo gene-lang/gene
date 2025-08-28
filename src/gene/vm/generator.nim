@@ -37,12 +37,15 @@ proc init_generator*() =
         return val
       
       # Otherwise, get the next value normally
-      # For now, always return NOT_FOUND until full implementation
       if gen.done:
         return NOT_FOUND
-      else:
-        # TODO: Actually execute generator until next yield
-        return NOT_FOUND
+      
+      # Execute the generator until next yield
+      # This requires running the generator function and catching yield
+      
+      # For now, return NOT_FOUND as yield isn't fully implemented
+      # TODO: Implement proper generator execution with state saving
+      return NOT_FOUND
 
     proc generator_has_next(self: VirtualMachine, args: Value): Value =
       # Check if generator has a next value without consuming it

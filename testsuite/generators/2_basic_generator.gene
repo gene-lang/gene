@@ -11,11 +11,13 @@
 # Test that generator is created - just print it for now
 (println "Generator created:" gen)
 
-# Call next method - should return NOT_FOUND for now
+# Call next method - should return 0 once properly implemented
+# Currently returns NOT_FOUND as yield is not fully implemented
 (var result (gen .next))
 (println "Generator next result:" result)
 (println "Is NOT_FOUND?" (if (result == not_found) "yes" "no"))
 
+# TODO: Once yield is implemented, this should return 0
 # Expected: Generator created: VkGenerator
 # Expected: Generator next result: not_found
 # Expected: Is NOT_FOUND? yes

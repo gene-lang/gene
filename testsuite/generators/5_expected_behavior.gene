@@ -1,0 +1,22 @@
+# This test documents the expected behavior once generators are fully implemented
+# Currently marked as TODO since yield is not yet working
+
+(fn range* [n]
+  (var i 0)
+  (while (< i n)
+    (yield i)
+    (i = (+ i 1))))
+
+# Once implemented, this should work:
+# (var gen (range* 3))
+# (assert ((gen .next) == 0))
+# (assert ((gen .next) == 1))
+# (assert ((gen .next) == 2))
+# (assert ((gen .next) == not_found))
+
+# For now, just document the expected behavior
+(println "Generator expected behavior test")
+(println "TODO: Implement yield to make generators functional")
+
+# Expected: Generator expected behavior test
+# Expected: TODO: Implement yield to make generators functional
