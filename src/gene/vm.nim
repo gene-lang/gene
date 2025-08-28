@@ -2861,10 +2861,15 @@ proc exec*(self: VirtualMachine): Value =
           
           # Save generator state
           let gen = self.current_generator
-          # Skip past the yield instruction AND the following Pop
-          # The compiler generates Pop after yield to clean up the stack,
-          # but in a generator we don't want to execute that Pop
-          gen.pc = self.pc + 2  # Skip yield and the Pop that follows
+          # Skip past the yield instruction
+          # Check if the next instruction is Pop and skip it too
+          var next_pc = self.pc + 1
+          if next_pc < self.cu.instructions.len and 
+             self.cu.instructions[next_pc].kind == IkPop:
+            next_pc += 1  # Skip the Pop that follows yield
+          
+          
+          gen.pc = next_pc
           gen.frame = self.frame
           gen.cu = self.cu  # Save the compilation unit
           
@@ -4039,21 +4044,25 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   
   # Check if generator yielded (IkYield will return a value) or completed
   # The IkYield handler already saved the state, we just need to check if done
-  # Generators that complete normally return NIL or hit the end of instructions
+  # Check if we hit the end of the generator function
+  # After IkEnd returns, PC would be at or past the last instruction
+  # Also check if the last executed instruction was IkEnd
+  var is_complete = false
+  
+  
   if self.pc >= self.cu.instructions.len:
-    # Generator completed - hit end of instructions
+    is_complete = true
+  elif self.pc < self.cu.instructions.len and self.cu.instructions[self.pc].kind == IkEnd:
+    # IkEnd just executed (PC points to it after it returns)
+    is_complete = true
+  
+  if is_complete:
+    # Generator completed - don't yield the return value
     gen.done = true
     gen.state = GsDone
     result = NOT_FOUND  # Return NOT_FOUND for completed generators
-  elif result == NIL:
-    # Generator returned NIL - check if this is from normal completion
-    # When a generator ends with IkEnd, it returns NIL
-    # We need to mark it as done and return NOT_FOUND
-    gen.done = true
-    gen.state = GsDone  
-    result = NOT_FOUND  # Return NOT_FOUND for completed generators
   else:
-    # Generator yielded a value - state was already saved by IkYield
+    # Generator yielded a value via IkYield
     gen.state = GsRunning
   
   # Restore original VM state
