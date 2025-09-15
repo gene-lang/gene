@@ -503,6 +503,7 @@ type
   Function* = ref object
     async*: bool
     is_generator*: bool  # True for generator functions
+    is_macro_like*: bool  # True for macro-like functions (defined with fn!)
     name*: string
     ns*: Namespace  # the namespace of the module wherein this is defined.
     scope_tracker*: ScopeTracker  # the root scope tracker of the function
@@ -742,6 +743,10 @@ type
     # Fast function call instructions
     IkCallDirect      # Direct function call with known target
     IkTailCall        # Tail call optimization
+
+    # Macro-specific instructions
+    IkCallMacro       # Direct macro call with known target
+    IkNewMacro        # Macro constructor call
 
     IkResolveSymbol
     IkSetMember
@@ -2427,6 +2432,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   let matcher = new_arg_matcher()
   var body_start: int
   var is_generator = false
+  var is_macro_like = false
+
+  # Check if this is a macro-like function (fn!)
+  if node.gene.type == "fn!".to_symbol_value():
+    is_macro_like = true
 
   if node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
@@ -2443,11 +2453,17 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         # Check if function name ends with * (generator function)
         if name.len > 0 and name[^1] == '*':
           is_generator = true
+        # Check if function name ends with ! (macro-like function)
+        if name.len > 0 and name[^1] == '!':
+          is_macro_like = true
       of VkComplexSymbol:
         name = first.ref.csymbol[^1]
         # Check if function name ends with * (generator function)
         if name.len > 0 and name[^1] == '*':
           is_generator = true
+        # Check if function name ends with ! (macro-like function)
+        if name.len > 0 and name[^1] == '!':
+          is_macro_like = true
       else:
         todo($first.kind)
 
@@ -2475,6 +2491,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   result = new_fn(name, matcher, body)
   result.async = is_async
   result.is_generator = is_generator
+  result.is_macro_like = is_macro_like
 
 # compile method is defined in compiler.nim
 
@@ -2990,7 +3007,7 @@ proc `$`*(self: Instruction): string =
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
-      IkCallDirect, IkTailCall:
+      IkCallDirect, IkTailCall, IkCallMacro, IkNewMacro:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
       else:

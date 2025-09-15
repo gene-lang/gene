@@ -1384,7 +1384,7 @@ proc exec*(self: VirtualMachine): Value =
               inst = self.cu.instructions[self.pc].addr
               continue
             
-            # Normal function call
+            # Normal function call (or macro-like function call)
             var scope: Scope
             if f.matcher.is_empty():
               scope = f.parent_scope
@@ -1400,7 +1400,15 @@ proc exec*(self: VirtualMachine): Value =
             r.frame.target = gene_type
             r.frame.scope = scope
             self.frame.replace(r.to_ref_value())
-            self.pc = inst.arg0.int64.int
+            # Enable caller context for macro-like functions
+            if f.is_macro_like:
+              r.frame.caller_context = self.frame
+              # Continue to macro branch (quoted arguments) - next instruction
+              self.pc.inc()
+            else:
+              # Jump to regular function branch (evaluated arguments)
+              # inst.arg0 contains fn_label which is the start of regular function branch
+              self.pc = inst.arg0.int64.int
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -1615,7 +1623,6 @@ proc exec*(self: VirtualMachine): Value =
             g.gene.type = gene_type
             self.frame.push(g)
 
-        {.pop.}
 
       of IkGeneSetType:
         {.push checks: off}
@@ -3070,6 +3077,96 @@ proc exec*(self: VirtualMachine): Value =
           else:
             todo($class.constructor.kind)
 
+      of IkNewMacro:
+        # Macro constructor call - similar to IkNew but with caller context
+        # Stack: [class, args_gene] -> [instance]
+        let args = self.frame.pop()  # Gene containing constructor arguments (unevaluated)
+        let class_val = self.frame.pop()  # Class to instantiate
+
+        # Get the class
+        let class = if class_val.kind == VkClass:
+          class_val.ref.class
+        elif class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
+          # Legacy path for Gene with type set to class
+          class_val.gene.type.ref.class
+        else:
+          raise new_exception(types.Exception, "new! requires a class, got " & $class_val.kind)
+
+        # Check constructor type
+        case class.constructor.kind:
+          of VkNativeFn:
+            # Call native constructor (same as regular)
+            let result = class.constructor.ref.native_fn(self, args)
+            self.frame.push(result)
+
+          of VkFunction:
+            # Macro constructor - function receives unevaluated arguments
+            let instance = new_ref(VkInstance)
+            instance.instance_class = class
+            self.frame.push(instance.to_ref_value())
+
+            class.constructor.ref.fn.compile()
+            let compiled = class.constructor.ref.fn.body_compiled
+            compiled.skip_return = true
+
+            # Create scope for constructor
+            let f = class.constructor.ref.fn
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              # Increment ref_count since the frame will own this reference
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            self.pc.inc()
+            let new_frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+            new_frame.caller_context = self.frame  # Store caller context for macro evaluation
+            self.frame = new_frame
+            self.frame.scope = scope  # Set the scope
+
+            # Pass instance as first argument for constructor
+            let args_gene = new_gene(NIL)
+            args_gene.children.add(instance.to_ref_value())
+            # Add other arguments if present (they remain unevaluated)
+            if args.kind == VkGene:
+              for child in args.gene.children:
+                args_gene.children.add(child)
+            self.frame.args = args_gene.to_gene_value()
+            self.frame.ns = class.constructor.ref.fn.ns
+
+            # Process arguments if matcher exists
+            if not f.matcher.is_empty():
+              # For macro constructors, arguments are passed as unevaluated expressions
+              var constructor_args = new_gene(NIL)
+              if args.kind == VkGene:
+                for child in args.gene.children:
+                  constructor_args.children.add(child)
+              process_args(f.matcher, constructor_args.to_gene_value(), scope)
+
+              # For constructors, set properties on the instance for parameters marked with is_prop
+              for i, param in f.matcher.children:
+                if param.is_prop and i < scope.members.len:
+                  let value = scope.members[i]
+                  if value.kind != VkNil:
+                    # Set the property on the instance
+                    instance.instance_props[param.name_key] = value
+
+            self.cu = compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+          of VkNil:
+            # No constructor - create empty instance (same as regular)
+            let instance = new_ref(VkInstance)
+            instance.instance_class = class
+            self.frame.push(instance.to_ref_value())
+
+          else:
+            todo($class.constructor.kind)
+
       of IkSubClass:
         let name = inst.arg0
         let parent_class = self.frame.pop()
@@ -3412,15 +3509,19 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         let expr = self.frame.pop()
         
-        # We need to be in a macro context to use $caller_eval
-        if self.frame.kind != FkMacro:
-          not_allowed("$caller_eval can only be used within macros")
+        # We need to be in a macro context (or function called as macro) to use $caller_eval
+        # Check current frame first, then check if any parent frame has caller_context
+        var current_frame = self.frame
+        while current_frame != nil:
+          if current_frame.caller_context != nil:
+            break
+          current_frame = current_frame.caller_frame
+
+        if current_frame == nil or current_frame.caller_context == nil:
+          not_allowed("$caller_eval can only be used within macros or macro-like functions")
         
-        # Get the caller's context
-        if self.frame.caller_context == nil:
-          not_allowed("$caller_eval: caller context not available")
-        
-        let caller_frame = self.frame.caller_context
+        # Get the caller's context from the frame that has it
+        let caller_frame = current_frame.caller_context
         
         # The expression might be a quoted symbol like :a
         # We need to evaluate it, not compile the quote itself
@@ -3435,7 +3536,7 @@ proc exec*(self: VirtualMachine): Value =
             # Direct symbol evaluation in caller's context
             let key = expr_to_eval.str.to_key()
             var r = NIL
-            
+
             # First check if it's a local variable in the caller's scope
             if caller_frame.scope != nil and caller_frame.scope.tracker != nil:
               let found = caller_frame.scope.tracker.locate(key)
@@ -3448,7 +3549,7 @@ proc exec*(self: VirtualMachine): Value =
                   scope = scope.parent
                 if found.local_index < scope.members.len:
                   r = scope.members[found.local_index]
-            
+
             if r == NIL:
               # Not a local variable, look in namespaces
               r = caller_frame.ns[key]
@@ -3458,9 +3559,13 @@ proc exec*(self: VirtualMachine): Value =
                   r = App.app.gene_ns.ref.ns[key]
                   if r == NIL:
                     not_allowed("Unknown symbol in caller context: " & expr_to_eval.str)
-            
+
             self.frame.push(r)
-            
+
+          of VkInt, VkFloat, VkString, VkBool, VkNil, VkChar:
+            # For literals, no evaluation needed - just return as-is
+            self.frame.push(expr_to_eval)
+
           else:
             # For complex expressions, compile and execute
             # This will have issues with local variables, but at least handles globals
@@ -3474,6 +3579,10 @@ proc exec*(self: VirtualMachine): Value =
             # Create a new frame that inherits from caller's frame
             let eval_frame = new_frame(caller_frame, Address(cu: saved_cu, pc: saved_pc))
             eval_frame.ns = caller_frame.ns
+            # Copy caller_context so nested $caller_eval calls work
+            # Use the caller_context we found during the traversal
+            if current_frame != nil and current_frame.caller_context != nil:
+              eval_frame.caller_context = current_frame.caller_context
             # Self is now passed as argument, copy args from caller
             eval_frame.args = caller_frame.args
             eval_frame.scope = caller_frame.scope

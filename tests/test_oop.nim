@@ -177,13 +177,63 @@ test_vm """
 #   a/.test
 # """, 1
 
-# Macros in classes
+# Macro-like methods in classes
 # test_vm """
 #   (class A
-#     (.macro test a
+#     (.fn test! [a]
 #       a
 #     )
 #   )
 #   (var b 1)
-#   ((new A) .test b)
+#   ((new A) .test! b)
 # """, new_gene_symbol("b")
+
+# Macro constructor test - constructor receives unevaluated arguments
+test_vm """
+  (class Point
+    (.ctor! [x y]
+      (/x = ($caller_eval x))
+      (/y = ($caller_eval y))
+    )
+    (.fn get_x []
+      /x
+    )
+  )
+  (var a 5)
+  (var p (new! Point a (+ 3 2)))
+  (p .get_x)
+""", 5
+
+# Regular constructor for comparison
+test_vm """
+  (class Point
+    (.ctor [x y]
+      (/x = x)
+      (/y = y)
+    )
+    (.fn get_x []
+      /x
+    )
+  )
+  (var a 5)
+  (var p (new Point a (+ 3 2)))
+  (p .get_x)
+""", 5
+
+# Macro constructor with validation
+test_vm """
+  (class Validator
+    (.ctor! [expr]
+      # We can inspect the unevaluated expression
+      (if (== ($caller_eval expr) 42)
+        (/valid = true)
+        (/valid = false)
+      )
+    )
+    (.fn is_valid []
+      /valid
+    )
+  )
+  (var v (new! Validator (+ 40 2)))
+  (v .is_valid)
+""", true

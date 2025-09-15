@@ -1005,14 +1005,20 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   self.output.instructions.add(Instruction(kind: IkDefineMethod, arg0: name))
 
 proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
-  # Constructor definition: (.ctor args body...) or (.ctor arg body...)
+  # Constructor definition: (.ctor args body...), (.ctor arg body...), (.ctor! args body...)
   if gene.children.len < 2:
     not_allowed("Constructor definition requires at least args and body")
-  
+
+  # Check if this is a macro constructor (.ctor!)
+  let is_macro_ctor = gene.type.kind == VkSymbol and gene.type.str == ".ctor!"
+
   # Create a function from the constructor definition
   # The constructor is similar to (fn new args body...) but bound to the class
   var fn_value = new_gene_value()
-  fn_value.gene.type = "fn".to_symbol_value()
+  if is_macro_ctor:
+    fn_value.gene.type = "fn!".to_symbol_value()  # Create macro-like function
+  else:
+    fn_value.gene.type = "fn".to_symbol_value()
   # Add "new" as the function name
   fn_value.gene.children.add("new".to_symbol_value())
   
@@ -1063,25 +1069,42 @@ proc compile_class(self: Compiler, gene: ptr Gene) =
 proc compile_new(self: Compiler, gene: ptr Gene) =
   if gene.children.len < 1:
     raise new_exception(types.Exception, "new requires at least a class name")
-  
+
+  # Check if this is a macro constructor call (new!)
+  let is_macro_new = gene.type.kind == VkSymbol and gene.type.str == "new!"
+
   # Compile the class (first argument)
   self.compile(gene.children[0])
-  
+
   # Compile the arguments as a Gene
   if gene.children.len > 1:
     # Create a Gene containing all arguments
     self.output.instructions.add(Instruction(kind: IkGeneStart))
-    for i in 1..<gene.children.len:
-      self.compile(gene.children[i])
-      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+
+    if is_macro_new:
+      # For macro constructor, don't evaluate arguments - pass them as quoted
+      self.quote_level.inc()
+      for i in 1..<gene.children.len:
+        self.compile(gene.children[i])
+        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      self.quote_level.dec()
+    else:
+      # For regular constructor, evaluate arguments normally
+      for i in 1..<gene.children.len:
+        self.compile(gene.children[i])
+        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+
     self.output.instructions.add(Instruction(kind: IkGeneEnd))
   else:
     # No arguments - push empty Gene
     self.output.instructions.add(Instruction(kind: IkGeneStart))
     self.output.instructions.add(Instruction(kind: IkGeneEnd))
-  
-  # Emit IkNew instruction
-  self.output.instructions.add(Instruction(kind: IkNew))
+
+  # Emit appropriate instruction based on constructor type
+  if is_macro_new:
+    self.output.instructions.add(Instruction(kind: IkNewMacro))
+  else:
+    self.output.instructions.add(Instruction(kind: IkNew))
 
 proc compile_super(self: Compiler, gene: ptr Gene) =
   # Super: returns the parent class
@@ -1331,7 +1354,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   # echo fmt"compile_gene_unknown: fn_label={fn_label}, end_label={end_label}"
   self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
 
-  # self.output.instructions.add(Instruction(kind: IkGeneStartMacro))
+  # Compile arguments for macro branch (will be passed as quoted/unevaluated)
   self.quote_level.inc()
   for k, v in gene.props:
     self.compile(v)
@@ -1342,10 +1365,11 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
   self.quote_level.dec()
 
-  # self.output.instructions.add(Instruction(kind: IkGeneStartFn, label: fn_label))
   # Only add the Noop if fn_label is different from end_label
   if fn_label != end_label:
     self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
+
+  # Compile arguments for regular function branch (will be evaluated)
   for k, v in gene.props:
     self.compile(v)
     self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
@@ -1755,7 +1779,7 @@ proc compile_gene(self: Compiler, input: Value) =
       of "continue":
         self.compile_continue(gene)
         return
-      of "fn", "fnx", "fnxx":
+      of "fn", "fn!", "fnx", "fnxx":
         self.compile_fn(input)
         return
       of "macro":
@@ -1782,7 +1806,7 @@ proc compile_gene(self: Compiler, input: Value) =
       of "class":
         self.compile_class(gene)
         return
-      of "new":
+      of "new", "new!":
         self.compile_new(gene)
         return
       of "super":
@@ -1821,7 +1845,7 @@ proc compile_gene(self: Compiler, input: Value) =
         # Method definition inside class body
         self.compile_method_definition(gene)
         return
-      of ".ctor":
+      of ".ctor", ".ctor!":
         # Constructor definition inside class body
         self.compile_constructor_definition(gene)
         return
