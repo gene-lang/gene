@@ -1366,8 +1366,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     # Compile the single argument directly onto stack
     self.compile(gene.children[0])
 
-    # Use CallFunctionDirect1 - optimized function call without Gene object creation
-    self.output.instructions.add(Instruction(kind: IkCallFunctionDirect1))
+    # Use CallFunction1 - optimized function call without Gene object creation
+    self.output.instructions.add(Instruction(kind: IkCallFunction1))
     return
 
   if definitely_not_macro:
@@ -2039,16 +2039,6 @@ proc peephole_optimize(self: CompilationUnit) =
     if i + 2 < self.instructions.len:
       let next1 = self.instructions[i + 1]
       let next2 = self.instructions[i + 2]
-      
-      # Pattern: PUSH; CALL; POP -> IkPushCallPop
-      if inst.kind == IkPushValue and next1.kind == IkCallDirect and next2.kind == IkPop:
-        new_instructions.add(Instruction(
-          kind: IkPushCallPop,
-          arg0: inst.arg0,
-          label: inst.label
-        ))
-        i += 3
-        continue
       
       # Pattern: VAR_RESOLVE; ADD; VAR_ASSIGN -> IkAddLocal
       if inst.kind == IkVarResolve and next1.kind == IkAdd and next2.kind == IkVarAssign:

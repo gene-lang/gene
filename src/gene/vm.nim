@@ -555,152 +555,7 @@ proc exec*(self: VirtualMachine): Value =
         # let value = self.frame.current()
         # Find the namespace where the member is defined and assign it there
 
-      of IkCallDirect:
-        {.push checks: off}
-        # Fast direct function call - function is in arg0, args already on stack
-        let target = inst.arg0
-        if target.kind != VkFunction:
-          not_allowed("IkCallDirect requires a function, got " & $target.kind)
-        
-        let f = target.ref.fn
-        
-        # Check if this is a generator function
-        if f.is_generator:
-          # Collect and discard arguments for now (generators will handle them on first .next)
-          let arg_count = inst.arg1.int64.int
-          var args_gene = new_gene(NIL)
-          for i in 0..<arg_count:
-            args_gene.children.insert(self.frame.pop(), 0)
-          
-          # Create generator instance
-          var gen = new_ref(VkGenerator)
-          var genObj: GeneratorObj
-          new(genObj)
-          genObj.function = f
-          genObj.state = GsPending
-          genObj.frame = nil
-          genObj.cu = nil
-          genObj.pc = 0
-          genObj.scope = nil
-          genObj.stack = args_gene.children  # Save args for when generator starts
-          genObj.done = false
-          genObj.has_peeked = false
-          genObj.peeked_value = NIL
-          gen.generator = genObj
-          self.frame.push(gen.to_ref_value())
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
-        
-        # Normal function call
-        if f.body_compiled == nil:
-          f.compile()
-        
-        # Collect arguments from stack (they were pushed in reverse order)
-        let arg_count = inst.arg1.int64.int
-        var args_gene = new_gene(NIL)
-        for i in 0..<arg_count:
-          args_gene.children.insert(self.frame.pop(), 0)
-        
-        # Create new frame
-        var scope: Scope
-        if f.matcher.is_empty():
-          scope = f.parent_scope
-          # Increment ref_count since the frame will own this reference
-          if scope != nil:
-            scope.ref_count.inc()
-        else:
-          scope = new_scope(f.scope_tracker, f.parent_scope)
-        
-        var new_frame = new_frame()
-        new_frame.kind = FkFunction
-        new_frame.target = target
-        new_frame.scope = scope
-        new_frame.args = args_gene.to_gene_value()
-        new_frame.caller_frame = self.frame
-        self.frame.ref_count.inc()
-        new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-        new_frame.ns = f.ns
-        
-        # Process arguments if needed
-        if not f.matcher.is_empty():
-          process_args(f.matcher, new_frame.args, new_frame.scope)
-        
-        # Profile function entry
-        if self.profiling:
-          let func_name = if f.name != "": f.name else: "<anonymous>"
-          self.enter_function(func_name)
-        
-        # Switch to new frame and CU
-        self.frame = new_frame
-        self.cu = f.body_compiled
-        self.pc = 0
-        inst = self.cu.instructions[self.pc].addr
-        continue
-        {.pop}
-
-
-      of IkCallDirect1:
-        {.push checks: off}
-        # Fast direct function call with exactly 1 argument - function and arg on stack
-        # Stack: [function, arg] (arg on top)
-        let arg = self.frame.pop()
-        let target = self.frame.pop()
-
-        if target.kind != VkFunction:
-          not_allowed("IkCallDirect1 requires a function, got " & $target.kind)
-
-        let f = target.ref.fn
-
-        # For generators, not supported in direct call
-        if f.is_generator:
-          not_allowed("IkCallDirect1 does not support generators")
-
-        # Compile function if needed
-        if f.body_compiled == nil:
-          f.compile()
-
-        # Create args gene with single argument
-        var args_gene = new_gene(NIL)
-        args_gene.children.add(arg)
-
-        # Create new frame for function execution
-        var scope: Scope
-        if f.matcher.is_empty():
-          scope = f.parent_scope
-          if scope != nil:
-            scope.ref_count.inc()
-        else:
-          scope = new_scope(f.scope_tracker, f.parent_scope)
-
-        var new_frame = new_frame()
-        new_frame.kind = FkFunction
-        new_frame.target = target
-        new_frame.scope = scope
-        new_frame.args = args_gene.to_gene_value()
-        new_frame.caller_frame = self.frame
-        self.frame.ref_count.inc()
-        new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-        new_frame.ns = f.ns
-
-        # Process arguments if needed
-        if not f.matcher.is_empty():
-          process_args(f.matcher, new_frame.args, new_frame.scope)
-
-        # Profile function entry
-        if self.profiling:
-          let func_name = if f.name != "": f.name else: "<anonymous>"
-          self.enter_function(func_name)
-
-        # Switch to new frame and CU
-        self.frame = new_frame
-        self.cu = f.body_compiled
-        self.pc = 0
-        inst = self.cu.instructions[self.pc].addr
-        continue
-        {.pop}
-
-      of IkCallFunctionDirect1:
+      of IkCallFunction1:
         {.push checks: off}
         # Optimized function call without Gene object creation
         # Stack: [function, arg] (arg on top)
@@ -708,13 +563,13 @@ proc exec*(self: VirtualMachine): Value =
         let target = self.frame.pop()
 
         if target.kind != VkFunction:
-          not_allowed("IkCallFunctionDirect1 requires a function, got " & $target.kind)
+          not_allowed("IkCallFunction1 requires a function, got " & $target.kind)
 
         let f = target.ref.fn
 
         # For generators, not supported in direct call
         if f.is_generator:
-          not_allowed("IkCallFunctionDirect1 does not support generators")
+          not_allowed("IkCallFunction1 does not support generators")
 
         # Compile function if needed
         if f.body_compiled == nil:

@@ -741,9 +741,7 @@ type
     IkGeneEnd
 
     # Fast function call instructions
-    IkCallDirect      # Direct function call with known target
-    IkCallDirect1     # Direct function call with exactly 1 argument
-    IkCallFunctionDirect1  # Optimized function call without Gene object creation
+    IkCallFunction1  # Optimized function call without Gene object creation
     IkTailCall        # Tail call optimization
 
     # Macro-specific instructions
@@ -3017,7 +3015,7 @@ proc `$`*(self: Instruction): string =
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
-      IkCallDirect, IkTailCall, IkCallMacro, IkNewMacro:
+      IkTailCall, IkCallMacro, IkNewMacro:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
       else:
