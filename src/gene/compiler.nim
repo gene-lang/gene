@@ -1565,7 +1565,7 @@ proc compile_gene(self: Compiler, input: Value) =
                 arg1: found.parent_index.int32
               ))
               self.output.instructions.add(Instruction(
-                kind: IkNoop,
+                kind: IkData,
                 arg0: second
               ))
               return
@@ -1599,7 +1599,7 @@ proc compile_gene(self: Compiler, input: Value) =
                 arg1: found.parent_index.int32
               ))
               self.output.instructions.add(Instruction(
-                kind: IkNoop,
+                kind: IkData,
                 arg0: second
               ))
               return
@@ -1634,7 +1634,7 @@ proc compile_gene(self: Compiler, input: Value) =
                 arg1: found.parent_index.int32
               ))
               self.output.instructions.add(Instruction(
-                kind: IkNoop,
+                kind: IkData,
                 arg0: second
               ))
               return
@@ -1669,7 +1669,7 @@ proc compile_gene(self: Compiler, input: Value) =
                 arg1: found.parent_index.int32
               ))
               self.output.instructions.add(Instruction(
-                kind: IkNoop,
+                kind: IkData,
                 arg0: second
               ))
               return
