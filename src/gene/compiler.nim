@@ -36,6 +36,11 @@ proc compile(self: Compiler, input: seq[Value]) =
 proc compile_literal(self: Compiler, input: Value) =
   self.output.instructions.add(Instruction(kind: IkPushValue, arg0: input))
 
+proc compile_unary_not(self: Compiler, operand: Value) {.inline.} =
+  ## Emit bytecode for a logical not.
+  self.compile(operand)
+  self.output.instructions.add(Instruction(kind: IkNot))
+
 # Translate $x to gene/x and $x/y to gene/x/y
 proc translate_symbol(input: Value): Value =
   case input.kind:
@@ -1762,9 +1767,9 @@ proc compile_gene(self: Compiler, input: Value) =
           self.output.instructions.add(Instruction(kind: IkOr))
           return
         of "not":
-          # not is a unary operator, so only compile the first argument
-          self.compile(gene.children[0])
-          self.output.instructions.add(Instruction(kind: IkNot))
+          if gene.children.len != 1:
+            not_allowed("not expects exactly 1 argument")
+          self.compile_unary_not(gene.children[0])
           return
         of "...":
           # Spread operator - compile the argument and emit IkSpread
@@ -1816,8 +1821,7 @@ proc compile_gene(self: Compiler, input: Value) =
       of "not":
         if gene.children.len != 1:
           not_allowed("not expects exactly 1 argument")
-        self.compile(gene.children[0])
-        self.output.instructions.add(Instruction(kind: IkNot))
+        self.compile_unary_not(gene.children[0])
         return
       of "break":
         self.compile_break(gene)

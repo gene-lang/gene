@@ -2,11 +2,12 @@ import tables, strutils, strformat, algorithm
 import times, os
 
 import ./types
-import ./parser
 import ./compiler
+from ./parser import read, read_all
 import ./vm/args
 import ./vm/module
 import ./vm/arithmetic
+import ./vm/generator
 
 when not defined(noExtensions):
   import ./vm/extension
@@ -567,21 +568,7 @@ proc exec*(self: VirtualMachine): Value =
           let f = target.ref.fn
 
           if f.is_generator:
-            var gen = new_ref(VkGenerator)
-            var gen_obj: GeneratorObj
-            new(gen_obj)
-            gen_obj.function = f
-            gen_obj.state = GsPending
-            gen_obj.frame = nil
-            gen_obj.cu = nil
-            gen_obj.pc = 0
-            gen_obj.scope = nil
-            gen_obj.stack = @[arg]
-            gen_obj.done = false
-            gen_obj.has_peeked = false
-            gen_obj.peeked_value = NIL
-            gen.generator = gen_obj
-            self.frame.push(gen.to_ref_value())
+            self.frame.push(new_generator_value(f, @[arg]))
           else:
             if f.body_compiled == nil:
               f.compile()
@@ -1924,21 +1911,8 @@ proc exec*(self: VirtualMachine): Value =
               let f = value.gene.type.ref.fn
               if f.is_generator:
                 # Create generator instance with the arguments from the gene
-                var gen = new_ref(VkGenerator)
-                var genObj: GeneratorObj
-                new(genObj)
-                genObj.function = f
-                genObj.state = GsPending
-                genObj.frame = nil
-                genObj.cu = nil
-                genObj.pc = 0
-                genObj.scope = nil
-                genObj.stack = value.gene.children  # Save arguments
-                genObj.done = false
-                genObj.has_peeked = false
-                genObj.peeked_value = NIL
-                gen.generator = genObj
-                self.frame.replace(gen.to_ref_value())
+                let gen_value = new_generator_value(f, value.gene.children)
+                self.frame.replace(gen_value)
               else:
                 discard
             else:
@@ -4172,7 +4146,6 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
 
 include "./vm/core"
 import "./vm/async"
-import "./vm/generator"
 # Temporarily import http module until extension loading is fixed
 when not defined(noExtensions):
   import "../genex/http"

@@ -1,6 +1,24 @@
 import ../types
 import strformat
 
+proc new_generator_value*(f: Function, args: seq[Value]): Value {.inline.} =
+  ## Helper for constructing generator instances.
+  var gen_ref = new_ref(VkGenerator)
+  var gen_obj: GeneratorObj
+  new(gen_obj)
+  gen_obj.function = f
+  gen_obj.state = GsPending
+  gen_obj.frame = nil
+  gen_obj.cu = nil
+  gen_obj.pc = 0
+  gen_obj.scope = nil
+  gen_obj.stack = args
+  gen_obj.done = false
+  gen_obj.has_peeked = false
+  gen_obj.peeked_value = NIL
+  gen_ref.generator = gen_obj
+  result = gen_ref.to_ref_value()
+
 # Forward declaration
 proc exec_generator*(self: VirtualMachine, gen: GeneratorObj): Value {.gcsafe.}
 
