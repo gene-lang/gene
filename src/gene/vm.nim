@@ -639,6 +639,67 @@ proc exec*(self: VirtualMachine): Value =
         continue
         {.pop}
 
+
+      of IkCallDirect1:
+        {.push checks: off}
+        # Fast direct function call with exactly 1 argument - function and arg on stack
+        # Stack: [function, arg] (arg on top)
+        let arg = self.frame.pop()
+        let target = self.frame.pop()
+
+        if target.kind != VkFunction:
+          not_allowed("IkCallDirect1 requires a function, got " & $target.kind)
+
+        let f = target.ref.fn
+
+        # For generators, not supported in direct call
+        if f.is_generator:
+          not_allowed("IkCallDirect1 does not support generators")
+
+        # Compile function if needed
+        if f.body_compiled == nil:
+          f.compile()
+
+        # Create args gene with single argument
+        var args_gene = new_gene(NIL)
+        args_gene.children.add(arg)
+
+        # Create new frame for function execution
+        var scope: Scope
+        if f.matcher.is_empty():
+          scope = f.parent_scope
+          if scope != nil:
+            scope.ref_count.inc()
+        else:
+          scope = new_scope(f.scope_tracker, f.parent_scope)
+
+        var new_frame = new_frame()
+        new_frame.kind = FkFunction
+        new_frame.target = target
+        new_frame.scope = scope
+        new_frame.args = args_gene.to_gene_value()
+        new_frame.caller_frame = self.frame
+        self.frame.ref_count.inc()
+        new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+        new_frame.ns = f.ns
+
+        # Process arguments if needed
+        if not f.matcher.is_empty():
+          process_args(f.matcher, new_frame.args, new_frame.scope)
+
+        # Profile function entry
+        if self.profiling:
+          let func_name = if f.name != "": f.name else: "<anonymous>"
+          self.enter_function(func_name)
+
+        # Switch to new frame and CU
+        self.frame = new_frame
+        self.cu = f.body_compiled
+        self.pc = 0
+        inst = self.cu.instructions[self.pc].addr
+        continue
+        {.pop}
+
       of IkTailCall:
         {.push checks: off}
         # IkTailCall works like IkGeneEnd but optimizes tail calls to the same function

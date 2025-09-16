@@ -1357,6 +1357,19 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     if not func_name.ends_with("!"):
       definitely_not_macro = true
 
+  # Check if we can optimize to direct function call
+  # Conditions: 1) definitely not macro, 2) exactly one argument
+  if definitely_not_macro and gene.props.len == 0 and gene.children.len == 1:
+    # Optimize single-argument function calls to direct call
+    # Function is already on stack from self.compile(gene.type) above
+
+    # Compile the single argument directly onto stack
+    self.compile(gene.children[0])
+
+    # Use CallDirect1 - function and arg are on stack
+    self.output.instructions.add(Instruction(kind: IkCallDirect1))
+    return
+
   if definitely_not_macro:
     # For functions that are definitely not macros, only compile the regular branch
     # Create a label that points to the next instruction (no actual jump needed)
@@ -2202,6 +2215,7 @@ proc compile*(f: Function) =
   self.end_scope()
   self.output.instructions.add(Instruction(kind: IkEnd))
   self.output.optimize_noops()  # Optimize BEFORE resolving jumps
+  self.output.peephole_optimize()  # Apply peephole optimizations
   self.output.update_jumps()
   f.body_compiled = self.output
   f.body_compiled.matcher = f.matcher

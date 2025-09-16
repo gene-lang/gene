@@ -742,6 +742,7 @@ type
 
     # Fast function call instructions
     IkCallDirect      # Direct function call with known target
+    IkCallDirect1     # Direct function call with exactly 1 argument
     IkTailCall        # Tail call optimization
 
     # Macro-specific instructions
