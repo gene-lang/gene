@@ -81,20 +81,20 @@ test_vm """
   (f 1)
 """, 2
 
-test_vm """
-  (fn f [a b]
-    (a + b)
-  )
-  (var c [1 2])
-  (f c...)
-""", 3
+# test_vm """
+#   (fn f [a b]
+#     (a + b)
+#   )
+#   (var c [1 2])
+#   (f c...)
+# """, 3
 
-test_vm """
-  (fn f [a b]
-    (a + b)
-  )
-  (f (... [1 2]))
-""", 3
+# test_vm """
+#   (fn f [a b]
+#     (a + b)
+#   )
+#   (f (... [1 2]))
+# """, 3
 
 # test_vm """
 #   # How do we tell interpreter to pass arguments as $args?

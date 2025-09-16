@@ -1813,6 +1813,12 @@ proc compile_gene(self: Compiler, input: Value) =
       of "..":
         self.compile_range_operator(gene)
         return
+      of "not":
+        if gene.children.len != 1:
+          not_allowed("not expects exactly 1 argument")
+        self.compile(gene.children[0])
+        self.output.instructions.add(Instruction(kind: IkNot))
+        return
       of "break":
         self.compile_break(gene)
         return

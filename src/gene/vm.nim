@@ -562,56 +562,69 @@ proc exec*(self: VirtualMachine): Value =
         let arg = self.frame.pop()
         let target = self.frame.pop()
 
-        if target.kind != VkFunction:
-          not_allowed("IkCallFunction1 requires a function, got " & $target.kind)
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
 
-        let f = target.ref.fn
-
-        # For generators, not supported in direct call
-        if f.is_generator:
-          not_allowed("IkCallFunction1 does not support generators")
-
-        # Compile function if needed
-        if f.body_compiled == nil:
-          f.compile()
-
-        # Create new frame for function execution - NO Gene object creation
-        var scope: Scope
-        if f.matcher.is_empty():
-          scope = f.parent_scope
-          if scope != nil:
-            scope.ref_count.inc()
-        else:
-          scope = new_scope(f.scope_tracker, f.parent_scope)
-
-        var new_frame = new_frame()
-        new_frame.kind = FkFunction
-        new_frame.target = target
-        new_frame.scope = scope
-        # Store argument directly in scope instead of creating Gene object
-        if not f.matcher.is_empty():
-          # Process single argument directly into scope
-          if scope.members.len == 0:
-            scope.members.add(arg)
+          if f.is_generator:
+            var gen = new_ref(VkGenerator)
+            var gen_obj: GeneratorObj
+            new(gen_obj)
+            gen_obj.function = f
+            gen_obj.state = GsPending
+            gen_obj.frame = nil
+            gen_obj.cu = nil
+            gen_obj.pc = 0
+            gen_obj.scope = nil
+            gen_obj.stack = @[arg]
+            gen_obj.done = false
+            gen_obj.has_peeked = false
+            gen_obj.peeked_value = NIL
+            gen.generator = gen_obj
+            self.frame.push(gen.to_ref_value())
           else:
-            scope.members[0] = arg
-        new_frame.caller_frame = self.frame
-        self.frame.ref_count.inc()
-        new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-        new_frame.ns = f.ns
+            if f.body_compiled == nil:
+              f.compile()
 
-        # Profile function entry
-        if self.profiling:
-          let func_name = if f.name != "": f.name else: "<anonymous>"
-          self.enter_function(func_name)
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
 
-        # Switch to new frame and CU
-        self.frame = new_frame
-        self.cu = f.body_compiled
-        self.pc = 0
-        inst = self.cu.instructions[self.pc].addr
-        continue
-        {.pop}
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+            if not f.matcher.is_empty():
+              if scope.members.len == 0:
+                scope.members.add(arg)
+              else:
+                scope.members[0] = arg
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            if self.profiling:
+              let func_name = if f.name != "": f.name else: "<anonymous>"
+              self.enter_function(func_name)
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+        of VkNativeFn:
+          var args_value = new_gene_value()
+          args_value.gene.children.add(arg)
+          let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+        else:
+          not_allowed("IkCallFunction1 requires a function, got " & $target.kind)
+        {.pop.}
 
       of IkTailCall:
         {.push checks: off}
