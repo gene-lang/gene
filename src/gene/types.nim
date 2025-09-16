@@ -2428,6 +2428,12 @@ proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Functio
   )
 
 proc to_function*(node: Value): Function {.gcsafe.} =
+  if node.kind != VkGene:
+    raise new_exception(Exception, "Expected Gene for function definition, got " & $node.kind)
+
+  if node.gene == nil:
+    raise new_exception(Exception, "Gene pointer is nil")
+
   var name: string
   let matcher = new_arg_matcher()
   var body_start: int
@@ -2435,17 +2441,19 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var is_macro_like = false
 
   # Check if this is a macro-like function (fn!)
-  if node.gene.type == "fn!".to_symbol_value():
+  if node.gene.type != NIL and node.gene.type == "fn!".to_symbol_value():
     is_macro_like = true
 
-  if node.gene.type == "fnx".to_symbol_value():
+  if node.gene.type != NIL and node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"
     body_start = 1
-  elif node.gene.type == "fnxx".to_symbol_value():
+  elif node.gene.type != NIL and node.gene.type == "fnxx".to_symbol_value():
     name = "<unnamed>"
     body_start = 0
   else:
+    if node.gene.children.len == 0:
+      raise new_exception(Exception, "Invalid function definition: expected function name")
     let first = node.gene.children[0]
     case first.kind:
       of VkSymbol, VkString:

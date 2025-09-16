@@ -1348,37 +1348,64 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   #   self.output.instructions.add(Instruction(kind: IkGeneEnd))
   #   return
 
-  let fn_label = new_label()
-  # When there are no children and props, use the same label for both fn and end
-  let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
-  # echo fmt"compile_gene_unknown: fn_label={fn_label}, end_label={end_label}"
-  self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
+  # Check if we can determine at compile time that this is definitely NOT a macro
+  # For now, assume functions with symbol names that don't end with '!' are not macros
+  var definitely_not_macro = false
+  if gene.type.kind == VkSymbol:
+    let func_name = gene.type.str
+    # Built-in functions and functions not ending with '!' are likely not macros
+    if not func_name.ends_with("!"):
+      definitely_not_macro = true
 
-  # Compile arguments for macro branch (will be passed as quoted/unevaluated)
-  self.quote_level.inc()
-  for k, v in gene.props:
-    self.compile(v)
-    self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-  for child in gene.children:
-    self.compile(child)
-    self.output.instructions.add(Instruction(kind: IkGeneAddChild))
-  self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
-  self.quote_level.dec()
+  if definitely_not_macro:
+    # For functions that are definitely not macros, only compile the regular branch
+    # Create a label that points to the next instruction (no actual jump needed)
+    let next_label = new_label()
+    self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: next_label.to_value()))
 
-  # Only add the Noop if fn_label is different from end_label
-  if fn_label != end_label:
-    self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
+    # Mark the next instruction with the label (effectively a no-op)
+    self.output.instructions.add(Instruction(kind: IkNoop, label: next_label))
 
-  # Compile arguments for regular function branch (will be evaluated)
-  for k, v in gene.props:
-    self.compile(v)
-    self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-  for child in gene.children:
-    self.compile(child)
-    self.output.instructions.add(Instruction(kind: IkGeneAddChild))
-  # Use fn_label if they're the same, otherwise use end_label
-  let gene_end_label = if fn_label == end_label: fn_label else: end_label
-  self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
+    # Compile arguments directly (will be evaluated)
+    for k, v in gene.props:
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+    for child in gene.children:
+      self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+    self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos))
+  else:
+    # For functions that might be macros, generate dual branches
+    let fn_label = new_label()
+    # When there are no children and props, use the same label for both fn and end
+    let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
+    self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
+
+    # Compile arguments for macro branch (will be passed as quoted/unevaluated)
+    self.quote_level.inc()
+    for k, v in gene.props:
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+    for child in gene.children:
+      self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+    self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
+    self.quote_level.dec()
+
+    # Only add the Noop if fn_label is different from end_label
+    if fn_label != end_label:
+      self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
+
+    # Compile arguments for regular function branch (will be evaluated)
+    for k, v in gene.props:
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+    for child in gene.children:
+      self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+    # Use fn_label if they're the same, otherwise use end_label
+    let gene_end_label = if fn_label == end_label: fn_label else: end_label
+    self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
   # echo fmt"Added GeneEnd with label {end_label} at position {self.output.instructions.len - 1}"
 
 # TODO: handle special cases:
