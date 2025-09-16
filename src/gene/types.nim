@@ -743,6 +743,7 @@ type
     # Fast function call instructions
     IkCallDirect      # Direct function call with known target
     IkCallDirect1     # Direct function call with exactly 1 argument
+    IkCallFunctionDirect1  # Optimized function call without Gene object creation
     IkTailCall        # Tail call optimization
 
     # Macro-specific instructions

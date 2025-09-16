@@ -1366,8 +1366,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     # Compile the single argument directly onto stack
     self.compile(gene.children[0])
 
-    # Use CallDirect1 - function and arg are on stack
-    self.output.instructions.add(Instruction(kind: IkCallDirect1))
+    # Use CallFunctionDirect1 - optimized function call without Gene object creation
+    self.output.instructions.add(Instruction(kind: IkCallFunctionDirect1))
     return
 
   if definitely_not_macro:
