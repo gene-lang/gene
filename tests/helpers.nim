@@ -79,12 +79,36 @@ proc test2(self: VirtualMachine, args: Value): Value =
   else:
     return 0.to_value()
 
+proc test_increment(self: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+  if args.kind == VkGene and args.gene.children.len > 0:
+    let x = args.gene.children[0].to_int()
+    return (x + 1).to_value()
+  else:
+    return 1.to_value()
+
+proc test_reentry(self: VirtualMachine, args: Value): Value =
+  if args.kind != VkGene or args.gene.children.len < 2:
+    return NIL
+
+  let fn_val = args.gene.children[0]
+  let arg_val = args.gene.children[1]
+
+  if fn_val.kind != VkFunction:
+    not_allowed("test_reentry expects a function as first argument")
+
+  let first = self.exec_function(fn_val, @[arg_val])
+  let second = self.exec_function(fn_val, @[first])
+  return second
+
 proc init_all*() =
   if not initialized:
     init_app_and_vm()
     # Register test functions in gene namespace
     App.app.gene_ns.ns["test1".to_key()] = test1
     App.app.gene_ns.ns["test2".to_key()] = test2
+    App.app.gene_ns.ns["test_increment".to_key()] = test_increment
+    let reentry_fn = cast[NativeFn](test_reentry)
+    App.app.gene_ns.ns["test_reentry".to_key()] = reentry_fn
     initialized = true
 
 proc test_parser*(code: string, result: Value) =
