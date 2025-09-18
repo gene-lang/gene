@@ -1362,6 +1362,11 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     if not func_name.ends_with("!"):
       definitely_not_macro = true
 
+  if definitely_not_macro and gene.props.len == 0 and gene.children.len == 0:
+    # No-argument call can use direct instruction
+    self.output.instructions.add(Instruction(kind: IkCallFunction0))
+    return
+
   # Check if we can optimize to direct function call
   # Conditions: 1) definitely not macro, 2) exactly one argument
   if definitely_not_macro and gene.props.len == 0 and gene.children.len == 1:

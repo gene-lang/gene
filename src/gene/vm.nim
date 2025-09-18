@@ -557,6 +557,111 @@ proc exec*(self: VirtualMachine): Value =
         # let value = self.frame.current()
         # Find the namespace where the member is defined and assign it there
 
+      of IkCallFunction0:
+        {.push checks: off}
+        # Optimized function call without Gene object creation (no arguments)
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, @[]))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+            if not f.matcher.is_empty():
+              new_frame.args = new_gene_value()
+              process_args(f.matcher, new_frame.args, scope)
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            if self.profiling:
+              let func_name = if f.name != "": f.name else: "<anonymous>"
+              self.enter_function(func_name)
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+        of VkInstance:
+          let instance = target.ref
+          let call_key = "call".to_key()
+          if instance.instance_class.methods.hasKey(call_key):
+            let meth = instance.instance_class.methods[call_key]
+            let callable = meth.callable
+            case callable.kind:
+              of VkFunction:
+                let f = callable.ref.fn
+                if f.body_compiled == nil:
+                  f.compile()
+
+                var scope: Scope
+                if f.matcher.is_empty():
+                  scope = f.parent_scope
+                  if scope != nil:
+                    scope.ref_count.inc()
+                else:
+                  scope = new_scope(f.scope_tracker, f.parent_scope)
+
+                var new_frame = new_frame()
+                new_frame.kind = FkFunction
+                new_frame.target = callable
+                new_frame.scope = scope
+                new_frame.current_method = meth
+                let args_gene = new_gene(NIL)
+                args_gene.children.add(target)
+                new_frame.args = args_gene.to_gene_value()
+                if not f.matcher.is_empty():
+                  process_args(f.matcher, new_frame.args, scope)
+                new_frame.caller_frame = self.frame
+                self.frame.ref_count.inc()
+                new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+                new_frame.ns = f.ns
+
+                if self.profiling:
+                  let func_name = if f.name != "": f.name else: "<anonymous>"
+                  self.enter_function(func_name)
+
+                self.frame = new_frame
+                self.cu = f.body_compiled
+                self.pc = 0
+                inst = self.cu.instructions[self.pc].addr
+                continue
+              of VkNativeFn:
+                var args_value = new_gene_value()
+                args_value.gene.children.add(target)
+                let result = callable.ref.native_fn(self, args_value)
+                self.frame.push(result)
+              else:
+                not_allowed("Call method must be a function, got " & $callable.kind)
+          else:
+            not_allowed("Instance is not callable")
+        of VkNativeFn:
+          var args_value = new_gene_value()
+          let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+        else:
+          not_allowed("IkCallFunction0 requires a function, got " & $target.kind)
+        {.pop.}
+
       of IkCallFunction1:
         {.push checks: off}
         # Optimized function call without Gene object creation
