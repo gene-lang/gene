@@ -521,53 +521,24 @@ proc compile_repeat(self: Compiler, gene: ptr Gene) =
   
   # Compile count expression
   self.compile(gene.children[0])
-  
-  # Initialize loop counter to 0
-  self.output.instructions.add(Instruction(kind: IkPushValue, arg0: 0.to_value()))
-  
-  # Don't create a scope for the loop body - let each iteration handle its own scoping
-  
-  # Mark loop start
-  self.output.instructions.add(Instruction(kind: IkLoopStart, label: start_label))
-  
-  # Stack: [count, counter]
-  # Check if counter < count
-  self.output.instructions.add(Instruction(kind: IkDup2))   # [count, counter, count, counter]
-  self.output.instructions.add(Instruction(kind: IkSwap))   # [count, counter, counter, count]
-  self.output.instructions.add(Instruction(kind: IkLt))     # [count, counter, bool]
-  self.output.instructions.add(Instruction(kind: IkJumpIfFalse, arg0: end_label.to_value()))
-  
-  # Compile body - wrap in a scope to isolate each iteration
+
+  # Initialize repeat loop
+  self.output.instructions.add(Instruction(kind: IkRepeatInit, arg0: end_label.to_value()))
+
+  # Mark the start of loop body
+  self.output.instructions.add(Instruction(kind: IkNoop, label: start_label))
+
   if gene.children.len > 1:
-    # Start a new scope for this iteration
     self.start_scope()
-    
     for i in 1..<gene.children.len:
       self.compile(gene.children[i])
-      # Pop the result (we don't need it)
       self.output.instructions.add(Instruction(kind: IkPop))
-    
-    # End the iteration scope
     self.end_scope()
-  
-  # Increment counter: Stack is [count, counter]
-  self.output.instructions.add(Instruction(kind: IkPushValue, arg0: 1.to_value()))  # [count, counter, 1]
-  self.output.instructions.add(Instruction(kind: IkAdd))  # [count, counter+1]
-  
-  # Jump back to condition check
-  self.output.instructions.add(Instruction(kind: IkContinue, arg0: start_label.to_value()))
-  
-  # Mark loop end
-  self.output.instructions.add(Instruction(kind: IkLoopEnd, label: end_label))
-  
-  # Clean up stack (pop counter and count)
-  self.output.instructions.add(Instruction(kind: IkPop))  # Remove counter
-  self.output.instructions.add(Instruction(kind: IkPop))  # Remove count
-  
-  # No scope to end - each iteration handles its own scoping
-  
-  # Push nil as the result
-  self.output.instructions.add(Instruction(kind: IkPushNil))
+
+  self.output.instructions.add(Instruction(kind: IkRepeatDecCheck, arg0: start_label.to_value()))
+
+  # Push nil as the result, mark loop end
+  self.output.instructions.add(Instruction(kind: IkPushNil, label: end_label))
   
   # Pop loop from stack
   discard self.loop_stack.pop()

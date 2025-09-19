@@ -557,6 +557,56 @@ proc exec*(self: VirtualMachine): Value =
         # let value = self.frame.current()
         # Find the namespace where the member is defined and assign it there
 
+      of IkRepeatInit:
+        {.push checks: off}
+        var count_val = self.frame.pop()
+        var remaining: int64
+        case count_val.kind:
+        of VkInt:
+          remaining = count_val.int64
+        of VkFloat:
+          remaining = count_val.float.int64
+        else:
+          if count_val.to_bool:
+            remaining = 1
+          else:
+            remaining = 0
+        if remaining <= 0:
+          self.pc = inst.arg0.int64.int
+          if self.pc < self.cu.instructions.len:
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            break
+        else:
+          self.frame.push(remaining.to_value())
+        {.pop.}
+
+      of IkRepeatDecCheck:
+        {.push checks: off}
+        var remaining_val = self.frame.pop()
+        var remaining: int64
+        case remaining_val.kind:
+        of VkInt:
+          remaining = remaining_val.int64
+        of VkFloat:
+          remaining = remaining_val.float.int64
+        else:
+          if remaining_val.to_bool:
+            remaining = 1
+          else:
+            remaining = 0
+        remaining.dec()
+        if remaining > 0:
+          self.frame.push(remaining.to_value())
+          self.pc = inst.arg0.int64.int
+          if self.pc < self.cu.instructions.len:
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            break
+        {.pop.}
+
       of IkCallFunction0:
         {.push checks: off}
         # Optimized function call without Gene object creation (no arguments)

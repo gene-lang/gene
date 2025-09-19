@@ -740,6 +740,9 @@ type
     IkGeneAddChildValue       # args: literal value
     IkGeneEnd
 
+    IkRepeatInit
+    IkRepeatDecCheck
+
     # Fast function call instructions
     IkCallFunction0  # Optimized zero-argument function call
     IkCallFunction1  # Optimized function call without Gene object creation
