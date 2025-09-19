@@ -41,6 +41,23 @@ proc compile_unary_not(self: Compiler, operand: Value) {.inline.} =
   self.compile(operand)
   self.output.instructions.add(Instruction(kind: IkNot))
 
+proc compileVarOpLiteral(self: Compiler, symbolVal: Value, literal: Value, opKind: InstructionKind): bool =
+  ## Emit optimized instruction when a variable is operated with a literal.
+  if symbolVal.kind != VkSymbol or not literal.is_literal():
+    return false
+
+  let key = symbolVal.str.to_key()
+  let found = self.scope_tracker.locate(key)
+  if found.local_index >= 0:
+    self.output.instructions.add(Instruction(
+      kind: opKind,
+      arg0: found.local_index.to_value(),
+      arg1: found.parent_index.int32
+    ))
+    self.output.instructions.add(Instruction(kind: IkData, arg0: literal))
+    return true
+  false
+
 # Translate $x to gene/x and $x/y to gene/x/y
 proc translate_symbol(input: Value): Value =
   case input.kind:
@@ -1547,24 +1564,8 @@ proc compile_gene(self: Compiler, input: Value) =
           self.compile(gene.children[0])
           return
         elif gene.children.len == 2:
-          # Check for variable + literal optimization
-          let first = gene.children[0]
-          let second = gene.children[1]
-          if first.kind == VkSymbol and second.is_literal():
-            let key = first.str.to_key()
-            let found = self.scope_tracker.locate(key)
-            if found.local_index >= 0:
-              # Generate single VarAddValue instruction
-              self.output.instructions.add(Instruction(
-                kind: IkVarAddValue,
-                arg0: found.local_index.to_value(),
-                arg1: found.parent_index.int32
-              ))
-              self.output.instructions.add(Instruction(
-                kind: IkData,
-                arg0: second
-              ))
-              return
+          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarAddValue):
+            return
           # Fall through to regular compilation
         # Multi-arg addition
         self.compile(gene.children[0])
@@ -1581,24 +1582,8 @@ proc compile_gene(self: Compiler, input: Value) =
           self.output.instructions.add(Instruction(kind: IkNeg))
           return
         elif gene.children.len == 2:
-          # Check for variable - literal optimization
-          let first = gene.children[0]
-          let second = gene.children[1]
-          if first.kind == VkSymbol and second.is_literal():
-            let key = first.str.to_key()
-            let found = self.scope_tracker.locate(key)
-            if found.local_index >= 0:
-              # Generate single VarSubValue instruction
-              self.output.instructions.add(Instruction(
-                kind: IkVarSubValue,
-                arg0: found.local_index.to_value(),
-                arg1: found.parent_index.int32
-              ))
-              self.output.instructions.add(Instruction(
-                kind: IkData,
-                arg0: second
-              ))
-              return
+          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarSubValue):
+            return
           # Fall through to regular compilation
         # Multi-arg subtraction
         self.compile(gene.children[0])
@@ -1616,24 +1601,8 @@ proc compile_gene(self: Compiler, input: Value) =
           self.compile(gene.children[0])
           return
         elif gene.children.len == 2:
-          # Check for variable * literal optimization
-          let first = gene.children[0]
-          let second = gene.children[1]
-          if first.kind == VkSymbol and second.is_literal():
-            let key = first.str.to_key()
-            let found = self.scope_tracker.locate(key)
-            if found.local_index >= 0:
-              # Generate single VarMulValue instruction
-              self.output.instructions.add(Instruction(
-                kind: IkVarMulValue,
-                arg0: found.local_index.to_value(),
-                arg1: found.parent_index.int32
-              ))
-              self.output.instructions.add(Instruction(
-                kind: IkData,
-                arg0: second
-              ))
-              return
+          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarMulValue):
+            return
           # Fall through to regular compilation
         # Multi-arg multiplication
         self.compile(gene.children[0])
@@ -1651,24 +1620,8 @@ proc compile_gene(self: Compiler, input: Value) =
           self.output.instructions.add(Instruction(kind: IkDiv))
           return
         elif gene.children.len == 2:
-          # Check for variable / literal optimization
-          let first = gene.children[0]
-          let second = gene.children[1]
-          if first.kind == VkSymbol and second.is_literal():
-            let key = first.str.to_key()
-            let found = self.scope_tracker.locate(key)
-            if found.local_index >= 0:
-              # Generate single VarDivValue instruction
-              self.output.instructions.add(Instruction(
-                kind: IkVarDivValue,
-                arg0: found.local_index.to_value(),
-                arg1: found.parent_index.int32
-              ))
-              self.output.instructions.add(Instruction(
-                kind: IkData,
-                arg0: second
-              ))
-              return
+          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarDivValue):
+            return
           # Fall through to regular compilation
         # Multi-arg division
         self.compile(gene.children[0])
@@ -1682,17 +1635,8 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("< requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
-          let key = first.str.to_key()
-          let found = self.scope_tracker.locate(key)
-          if found.local_index >= 0:
-            self.output.instructions.add(Instruction(
-              kind: IkVarLtValue,
-              arg0: found.local_index.to_value(),
-              arg1: found.parent_index.int32
-            ))
-            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
-            return
+        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarLtValue):
+          return
         self.compile(first)
         self.compile(second)
         self.output.instructions.add(Instruction(kind: IkLt))
@@ -1703,17 +1647,8 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("<= requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
-          let key = first.str.to_key()
-          let found = self.scope_tracker.locate(key)
-          if found.local_index >= 0:
-            self.output.instructions.add(Instruction(
-              kind: IkVarLeValue,
-              arg0: found.local_index.to_value(),
-              arg1: found.parent_index.int32
-            ))
-            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
-            return
+        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarLeValue):
+          return
         self.compile(first)
         self.compile(second)
         self.output.instructions.add(Instruction(kind: IkLe))
@@ -1724,17 +1659,8 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("> requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
-          let key = first.str.to_key()
-          let found = self.scope_tracker.locate(key)
-          if found.local_index >= 0:
-            self.output.instructions.add(Instruction(
-              kind: IkVarGtValue,
-              arg0: found.local_index.to_value(),
-              arg1: found.parent_index.int32
-            ))
-            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
-            return
+        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarGtValue):
+          return
         self.compile(first)
         self.compile(second)
         self.output.instructions.add(Instruction(kind: IkGt))
@@ -1745,17 +1671,8 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed(">= requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
-          let key = first.str.to_key()
-          let found = self.scope_tracker.locate(key)
-          if found.local_index >= 0:
-            self.output.instructions.add(Instruction(
-              kind: IkVarGeValue,
-              arg0: found.local_index.to_value(),
-              arg1: found.parent_index.int32
-            ))
-            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
-            return
+        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarGeValue):
+          return
         self.compile(first)
         self.compile(second)
         self.output.instructions.add(Instruction(kind: IkGe))
@@ -1766,17 +1683,8 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("== requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
-          let key = first.str.to_key()
-          let found = self.scope_tracker.locate(key)
-          if found.local_index >= 0:
-            self.output.instructions.add(Instruction(
-              kind: IkVarEqValue,
-              arg0: found.local_index.to_value(),
-              arg1: found.parent_index.int32
-            ))
-            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
-            return
+        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarEqValue):
+          return
         self.compile(first)
         self.compile(second)
         self.output.instructions.add(Instruction(kind: IkEq))
