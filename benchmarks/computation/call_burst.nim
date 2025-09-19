@@ -7,7 +7,7 @@ when isMainModule:
   import ../../src/gene/vm
 
   var repeats = 1000
-  var callsPerRepeat = 10
+  var callsPerRepeat = 100
   let args = command_line_params()
   if args.len > 0:
     repeats = parseInt(args[0])
@@ -22,7 +22,7 @@ when isMainModule:
   let callBlock = callList.join("\n")
 
   let code = fmt"""
-    (fn call_once [] NIL)
+    (fn call_once [] nil)
     (repeat {repeats}
 {callBlock})
   """
