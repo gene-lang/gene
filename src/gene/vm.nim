@@ -640,8 +640,8 @@ proc exec*(self: VirtualMachine): Value =
             new_frame.kind = FkFunction
             new_frame.target = target
             new_frame.scope = scope
+            new_frame.args = new_gene_value()
             if not f.matcher.is_empty():
-              new_frame.args = new_gene_value()
               process_args(f.matcher, new_frame.args, scope)
             new_frame.caller_frame = self.frame
             self.frame.ref_count.inc()
@@ -654,9 +654,47 @@ proc exec*(self: VirtualMachine): Value =
 
             self.frame = new_frame
             self.cu = f.body_compiled
+            if f.async:
+              self.exception_handlers.add(ExceptionHandler(
+                catch_pc: -3,
+                finally_pc: -1,
+                frame: self.frame,
+                cu: self.cu,
+                saved_value: NIL,
+                has_saved_value: false,
+                in_finally: false
+              ))
             self.pc = 0
             inst = self.cu.instructions[self.pc].addr
             continue
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.ns = b.ns
+          new_frame.args = new_gene_value()
+          if not b.matcher.is_empty():
+            process_args(b.matcher, new_frame.args, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
         of VkInstance:
           let instance = target.ref
           let call_key = "call".to_key()
@@ -698,6 +736,16 @@ proc exec*(self: VirtualMachine): Value =
 
                 self.frame = new_frame
                 self.cu = f.body_compiled
+                if f.async:
+                  self.exception_handlers.add(ExceptionHandler(
+                    catch_pc: -3,
+                    finally_pc: -1,
+                    frame: self.frame,
+                    cu: self.cu,
+                    saved_value: NIL,
+                    has_saved_value: false,
+                    in_finally: false
+                  ))
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
                 continue
@@ -766,6 +814,36 @@ proc exec*(self: VirtualMachine): Value =
             self.pc = 0
             inst = self.cu.instructions[self.pc].addr
             continue
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.ns = b.ns
+          let args_gene = new_gene(NIL)
+          args_gene.children.add(arg)
+          new_frame.args = args_gene.to_gene_value()
+          if not b.matcher.is_empty():
+            process_args(b.matcher, new_frame.args, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
         of VkInstance:
           let instance = target.ref
           let call_key = "call".to_key()
@@ -3223,10 +3301,20 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(v)
 
       of IkNew:
-        # Stack: [class, args_gene] -> [instance]
-        let args = self.frame.pop()  # Gene containing constructor arguments
-        let class_val = self.frame.pop()  # Class to instantiate
-        
+        # Stack: either [class, args_gene] or just [class]
+        var class_val = self.frame.pop()
+        var args: Value
+        if class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
+          # Legacy path where class is wrapped in a gene; no args provided
+          args = new_gene_value()
+        elif class_val.kind == VkGene:
+          # Top value is the argument gene; grab class next
+          args = class_val
+          class_val = self.frame.pop()
+        else:
+          # No explicit arguments were provided
+          args = new_gene_value()
+
         # Get the class
         let class = if class_val.kind == VkClass:
           class_val.ref.class
@@ -3310,9 +3398,16 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkNewMacro:
         # Macro constructor call - similar to IkNew but with caller context
-        # Stack: [class, args_gene] -> [instance]
-        let args = self.frame.pop()  # Gene containing constructor arguments (unevaluated)
-        let class_val = self.frame.pop()  # Class to instantiate
+        # Stack: either [class, args_gene] or just [class]
+        var class_val = self.frame.pop()
+        var args: Value
+        if class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
+          args = new_gene_value()
+        elif class_val.kind == VkGene:
+          args = class_val
+          class_val = self.frame.pop()
+        else:
+          args = new_gene_value()
 
         # Get the class
         let class = if class_val.kind == VkClass:
@@ -3924,9 +4019,18 @@ proc exec*(self: VirtualMachine): Value =
       of IkCallMethodNoArgs:
         # Method call with no arguments (e.g., obj.name)
         let method_name = inst.arg0.str
+        var top = self.frame.pop()
         var obj: Value
-        self.frame.pop2(obj)
-        
+
+        case top.kind:
+        of VkFunction, VkNativeFn, VkBoundMethod, VkFrame, VkMacro:
+          # Method already resolved, object should be below
+          if self.frame.stack_index == 0:
+            not_allowed("CallMethodNoArgs requires a target object")
+          obj = self.frame.pop()
+        else:
+          obj = top
+
         case obj.kind:
         of VkClass:
           # Handle built-in class properties
@@ -3943,9 +4047,8 @@ proc exec*(self: VirtualMachine): Value =
           else:
             # Look up the method in the instance's class
             let class = obj.ref.instance_class
-            let method_key = method_name.to_key()
-            if class.methods.hasKey(method_key):
-              let meth = class.methods[method_key]
+            let meth = class.get_method(method_name)
+            if meth != nil:
               # For IkCallMethodNoArgs, we should call the method directly
               # not just return a bound method
               case meth.callable.kind:
@@ -3976,6 +4079,8 @@ proc exec*(self: VirtualMachine): Value =
                 let args_gene = new_gene(NIL)
                 args_gene.children.add(obj)
                 self.frame.args = args_gene.to_gene_value()
+                if not f.matcher.is_empty():
+                  process_args(f.matcher, self.frame.args, scope)
                 self.cu = f.body_compiled
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr

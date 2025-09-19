@@ -2,7 +2,7 @@
 
 (class A
   (.fn m []
-    1
+    (print "Hello World!")
   )
 )
 

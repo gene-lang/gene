@@ -3043,7 +3043,12 @@ proc `$`*(self: Instruction): string =
     of IkVarResolveInherited, IkVarAssignInherited:
       result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
     else:
-      if self.label.int > 0:
+      if self.kind == IkCallMethodNoArgs:
+        if self.label.int > 0:
+          result = fmt"{self.label.int32.to_hex()} CallMethod0"
+        else:
+          result = "         CallMethod0"
+      elif self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]}"
       else:
         result = fmt"         {($self.kind)[2..^1]}"

@@ -420,7 +420,9 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
         if is_int:
           self.output.instructions.add(Instruction(kind: IkGetChild, arg0: i))
         elif s.starts_with("."):
-          self.output.instructions.add(Instruction(kind: IkCallMethodNoArgs, arg0: s[1..^1]))
+          let method_value = s[1..^1].to_symbol_value()
+          self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
+          self.output.instructions.add(Instruction(kind: IkCallMethodNoArgs, arg0: method_value))
         else:
           let key = s.to_key()
           self.output.instructions.add(Instruction(kind: IkGetMember, arg0: cast[Value](key)))
@@ -1069,7 +1071,7 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
   # Compile the class (first argument)
   self.compile(gene.children[0])
 
-  # Compile the arguments as a Gene
+  # Compile the arguments as a Gene when necessary
   if gene.children.len > 1:
     # Create a Gene containing all arguments
     self.output.instructions.add(Instruction(kind: IkGeneStart))
@@ -1087,10 +1089,6 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
         self.compile(gene.children[i])
         self.output.instructions.add(Instruction(kind: IkGeneAddChild))
 
-    self.output.instructions.add(Instruction(kind: IkGeneEnd))
-  else:
-    # No arguments - push empty Gene
-    self.output.instructions.add(Instruction(kind: IkGeneStart))
     self.output.instructions.add(Instruction(kind: IkGeneEnd))
 
   # Emit appropriate instruction based on constructor type
@@ -1429,26 +1427,39 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 # self + method_name => bounded_method_object (is composed of self, class, method_object(is composed of name, logic))
 # (bounded_method_object ...arguments)
 proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
-  let start_pos = self.output.instructions.len
+  let initial_pos = self.output.instructions.len
   
   var method_name: string
+  var method_value: Value
   var start_index = 0
   
   if gene.type.kind == VkSymbol and gene.type.str.starts_with("."):
     # (.method_name args...) - self is implicit
     method_name = gene.type.str[1..^1]
+    method_value = method_name.to_symbol_value()
     self.output.instructions.add(Instruction(kind: IkSelf))
-    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_name))
+    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
   else:
     # (obj .method_name args...) - obj is explicit
     self.compile(gene.type)
     let first = gene.children[0]
     method_name = first.str[1..^1]
+    method_value = method_name.to_symbol_value()
     start_index = 1  # Skip the method name when adding arguments
-    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_name))
+    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
+
+  let arg_count = gene.children.len - start_index
+  let has_props = gene.props.len > 0
+  const property_like_methods = ["name", "class", "state", "value"]
+  let is_property_like = method_name in property_like_methods
+
+  if arg_count == 0 and not has_props and not is_property_like:
+    self.output.instructions.add(Instruction(kind: IkCallMethodNoArgs, arg0: method_value))
+    return
 
   # After IkResolveMethod, stack is [object, method] with method on top
   # IkGeneStartDefault will consume method and create frame
+  let start_pos = initial_pos
   let label = new_label()
   self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: label.to_value()))
   
