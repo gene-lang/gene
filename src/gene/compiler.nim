@@ -943,8 +943,8 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
 
 proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   # Method definition: (.fn name args body...) or (.fn name arg body...)
-  if gene.children.len < 3:
-    not_allowed("Method definition requires at least name, args and body")
+  if gene.children.len < 2:
+    not_allowed("Method definition requires at least name and args")
   
   let name = gene.children[0]
   if name.kind != VkSymbol:
@@ -988,10 +988,14 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
     method_args.ref.arr.add(args)
   
   fn_value.gene.children.add(method_args)
-  
+
   # Add the body
-  for i in 2..<gene.children.len:
-    fn_value.gene.children.add(gene.children[i])
+  if gene.children.len == 2:
+    # No body provided - default to nil
+    fn_value.gene.children.add(NIL)
+  else:
+    for i in 2..<gene.children.len:
+      fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
   self.compile_fn(fn_value)
