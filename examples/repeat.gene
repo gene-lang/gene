@@ -1,0 +1,5 @@
+#!/usr/bin/env gene run
+
+(repeat 3
+  (println "Hello World!")
+)

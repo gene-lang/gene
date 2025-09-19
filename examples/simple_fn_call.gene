@@ -1,0 +1,7 @@
+#!/usr/bin/env gene run
+
+(fn hello []
+  (println "Hello World!")
+)
+
+(hello)
