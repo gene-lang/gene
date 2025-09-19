@@ -2863,6 +2863,7 @@ proc exec*(self: VirtualMachine): Value =
           class: class,
         )
         class.methods[name.str.to_key()] = m
+        class.version.inc()
         
         # Set the function's namespace to the class namespace
         fn_value.ref.fn.ns = class.ns
@@ -3546,9 +3547,25 @@ proc exec*(self: VirtualMachine): Value =
         else:
           # Normal method resolution
           let class = v.get_class()
-          let meth = class.get_method(method_name)
-          if meth == nil:
-            not_allowed("Method '" & method_name & "' not found on " & $v.kind)
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            meth = cache.cached_method
+          else:
+            meth = class.get_method(method_name)
+            if meth == nil:
+              not_allowed("Method '" & method_name & "' not found on " & $v.kind)
+            cache.class = class
+            cache.class_version = class.version
+            cache.cached_method = meth
+
           # Push the method callable on top of the object
           self.frame.push(meth.callable)
 

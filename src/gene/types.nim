@@ -487,6 +487,7 @@ type
     # method_missing*: Value
     ns*: Namespace # Class can act like a namespace
     for_singleton*: bool # if it's the class associated with a single object, can not be extended
+    version*: uint64  # Incremented when methods are mutated
 
   Method* = ref object
     class*: Class
@@ -868,6 +869,9 @@ type
     version*: uint64      # Namespace version when cached
     value*: Value         # Cached value
     ns*: Namespace        # Namespace where value was found
+    class*: Class         # Cached class for method lookup
+    class_version*: uint64
+    cached_method*: Method       # Cached method reference
 
   VirtualMachine* = ref object
     cu*: CompilationUnit
@@ -2609,6 +2613,7 @@ proc new_class*(name: string, parent: Class): Class =
     ns: new_namespace(nil, name),
     parent: parent,
     constructor: NIL,
+    version: 0,
   )
 
 proc new_class*(name: string): Class =
@@ -2762,6 +2767,7 @@ proc def_native_method*(self: Class, name: string, f: NativeFn) =
     name: name,
     callable: r.to_ref_value(),
   )
+  self.version.inc()
 
 proc def_native_constructor*(self: Class, f: NativeFn) =
   let r = new_ref(VkNativeFn)
@@ -2786,6 +2792,7 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
     callable: r.to_ref_value(),
     is_macro: true,
   )
+  self.version.inc()
 
 proc add_standard_instance_methods*(class: Class) =
   # Currently no standard methods to add
