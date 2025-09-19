@@ -1,0 +1,10 @@
+#!/usr/bin/env gene run
+
+(class A
+  (.fn m []
+    1
+  )
+)
+
+(var a (new A))
+(a .m)
