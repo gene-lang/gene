@@ -53,21 +53,15 @@
       (for h in self/handlers
          (var result (h req))
          (if result
-            (println result/status req/method req/url)
-            (return result)
+            then (do
+                   (println result/status req/method req/url)
+                   (return result)
+                 )
          )
       )
 
       # No handler responded the request, return 404 Not found.
       (respond 404)
-
-    catch *
-      # `catch` can appear on the top level of fn/method/macro/block.
-      # `_` represents all catchable exceptions.
-      # Log the exception and let it bubble up to be handled by a middleware or the
-      # HTTP server itself.
-      (println ($ex .to_s))
-      (throw $ex)
    )
 )
 
@@ -76,19 +70,18 @@
    (println "hello handler called with req:" req)
    (println "  req/path =" req/path)
    (println "  Comparing with /hello")
-   # Return if path is not "/hello"
    (if (req/path != "/hello")
-      (println "  Path doesn't match /hello, returning nil")
-      (return)
-   )
-   (println "  Path matches /hello!")
-
-   (var params req/params)
-   (if (params .contains "name")
-      # (respond "any string") will create a 200/OK respoonse with the string as body.
-      (respond #"Hello #{params/name}!")
-    else
-      (respond "Hello world!")
+      then (do
+             (println "  Path doesn't match /hello, returning nil")
+             (return)
+           )
+      else (do
+             (println "  Path matches /hello!")
+             (var params req/params)
+             (if (params .contains "name")
+                then (respond #"Hello #{params/name}!")
+                else (respond "Hello world!"))
+           )
    )
 )
 
@@ -98,12 +91,15 @@
    (println "secret handler called")
    (println "  req/path =" req/path)
    (if (req/path != "/secret")
-      (println "  Path doesn't match /secret, returning nil")
-      (return)
+      then (do
+             (println "  Path doesn't match /secret, returning nil")
+             (return)
+           )
+      else (do
+             (println "  Path matches /secret!")
+             (respond "Sssh, do not tell this to anyone!")
+           )
    )
-   (println "  Path matches /secret!")
-
-   (respond "Sssh, do not tell this to anyone!")
 )
 
 # A dummy passcode used for authentication

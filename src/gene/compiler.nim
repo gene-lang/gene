@@ -1361,6 +1361,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     # Built-in functions and functions not ending with '!' are likely not macros
     if not func_name.ends_with("!"):
       definitely_not_macro = true
+    if func_name in ["return", "break", "continue", "throw"]:
+      definitely_not_macro = false
 
   if definitely_not_macro and gene.props.len == 0 and gene.children.len == 0:
     # No-argument call can use direct instruction
