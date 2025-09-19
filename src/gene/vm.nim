@@ -2516,6 +2516,59 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("Cannot compare " & $var_value.kind & " < " & $literal_value.kind)
         {.pop.}
 
+      of IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue:
+        {.push checks: off}
+        let cmp_kind = inst.kind
+        let var_value = if inst.arg1 == 0:
+          self.frame.scope.members[inst.arg0.int64]
+        else:
+          var scope = self.frame.scope
+          for _ in 0..<inst.arg1:
+            scope = scope.parent
+          scope.members[inst.arg0.int64]
+
+        self.pc.inc()
+        let data_inst = self.cu.instructions[self.pc].addr
+        let literal_value = data_inst.arg0
+
+        template compare(opInt, opFloat, desc: untyped) =
+          case var_value.kind:
+            of VkInt:
+              let leftInt = var_value.to_int()
+              case literal_value.kind:
+                of VkInt:
+                  let rightInt = literal_value.to_int()
+                  self.frame.push(opInt(leftInt, rightInt))
+                of VkFloat:
+                  self.frame.push(opFloat(system.float64(leftInt), literal_value.to_float()))
+                else:
+                  not_allowed("Cannot compare " & $var_value.kind & " " & desc & " " & $literal_value.kind)
+            of VkFloat:
+              let leftFloat = var_value.to_float()
+              case literal_value.kind:
+                of VkInt:
+                  self.frame.push(opFloat(leftFloat, system.float64(literal_value.to_int())))
+                of VkFloat:
+                  self.frame.push(opFloat(leftFloat, literal_value.to_float()))
+                else:
+                  not_allowed("Cannot compare " & $var_value.kind & " " & desc & " " & $literal_value.kind)
+            else:
+              not_allowed("Cannot compare " & $var_value.kind & " " & desc & " " & $literal_value.kind)
+
+        case cmp_kind:
+          of IkVarLeValue:
+            compare(lte_int_fast, lte_float_fast, "<=")
+          of IkVarGtValue:
+            compare(gt_int_fast, gt_float_fast, ">")
+          of IkVarGeValue:
+            compare(gte_int_fast, gte_float_fast, ">=")
+          of IkVarEqValue:
+            compare(eq_int_fast, eq_float_fast, "==")
+          else:
+            discard
+        inst = data_inst
+        {.pop.}
+
       of IkLtValue:
         var first: Value
         self.frame.pop2(first)

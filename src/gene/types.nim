@@ -785,6 +785,10 @@ type
     IkReturnTrue       # Common pattern: return true
     IkReturnFalse      # Common pattern: return false
     IkResume
+    IkVarLeValue
+    IkVarGtValue
+    IkVarGeValue
+    IkVarEqValue
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object
@@ -3013,7 +3017,7 @@ proc `$`*(self: Instruction): string =
       IkVar, IkVarResolve, IkVarAssign,
       IkAddValue, IkVarAddValue, IkVarSubValue, IkVarMulValue, IkVarDivValue,
       IkIncVar, IkDecVar,
-      IkLtValue, IkVarLtValue,
+      IkLtValue, IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue,
       IkMapSetProp, IkMapSetPropValue,
       IkArrayAddChildValue,
       IkResolveSymbol, IkResolveMethod,

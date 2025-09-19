@@ -1680,40 +1680,105 @@ proc compile_gene(self: Compiler, input: Value) =
         # Binary less than
         if gene.children.len != 2:
           not_allowed("< requires exactly 2 arguments")
-        self.compile(gene.children[0])
-        self.compile(gene.children[1])
+        let first = gene.children[0]
+        let second = gene.children[1]
+        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
+          let key = first.str.to_key()
+          let found = self.scope_tracker.locate(key)
+          if found.local_index >= 0:
+            self.output.instructions.add(Instruction(
+              kind: IkVarLtValue,
+              arg0: found.local_index.to_value(),
+              arg1: found.parent_index.int32
+            ))
+            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
+            return
+        self.compile(first)
+        self.compile(second)
         self.output.instructions.add(Instruction(kind: IkLt))
         return
       of "<=":
         # Binary less than or equal
         if gene.children.len != 2:
           not_allowed("<= requires exactly 2 arguments")
-        self.compile(gene.children[0])
-        self.compile(gene.children[1])
+        let first = gene.children[0]
+        let second = gene.children[1]
+        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
+          let key = first.str.to_key()
+          let found = self.scope_tracker.locate(key)
+          if found.local_index >= 0:
+            self.output.instructions.add(Instruction(
+              kind: IkVarLeValue,
+              arg0: found.local_index.to_value(),
+              arg1: found.parent_index.int32
+            ))
+            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
+            return
+        self.compile(first)
+        self.compile(second)
         self.output.instructions.add(Instruction(kind: IkLe))
         return
       of ">":
         # Binary greater than
         if gene.children.len != 2:
           not_allowed("> requires exactly 2 arguments")
-        self.compile(gene.children[0])
-        self.compile(gene.children[1])
+        let first = gene.children[0]
+        let second = gene.children[1]
+        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
+          let key = first.str.to_key()
+          let found = self.scope_tracker.locate(key)
+          if found.local_index >= 0:
+            self.output.instructions.add(Instruction(
+              kind: IkVarGtValue,
+              arg0: found.local_index.to_value(),
+              arg1: found.parent_index.int32
+            ))
+            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
+            return
+        self.compile(first)
+        self.compile(second)
         self.output.instructions.add(Instruction(kind: IkGt))
         return
       of ">=":
         # Binary greater than or equal
         if gene.children.len != 2:
           not_allowed(">= requires exactly 2 arguments")
-        self.compile(gene.children[0])
-        self.compile(gene.children[1])
+        let first = gene.children[0]
+        let second = gene.children[1]
+        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
+          let key = first.str.to_key()
+          let found = self.scope_tracker.locate(key)
+          if found.local_index >= 0:
+            self.output.instructions.add(Instruction(
+              kind: IkVarGeValue,
+              arg0: found.local_index.to_value(),
+              arg1: found.parent_index.int32
+            ))
+            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
+            return
+        self.compile(first)
+        self.compile(second)
         self.output.instructions.add(Instruction(kind: IkGe))
         return
       of "==":
         # Binary equality
         if gene.children.len != 2:
           not_allowed("== requires exactly 2 arguments")
-        self.compile(gene.children[0])
-        self.compile(gene.children[1])
+        let first = gene.children[0]
+        let second = gene.children[1]
+        if first.kind == VkSymbol and second.kind in {VkInt, VkFloat}:
+          let key = first.str.to_key()
+          let found = self.scope_tracker.locate(key)
+          if found.local_index >= 0:
+            self.output.instructions.add(Instruction(
+              kind: IkVarEqValue,
+              arg0: found.local_index.to_value(),
+              arg1: found.parent_index.int32
+            ))
+            self.output.instructions.add(Instruction(kind: IkData, arg0: second))
+            return
+        self.compile(first)
+        self.compile(second)
         self.output.instructions.add(Instruction(kind: IkEq))
         return
       of "!=":
