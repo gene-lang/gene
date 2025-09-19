@@ -571,6 +571,9 @@ proc exec*(self: VirtualMachine): Value =
             remaining = 1
           else:
             remaining = 0
+        when not defined(release):
+          if self.trace:
+            echo "IkRepeatInit remaining=", remaining
         if remaining <= 0:
           self.pc = inst.arg0.int64.int
           if self.pc < self.cu.instructions.len:
@@ -597,6 +600,9 @@ proc exec*(self: VirtualMachine): Value =
           else:
             remaining = 0
         remaining.dec()
+        when not defined(release):
+          if self.trace:
+            echo "IkRepeatDecCheck remaining=", remaining
         if remaining > 0:
           self.frame.push(remaining.to_value())
           self.pc = inst.arg0.int64.int

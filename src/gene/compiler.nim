@@ -1978,7 +1978,7 @@ proc update_jumps(self: CompilationUnit) =
   for i in 0..<self.instructions.len:
     let inst = self.instructions[i]
     case inst.kind
-      of IkJump, IkJumpIfFalse, IkContinue, IkBreak, IkGeneStartDefault:
+      of IkJump, IkJumpIfFalse, IkContinue, IkBreak, IkGeneStartDefault, IkRepeatInit, IkRepeatDecCheck:
         # Special case: -1 means no loop (for break/continue outside loops)
         if inst.kind in {IkBreak, IkContinue} and inst.arg0.int64 == -1:
           # Keep -1 as is for runtime checking
