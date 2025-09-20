@@ -58,7 +58,7 @@ Gene uses S-expression syntax similar to Lisp/Clojure:
 
 2. **Exception Handling**: Use `catch *` with `$ex` to access exception. Using `catch e` crashes on macOS.
 
-3. **String Methods**: Implemented in `vm/core.nim` as native functions. Must handle in `IkCallMethod0` for VkString case.
+3. **String Methods**: Implemented in `vm/core.nim` as native functions. Must handle in `IkCallMethod1` for VkString case.
 
 ### VM Instructions
 Located in `types.nim` starting around line 600:
@@ -69,7 +69,7 @@ Located in `types.nim` starting around line 600:
 - Async: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`
 
 ### Method Dispatch
-Methods are resolved in `vm.nim` `IkCallMethod0`:
+Methods are resolved in `vm.nim` `IkCallMethod1`:
 - VkInstance: Look up in class methods table
 - VkString: Use App.app.string_class methods
 - VkFuture: Use App.app.future_class methods
@@ -134,7 +134,7 @@ nim c -d:release src/gene.nim      # Direct compilation
 **Adding a method to a class:**
 1. Define native function proc
 2. Use `add_method(class, "name", proc)` in init
-3. Handle in IkCallMethod0 for the type
+3. Handle in IkCallMethod1 for the type
 
 ## Important Files
 

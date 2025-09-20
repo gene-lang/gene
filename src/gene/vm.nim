@@ -4000,7 +4000,7 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("Cannot await a pending future in pseudo-async mode")
         {.pop.}
       
-      of IkCallMethod0:
+      of IkCallMethod1:
         # Method call with no arguments (e.g., (obj .name))
         let method_name = inst.arg0.str
         var top = self.frame.pop()
@@ -4010,7 +4010,7 @@ proc exec*(self: VirtualMachine): Value =
         of VkFunction, VkNativeFn, VkBoundMethod, VkFrame, VkMacro:
           # Method already resolved, object should be below
           if self.frame.stack_index == 0:
-            not_allowed("CallMethod0 requires a target object")
+            not_allowed("CallMethod1 requires a target object")
           obj = self.frame.pop()
         else:
           obj = top
@@ -4033,7 +4033,7 @@ proc exec*(self: VirtualMachine): Value =
             let class = obj.ref.instance_class
             let meth = class.get_method(method_name)
             if meth != nil:
-              # For IkCallMethod0, we should call the method directly
+              # For IkCallMethod1, we should call the method directly
               # not just return a bound method
               case meth.callable.kind:
               of VkFunction:

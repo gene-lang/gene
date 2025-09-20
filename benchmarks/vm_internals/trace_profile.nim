@@ -62,7 +62,7 @@ when isMainModule:
     case inst.kind
     of IkFunction:
       echo fmt"  Function definition at {i}"
-    of IkCallInit, IkCallMethod, IkCallMethod0:
+    of IkCallInit, IkCallMethod, IkCallMethod1:
       call_count += 1
       has_recursive_call = true
       echo fmt"  Function call at {i}: {inst.kind}"

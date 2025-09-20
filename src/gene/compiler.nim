@@ -422,7 +422,7 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
         elif s.starts_with("."):
           let method_value = s[1..^1].to_symbol_value()
           self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
-          self.output.instructions.add(Instruction(kind: IkCallMethod0, arg0: method_value))
+          self.output.instructions.add(Instruction(kind: IkCallMethod1, arg0: method_value))
         else:
           let key = s.to_key()
           self.output.instructions.add(Instruction(kind: IkGetMember, arg0: cast[Value](key)))
@@ -1460,7 +1460,7 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   let is_property_like = method_name in property_like_methods
 
   if arg_count == 0 and not has_props and not is_property_like:
-    self.output.instructions.add(Instruction(kind: IkCallMethod0, arg0: method_value))
+    self.output.instructions.add(Instruction(kind: IkCallMethod1, arg0: method_value))
     return
 
   # After IkResolveMethod, stack is [object, method] with method on top

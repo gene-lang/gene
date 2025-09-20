@@ -130,7 +130,7 @@ proc formatInstruction(inst: Instruction, index: int, format: string, show_addre
        IkResolveSymbol, IkJump, IkJumpIfFalse, IkContinue, IkBreak,
        IkGeneStartDefault, IkSubValue, IkAddValue, IkLtValue, IkFunction,
        IkMacro, IkBlock, IkCompileFn, IkNamespace, IkNamespaceStore,
-       IkClass, IkSubClass, IkDefineMethod, IkResolveMethod, IkCallMethod0,
+       IkClass, IkSubClass, IkDefineMethod, IkResolveMethod, IkCallMethod1,
        IkCallMethod, IkAssign, IkData:
       result &= " " & $inst.arg0
     of IkSetMember, IkGetMember:
@@ -255,7 +255,7 @@ proc formatInstruction(inst: Instruction, index: int, format: string, show_addre
         result &= inst.arg0.str
       else:
         result &= formatValue(inst.arg0)
-    of IkCallMethod0:
+    of IkCallMethod1:
       if inst.arg0.kind == VkSymbol:
         result &= "." & inst.arg0.str & "()"
       else:
