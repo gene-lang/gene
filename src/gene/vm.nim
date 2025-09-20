@@ -4174,7 +4174,145 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("Array class not initialized")
         else:
           todo($obj.kind & " method: " & method_name)
-      
+
+      of IkCallMethod:
+        # Method call with arguments (e.g., (obj .method arg1 arg2))
+        let method_name = inst.arg0.str
+        let arg_count = inst.arg1  # Total argument count including self
+
+        # Pop all arguments from stack (they are on top)
+        var args = newSeq[Value](arg_count - 1)
+        for i in countdown(arg_count - 2, 0):
+          args[i] = self.frame.pop()
+
+        # Pop the object (self)
+        let obj = self.frame.pop()
+
+        case obj.kind:
+        of VkInstance:
+          # Look up the method in the instance's class
+          let class = obj.ref.instance_class
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              # Call the method with arguments
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              # Create a new frame for the method call
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              self.pc.inc()
+              self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+              self.frame.kind = FkFunction
+              self.frame.target = meth.callable
+              self.frame.scope = scope
+              self.frame.current_method = meth
+              self.frame.ns = f.ns
+
+              # Create args gene with obj as first argument followed by other args
+              var args_value = new_gene_value()
+              args_value.gene.children.add(obj)
+              for arg in args:
+                args_value.gene.children.add(arg)
+              self.frame.args = args_value
+
+              # Process arguments with matcher if exists
+              if not f.matcher.is_empty():
+                process_args(f.matcher, self.frame.args, scope)
+
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Call native method with arguments
+              var args_gene = new_gene()
+              args_gene.children.add(obj)
+              for arg in args:
+                args_gene.children.add(arg)
+              let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+              self.frame.push(result)
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+
+        of VkString:
+          # Handle string methods
+          let string_class = App.app.string_class.ref.class
+          let method_key = method_name.to_key()
+          if string_class.methods.hasKey(method_key):
+            let meth = string_class.methods[method_key]
+            case meth.callable.kind:
+            of VkNativeFn:
+              var args_gene = new_gene()
+              args_gene.children.add(obj)
+              for arg in args:
+                args_gene.children.add(arg)
+              let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+              self.frame.push(result)
+            else:
+              not_allowed("String method must be a native function")
+          else:
+            not_allowed("Method " & method_name & " not found on string")
+
+        of VkFuture:
+          # Handle future methods
+          if App.app.future_class.kind == VkClass:
+            let future_class = App.app.future_class.ref.class
+            let method_key = method_name.to_key()
+            if future_class.methods.hasKey(method_key):
+              let meth = future_class.methods[method_key]
+              case meth.callable.kind:
+              of VkNativeFn:
+                var args_gene = new_gene()
+                args_gene.children.add(obj)
+                for arg in args:
+                  args_gene.children.add(arg)
+                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                self.frame.push(result)
+              else:
+                not_allowed("Future method must be a native function")
+            else:
+              not_allowed("Method " & method_name & " not found on future")
+          else:
+            not_allowed("Future class not initialized")
+
+        of VkArray:
+          # Handle array methods
+          if App.app.array_class.kind == VkClass:
+            let array_class = App.app.array_class.ref.class
+            let method_key = method_name.to_key()
+            if array_class.methods.hasKey(method_key):
+              let meth = array_class.methods[method_key]
+              case meth.callable.kind:
+              of VkNativeFn:
+                var args_gene = new_gene()
+                args_gene.children.add(obj)
+                for arg in args:
+                  args_gene.children.add(arg)
+                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                self.frame.push(result)
+              else:
+                not_allowed("Array method must be a native function")
+            else:
+              not_allowed("Method " & method_name & " not found on array")
+          else:
+            not_allowed("Array class not initialized")
+
+        else:
+          todo($obj.kind & " method: " & method_name)
+
       # Superinstructions for performance
       of IkPushCallPop:
         # Combined PUSH; CALL; POP for void function calls

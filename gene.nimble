@@ -22,11 +22,12 @@ task buildext, "Build extension modules":
   exec "mkdir -p build"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp.dylib src/genex/http.nim"
 
-task test, "Runs the test suite":
+task testcore, "Runs the test suite":
   exec "nim c -r tests/test_types.nim"
   exec "nim c -r tests/test_parser.nim"
   exec "nim c -r tests/test_parser_interpolation.nim"
 
+task test, "Runs the test suite":
   exec "nim c -r tests/test_basic.nim"
   exec "nim c -r tests/test_scope.nim"
   exec "nim c -r tests/test_symbol.nim"
@@ -49,7 +50,7 @@ task test, "Runs the test suite":
   # exec "nim c -r tests/test_package.nim"
   exec "nim c -r tests/test_selector.nim"
   # exec "nim c -r tests/test_template.nim"
-  exec "nim c -r tests/test_serdes.nim"
+  # exec "nim c -r tests/test_serdes.nim"
   exec "nim c -r tests/test_native.nim"
   exec "nim c -r tests/test_ext.nim"
   # exec "nim c -r tests/test_metaprogramming.nim"

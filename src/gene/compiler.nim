@@ -1433,18 +1433,15 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 # self + method_name => bounded_method_object (is composed of self, class, method_object(is composed of name, logic))
 # (bounded_method_object ...arguments)
 proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
-  let initial_pos = self.output.instructions.len
-  
   var method_name: string
   var method_value: Value
   var start_index = 0
-  
+
   if gene.type.kind == VkSymbol and gene.type.str.starts_with("."):
     # (.method_name args...) - self is implicit
     method_name = gene.type.str[1..^1]
     method_value = method_name.to_symbol_value()
     self.output.instructions.add(Instruction(kind: IkSelf))
-    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
   else:
     # (obj .method_name args...) - obj is explicit
     self.compile(gene.type)
@@ -1452,41 +1449,53 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     method_name = first.str[1..^1]
     method_value = method_name.to_symbol_value()
     start_index = 1  # Skip the method name when adding arguments
-    self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
 
   let arg_count = gene.children.len - start_index
-  let has_props = gene.props.len > 0
-  const property_like_methods = ["name", "class", "state", "value"]
-  let is_property_like = method_name in property_like_methods
 
-  if arg_count == 0 and not has_props and not is_property_like:
-    self.output.instructions.add(Instruction(kind: IkCallMethod1, arg0: method_value))
+  if gene.props.len == 0:
+    # Fast path: positional arguments only
+    # Compile arguments - they'll be on stack after object
+    for i in start_index..<gene.children.len:
+      self.compile(gene.children[i])
+
+    # Use IkCallMethod1 for no args, IkCallMethod for with args
+    if arg_count == 0:
+      self.output.instructions.add(Instruction(kind: IkCallMethod1, arg0: method_value))
+    else:
+      let total_args = arg_count + 1  # include self
+      self.output.instructions.add(
+        Instruction(
+          kind: IkCallMethod,
+          arg0: method_value,
+          arg1: total_args.int32,
+        )
+      )
     return
 
-  # After IkResolveMethod, stack is [object, method] with method on top
-  # IkGeneStartDefault will consume method and create frame
+  # Fallback path for named properties or other complex invocations
+  let initial_pos = self.output.instructions.len
   let start_pos = initial_pos
   let label = new_label()
   self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: label.to_value()))
-  
+
   # Skip the macro path - jump directly to function call
   self.output.instructions.add(Instruction(kind: IkJump, arg0: label.to_value()))
-  
+
   # Function call path
   self.output.instructions.add(Instruction(kind: IkNoop, label: label))
-  
+
   # After IkGeneStartDefault replaces method with frame, stack is [object, frame]
   # We need to swap to get [frame, object] for IkGeneAddChild
   self.output.instructions.add(Instruction(kind: IkSwap))
-  
+
   # Now add the object as the first argument
   self.output.instructions.add(Instruction(kind: IkGeneAddChild))
-  
+
   # Add properties if any
   for k, v in gene.props:
     self.compile(v)
     self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-    
+
   # Add remaining arguments (skip method name if it's in children)
   for i in start_index..<gene.children.len:
     self.compile(gene.children[i])
