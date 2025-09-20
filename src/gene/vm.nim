@@ -4029,60 +4029,68 @@ proc exec*(self: VirtualMachine): Value =
             r.class = obj.ref.instance_class
             self.frame.push(r.to_ref_value())
           else:
-            # Look up the method in the instance's class
+            # OPTIMIZATION: Use inline cache for method lookup
             let class = obj.ref.instance_class
-            let meth = class.get_method(method_name)
+            var cache: ptr InlineCache
+            if self.pc < self.cu.inline_caches.len:
+              cache = self.cu.inline_caches[self.pc].addr
+            else:
+              while self.cu.inline_caches.len <= self.pc:
+                self.cu.inline_caches.add(InlineCache())
+              cache = self.cu.inline_caches[self.pc].addr
+
+            var meth: Method
+            if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+              # CACHE HIT: Use cached method
+              meth = cache.cached_method
+            else:
+              # CACHE MISS: Look up method and cache it
+              meth = class.get_method(method_name)
+              if meth != nil:
+                cache.class = class
+                cache.class_version = class.version
+                cache.cached_method = meth
+
             if meth != nil:
               # For IkCallMethod1, we should call the method directly
               # not just return a bound method
               case meth.callable.kind:
               of VkFunction:
-                # Call the method directly with obj as self
+                # OPTIMIZED: Follow IkCallFunction0 pattern for zero-arg method calls
                 let f = meth.callable.ref.fn
                 if f.body_compiled == nil:
                   f.compile()
-                
-                # Create a new frame for the method call
+
+                # Use exact same scope optimization as IkCallFunction0
                 var scope: Scope
                 if f.matcher.is_empty():
+                  # FAST PATH: Reuse parent scope directly (like IkCallFunction0)
                   scope = f.parent_scope
-                  # Increment ref_count since the frame will own this reference
                   if scope != nil:
                     scope.ref_count.inc()
                 else:
+                  # SLOW PATH: Create new w sco and manually setet self
                   scope = new_scope(f.scope_tracker, f.parent_scope)
-                
-                self.pc.inc()
-                self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
-                self.frame.kind = FkFunction
-                self.frame.target = meth.callable
-                self.frame.scope = scope
-                self.frame.current_method = meth
-                self.frame.ns = f.ns
-                # Pass obj as self (first argument)
-                let matcher = f.matcher
-                var args_value: Value
-                if matcher.children.len == 1 and not matcher.children[0].is_splat:
-                  args_value = new_gene_value()
-                  args_value.gene.children.add(obj)
-                  self.frame.args = args_value
-                  let param = matcher.children[0]
-                  if param.kind == MatchData:
-                    let self_idx = if f.scope_tracker.mappings.has_key(param.name_key): f.scope_tracker.mappings[param.name_key] else: -1
-                    if self_idx >= 0:
-                      while scope.members.len <= self_idx:
-                        scope.members.add(NIL)
-                      scope.members[self_idx] = obj
-                    else:
-                      process_args(matcher, self.frame.args, scope)
-                  else:
-                    process_args(matcher, self.frame.args, scope)
-                else:
-                  args_value = new_gene_value()
-                  args_value.gene.children.add(obj)
-                  self.frame.args = args_value
-                  if not matcher.is_empty():
-                    process_args(matcher, self.frame.args, scope)
+                  # Manual argument matching: set self in scope without Gene objects
+                  if f.scope_tracker.mappings.len > 0 and f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
+
+                # Use exact same lightweight frame creation as IkCallFunction0
+                var new_frame = new_frame()
+                new_frame.kind = FkFunction
+                new_frame.target = meth.callable
+                new_frame.scope = scope
+                new_frame.current_method = meth
+
+                 #new_frame.caller_frame = self.frame
+                self.frame.ref_count.inc()
+                new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+                new_frame.ns = f.ns
+
+                self.frame = new_frame
                 self.cu = f.body_compiled
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
@@ -4092,19 +4100,40 @@ proc exec*(self: VirtualMachine): Value =
             else:
               not_allowed("Method " & method_name & " not found on instance")
         of VkString:
-          # Handle string methods
+          # OPTIMIZATION: Use inline cache for string method lookup
           let string_class = App.app.string_class.ref.class
           let method_key = method_name.to_key()
-          if string_class.methods.hasKey(method_key):
-            let meth = string_class.methods[method_key]
+
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == string_class and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            if string_class.methods.hasKey(method_key):
+              meth = string_class.methods[method_key]
+              cache.class = string_class
+              cache.cached_method = meth
+            else:
+              meth = nil
+
+          if meth != nil:
             # Call the native method directly
             case meth.callable.kind:
             of VkNativeFn:
               # Create a gene with the string as the first argument
               var args_gene = new_gene()
               args_gene.children.add(obj)  # Add self (the string) as first argument
-              let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
-              self.frame.push(result)
+              let method_result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+              self.frame.push(method_result)
             else:
               not_allowed("String method must be a native function")
           else:
@@ -4196,12 +4225,12 @@ proc exec*(self: VirtualMachine): Value =
           if meth != nil:
             case meth.callable.kind:
             of VkFunction:
-              # Call the method with arguments
+              # OPTIMIZED: Follow IkCallFunction1 pattern for method calls with arguments
               let f = meth.callable.ref.fn
               if f.body_compiled == nil:
                 f.compile()
 
-              # Create a new frame for the method call
+              # Use lightweight frame creation like IkCallFunction1
               var scope: Scope
               if f.matcher.is_empty():
                 scope = f.parent_scope
@@ -4209,26 +4238,49 @@ proc exec*(self: VirtualMachine): Value =
                   scope.ref_count.inc()
               else:
                 scope = new_scope(f.scope_tracker, f.parent_scope)
+                # CRITICAL OPTIMIZATION: Manual argument matching from caller's stack
+                # Directly set arguments in scope without Gene object creation
+                if f.scope_tracker.mappings.len > 0:
+                  # Set self parameter if it exists
+                  if f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
 
-              self.pc.inc()
-              self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
-              self.frame.kind = FkFunction
-              self.frame.target = meth.callable
-              self.frame.scope = scope
-              self.frame.current_method = meth
-              self.frame.ns = f.ns
+                  # Set other parameters directly from args array
+                  var arg_idx = 0
+                  for param_name, param_idx in f.scope_tracker.mappings:
+                    if param_name != "self".to_key() and arg_idx < args.len:
+                      while scope.members.len <= param_idx:
+                        scope.members.add(NIL)
+                      scope.members[param_idx] = args[arg_idx]
+                      arg_idx.inc()
 
-              # Create args gene with obj as first argument followed by other args
-              var args_value = new_gene_value()
-              args_value.gene.children.add(obj)
-              for arg in args:
-                args_value.gene.children.add(arg)
-              self.frame.args = args_value
+              # Use lightweight frame creation like IkCallFunction1
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
 
-              # Process arguments with matcher if exists
-              if not f.matcher.is_empty():
-                process_args(f.matcher, self.frame.args, scope)
+              # CRITICAL: Skip Gene object creation entirely for simple cases
+              # Only create args structure if matcher requires it
+              if f.matcher.is_empty():
+                # For empty matchers, NO args needed at all - process_args() is never called
+                new_frame.args = NIL
+              else:
+                # For non-empty matchers, create minimal args but skip process_args()
+                new_frame.args = new_gene_value()
+                new_frame.args.gene.children.add(obj)
+                for arg in args:
+                  new_frame.args.gene.children.add(arg)
 
+              self.frame = new_frame
               self.cu = f.body_compiled
               self.pc = 0
               inst = self.cu.instructions[self.pc].addr
