@@ -716,7 +716,7 @@ type
     IkNew
     IkResolveMethod
     IkCallMethod
-    IkCallMethodNoArgs
+    IkCallMethod0
     IkCallInit
     IkDefineMethod      # Define a method on a class
     IkDefineConstructor # Define a constructor on a class
@@ -3049,13 +3049,13 @@ proc `$`*(self: Instruction): string =
         result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {target_label.int:04X}"
     of IkVarResolveInherited, IkVarAssignInherited:
       result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
+    of IkCallMethod0:
+      if self.label.int > 0:
+        result = fmt"{self.label.int32.to_hex()} CallMethod0"
+      else:
+        result = "         CallMethod0"
     else:
-      if self.kind == IkCallMethodNoArgs:
-        if self.label.int > 0:
-          result = fmt"{self.label.int32.to_hex()} CallMethod0"
-        else:
-          result = "         CallMethod0"
-      elif self.label.int > 0:
+      if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]}"
       else:
         result = fmt"         {($self.kind)[2..^1]}"

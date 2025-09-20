@@ -1,4 +1,4 @@
-# CLAUDE.md - Gene Language Development Guide
+# Gene Language Development Guide
 
 This file provides comprehensive guidance for AI assistants working with the Gene programming language codebase.
 
