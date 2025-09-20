@@ -5,3 +5,15 @@
 )
 
 (hello)
+
+(fn with_1_arg [x]
+  (println "with_1_arg:" x)
+)
+
+(with_1_arg 1)
+
+(fn with_2_args [x y]
+  (println "with_2_args:" x y)
+)
+
+(with_2_args 1 2)

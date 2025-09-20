@@ -4010,7 +4010,7 @@ proc exec*(self: VirtualMachine): Value =
         of VkFunction, VkNativeFn, VkBoundMethod, VkFrame, VkMacro:
           # Method already resolved, object should be below
           if self.frame.stack_index == 0:
-            not_allowed("CallMethodNoArgs requires a target object")
+            not_allowed("CallMethod0 requires a target object")
           obj = self.frame.pop()
         else:
           obj = top
