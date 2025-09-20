@@ -3513,61 +3513,28 @@ proc exec*(self: VirtualMachine): Value =
         let v = self.frame.current()
         let method_name = inst.arg0.str
         
-        # Check for built-in properties that should return values directly
-        # Properties are different from methods - they return values immediately
-        if v.kind == VkClass and method_name == "name":
-          # For property access, pop the object and push the property value
-          discard self.frame.pop()
-          self.frame.push(v.ref.class.name.to_value())
-        elif v.kind == VkInstance and method_name == "class":
-          # For property access, pop the object and push the property value
-          discard self.frame.pop()
-          let r = new_ref(VkClass)
-          r.class = v.ref.instance_class
-          self.frame.push(r.to_ref_value())
-        elif v.kind == VkFuture and method_name == "state":
-          # For Future.state property, return the state directly
-          discard self.frame.pop()
-          let future_obj = v.ref.future
-          case future_obj.state:
-            of FsPending:
-              self.frame.push("pending".to_symbol_value())
-            of FsSuccess:
-              self.frame.push("success".to_symbol_value())
-            of FsFailure:
-              self.frame.push("failure".to_symbol_value())
-        elif v.kind == VkFuture and method_name == "value":
-          # For Future.value property, return the value directly
-          discard self.frame.pop()
-          let future_obj = v.ref.future
-          if future_obj.state == FsSuccess:
-            self.frame.push(future_obj.value)
-          else:
-            self.frame.push(NIL)
+        let class = v.get_class()
+        var cache: ptr InlineCache
+        if self.pc < self.cu.inline_caches.len:
+          cache = self.cu.inline_caches[self.pc].addr
         else:
-          # Normal method resolution
-          let class = v.get_class()
-          var cache: ptr InlineCache
-          if self.pc < self.cu.inline_caches.len:
-            cache = self.cu.inline_caches[self.pc].addr
-          else:
-            while self.cu.inline_caches.len <= self.pc:
-              self.cu.inline_caches.add(InlineCache())
-            cache = self.cu.inline_caches[self.pc].addr
+          while self.cu.inline_caches.len <= self.pc:
+            self.cu.inline_caches.add(InlineCache())
+          cache = self.cu.inline_caches[self.pc].addr
 
-          var meth: Method
-          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
-            meth = cache.cached_method
-          else:
-            meth = class.get_method(method_name)
-            if meth == nil:
-              not_allowed("Method '" & method_name & "' not found on " & $v.kind)
-            cache.class = class
-            cache.class_version = class.version
-            cache.cached_method = meth
+        var meth: Method
+        if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+          meth = cache.cached_method
+        else:
+          meth = class.get_method(method_name)
+          if meth == nil:
+            not_allowed("Method '" & method_name & "' not found on " & $v.kind)
+          cache.class = class
+          cache.class_version = class.version
+          cache.cached_method = meth
 
-          # Push the method callable on top of the object
-          self.frame.push(meth.callable)
+        # Push the method callable on top of the object
+        self.frame.push(meth.callable)
 
       of IkThrow:
         {.push checks: off}
@@ -4033,8 +4000,8 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("Cannot await a pending future in pseudo-async mode")
         {.pop.}
       
-      of IkCallMethodNoArgs:
-        # Method call with no arguments (e.g., obj.name)
+      of IkCallMethod0:
+        # Method call with no arguments (e.g., (obj .name))
         let method_name = inst.arg0.str
         var top = self.frame.pop()
         var obj: Value
@@ -4066,7 +4033,7 @@ proc exec*(self: VirtualMachine): Value =
             let class = obj.ref.instance_class
             let meth = class.get_method(method_name)
             if meth != nil:
-              # For IkCallMethodNoArgs, we should call the method directly
+              # For IkCallMethod0, we should call the method directly
               # not just return a bound method
               case meth.callable.kind:
               of VkFunction:
@@ -4093,11 +4060,29 @@ proc exec*(self: VirtualMachine): Value =
                 self.frame.current_method = meth
                 self.frame.ns = f.ns
                 # Pass obj as self (first argument)
-                let args_gene = new_gene(NIL)
-                args_gene.children.add(obj)
-                self.frame.args = args_gene.to_gene_value()
-                if not f.matcher.is_empty():
-                  process_args(f.matcher, self.frame.args, scope)
+                let matcher = f.matcher
+                var args_value: Value
+                if matcher.children.len == 1 and not matcher.children[0].is_splat:
+                  args_value = new_gene_value()
+                  args_value.gene.children.add(obj)
+                  self.frame.args = args_value
+                  let param = matcher.children[0]
+                  if param.kind == MatchData:
+                    let self_idx = if f.scope_tracker.mappings.has_key(param.name_key): f.scope_tracker.mappings[param.name_key] else: -1
+                    if self_idx >= 0:
+                      while scope.members.len <= self_idx:
+                        scope.members.add(NIL)
+                      scope.members[self_idx] = obj
+                    else:
+                      process_args(matcher, self.frame.args, scope)
+                  else:
+                    process_args(matcher, self.frame.args, scope)
+                else:
+                  args_value = new_gene_value()
+                  args_value.gene.children.add(obj)
+                  self.frame.args = args_value
+                  if not matcher.is_empty():
+                    process_args(matcher, self.frame.args, scope)
                 self.cu = f.body_compiled
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
