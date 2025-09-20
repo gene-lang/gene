@@ -962,13 +962,15 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   let args = gene.children[1]
   var method_args: Value
   
-  if args.kind == VkArray and args.ref.arr.len > 0:
-    # Check if first arg is already self
-    if args.ref.arr[0].kind == VkSymbol and args.ref.arr[0].str == "self":
-      # Self is already there, use args as-is
-      method_args = args
+  if args.kind == VkArray:
+    if args.ref.arr.len == 0:
+      method_args = new_array_value()
+      method_args.ref.arr.add("self".to_symbol_value())
+    elif args.ref.arr[0].kind == VkSymbol and args.ref.arr[0].str == "self":
+      method_args = new_array_value()
+      for arg in args.ref.arr:
+        method_args.ref.arr.add(arg)
     else:
-      # Need to add self
       method_args = new_array_value()
       method_args.ref.arr.add("self".to_symbol_value())
       for arg in args.ref.arr:
