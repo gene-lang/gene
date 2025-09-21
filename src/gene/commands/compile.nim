@@ -130,8 +130,8 @@ proc formatInstruction(inst: Instruction, index: int, format: string, show_addre
        IkResolveSymbol, IkJump, IkJumpIfFalse, IkContinue, IkBreak,
        IkGeneStartDefault, IkSubValue, IkAddValue, IkLtValue, IkFunction,
        IkMacro, IkBlock, IkCompileFn, IkNamespace, IkNamespaceStore,
-       IkClass, IkSubClass, IkDefineMethod, IkResolveMethod, IkCallMethod1,
-       IkCallMethod, IkAssign, IkData:
+       IkClass, IkSubClass, IkDefineMethod, IkResolveMethod,
+       IkAssign, IkData:
       result &= " " & $inst.arg0
     of IkSetMember, IkGetMember:
       let key = inst.arg0.Key
@@ -255,11 +255,7 @@ proc formatInstruction(inst: Instruction, index: int, format: string, show_addre
         result &= inst.arg0.str
       else:
         result &= formatValue(inst.arg0)
-    of IkCallMethod1:
-      if inst.arg0.kind == VkSymbol:
-        result &= "." & inst.arg0.str & "()"
-      else:
-        result &= formatValue(inst.arg0)
+
     of IkImport:
       # Import uses stack for the import gene
       discard
@@ -288,12 +284,7 @@ proc formatInstruction(inst: Instruction, index: int, format: string, show_addre
       # CatchStart might have exception type in arg0
       if inst.arg0.kind != VkNil:
         result &= "type=" & formatValue(inst.arg0)
-    of IkCallMethod:
-      # CallMethod has method name in arg0
-      if inst.arg0.kind == VkSymbol:
-        result &= "." & inst.arg0.str
-      else:
-        result &= formatValue(inst.arg0)
+
     of IkAssign:
       # Assign has symbol in arg0
       if inst.arg0.kind == VkSymbol:

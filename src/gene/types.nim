@@ -715,8 +715,7 @@ type
     IkSubClass
     IkNew
     IkResolveMethod
-    IkCallMethod
-    IkCallMethod1
+
     IkCallInit
     IkDefineMethod      # Define a method on a class
     IkDefineConstructor # Define a constructor on a class
@@ -744,9 +743,7 @@ type
     IkRepeatInit
     IkRepeatDecCheck
 
-    # Fast function call instructions
-    IkCallFunction0  # Optimized zero-argument function call
-    IkCallFunction1  # Optimized function call without Gene object creation
+    # Legacy tail call instruction (kept for compatibility)
     IkTailCall        # Tail call optimization
 
     # Unified call instructions
@@ -3155,11 +3152,7 @@ proc `$`*(self: Instruction): string =
         result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {target_label.int:04X}"
     of IkVarResolveInherited, IkVarAssignInherited:
       result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
-    of IkCallMethod1:
-      if self.label.int > 0:
-        result = fmt"{self.label.int32.to_hex()} CallMethod1"
-      else:
-        result = "         CallMethod1"
+
     else:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]}"
