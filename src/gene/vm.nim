@@ -4432,36 +4432,76 @@ proc exec*(self: VirtualMachine): Value =
 
         case obj.kind:
         of VkInstance:
+          # OPTIMIZATION: Use inline cache for method lookup
           let class = obj.ref.instance_class
-          let meth = class.get_method(method_name)
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            meth = class.get_method(method_name)
+            if meth != nil:
+              cache.class = class
+              cache.class_version = class.version
+              cache.cached_method = meth
+
           if meth != nil:
             case meth.callable.kind:
             of VkFunction:
+              # OPTIMIZED: Follow IkCallMethod1 pattern for zero-arg method calls
               let f = meth.callable.ref.fn
               if f.body_compiled == nil:
                 f.compile()
 
+              # Use exact same scope optimization as original IkCallMethod1
               var scope: Scope
               if f.matcher.is_empty():
+                # FAST PATH: Reuse parent scope directly
                 scope = f.parent_scope
                 if scope != nil:
                   scope.ref_count.inc()
               else:
+                # SLOW PATH: Create new scope and manually set self
                 scope = new_scope(f.scope_tracker, f.parent_scope)
+                # Manual argument matching: set self in scope without Gene objects
+                if f.scope_tracker.mappings.len > 0 and f.scope_tracker.mappings.hasKey("self".to_key()):
+                  let self_idx = f.scope_tracker.mappings["self".to_key()]
+                  while scope.members.len <= self_idx:
+                    scope.members.add(NIL)
+                  scope.members[self_idx] = obj
 
+              # ULTRA-OPTIMIZED: Minimal frame creation (like original IkCallMethod1)
               var new_frame = new_frame()
               new_frame.kind = FkFunction
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
-              new_frame.args = new_gene_value()
-              new_frame.args.gene.children.add(obj)  # Add self as first argument
-              if not f.matcher.is_empty():
-                process_args(f.matcher, new_frame.args, scope)
-              new_frame.caller_frame = self.frame
+              # CRITICAL OPTIMIZATION: Don't set caller_frame (like original IkCallMethod1)
+              # new_frame.caller_frame = self.frame  # Commented out for performance
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
               new_frame.ns = f.ns
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: -3,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
 
               self.frame = new_frame
               self.cu = f.body_compiled
@@ -4479,11 +4519,32 @@ proc exec*(self: VirtualMachine): Value =
           else:
             not_allowed("Method " & method_name & " not found on instance")
         of VkString:
-          # Handle string methods using the string class
+          # OPTIMIZATION: Use inline cache for string method lookup
           let string_class = App.app.string_class.ref.class
           let method_key = method_name.to_key()
-          if string_class.methods.hasKey(method_key):
-            let meth = string_class.methods[method_key]
+
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == string_class and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            if string_class.methods.hasKey(method_key):
+              meth = string_class.methods[method_key]
+              cache.class = string_class
+              cache.cached_method = meth
+            else:
+              meth = nil
+
+          if meth != nil:
             case meth.callable.kind:
             of VkNativeFn:
               # Create a gene with the string as the first argument
@@ -4565,8 +4626,28 @@ proc exec*(self: VirtualMachine): Value =
 
         case obj.kind:
         of VkInstance:
+          # OPTIMIZATION: Use inline cache for method lookup
           let class = obj.ref.instance_class
-          let meth = class.get_method(method_name)
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            meth = class.get_method(method_name)
+            if meth != nil:
+              cache.class = class
+              cache.class_version = class.version
+              cache.cached_method = meth
+
           if meth != nil:
             case meth.callable.kind:
             of VkFunction:
