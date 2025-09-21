@@ -749,6 +749,14 @@ type
     IkCallFunction1  # Optimized function call without Gene object creation
     IkTailCall        # Tail call optimization
 
+    # Unified call instructions
+    IkUnifiedCall0      # Zero-argument unified call
+    IkUnifiedCall1      # Single-argument unified call
+    IkUnifiedCall       # Multi-argument unified call
+    IkUnifiedMethodCall0 # Zero-argument method call
+    IkUnifiedMethodCall1 # Single-argument method call
+    IkUnifiedMethodCall  # Multi-argument method call
+
     # Macro-specific instructions
     IkCallMacro       # Direct macro call with known target
     IkNewMacro        # Macro constructor call
@@ -1003,6 +1011,38 @@ type
 
   NativeFn* = proc(vm_data: VirtualMachine, args: Value): Value {.gcsafe, nimcall.}
   # NativeFn2* = proc(vm_data: VirtualMachine, args: Value): Value {.gcsafe.}
+
+  # Unified Callable System
+  CallableKind* = enum
+    CkFunction          # Regular Gene function
+    CkNativeFunction    # Nim function
+    CkMethod            # Gene method
+    CkNativeMethod      # Nim method
+    CkMacro             # Gene macro
+    CkMacroMethod       # Gene macro method
+    CkBlock             # Lambda/block
+
+  CallableFlags* = enum
+    CfEvaluateArgs      # Should arguments be evaluated?
+    CfNeedsSelf         # Does this callable need a self parameter?
+    CfIsNative          # Is this implemented in Nim?
+    CfIsMacro           # Is this a macro (unevaluated args)?
+    CfIsMethod          # Is this a method (needs receiver)?
+    CfCanInline         # Can this be inlined?
+    CfIsPure            # Is this a pure function (no side effects)?
+
+  Callable* = ref object
+    case kind*: CallableKind
+    of CkFunction, CkMethod, CkMacro, CkMacroMethod:
+      fn*: Function
+    of CkNativeFunction, CkNativeMethod:
+      native_fn*: NativeFn
+    of CkBlock:
+      block_fn*: Block
+
+    flags*: set[CallableFlags]
+    arity*: int                    # Number of required arguments
+    name*: string                  # For debugging and profiling
 
 const INST_SIZE* = sizeof(Instruction)
 
@@ -2820,6 +2860,64 @@ proc clone*(self: Method): Method =
     name: self.name,
     callable: self.callable,
   )
+
+#################### Callable ######################
+
+proc new_callable*(kind: CallableKind, name: string = ""): Callable =
+  result = Callable(kind: kind, name: name, arity: 0, flags: {})
+
+  # Set default flags based on kind
+  case kind:
+  of CkFunction:
+    result.flags = {CfEvaluateArgs}
+  of CkNativeFunction:
+    result.flags = {CfEvaluateArgs, CfIsNative}
+  of CkMethod:
+    result.flags = {CfEvaluateArgs, CfIsMethod, CfNeedsSelf}
+  of CkNativeMethod:
+    result.flags = {CfEvaluateArgs, CfIsMethod, CfNeedsSelf, CfIsNative}
+  of CkMacro:
+    result.flags = {CfIsMacro}
+  of CkMacroMethod:
+    result.flags = {CfIsMacro, CfIsMethod, CfNeedsSelf}
+  of CkBlock:
+    result.flags = {CfEvaluateArgs}
+
+proc get_arity*(matcher: RootMatcher): int =
+  # Calculate minimum required arguments
+  result = 0
+  for child in matcher.children:
+    if child.required:
+      result.inc()
+
+proc to_callable*(fn: Function): Callable =
+  result = new_callable(CkFunction, fn.name)
+  result.fn = fn
+  result.arity = fn.matcher.get_arity()
+  if fn.is_macro_like:
+    result.kind = CkMacro
+    result.flags = {CfIsMacro}
+
+proc to_callable*(native_fn: NativeFn, name: string = "", arity: int = 0): Callable =
+  result = new_callable(CkNativeFunction, name)
+  result.native_fn = native_fn
+  result.arity = arity
+
+proc to_callable*(blk: Block): Callable =
+  result = new_callable(CkBlock)
+  result.block_fn = blk
+  result.arity = blk.matcher.get_arity()
+
+proc to_callable*(value: Value): Callable =
+  case value.kind:
+  of VkFunction:
+    return value.ref.fn.to_callable()
+  of VkNativeFn:
+    return to_callable(value.ref.native_fn)
+  of VkBlock:
+    return value.ref.block.to_callable()
+  else:
+    not_allowed("Cannot convert " & $value.kind & " to Callable")
 
 #################### Future ######################
 

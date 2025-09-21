@@ -172,6 +172,201 @@ proc print_instruction_profile*(self: VirtualMachine) =
 # Forward declaration
 proc exec*(self: VirtualMachine): Value
 
+#################### Unified Callable System ####################
+
+proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
+                           args: seq[Value], self_value: Value = NIL): Value =
+  ## Unified call dispatcher that handles all callable types through a single interface
+  let flags = callable.flags
+
+  # Argument evaluation optimization
+  let processed_args =
+    if CfEvaluateArgs in flags:
+      # For now, use standard evaluation - can optimize later
+      args
+    else:
+      args  # No evaluation for macros
+
+  # Add self parameter for methods
+  let final_args =
+    if CfIsMethod in flags:
+      if self_value == NIL:
+        not_allowed("Method call requires a receiver")
+      @[self_value] & processed_args
+    else:
+      processed_args
+
+  # Dispatch based on callable kind with optimized paths
+  case callable.kind:
+  of CkNativeFunction, CkNativeMethod:
+    # Create Gene args structure for native functions
+    var args_value = new_gene_value()
+    for arg in final_args:
+      args_value.gene.children.add(arg)
+    return callable.native_fn(vm, args_value)
+
+  of CkFunction, CkMethod:
+    # Handle Gene functions and methods
+    let f = callable.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    # Create new frame for function execution
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    let r = new_ref(VkFunction)
+    r.fn = callable.fn
+    new_frame.target = r.to_ref_value()
+    new_frame.scope = scope
+    new_frame.caller_frame = vm.frame
+    new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
+    new_frame.ns = f.ns
+
+    # Create args Gene for argument processing
+    var args_gene = new_gene_value()
+    for arg in final_args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    # Process arguments if matcher exists
+    if not f.matcher.is_empty():
+      process_args(f.matcher, args_gene, new_frame.scope)
+
+    # Switch to new frame and execute
+    vm.frame = new_frame
+    vm.cu = f.body_compiled
+    vm.pc = 0
+    return vm.exec()
+
+  of CkMacro, CkMacroMethod:
+    # Handle macros - similar to functions but with caller context
+    let f = callable.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkMacro
+    let r2 = new_ref(VkMacro)
+    r2.`macro` = Macro(
+      name: f.name,
+      ns: f.ns,
+      scope_tracker: f.scope_tracker,
+      parent_scope: f.parent_scope,
+      matcher: f.matcher,
+      body: f.body,
+      body_compiled: f.body_compiled
+    )
+    new_frame.target = r2.to_ref_value()
+    new_frame.scope = scope
+    new_frame.caller_frame = vm.frame
+    new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
+    new_frame.caller_context = vm.frame  # For $caller_eval
+    new_frame.ns = f.ns
+
+    # Create args Gene for argument processing (unevaluated for macros)
+    var args_gene = new_gene_value()
+    for arg in final_args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    # Process arguments if matcher exists
+    if not f.matcher.is_empty():
+      process_args(f.matcher, args_gene, new_frame.scope)
+
+    # Switch to new frame and execute
+    vm.frame = new_frame
+    vm.cu = f.body_compiled
+    vm.pc = 0
+    return vm.exec()
+
+  of CkBlock:
+    # Handle blocks - similar to functions but with captured scope
+    let blk = callable.block_fn
+    if blk.body_compiled == nil:
+      blk.compile()
+
+    var scope: Scope
+    if blk.matcher.is_empty():
+      scope = blk.frame.scope  # Use captured scope
+    else:
+      scope = new_scope(blk.scope_tracker, blk.frame.scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkBlock
+    let r3 = new_ref(VkBlock)
+    r3.block = callable.block_fn
+    new_frame.target = r3.to_ref_value()
+    new_frame.scope = scope
+    new_frame.caller_frame = vm.frame
+    new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
+    new_frame.ns = blk.ns
+
+    # Create args Gene for argument processing
+    var args_gene = new_gene_value()
+    for arg in final_args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    # Process arguments if matcher exists
+    if not blk.matcher.is_empty():
+      process_args(blk.matcher, args_gene, new_frame.scope)
+
+    # Switch to new frame and execute
+    vm.frame = new_frame
+    vm.cu = blk.body_compiled
+    vm.pc = 0
+    return vm.exec()
+
+proc value_to_callable*(value: Value): Callable =
+  ## Convert a Value to a Callable for unified dispatch
+  case value.kind:
+  of VkFunction:
+    return value.ref.fn.to_callable()
+  of VkNativeFn:
+    return to_callable(value.ref.native_fn)
+  of VkBlock:
+    return value.ref.block.to_callable()
+  of VkMacro:
+    let `macro` = value.ref.`macro`
+    result = new_callable(CkMacro, `macro`.name)
+    result.fn = Function(
+      name: `macro`.name,
+      ns: `macro`.ns,
+      scope_tracker: `macro`.scope_tracker,
+      parent_scope: `macro`.parent_scope,
+      matcher: `macro`.matcher,
+      body: `macro`.body,
+      body_compiled: `macro`.body_compiled
+    )
+    result.arity = `macro`.matcher.get_arity()
+  of VkBoundMethod:
+    # Convert bound method to appropriate callable
+    let bm = value.ref.bound_method
+    let method_callable = value_to_callable(bm.`method`.callable)
+    # Modify flags to indicate it's a method
+    method_callable.flags.incl(CfIsMethod)
+    method_callable.flags.incl(CfNeedsSelf)
+    return method_callable
+  of VkNativeMethod:
+    # Handle native methods
+    return to_callable(value.ref.native_method, "", 0)
+  else:
+    not_allowed("Cannot convert " & $value.kind & " to Callable")
+
 proc render_template(self: VirtualMachine, tpl: Value): Value =
   # Render a template by recursively processing quote/unquote values
   case tpl.kind:
@@ -4471,7 +4666,413 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.ref_count.dec()
           self.frame.push(FALSE)
           continue
-      
+
+      # Unified call instructions
+      of IkUnifiedCall0:
+        {.push checks: off}
+        # Zero-argument unified call
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, @[]))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+            new_frame.args = new_gene_value()
+            if not f.matcher.is_empty():
+              process_args(f.matcher, new_frame.args, scope)
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          var args_value = new_gene_value()
+          let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          if not b.matcher.is_empty():
+            process_args(b.matcher, new_frame.args, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        else:
+          not_allowed("IkUnifiedCall0 requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedCall1:
+        {.push checks: off}
+        # Single-argument unified call
+        let arg = self.frame.pop()
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, @[arg]))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+            new_frame.args = new_gene_value()
+            new_frame.args.gene.children.add(arg)
+            if not f.matcher.is_empty():
+              process_args(f.matcher, new_frame.args, scope)
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          var args_value = new_gene_value()
+          args_value.gene.children.add(arg)
+          let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          new_frame.args.gene.children.add(arg)
+          if not b.matcher.is_empty():
+            process_args(b.matcher, new_frame.args, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        else:
+          not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedCall:
+        {.push checks: off}
+        # Multi-argument unified call
+        let arg_count = inst.arg1
+        var args = newSeq[Value](arg_count)
+        for i in countdown(arg_count - 1, 0):
+          args[i] = self.frame.pop()
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, args))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+            new_frame.args = new_gene_value()
+            for arg in args:
+              new_frame.args.gene.children.add(arg)
+            if not f.matcher.is_empty():
+              process_args(f.matcher, new_frame.args, scope)
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          var args_value = new_gene_value()
+          for arg in args:
+            args_value.gene.children.add(arg)
+          let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+
+        else:
+          not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall0:
+        {.push checks: off}
+        # Zero-argument unified method call
+        let method_name = inst.arg0.str
+        let obj = self.frame.pop()
+
+        case obj.kind:
+        of VkInstance:
+          let class = obj.ref.instance_class
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.args = new_gene_value()
+              new_frame.args.gene.children.add(obj)  # Add self as first argument
+              if not f.matcher.is_empty():
+                process_args(f.matcher, new_frame.args, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              var args_value = new_gene_value()
+              args_value.gene.children.add(obj)
+              let result = meth.callable.ref.native_fn(self, args_value)
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall1:
+        {.push checks: off}
+        # Single-argument unified method call
+        let method_name = inst.arg0.str
+        let arg = self.frame.pop()
+        let obj = self.frame.pop()
+
+        case obj.kind:
+        of VkInstance:
+          let class = obj.ref.instance_class
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.args = new_gene_value()
+              new_frame.args.gene.children.add(obj)  # Add self as first argument
+              new_frame.args.gene.children.add(arg)  # Add the argument
+              if not f.matcher.is_empty():
+                process_args(f.matcher, new_frame.args, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              var args_value = new_gene_value()
+              args_value.gene.children.add(obj)
+              args_value.gene.children.add(arg)
+              let result = meth.callable.ref.native_fn(self, args_value)
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall:
+        {.push checks: off}
+        # Multi-argument unified method call
+        let method_name = inst.arg0.str
+        let arg_count = inst.arg1 - 1  # Subtract 1 for self
+        var args = newSeq[Value](arg_count)
+        for i in countdown(arg_count - 1, 0):
+          args[i] = self.frame.pop()
+        let obj = self.frame.pop()
+
+        case obj.kind:
+        of VkInstance:
+          let class = obj.ref.instance_class
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.args = new_gene_value()
+              new_frame.args.gene.children.add(obj)  # Add self as first argument
+              for arg in args:
+                new_frame.args.gene.children.add(arg)
+              if not f.matcher.is_empty():
+                process_args(f.matcher, new_frame.args, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              var args_value = new_gene_value()
+              args_value.gene.children.add(obj)
+              for arg in args:
+                args_value.gene.children.add(arg)
+              let result = meth.callable.ref.native_fn(self, args_value)
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
       else:
         todo($inst.kind)
 
