@@ -32,13 +32,13 @@ proc init_generator*() =
     let generator_class = new_class("Generator")
     
     # Add next method - for now just returns VOID
-    proc generator_next(self: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+    proc generator_next(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
       # Get next value from generator
       if args.kind != VkGene:
         raise new_exception(types.Exception, fmt"Generator.next expects Gene args, got {args.kind}")
       if args.gene.children.len < 1:
         raise new_exception(types.Exception, "Generator.next requires a generator")
-      
+
       let gen_arg = args.gene.children[0]
       if gen_arg.kind != VkGenerator:
         raise new_exception(types.Exception, "next can only be called on a Generator")
@@ -63,16 +63,16 @@ proc init_generator*() =
       
       
       # Execute the generator until next yield
-      let result = exec_generator(self, gen)
+      let result = exec_generator(vm, gen)
       return result
 
-    proc generator_has_next(self: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+    proc generator_has_next(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
       # Check if generator has a next value without consuming it
       if args.kind != VkGene:
         raise new_exception(types.Exception, fmt"Generator.has_next expects Gene args, got {args.kind}")
       if args.gene.children.len < 1:
         raise new_exception(types.Exception, "Generator.has_next requires a generator")
-      
+
       let gen_arg = args.gene.children[0]
       if gen_arg.kind != VkGenerator:
         raise new_exception(types.Exception, "has_next can only be called on a Generator")
@@ -93,7 +93,7 @@ proc init_generator*() =
         return FALSE
       
       # Otherwise, try to get the next value without consuming it
-      let next_val = exec_generator(self, gen)
+      let next_val = exec_generator(vm, gen)
       
       
       # Store the peeked value

@@ -4103,6 +4103,10 @@ proc exec*(self: VirtualMachine): Value =
           var args_value = new_gene_value()
           let result = target.ref.native_fn(self, args_value)
           self.frame.push(result)
+        of VkNativeFn3:
+          # Zero arguments - use new signature with nil pointer
+          let result = target.ref.native_fn3(self, nil, 0, false)
+          self.frame.push(result)
 
         of VkBlock:
           let b = target.ref.block
@@ -4258,6 +4262,10 @@ proc exec*(self: VirtualMachine): Value =
           var args_value = new_gene_value()
           args_value.gene.children.add(arg)
           let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+        of VkNativeFn3:
+          # Single argument - use new signature with helper
+          let result = call_native_fn(target.ref.native_fn3, self, [arg])
           self.frame.push(result)
 
         of VkBlock:
@@ -4418,6 +4426,10 @@ proc exec*(self: VirtualMachine): Value =
           for arg in args:
             args_value.gene.children.add(arg)
           let result = target.ref.native_fn(self, args_value)
+          self.frame.push(result)
+        of VkNativeFn3:
+          # Multi-argument - use new signature with helper
+          let result = call_native_fn(target.ref.native_fn3, self, args)
           self.frame.push(result)
 
         else:

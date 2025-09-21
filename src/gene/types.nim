@@ -130,6 +130,7 @@ type
     VkEnumMember
     VkNativeFn
     VkNativeFn2
+    VkNativeFn3
     VkNativeMethod
     VkNativeMethod2
 
@@ -302,6 +303,8 @@ type
         native_fn*: NativeFn
       of VkNativeFn2:
         native_fn2*: NativeFn2
+      of VkNativeFn3:
+        native_fn3*: NativeFn3
       of VkNativeMethod, VkNativeMethod2:
         native_method*: NativeFn
 
@@ -1015,7 +1018,7 @@ type
   ArgumentError* = object of Exception
 
   NativeFn* = proc(vm_data: VirtualMachine, args: Value): Value {.gcsafe, nimcall.}
-  # NativeFn2* = proc(vm_data: VirtualMachine, args: Value): Value {.gcsafe.}
+  NativeFn3* = proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.}
 
   # Unified Callable System
   CallableKind* = enum
@@ -3005,6 +3008,78 @@ converter to_value*(f: NativeFn): Value {.inline.} =
   r.native_fn = f
   result = r.to_ref_value()
 
+converter to_value*(f: NativeFn3): Value {.inline.} =
+  let r = new_ref(VkNativeFn3)
+  r.native_fn3 = f
+  result = r.to_ref_value()
+
+# Helper functions for new NativeFn signature
+proc get_positional_arg*(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value {.inline.} =
+  ## Get positional argument (handles keyword offset automatically)
+  let offset = if has_keyword_args: 1 else: 0
+  return args[offset + index]
+
+proc get_keyword_arg*(args: ptr UncheckedArray[Value], name: string): Value {.inline.} =
+  ## Get keyword argument by name
+  if args[0].kind == VkMap:
+    return args[0].ref.map.get_or_default(name.to_key(), NIL)
+  else:
+    return NIL
+
+proc has_keyword_arg*(args: ptr UncheckedArray[Value], name: string): bool {.inline.} =
+  ## Check if keyword argument exists
+  if args[0].kind == VkMap:
+    return args[0].ref.map.hasKey(name.to_key())
+  else:
+    return false
+
+proc get_positional_count*(arg_count: int, has_keyword_args: bool): int {.inline.} =
+  ## Get the number of positional arguments
+  if has_keyword_args: arg_count - 1 else: arg_count
+
+# Helper functions specifically for native methods
+proc get_self*(args: ptr UncheckedArray[Value], has_keyword_args: bool): Value {.inline.} =
+  ## Get self object for native methods (always first positional argument)
+  return get_positional_arg(args, 0, has_keyword_args)
+
+proc get_method_arg*(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value {.inline.} =
+  ## Get method argument by index (index 0 = first argument after self)
+  return get_positional_arg(args, index + 1, has_keyword_args)
+
+proc get_method_arg_count*(arg_count: int, has_keyword_args: bool): int {.inline.} =
+  ## Get the number of method arguments (excluding self)
+  let positional_count = get_positional_count(arg_count, has_keyword_args)
+  if positional_count > 0: positional_count - 1 else: 0
+
+# Migration helpers
+proc get_legacy_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): seq[Value] =
+  ## Helper to convert to seq[Value] for easier migration
+  result = newSeq[Value]()
+  let offset = if has_keyword_args: 1 else: 0
+  for i in offset..<arg_count:
+    result.add(args[i])
+
+proc create_gene_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  ## For functions that need Gene object temporarily during migration
+  var gene_args = new_gene_value()
+  let offset = if has_keyword_args: 1 else: 0
+  for i in offset..<arg_count:
+    gene_args.gene.children.add(args[i])
+  return gene_args
+
+# Helper for calling native functions with proper casting
+proc call_native_fn*(fn: NativeFn3, vm: VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
+  ## Helper to call native function with proper array casting
+  if args.len == 0:
+    return fn(vm, nil, 0, has_keyword_args)
+  else:
+    return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
+
+# Temporary helper for migration - converts Gene args to new format
+proc call_native_fn_legacy*(fn: NativeFn, vm: VirtualMachine, gene_args: Value): Value {.inline.} =
+  ## Temporary helper to call old native function with Gene args
+  return fn(vm, gene_args)
+
 #################### Frame #######################
 const INITIAL_FRAME_POOL_SIZE = 1024
 
@@ -3273,7 +3348,7 @@ proc init_app_and_vm*() =
   # Add time namespace stub to prevent errors
   let time_ns = new_namespace("time")
   # Simple time function that returns current timestamp
-  proc time_now(self: VirtualMachine, args: Value): Value =
+  proc time_now(vm: VirtualMachine, args: Value): Value =
     return epochTime().to_value()
 
   var time_now_fn = new_ref(VkNativeFn)
