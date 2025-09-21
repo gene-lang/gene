@@ -6,7 +6,7 @@ when isMainModule:
   import ../../src/gene/compiler
   import ../../src/gene/vm
 
-  proc native_f(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+  proc native_f(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
     discard
 
   var repeats = 1000
@@ -33,7 +33,9 @@ when isMainModule:
   let compiled = compile(read_all(code))
 
   let ns = new_namespace("call_burst")
-  ns["native_f".to_key()] = native_f
+  let native_f_ref = new_ref(VkNativeFn)
+  native_f_ref.native_fn = native_f
+  ns["native_f".to_key()] = native_f_ref.to_ref_value()
   VM.frame.update(new_frame(ns))
   VM.cu = compiled
   VM.trace = get_env("TRACE") == "1"

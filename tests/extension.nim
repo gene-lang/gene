@@ -8,31 +8,31 @@ type
 # Create extension class
 var ExtensionClass {.threadvar.}: Class
 
-proc test*(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
-  if args.gene.children.len > 0:
-    args.gene.children[0]
+proc test*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if arg_count > 0:
+    get_positional_arg(args, 0, has_keyword_args)
   else:
     1.to_value()
 
-proc new_extension*(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc new_extension*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   let r = new_ref(VkCustom)
   r.custom_data = Extension(
-    i: if args.gene.children.len > 0: args.gene.children[0].to_int() else: 0,
-    s: if args.gene.children.len > 1: args.gene.children[1].str else: ""
+    i: if arg_count > 0: get_positional_arg(args, 0, has_keyword_args).to_int() else: 0,
+    s: if arg_count > 1: get_positional_arg(args, 1, has_keyword_args).str else: ""
   )
   r.custom_class = ExtensionClass
   result = r.to_ref_value()
 
-proc get_i*(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
-  if args.gene.children.len > 0 and args.gene.children[0].kind == VkCustom:
-    let ext = cast[Extension](args.gene.children[0].ref.custom_data)
+proc get_i*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if arg_count > 0 and get_positional_arg(args, 0, has_keyword_args).kind == VkCustom:
+    let ext = cast[Extension](get_positional_arg(args, 0, has_keyword_args).ref.custom_data)
     return ext.i.to_value()
   0.to_value()
 
-proc get_i_method*(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc get_i_method*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Self is now the first argument in args
-  if args.kind == VkGene and args.gene.children.len > 0:
-    let self = args.gene.children[0]
+  if arg_count > 0:
+    let self = get_positional_arg(args, 0, has_keyword_args)
     if self.kind == VkCustom:
       let ext = cast[Extension](self.ref.custom_data)
       return ext.i.to_value()

@@ -280,26 +280,26 @@ proc deserialize*(self: Serialization, value: Value): Value =
     return value
 
 # VM integration functions
-proc vm_serialize(self: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc vm_serialize(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
-    if args.gene.children.len != 1:
+    if arg_count != 1:
       not_allowed("serialize expects 1 argument")
-    
-    let value = args.gene.children[0]
+
+    let value = get_positional_arg(args, 0, has_keyword_args)
     let ser = serialize(value)
     return ser.to_s().to_value()
 
-proc vm_deserialize(self: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc vm_deserialize(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
-    if args.gene.children.len != 1:
+    if arg_count != 1:
       not_allowed("deserialize expects 1 argument")
-    
-    let s = args.gene.children[0].str
+
+    let s = get_positional_arg(args, 0, has_keyword_args).str
     return deserialize(s)
 
 # Initialize the serdes namespace
 proc init_serdes*() =
   let serdes_ns = new_namespace("serdes")
-  serdes_ns["serialize".to_key()] = NativeFn(vm_serialize)
-  serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize)
+  serdes_ns["serialize".to_key()] = NativeFn(vm_serialize).to_value()
+  serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize).to_value()
   App.app.gene_ns.ref.ns["serdes".to_key()] = serdes_ns.to_value()

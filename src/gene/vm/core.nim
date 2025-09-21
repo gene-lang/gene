@@ -4,81 +4,83 @@ import base64
 # JIT the code (create a temporary block, reuse the frame)
 # Execute the code
 # Show the result
-proc debug(self: VirtualMachine, args: Value): Value =
+proc debug(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   todo()
 
-proc println(self: VirtualMachine, args: Value): Value =
+proc println(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
-  for i, k in args.gene.children:
+  for i in 0..<get_positional_count(arg_count, has_keyword_args):
+    let k = get_positional_arg(args, i, has_keyword_args)
     s &= k.str_no_quotes()
-    if i < args.gene.children.len - 1:
+    if i < get_positional_count(arg_count, has_keyword_args) - 1:
       s &= " "
   echo s
 
-proc print(self: VirtualMachine, args: Value): Value =
+proc print(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
-  for i, k in args.gene.children:
+  for i in 0..<get_positional_count(arg_count, has_keyword_args):
+    let k = get_positional_arg(args, i, has_keyword_args)
     s &= k.str_no_quotes()
-    if i < args.gene.children.len - 1:
+    if i < get_positional_count(arg_count, has_keyword_args) - 1:
       s &= " "
   stdout.write(s)
 
-proc gene_assert(self: VirtualMachine, args: Value): Value =
-  if args.gene.children.len > 0:
-    let condition = args.gene.children[0]
+proc gene_assert(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count > 0:
+    let condition = get_positional_arg(args, 0, has_keyword_args)
     if not condition.to_bool():
       var msg = "Assertion failed"
-      if args.gene.children.len > 1:
-        msg = args.gene.children[1].str
+      if arg_count > 1:
+        msg = get_positional_arg(args, 1, has_keyword_args).str
       raise new_exception(types.Exception, msg)
 
-proc base64_encode(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc base64_encode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "base64_encode requires a string argument")
-  
-  let input = args.gene.children[0]
+
+  let input = get_positional_arg(args, 0, has_keyword_args)
   if input.kind != VkString:
     raise new_exception(types.Exception, "base64_encode requires a string argument")
-  
+
   let encoded = base64.encode(input.str)
   return encoded.to_value()
 
-proc base64_decode(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc base64_decode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "base64_decode requires a string argument")
-  
-  let input = args.gene.children[0]
+
+  let input = get_positional_arg(args, 0, has_keyword_args)
   if input.kind != VkString:
     raise new_exception(types.Exception, "base64_decode requires a string argument")
-  
+
   try:
     let decoded = base64.decode(input.str)
     return decoded.to_value()
   except ValueError as e:
     raise new_exception(types.Exception, "Invalid base64 string: " & e.msg)
 
-proc trace_start(self: VirtualMachine, args: Value): Value =
-  self.trace = true
-  self.frame.push(NIL)
+proc trace_start(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  vm.trace = true
+  return NIL
 
-proc trace_end(self: VirtualMachine, args: Value): Value =
-  self.trace = false
-  self.frame.push(NIL)
+proc trace_end(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  vm.trace = false
+  return NIL
 
-proc print_stack(self: VirtualMachine, args: Value): Value =
+proc print_stack(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = "Stack: "
-  for i, reg in self.frame.stack:
+  for i, reg in vm.frame.stack:
     if i > 0:
       s &= ", "
-    if i == self.frame.stack_index.int:
+    if i == vm.frame.stack_index.int:
       s &= "=> "
-    s &= $self.frame.stack[i]
+    s &= $vm.frame.stack[i]
   echo s
-  self.frame.push(NIL)
+  return NIL
 
-proc print_instructions(self: VirtualMachine, args: Value): Value =
-  echo self.cu
-  self.frame.push(NIL)
+proc print_instructions(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  echo vm.cu
+  return NIL
 
 proc to_ctor(node: Value): Function =
   let name = "ctor"
@@ -94,22 +96,30 @@ proc to_ctor(node: Value): Function =
   # body = wrap_with_try(body)
   result = new_fn(name, matcher, body)
 
-proc class_ctor(self: VirtualMachine, args: Value): Value =
-  let fn = to_ctor(args)
-  fn.ns = self.frame.ns
+proc class_ctor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    not_allowed("class_ctor requires arguments")
+
+  let args_gene = create_gene_args(args, arg_count, has_keyword_args)
+  let fn = to_ctor(args_gene)
+  fn.ns = vm.frame.ns
   let r = new_ref(VkFunction)
   r.fn = fn
   # Get class from first argument (bound method self)
-  let x = args.gene.type.ref.bound_method.self
+  let x = args_gene.gene.type.ref.bound_method.self
   if x.kind == VkClass:
     x.ref.class.constructor = r.to_ref_value()
   else:
     not_allowed("Constructor can only be defined on classes")
 
-proc class_fn(self: VirtualMachine, args: Value): Value =
-  let x = args.gene.type.ref.bound_method.self
+proc class_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    not_allowed("class_fn requires arguments")
+
+  let args_gene = create_gene_args(args, arg_count, has_keyword_args)
+  let x = args_gene.gene.type.ref.bound_method.self
   # define a fn like method on a class
-  let fn = to_function(args)
+  let fn = to_function(args_gene)
 
   let r = new_ref(VkFunction)
   r.fn = fn
@@ -129,39 +139,44 @@ proc class_fn(self: VirtualMachine, args: Value): Value =
   else:
     not_allowed()
 
-proc vm_compile(self: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
+    if arg_count < 1:
+      not_allowed("vm_compile requires an argument")
+
     let compiler = Compiler(output: new_compilation_unit())
-    let scope_tracker = self.frame.caller_frame.scope.tracker
+    let scope_tracker = vm.frame.caller_frame.scope.tracker
     # compiler.output.scope_tracker = scope_tracker
     compiler.scope_trackers.add(scope_tracker)
-    compiler.compile(args.gene.children[0])
+    compiler.compile(get_positional_arg(args, 0, has_keyword_args))
     let instrs = new_ref(VkArray)
     for instr in compiler.output.instructions:
       instrs.arr.add instr.to_value()
     result = instrs.to_ref_value()
 
-proc vm_push(self: VirtualMachine, args: Value): Value =
-  new_instr(IkPushValue, args.gene.children[0])
+proc vm_push(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    not_allowed("vm_push requires an argument")
+  new_instr(IkPushValue, get_positional_arg(args, 0, has_keyword_args))
 
-proc vm_add(self: VirtualMachine, args: Value): Value =
+proc vm_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   new_instr(IkAdd)
 
-proc current_ns(self: VirtualMachine, args: Value): Value =
+proc current_ns(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Return the current namespace
   let r = new_ref(VkNamespace)
-  r.ns = self.frame.ns
+  r.ns = vm.frame.ns
   result = r.to_ref_value()
 
 # vm_not function removed - now handled by IkNot instruction at compile time
 
 # vm_spread function removed - ... is now handled as compile-time keyword
 
-proc vm_parse(self: VirtualMachine, args: Value): Value =
+proc vm_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Parse Gene code from string
-  if args.gene.children.len != 1:
+  if arg_count != 1:
     not_allowed("$parse expects exactly 1 argument")
-  let arg = args.gene.children[0]
+  let arg = get_positional_arg(args, 0, has_keyword_args)
   case arg.kind:
     of VkString:
       let code = arg.str
@@ -175,11 +190,11 @@ proc vm_parse(self: VirtualMachine, args: Value): Value =
       except:
         # Fallback to simple parsing for basic literals
         case code:
-          of "true": 
+          of "true":
             return TRUE
-          of "false": 
+          of "false":
             return FALSE
-          of "nil": 
+          of "nil":
             return NIL
           else:
             # Try to parse as number
@@ -196,52 +211,52 @@ proc vm_parse(self: VirtualMachine, args: Value): Value =
     else:
       not_allowed("$parse expects a string argument")
 
-proc vm_with(self: VirtualMachine, args: Value): Value =
+proc vm_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # $with sets self to the first argument and executes the body, returns the original value
-  if args.gene.children.len < 2:
+  if arg_count < 2:
     not_allowed("$with expects at least 2 arguments")
-  
-  let original_value = args.gene.children[0]
+
+  let original_value = get_positional_arg(args, 0, has_keyword_args)
   # Self is now managed through arguments, not frame field
   # The compiler should handle passing the value as the first argument
-  
+
   # Execute the body (all arguments after the first)
-  for i in 1..<args.gene.children.len:
+  for i in 1..<get_positional_count(arg_count, has_keyword_args):
     discard # Body execution would happen during compilation/evaluation
-  
+
   return original_value
 
-proc vm_tap(self: VirtualMachine, args: Value): Value =
+proc vm_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # $tap executes the body with self set to the first argument, returns the original value
-  if args.gene.children.len < 2:
+  if arg_count < 2:
     not_allowed("$tap expects at least 2 arguments")
-  
-  let original_value = args.gene.children[0]
-  
+
+  let original_value = get_positional_arg(args, 0, has_keyword_args)
+
   # If second argument is a symbol, bind it to the value
   var binding_name: string = ""
   var body_start_index = 1
-  if args.gene.children.len > 2 and args.gene.children[1].kind == VkSymbol:
-    binding_name = args.gene.children[1].str
-    body_start_index = 2
-  
+  if arg_count > 2:
+    let second_arg = get_positional_arg(args, 1, has_keyword_args)
+    if second_arg.kind == VkSymbol:
+      binding_name = second_arg.str
+      body_start_index = 2
+
   # Self is now managed through arguments
   # The compiler should handle passing the value as the first argument
-  
+
   # Execute the body
-  for i in body_start_index..<args.gene.children.len:
+  for i in body_start_index..<get_positional_count(arg_count, has_keyword_args):
     discard # Body execution would happen during compilation/evaluation
-  
+
   return original_value
 
 # String interpolation handler
-proc vm_str_interpolation(self: VirtualMachine, args: Value): Value =
+proc vm_str_interpolation(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # #Str concatenates all arguments as strings
-  if args.kind != VkGene:
-    return "".to_value()
-  
   var result = ""
-  for child in args.gene.children:
+  for i in 0..<get_positional_count(arg_count, has_keyword_args):
+    let child = get_positional_arg(args, i, has_keyword_args)
     case child.kind:
     of VkString:
       result.add(child.str)
@@ -258,10 +273,10 @@ proc vm_str_interpolation(self: VirtualMachine, args: Value): Value =
     else:
       # For other types, use $ operator
       result.add($child)
-  
+
   return result.to_value()
 
-proc vm_eval(self: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc vm_eval(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     # This function is not used - eval is handled by IkEval instruction
     # The compiler generates IkEval instructions for each argument
@@ -271,11 +286,11 @@ proc vm_eval(self: VirtualMachine, args: Value): Value {.gcsafe.} =
 
 
 # Sleep functions
-proc gene_sleep(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "sleep requires 1 argument")
 
-  let duration_arg = args.gene.children[0]
+  let duration_arg = get_positional_arg(args, 0, has_keyword_args)
   var duration_ms: int
 
   case duration_arg.kind:
@@ -290,11 +305,11 @@ proc gene_sleep(self: VirtualMachine, args: Value): Value =
   sleep(duration_ms)
   return NIL
 
-proc gene_sleep_async(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "sleep_async requires 1 argument")
 
-  let duration_arg = args.gene.children[0]
+  let duration_arg = get_positional_arg(args, 0, has_keyword_args)
   var duration_ms: int
 
   case duration_arg.kind:
@@ -317,11 +332,11 @@ proc gene_sleep_async(self: VirtualMachine, args: Value): Value =
   return gene_future_val
 
 # I/O functions
-proc file_read(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc file_read(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "File/read requires 1 argument")
 
-  let path_arg = args.gene.children[0]
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
   if path_arg.kind != VkString:
     raise new_exception(types.Exception, "File/read requires a string path")
 
@@ -332,12 +347,12 @@ proc file_read(self: VirtualMachine, args: Value): Value =
   except IOError as e:
     raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
 
-proc file_write(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 2:
+proc file_write(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 2:
     raise new_exception(types.Exception, "File/write requires 2 arguments")
 
-  let path_arg = args.gene.children[0]
-  let content_arg = args.gene.children[1]
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  let content_arg = get_positional_arg(args, 1, has_keyword_args)
 
   if path_arg.kind != VkString:
     raise new_exception(types.Exception, "File/write requires a string path")
@@ -353,11 +368,11 @@ proc file_write(self: VirtualMachine, args: Value): Value =
   except IOError as e:
     raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
 
-proc file_read_async(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "File/read_async requires 1 argument")
 
-  let path_arg = args.gene.children[0]
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
   if path_arg.kind != VkString:
     raise new_exception(types.Exception, "File/read_async requires a string path")
 
@@ -377,12 +392,12 @@ proc file_read_async(self: VirtualMachine, args: Value): Value =
 
   return gene_future_val
 
-proc file_write_async(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 2:
+proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 2:
     raise new_exception(types.Exception, "File/write_async requires 2 arguments")
 
-  let path_arg = args.gene.children[0]
-  let content_arg = args.gene.children[1]
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  let content_arg = get_positional_arg(args, 1, has_keyword_args)
 
   if path_arg.kind != VkString:
     raise new_exception(types.Exception, "File/write_async requires a string path")
@@ -472,18 +487,18 @@ proc init_gene_namespace*() =
   
   # Add String methods
   # append method
-  proc string_append(self: VirtualMachine, args: Value): Value =
-    if args.kind != VkGene or args.gene.children.len < 2:
+  proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 2:
       raise new_exception(types.Exception, "String.append requires 2 arguments (self and string to append)")
-    
-    let self_arg = args.gene.children[0]
-    let append_arg = args.gene.children[1]
-    
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let append_arg = get_positional_arg(args, 1, has_keyword_args)
+
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "append can only be called on a string")
     if append_arg.kind != VkString:
       raise new_exception(types.Exception, "append requires a string argument")
-    
+
     let result = self_arg.str & append_arg.str
     return result.to_value()
   
@@ -492,14 +507,14 @@ proc init_gene_namespace*() =
   string_class.def_native_method("append", append_fn.native_fn)
   
   # length method
-  proc string_length(self: VirtualMachine, args: Value): Value =
-    if args.kind != VkGene or args.gene.children.len < 1:
+  proc string_length(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
       raise new_exception(types.Exception, "String.length requires self argument")
-    
-    let self_arg = args.gene.children[0]
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "length can only be called on a string")
-    
+
     return self_arg.str.len.int64.to_value()
   
   var length_fn = new_ref(VkNativeFn)
@@ -507,14 +522,14 @@ proc init_gene_namespace*() =
   string_class.def_native_method("length", length_fn.native_fn)
   
   # to_upper method
-  proc string_to_upper(self: VirtualMachine, args: Value): Value =
-    if args.kind != VkGene or args.gene.children.len < 1:
+  proc string_to_upper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
       raise new_exception(types.Exception, "String.to_upper requires self argument")
-    
-    let self_arg = args.gene.children[0]
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "to_upper can only be called on a string")
-    
+
     return self_arg.str.toUpperAscii().to_value()
   
   var to_upper_fn = new_ref(VkNativeFn)
@@ -522,14 +537,14 @@ proc init_gene_namespace*() =
   string_class.def_native_method("to_upper", to_upper_fn.native_fn)
   
   # to_lower method
-  proc string_to_lower(self: VirtualMachine, args: Value): Value =
-    if args.kind != VkGene or args.gene.children.len < 1:
+  proc string_to_lower(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
       raise new_exception(types.Exception, "String.to_lower requires self argument")
-    
-    let self_arg = args.gene.children[0]
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "to_lower can only be called on a string")
-    
+
     return self_arg.str.toLowerAscii().to_value()
   
   var to_lower_fn = new_ref(VkNativeFn)
@@ -559,29 +574,29 @@ proc init_gene_namespace*() =
   App.app.array_class = r.to_ref_value()
   
   # Add array methods
-  proc vm_array_add(self: VirtualMachine, args: Value): Value =
+  proc vm_array_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self), second is the value to add
-    let arr = args.gene.children[0]
-    let value = if args.gene.children.len > 1: args.gene.children[1] else: NIL
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    let value = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
     if arr.kind == VkArray:
       arr.ref.arr.add(value)
     return arr
   
   array_class.def_native_method("add", vm_array_add)
   
-  proc vm_array_size(self: VirtualMachine, args: Value): Value =
+  proc vm_array_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self)
-    let arr = args.gene.children[0]
+    let arr = get_positional_arg(args, 0, has_keyword_args)
     if arr.kind == VkArray:
       return arr.ref.arr.len.to_value()
     return 0.to_value()
   
   array_class.def_native_method("size", vm_array_size)
   
-  proc vm_array_get(self: VirtualMachine, args: Value): Value =
+  proc vm_array_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self), second is the index
-    let arr = args.gene.children[0]
-    let index = if args.gene.children.len > 1: args.gene.children[1] else: 0.to_value()
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    let index = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: 0.to_value()
     if arr.kind == VkArray and index.kind == VkInt:
       let idx = index.int64.int
       if idx >= 0 and idx < arr.ref.arr.len:
@@ -597,10 +612,10 @@ proc init_gene_namespace*() =
   App.app.map_class = r.to_ref_value()
   
   # Add map methods
-  proc vm_map_contains(self: VirtualMachine, args: Value): Value =
+  proc vm_map_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the map (self), second is the key
-    let map = args.gene.children[0]
-    let key = if args.gene.children.len > 1: args.gene.children[1] else: NIL
+    let map = get_positional_arg(args, 0, has_keyword_args)
+    let key = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
     if map.kind == VkMap and key.kind == VkString:
       return map.ref.map.hasKey(key.str.to_key()).to_value()
     return false.to_value()
@@ -661,11 +676,10 @@ proc init_gene_namespace*() =
   App.app.gene_ns.ns["print_instructions".to_key()] = print_instructions
   App.app.gene_ns.ns["ns".to_key()] = current_ns
   # not and ... are now handled by compile-time instructions, no need to register
-  App.app.gene_ns.ns["parse".to_key()] = vm_parse  # $parse translates to gene/parse
-  App.app.gene_ns.ns["with".to_key()] = vm_with    # $with translates to gene/with
-  App.app.gene_ns.ns["tap".to_key()] = vm_tap      # $tap translates to gene/tap
-  App.app.gene_ns.ns["eval".to_key()] = vm_eval    # eval function
-
+  App.app.gene_ns.ns["parse".to_key()] = vm_parse.to_value()  # $parse translates to gene/parse
+  App.app.gene_ns.ns["with".to_key()] = vm_with.to_value()    # $with translates to gene/with
+  App.app.gene_ns.ns["tap".to_key()] = vm_tap.to_value()      # $tap translates to gene/tap
+  App.app.gene_ns.ns["eval".to_key()] = vm_eval.to_value()    # eval function
 
   # Add sleep functions directly to gene namespace
   var sleep_ref = new_ref(VkNativeFn)
@@ -675,28 +689,27 @@ proc init_gene_namespace*() =
   var sleep_async_ref = new_ref(VkNativeFn)
   sleep_async_ref.native_fn = gene_sleep_async
   App.app.gene_ns.ns["sleep_async".to_key()] = sleep_async_ref.to_ref_value()
-  
+
   # Also add to global namespace
-  App.app.global_ns.ns["parse".to_key()] = vm_parse
-  App.app.global_ns.ns["with".to_key()] = vm_with
-  App.app.global_ns.ns["tap".to_key()] = vm_tap
-  App.app.global_ns.ns["eval".to_key()] = vm_eval
-  App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation
+  App.app.global_ns.ns["parse".to_key()] = vm_parse.to_value()
+  App.app.global_ns.ns["with".to_key()] = vm_with.to_value()
+  App.app.global_ns.ns["tap".to_key()] = vm_tap.to_value()
+  App.app.global_ns.ns["eval".to_key()] = vm_eval.to_value()
+  App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation.to_value()
   App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
   
   
 
   let class = new_class("Class")
-  class.def_native_macro_method "ctor", class_ctor
-  class.def_native_macro_method "fn", class_fn
-  
-  
+  class.def_native_macro_method("ctor", class_ctor)
+  class.def_native_macro_method("fn", class_fn)
+
   r = new_ref(VkClass)
   r.class = class
   App.app.class_class = r.to_ref_value()
 
   let vm_ns = new_namespace("vm")
   App.app.gene_ns.ns["vm".to_key()] = vm_ns.to_value()
-  vm_ns["compile".to_key()] = NativeFn(vm_compile)
-  vm_ns["PUSH".to_key()] = vm_push
-  vm_ns["ADD" .to_key()] = vm_add
+  vm_ns["compile".to_key()] = vm_compile.to_value()
+  vm_ns["PUSH".to_key()] = vm_push.to_value()
+  vm_ns["ADD".to_key()] = vm_add.to_value()

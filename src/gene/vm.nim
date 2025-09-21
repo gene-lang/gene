@@ -200,11 +200,8 @@ proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
   # Dispatch based on callable kind with optimized paths
   case callable.kind:
   of CkNativeFunction, CkNativeMethod:
-    # Create Gene args structure for native functions
-    var args_value = new_gene_value()
-    for arg in final_args:
-      args_value.gene.children.add(arg)
-    return callable.native_fn(vm, args_value)
+    # Use new native function signature with helper
+    return call_native_fn(callable.native_fn, vm, final_args)
 
   of CkFunction, CkMethod:
     # Handle Gene functions and methods
@@ -2126,11 +2123,11 @@ proc exec*(self: VirtualMachine): Value =
             case frame.kind:
               of NfFunction:
                 let f = frame.target.ref.native_fn
-                self.frame.replace(f(self, frame.args))
+                self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
               of NfMethod:
                 # Native method call - invoke the native function with self as first arg
                 let f = frame.target.ref.native_fn
-                self.frame.replace(f(self, frame.args))
+                self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
               else:
                 todo($frame.kind)
 
@@ -3264,7 +3261,7 @@ proc exec*(self: VirtualMachine): Value =
         case class.constructor.kind:
           of VkNativeFn:
             # Call native constructor
-            let result = class.constructor.ref.native_fn(self, args)
+            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
             self.frame.push(result)
             
           of VkFunction:
@@ -3358,7 +3355,7 @@ proc exec*(self: VirtualMachine): Value =
         case class.constructor.kind:
           of VkNativeFn:
             # Call native constructor (same as regular)
-            let result = class.constructor.ref.native_fn(self, args)
+            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
             self.frame.push(result)
 
           of VkFunction:
@@ -4100,12 +4097,8 @@ proc exec*(self: VirtualMachine): Value =
             continue
 
         of VkNativeFn:
-          var args_value = new_gene_value()
-          let result = target.ref.native_fn(self, args_value)
-          self.frame.push(result)
-        of VkNativeFn3:
           # Zero arguments - use new signature with nil pointer
-          let result = target.ref.native_fn3(self, nil, 0, false)
+          let result = target.ref.native_fn(self, nil, 0, false)
           self.frame.push(result)
 
         of VkBlock:
@@ -4183,9 +4176,8 @@ proc exec*(self: VirtualMachine): Value =
               continue
 
             of VkNativeFn:
-              var args_value = new_gene_value()
-              args_value.gene.children.add(instance)
-              discard init_method.callable.ref.native_fn(self, args_value)
+              # Call native init method with instance as first argument
+              discard call_native_fn(init_method.callable.ref.native_fn, self, [instance])
               self.frame.push(instance)
 
             else:
@@ -4259,13 +4251,8 @@ proc exec*(self: VirtualMachine): Value =
             continue
 
         of VkNativeFn:
-          var args_value = new_gene_value()
-          args_value.gene.children.add(arg)
-          let result = target.ref.native_fn(self, args_value)
-          self.frame.push(result)
-        of VkNativeFn3:
           # Single argument - use new signature with helper
-          let result = call_native_fn(target.ref.native_fn3, self, [arg])
+          let result = call_native_fn(target.ref.native_fn, self, [arg])
           self.frame.push(result)
 
         of VkBlock:
@@ -4345,10 +4332,8 @@ proc exec*(self: VirtualMachine): Value =
               continue
 
             of VkNativeFn:
-              var args_value = new_gene_value()
-              args_value.gene.children.add(instance)
-              args_value.gene.children.add(arg)
-              discard init_method.callable.ref.native_fn(self, args_value)
+              # Call native init method with instance and argument
+              discard call_native_fn(init_method.callable.ref.native_fn, self, [instance, arg])
               self.frame.push(instance)
 
             else:
@@ -4422,14 +4407,8 @@ proc exec*(self: VirtualMachine): Value =
             continue
 
         of VkNativeFn:
-          var args_value = new_gene_value()
-          for arg in args:
-            args_value.gene.children.add(arg)
-          let result = target.ref.native_fn(self, args_value)
-          self.frame.push(result)
-        of VkNativeFn3:
           # Multi-argument - use new signature with helper
-          let result = call_native_fn(target.ref.native_fn3, self, args)
+          let result = call_native_fn(target.ref.native_fn, self, args)
           self.frame.push(result)
 
         else:
@@ -4522,9 +4501,8 @@ proc exec*(self: VirtualMachine): Value =
               continue
 
             of VkNativeFn:
-              var args_value = new_gene_value()
-              args_value.gene.children.add(obj)
-              let result = meth.callable.ref.native_fn(self, args_value)
+              # Method call with self as first argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
               self.frame.push(result)
             else:
               not_allowed("Method must be a function or native function")
@@ -4559,10 +4537,8 @@ proc exec*(self: VirtualMachine): Value =
           if meth != nil:
             case meth.callable.kind:
             of VkNativeFn:
-              # Create a gene with the string as the first argument
-              var args_gene = new_gene()
-              args_gene.children.add(obj)  # Add self (the string) as first argument
-              let method_result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+              # String method call with self as first argument
+              let method_result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
               self.frame.push(method_result)
             else:
               not_allowed("String method must be a native function")
@@ -4577,9 +4553,8 @@ proc exec*(self: VirtualMachine): Value =
               let meth = future_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Future method call with self as first argument
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
                 self.frame.push(result)
               else:
                 not_allowed("Future method must be a native function")
@@ -4596,9 +4571,8 @@ proc exec*(self: VirtualMachine): Value =
               let meth = array_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Array method call with self as first argument
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
                 self.frame.push(result)
               else:
                 not_allowed("Array method must be a native function")
@@ -4615,9 +4589,8 @@ proc exec*(self: VirtualMachine): Value =
               let meth = generator_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Array method call with self as first argument
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
                 self.frame.push(result)
               else:
                 not_allowed("Generator method must be a native function")
@@ -4697,10 +4670,8 @@ proc exec*(self: VirtualMachine): Value =
               continue
 
             of VkNativeFn:
-              var args_value = new_gene_value()
-              args_value.gene.children.add(obj)
-              args_value.gene.children.add(arg)
-              let result = meth.callable.ref.native_fn(self, args_value)
+              # Method call with self and one argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
               self.frame.push(result)
 
             else:
@@ -4715,10 +4686,8 @@ proc exec*(self: VirtualMachine): Value =
             let meth = string_class.methods[method_key]
             case meth.callable.kind:
             of VkNativeFn:
-              var args_gene = new_gene()
-              args_gene.children.add(obj)  # Add self (the string) as first argument
-              args_gene.children.add(arg)  # Add the argument
-              let method_result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+              # String method call with self and one argument
+              let method_result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
               self.frame.push(method_result)
             else:
               not_allowed("String method must be a native function")
@@ -4733,10 +4702,8 @@ proc exec*(self: VirtualMachine): Value =
               let meth = future_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                args_gene.children.add(arg)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Future method call with self and one argument
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
                 self.frame.push(result)
               else:
                 not_allowed("Future method must be a native function")
@@ -4753,10 +4720,8 @@ proc exec*(self: VirtualMachine): Value =
               let meth = array_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                args_gene.children.add(arg)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Array method call with self and one argument
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
                 self.frame.push(result)
               else:
                 not_allowed("Array method must be a native function")
@@ -4773,10 +4738,8 @@ proc exec*(self: VirtualMachine): Value =
               let meth = generator_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                args_gene.children.add(arg)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Generator method call with self and one argument
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
                 self.frame.push(result)
               else:
                 not_allowed("Generator method must be a native function")
@@ -4840,11 +4803,10 @@ proc exec*(self: VirtualMachine): Value =
               continue
 
             of VkNativeFn:
-              var args_value = new_gene_value()
-              args_value.gene.children.add(obj)
-              for arg in args:
-                args_value.gene.children.add(arg)
-              let result = meth.callable.ref.native_fn(self, args_value)
+              # Multi-argument method call with self as first argument
+              var call_args = @[obj]
+              call_args.add(args)
+              let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
               self.frame.push(result)
 
             else:
@@ -4859,11 +4821,10 @@ proc exec*(self: VirtualMachine): Value =
             let meth = string_class.methods[method_key]
             case meth.callable.kind:
             of VkNativeFn:
-              var args_gene = new_gene()
-              args_gene.children.add(obj)  # Add self (the string) as first argument
-              for arg in args:
-                args_gene.children.add(arg)
-              let method_result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+              # Multi-argument string method call with self as first argument
+              var call_args = @[obj]
+              call_args.add(args)
+              let method_result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
               self.frame.push(method_result)
             else:
               not_allowed("String method must be a native function")
@@ -4878,11 +4839,10 @@ proc exec*(self: VirtualMachine): Value =
               let meth = future_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                for arg in args:
-                  args_gene.children.add(arg)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Multi-argument future method call with self as first argument
+                var call_args = @[obj]
+                call_args.add(args)
+                let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
                 self.frame.push(result)
               else:
                 not_allowed("Future method must be a native function")
@@ -4899,11 +4859,10 @@ proc exec*(self: VirtualMachine): Value =
               let meth = array_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                for arg in args:
-                  args_gene.children.add(arg)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Multi-argument array method call with self as first argument
+                var call_args = @[obj]
+                call_args.add(args)
+                let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
                 self.frame.push(result)
               else:
                 not_allowed("Array method must be a native function")
@@ -4920,11 +4879,10 @@ proc exec*(self: VirtualMachine): Value =
               let meth = generator_class.methods[method_key]
               case meth.callable.kind:
               of VkNativeFn:
-                var args_gene = new_gene()
-                args_gene.children.add(obj)
-                for arg in args:
-                  args_gene.children.add(arg)
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
+                # Multi-argument array method call with self as first argument
+                var call_args = @[obj]
+                call_args.add(args)
+                let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
                 self.frame.push(result)
               else:
                 not_allowed("Generator method must be a native function")
@@ -4941,8 +4899,7 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         # Optimized zero-argument native function call
         let target = self.frame.pop()
-        var args_value = new_gene_value()
-        let result = target.ref.native_fn(self, args_value)
+        let result = target.ref.native_fn(self, nil, 0, false)
         self.frame.push(result)
         {.pop}
 
@@ -4951,9 +4908,7 @@ proc exec*(self: VirtualMachine): Value =
         # Optimized single-argument native function call
         let arg = self.frame.pop()
         let target = self.frame.pop()
-        var args_value = new_gene_value()
-        args_value.gene.children.add(arg)
-        let result = target.ref.native_fn(self, args_value)
+        let result = call_native_fn(target.ref.native_fn, self, [arg])
         self.frame.push(result)
         {.pop}
 
@@ -4965,10 +4920,7 @@ proc exec*(self: VirtualMachine): Value =
         for i in countdown(arg_count - 1, 0):
           args[i] = self.frame.pop()
         let target = self.frame.pop()
-        var args_value = new_gene_value()
-        for arg in args:
-          args_value.gene.children.add(arg)
-        let result = target.ref.native_fn(self, args_value)
+        let result = call_native_fn(target.ref.native_fn, self, args)
         self.frame.push(result)
         {.pop}
 
