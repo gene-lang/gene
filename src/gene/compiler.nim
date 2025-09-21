@@ -422,7 +422,7 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
         elif s.starts_with("."):
           let method_value = s[1..^1].to_symbol_value()
           self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: method_value))
-          self.output.instructions.add(Instruction(kind: IkCallMethod1, arg0: method_value))
+          self.output.instructions.add(Instruction(kind: IkUnifiedMethodCall0, arg0: method_value))
         else:
           let key = s.to_key()
           self.output.instructions.add(Instruction(kind: IkGetMember, arg0: cast[Value](key)))
@@ -1357,8 +1357,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       definitely_not_macro = false
 
   if definitely_not_macro and gene.props.len == 0 and gene.children.len == 0:
-    # No-argument call can use direct instruction
-    self.output.instructions.add(Instruction(kind: IkCallFunction0))
+    # No-argument call can use unified instruction
+    self.output.instructions.add(Instruction(kind: IkUnifiedCall0))
     return
 
   # Check if we can optimize to direct function call
@@ -1370,8 +1370,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     # Compile the single argument directly onto stack
     self.compile(gene.children[0])
 
-    # Use CallFunction1 - optimized function call without Gene object creation
-    self.output.instructions.add(Instruction(kind: IkCallFunction1))
+    # Use UnifiedCall1 - optimized function call without Gene object creation
+    self.output.instructions.add(Instruction(kind: IkUnifiedCall1))
     return
 
   if definitely_not_macro:
@@ -1458,14 +1458,14 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     for i in start_index..<gene.children.len:
       self.compile(gene.children[i])
 
-    # Use IkCallMethod1 for no args, IkCallMethod for with args
+    # Use unified method call instructions
     if arg_count == 0:
-      self.output.instructions.add(Instruction(kind: IkCallMethod1, arg0: method_value))
+      self.output.instructions.add(Instruction(kind: IkUnifiedMethodCall0, arg0: method_value))
     else:
       let total_args = arg_count + 1  # include self
       self.output.instructions.add(
         Instruction(
-          kind: IkCallMethod,
+          kind: IkUnifiedMethodCall,
           arg0: method_value,
           arg1: total_args.int32,
         )
