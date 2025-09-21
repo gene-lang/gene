@@ -224,15 +224,15 @@ proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
       vm.frame.scope = scope
       vm.frame.ns = f.ns
 
-      # Create args Gene for argument processing
-      var args_gene = new_gene_value()
-      for arg in final_args:
-        args_gene.gene.children.add(arg)
-      vm.frame.args = args_gene
-
-      # Process arguments if matcher exists
+      # OPTIMIZATION: Direct argument processing for tail calls
       if not f.matcher.is_empty():
-        process_args(f.matcher, args_gene, vm.frame.scope)
+        if final_args.len == 0:
+          process_args_zero(f.matcher, vm.frame.scope)
+        elif final_args.len == 1:
+          process_args_one(f.matcher, final_args[0], vm.frame.scope)
+        else:
+          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, vm.frame.scope)
+      # No need to set vm.frame.args for optimized tail calls
 
       # Jump to beginning of new function
       vm.cu = f.body_compiled
@@ -258,15 +258,15 @@ proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
       new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
       new_frame.ns = f.ns
 
-      # Create args Gene for argument processing
-      var args_gene = new_gene_value()
-      for arg in final_args:
-        args_gene.gene.children.add(arg)
-      new_frame.args = args_gene
-
-      # Process arguments if matcher exists
+      # OPTIMIZATION: Direct argument processing without Gene objects
       if not f.matcher.is_empty():
-        process_args(f.matcher, args_gene, new_frame.scope)
+        if final_args.len == 0:
+          process_args_zero(f.matcher, new_frame.scope)
+        elif final_args.len == 1:
+          process_args_one(f.matcher, final_args[0], new_frame.scope)
+        else:
+          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, new_frame.scope)
+      # No need to set new_frame.args for optimized argument processing
 
       # Switch to new frame and execute
       vm.frame = new_frame
@@ -4070,9 +4070,10 @@ proc exec*(self: VirtualMachine): Value =
             new_frame.kind = FkFunction
             new_frame.target = target
             new_frame.scope = scope
-            new_frame.args = new_gene_value()
+            # OPTIMIZATION: Direct argument processing without Gene objects
             if not f.matcher.is_empty():
-              process_args(f.matcher, new_frame.args, scope)
+              process_args_zero(f.matcher, scope)
+            # No need to set new_frame.args for zero-argument functions
             new_frame.caller_frame = self.frame
             self.frame.ref_count.inc()
             new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -4218,14 +4219,10 @@ proc exec*(self: VirtualMachine): Value =
             new_frame.target = target
             new_frame.scope = scope
 
-            # OPTIMIZATION: Use the same fast path as original IkCallFunction1
+            # OPTIMIZATION: Direct single-argument processing without Gene objects
             if not f.matcher.is_empty():
-              # Direct assignment to scope.members[0] - much faster than process_args()
-              if scope.members.len == 0:
-                scope.members.add(arg)
-              else:
-                scope.members[0] = arg
-            # No need to set new_frame.args for simple single-parameter functions
+              process_args_one(f.matcher, arg, scope)
+            # No need to set new_frame.args for single-parameter functions
 
             new_frame.caller_frame = self.frame
             self.frame.ref_count.inc()
@@ -4377,11 +4374,14 @@ proc exec*(self: VirtualMachine): Value =
             new_frame.target = target
             new_frame.scope = scope
 
-            new_frame.args = new_gene_value()
-            for arg in args:
-              new_frame.args.gene.children.add(arg)
+            # OPTIMIZATION: Direct multi-argument processing without Gene objects
             if not f.matcher.is_empty():
-              process_args(f.matcher, new_frame.args, scope)
+              # Convert seq[Value] to ptr UncheckedArray[Value] for direct processing
+              if args.len > 0:
+                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+              else:
+                process_args_zero(f.matcher, scope)
+            # No need to set new_frame.args for optimized argument processing
 
             new_frame.caller_frame = self.frame
             self.frame.ref_count.inc()
@@ -5131,15 +5131,15 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   # Mark this frame as coming from exec_function
   new_frame.from_exec_function = true
   
-  # Convert args to Gene value
-  let args_gene = new_gene(NIL)
-  for arg in args:
-    args_gene.children.add(arg)
-  new_frame.args = args_gene.to_gene_value()
-  
-  # Process arguments if matcher exists
+  # OPTIMIZATION: Direct argument processing for exec_function
   if not f.matcher.is_empty():
-    process_args(f.matcher, new_frame.args, scope)
+    if args.len == 0:
+      process_args_zero(f.matcher, scope)
+    elif args.len == 1:
+      process_args_one(f.matcher, args[0], scope)
+    else:
+      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+  # No need to set new_frame.args for optimized exec_function
   
   # Set up VM for function execution
   self.frame = new_frame
