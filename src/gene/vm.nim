@@ -14,25 +14,6 @@ when not defined(noExtensions):
 
 const DEBUG_VM = false
 
-# Native functions for built-in properties
-proc class_name_getter(vm: VirtualMachine, args: Value): Value =
-  # The class object is passed in args as the first child
-  if args.kind == VkGene and args.gene.children.len > 0:
-    let target = args.gene.children[0]
-    if target.kind == VkClass:
-      return target.ref.class.name.to_value()
-  not_allowed("name can only be called on classes")
-
-proc instance_class_getter(vm: VirtualMachine, args: Value): Value =
-  # The instance object is passed in args as the first child
-  if args.kind == VkGene and args.gene.children.len > 0:
-    let target = args.gene.children[0]
-    if target.kind == VkInstance:
-      let r = new_ref(VkClass)
-      r.class = target.ref.instance_class
-      return r.to_ref_value()
-  not_allowed("class can only be called on instances")
-
 # Forward declarations from vm/core
 proc init_gene_namespace*()
 proc register_io_functions*()
@@ -4476,8 +4457,7 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
-              # CRITICAL OPTIMIZATION: Don't set caller_frame (like original IkCallMethod1)
-              # new_frame.caller_frame = self.frame  # Commented out for performance
+              new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
               new_frame.ns = f.ns
@@ -4893,168 +4873,6 @@ proc exec*(self: VirtualMachine): Value =
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
-
-      # Specialized call instructions (compile-time optimized)
-      of IkCallNativeFunction0:
-        {.push checks: off}
-        # Optimized zero-argument native function call
-        let target = self.frame.pop()
-        let result = target.ref.native_fn(self, nil, 0, false)
-        self.frame.push(result)
-        {.pop}
-
-      of IkCallNativeFunction1:
-        {.push checks: off}
-        # Optimized single-argument native function call
-        let arg = self.frame.pop()
-        let target = self.frame.pop()
-        let result = call_native_fn(target.ref.native_fn, self, [arg])
-        self.frame.push(result)
-        {.pop}
-
-      of IkCallNativeFunction:
-        {.push checks: off}
-        # Optimized multi-argument native function call
-        let arg_count = inst.arg1
-        var args = newSeq[Value](arg_count)
-        for i in countdown(arg_count - 1, 0):
-          args[i] = self.frame.pop()
-        let target = self.frame.pop()
-        let result = call_native_fn(target.ref.native_fn, self, args)
-        self.frame.push(result)
-        {.pop}
-
-      of IkCallGeneFunction0:
-        {.push checks: off}
-        # Optimized zero-argument Gene function call
-        let target = self.frame.pop()
-        let f = target.ref.fn
-        if f.is_generator:
-          self.frame.push(new_generator_value(f, @[]))
-        else:
-          if f.body_compiled == nil:
-            f.compile()
-
-          var scope: Scope
-          if f.matcher.is_empty():
-            scope = f.parent_scope
-            if scope != nil:
-              scope.ref_count.inc()
-          else:
-            scope = new_scope(f.scope_tracker, f.parent_scope)
-
-          var new_frame = new_frame()
-          new_frame.kind = FkFunction
-          new_frame.target = target
-          new_frame.scope = scope
-
-          new_frame.args = new_gene_value()
-          if not f.matcher.is_empty():
-            process_args(f.matcher, new_frame.args, scope)
-
-          new_frame.caller_frame = self.frame
-          self.frame.ref_count.inc()
-          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-          new_frame.ns = f.ns
-
-          self.frame = new_frame
-          self.cu = f.body_compiled
-          self.pc = 0
-          inst = self.cu.instructions[self.pc].addr
-          continue
-        {.pop}
-
-      of IkCallGeneFunction1:
-        {.push checks: off}
-        # Optimized single-argument Gene function call
-        let arg = self.frame.pop()
-        let target = self.frame.pop()
-        let f = target.ref.fn
-        if f.is_generator:
-          self.frame.push(new_generator_value(f, @[arg]))
-        else:
-          if f.body_compiled == nil:
-            f.compile()
-
-          var scope: Scope
-          if f.matcher.is_empty():
-            scope = f.parent_scope
-            if scope != nil:
-              scope.ref_count.inc()
-          else:
-            scope = new_scope(f.scope_tracker, f.parent_scope)
-
-          var new_frame = new_frame()
-          new_frame.kind = FkFunction
-          new_frame.target = target
-          new_frame.scope = scope
-
-          # OPTIMIZATION: Use the same fast path as original IkCallFunction1
-          if not f.matcher.is_empty():
-            # Direct assignment to scope.members[0] - much faster than process_args()
-            if scope.members.len == 0:
-              scope.members.add(arg)
-            else:
-              scope.members[0] = arg
-          # No need to set new_frame.args for simple single-parameter functions
-
-          new_frame.caller_frame = self.frame
-          self.frame.ref_count.inc()
-          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-          new_frame.ns = f.ns
-
-          self.frame = new_frame
-          self.cu = f.body_compiled
-          self.pc = 0
-          inst = self.cu.instructions[self.pc].addr
-          continue
-        {.pop}
-
-      of IkCallGeneFunction:
-        {.push checks: off}
-        # Optimized multi-argument Gene function call
-        let arg_count = inst.arg1
-        var args = newSeq[Value](arg_count)
-        for i in countdown(arg_count - 1, 0):
-          args[i] = self.frame.pop()
-        let target = self.frame.pop()
-        let f = target.ref.fn
-        if f.is_generator:
-          self.frame.push(new_generator_value(f, args))
-        else:
-          if f.body_compiled == nil:
-            f.compile()
-
-          var scope: Scope
-          if f.matcher.is_empty():
-            scope = f.parent_scope
-            if scope != nil:
-              scope.ref_count.inc()
-          else:
-            scope = new_scope(f.scope_tracker, f.parent_scope)
-
-          var new_frame = new_frame()
-          new_frame.kind = FkFunction
-          new_frame.target = target
-          new_frame.scope = scope
-          new_frame.args = new_gene_value()
-          for arg in args:
-            new_frame.args.gene.children.add(arg)
-          if not f.matcher.is_empty():
-            process_args(f.matcher, new_frame.args, scope)
-          new_frame.caller_frame = self.frame
-          self.frame.ref_count.inc()
-          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-          new_frame.ns = f.ns
-
-          self.frame = new_frame
-          self.cu = f.body_compiled
-          self.pc = 0
-          inst = self.cu.instructions[self.pc].addr
-          continue
-        {.pop}
-
-
 
       else:
         todo($inst.kind)

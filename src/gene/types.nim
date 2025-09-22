@@ -754,14 +754,6 @@ type
     IkUnifiedMethodCall1 # Single-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
 
-    # Specialized call instructions (compile-time optimized)
-    IkCallNativeFunction0  # Zero-argument native function call
-    IkCallNativeFunction1  # Single-argument native function call
-    IkCallNativeFunction   # Multi-argument native function call
-    IkCallGeneFunction0    # Zero-argument Gene function call
-    IkCallGeneFunction1    # Single-argument Gene function call
-    IkCallGeneFunction     # Multi-argument Gene function call
-
     # Macro-specific instructions
     IkCallMacro       # Direct macro call with known target
     IkNewMacro        # Macro constructor call
