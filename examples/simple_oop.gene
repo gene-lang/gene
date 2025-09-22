@@ -1,7 +1,12 @@
 #!/usr/bin/env gene run
 
 (class A
+  (.ctor []
+    (/name = "Test")
+  )
+  
   (.fn m []
+    (println "Hi my name is" self/name)
   )
 )
 

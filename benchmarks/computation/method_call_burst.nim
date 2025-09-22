@@ -23,7 +23,8 @@ when isMainModule:
 
   let code = fmt"""
     (class Pinger
-      (.fn ping [] NIL))
+      (.fn ping [])
+    )
 
     (var obj (new Pinger))
 
