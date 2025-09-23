@@ -36,3 +36,6 @@ tests/test_*
 # Nim cache
 nimcache/
 *.exe
+
+ruby/
+lua/
