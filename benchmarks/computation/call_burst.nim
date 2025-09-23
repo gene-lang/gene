@@ -16,33 +16,46 @@ when isMainModule:
 
   init_app_and_vm()
 
-  var callList: seq[string] = @[]
-  for _ in 0..<callsPerRepeat:
-    callList.add("    (call_once)")
-  let callBlock = callList.join("\n")
+  proc callBlock(callLine: string): string =
+    var lines: seq[string] = @[]
+    for _ in 0..<callsPerRepeat:
+      lines.add("    " & callLine)
+    lines.join("\n")
 
-  let code = fmt"""
+  proc runBenchmark(code, label: string) =
+    let compiled = compile(read_all(code))
+    let ns = new_namespace(label)
+    VM.frame.update(new_frame(ns))
+    VM.cu = compiled
+    VM.trace = get_env("TRACE") == "1"
+
+    let start = cpuTime()
+    discard VM.exec()
+    let duration = cpuTime() - start
+
+    let totalCalls = repeats * callsPerRepeat
+    let callsPerSecond = if duration > 0: totalCalls.float / duration else: 0.0
+
+    echo fmt"{label}:"
+    echo fmt"  repeat count: {repeats}"
+    echo fmt"  calls per repeat: {callsPerRepeat}"
+    echo fmt"  total calls: {totalCalls}"
+    echo fmt"  duration: {duration:.6f} seconds"
+    echo fmt"  calls/sec: {callsPerSecond:.0f}"
+    echo ""
+
+  let zeroArgCode = fmt"""
     (fn call_once [] nil)
     (repeat {repeats}
-{callBlock})
+{callBlock("(call_once)")})
   """
 
-  let compiled = compile(read_all(code))
+  runBenchmark(zeroArgCode, "zero-arg function call")
 
-  let ns = new_namespace("call_burst")
-  VM.frame.update(new_frame(ns))
-  VM.cu = compiled
-  VM.trace = get_env("TRACE") == "1"
+  let oneArgCode = fmt"""
+    (fn call_once [x] x)
+    (repeat {repeats}
+{callBlock("(call_once 1)")})
+  """
 
-  let start = cpuTime()
-  discard VM.exec()
-  let duration = cpuTime() - start
-
-  let totalCalls = repeats * callsPerRepeat
-  let callsPerSecond = if duration > 0: totalCalls.float / duration else: 0.0
-
-  echo fmt"repeat count: {repeats}"
-  echo fmt"calls per repeat: {callsPerRepeat}"
-  echo fmt"total calls: {totalCalls}"
-  echo fmt"duration: {duration:.6f} seconds"
-  echo fmt"calls/sec: {callsPerSecond:.0f}"
+  runBenchmark(oneArgCode, "one-arg function call")
