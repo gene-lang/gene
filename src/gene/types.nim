@@ -422,6 +422,8 @@ type
     mixin_class*    : Value
     application_class*: Value
     package_class*  : Value
+    file_class*     : Value
+    dir_class*      : Value
     module_class*   : Value
     namespace_class*: Value
     function_class* : Value
@@ -432,7 +434,6 @@ type
     thread_class*   : Value
     thread_message_class* : Value
     thread_message_type_class* : Value
-    file_class*     : Value
 
   Package* = ref object
     dir*: string          # Where the package assets are installed
@@ -483,6 +484,7 @@ type
     name*: string
     constructor*: Value
     methods*: Table[Key, Method]
+    members*: Table[Key, Value]  # Static members - class acts as namespace
     on_extended*: Value
     # method_missing*: Value
     ns*: Namespace # Class can act like a namespace
@@ -2649,6 +2651,8 @@ proc new_class*(name: string, parent: Class): Class =
     ns: new_namespace(nil, name),
     parent: parent,
     constructor: NIL,
+    members: initTable[Key, Value](),
+    methods: initTable[Key, Method](),
     version: 0,
   )
 
@@ -2804,6 +2808,23 @@ proc def_native_method*(self: Class, name: string, f: NativeFn) =
     callable: r.to_ref_value(),
   )
   self.version.inc()
+
+proc def_member*(self: Class, name: string, value: Value) =
+  self.members[name.to_key()] = value
+  self.version.inc()
+
+proc def_static_method*(self: Class, name: string, f: NativeFn) =
+  let r = new_ref(VkNativeFn)
+  r.native_fn = f
+  self.members[name.to_key()] = r.to_ref_value()
+  self.version.inc()
+
+proc get_member*(self: Class, name: Key): Value =
+  if self.members.hasKey(name):
+    return self.members[name]
+  if not self.parent.is_nil:
+    return self.parent.get_member(name)
+  return NIL
 
 proc def_native_constructor*(self: Class, f: NativeFn) =
   let r = new_ref(VkNativeFn)

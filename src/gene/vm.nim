@@ -1170,7 +1170,12 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(value.ref.ns[name])
           of VkClass:
-            self.frame.push(value.ref.class.ns[name])
+            # Check members first (static methods), then ns (namespace members)
+            let member = value.ref.class.get_member(name)
+            if member != NIL:
+              self.frame.push(member)
+            else:
+              self.frame.push(value.ref.class.ns[name])
           of VkEnum:
             # Access enum member
             let member_name = $name

@@ -136,6 +136,11 @@ run_category "Functions" "functions"
 run_category "Scopes" "scopes"
 run_category "Async Support" "async"
 run_category "Generators" "generators"
+run_category "Stdlib Core" "stdlib/core"
+run_category "Stdlib Strings" "stdlib/strings"
+run_category "Stdlib Arrays" "stdlib/arrays"
+# run_category "Stdlib IO" "stdlib/io"
+# run_category "Stdlib Time" "stdlib/time"
 
 # Summary
 echo "================================"

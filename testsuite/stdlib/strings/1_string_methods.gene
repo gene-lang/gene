@@ -1,0 +1,17 @@
+# Gene string method tests
+# Expected: 5
+# Expected: HELLO
+# Expected: hello
+# Expected: helloworld
+# Expected: hello
+# Expected: String method tests done
+
+(var original "hello")
+(println (original .length))
+(var upper (original .to_upper))
+(println upper)
+(println (upper .to_lower))
+(var appended (original .append "world"))
+(println appended)
+(println original)
+(println "String method tests done")

@@ -1,4 +1,8 @@
 import base64
+import ../stdlib/core as stdlib_core
+import ../stdlib/math as stdlib_math
+import ../stdlib/io as stdlib_io
+import ../stdlib/system as stdlib_system
 
 # Show the code
 # JIT the code (create a temporary block, reuse the frame)
@@ -697,8 +701,12 @@ proc init_gene_namespace*() =
   App.app.global_ns.ns["eval".to_key()] = vm_eval.to_value()
   App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation.to_value()
   App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
-  
-  
+
+  # Initialize standard library namespaces
+  stdlib_core.init_core_namespace(App.app.global_ns.ref.ns)
+  stdlib_math.init_math_namespace(App.app.global_ns.ref.ns)
+  stdlib_io.init_io_namespace(App.app.global_ns.ref.ns)
+  stdlib_system.init_system_namespace(App.app.global_ns.ref.ns)
 
   let class = new_class("Class")
   class.def_native_macro_method("ctor", class_ctor)

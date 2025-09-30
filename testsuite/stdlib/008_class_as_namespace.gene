@@ -1,0 +1,21 @@
+# Test Class serving as namespace with both static and instance members
+# This demonstrates that File/read is a static method (function)
+# while ((new File "path") .read) is an instance method
+
+# Expected: Static method call
+# Expected: Instance method call
+# Expected: true
+
+# Static method call - File acts as namespace
+(println "Static method call")
+(File/write "tmp/test.txt" "test content")
+(var exists (File/exists "tmp/test.txt"))
+(println "Instance method call")
+
+# Instance method call - File acts as class
+(var file (new File "tmp/test.txt"))
+(var content (file .read))
+(println (== content "test content"))
+
+# Cleanup
+(File/delete "tmp/test.txt")
