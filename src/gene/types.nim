@@ -754,6 +754,7 @@ type
     IkUnifiedCall       # Multi-argument unified call
     IkUnifiedMethodCall0 # Zero-argument method call
     IkUnifiedMethodCall1 # Single-argument method call
+    IkUnifiedMethodCall2 # Two-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
 
     # Macro-specific instructions

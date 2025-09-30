@@ -6,7 +6,13 @@ when isMainModule:
   import ../../src/gene/compiler
   import ../../src/gene/vm
 
-  proc native_f(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  proc native_f0(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    # echo "native_f0"
+    discard
+
+  proc native_f1(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    # {.cast(gcsafe).}:
+    #   echo fmt"native_f1 {args[0]}"
     discard
 
   var repeats = 1000
@@ -19,36 +25,59 @@ when isMainModule:
 
   init_app_and_vm()
 
-  var callList: seq[string] = @[]
-  for _ in 0..<callsPerRepeat:
-    callList.add("    (native_f)")
-  let callBlock = callList.join("\n")
+  proc runBenchmark(code, label: string, ns: Namespace) =
+    let compiled = compile(read_all(code))
+    VM.frame.update(new_frame(ns))
+    VM.cu = compiled
+    VM.trace = get_env("TRACE") == "1"
 
-  let code = fmt"""
-    (fn call_once [] nil)
+    let start = cpuTime()
+    discard VM.exec()
+    let duration = cpuTime() - start
+
+    let totalCalls = repeats * callsPerRepeat
+    let callsPerSecond = if duration > 0: totalCalls.float / duration else: 0.0
+
+    echo fmt"{label}:"
+    echo fmt"  repeat count: {repeats}"
+    echo fmt"  calls per repeat: {callsPerRepeat}"
+    echo fmt"  total calls: {totalCalls}"
+    echo fmt"  duration: {duration:.6f} seconds"
+    echo fmt"  calls/sec: {callsPerSecond:.0f}"
+    echo ""
+
+  # Setup namespace
+  let ns = new_namespace("native_calls")
+  let native_f0_ref = new_ref(VkNativeFn)
+  native_f0_ref.native_fn = native_f0
+  ns["native_f0".to_key()] = native_f0_ref.to_ref_value()
+
+  let native_f1_ref = new_ref(VkNativeFn)
+  native_f1_ref.native_fn = native_f1
+  ns["native_f1".to_key()] = native_f1_ref.to_ref_value()
+
+  # Zero-arg benchmark
+  var callList0: seq[string] = @[]
+  for _ in 0..<callsPerRepeat:
+    callList0.add("    (native_f0)")
+  let callBlock0 = callList0.join("\n")
+
+  let code0 = fmt"""
     (repeat {repeats}
-{callBlock})
+{callBlock0})
   """
 
-  let compiled = compile(read_all(code))
+  runBenchmark(code0, "zero-arg native call", ns)
 
-  let ns = new_namespace("call_burst")
-  let native_f_ref = new_ref(VkNativeFn)
-  native_f_ref.native_fn = native_f
-  ns["native_f".to_key()] = native_f_ref.to_ref_value()
-  VM.frame.update(new_frame(ns))
-  VM.cu = compiled
-  VM.trace = get_env("TRACE") == "1"
+  # One-arg benchmark
+  var callList1: seq[string] = @[]
+  for _ in 0..<callsPerRepeat:
+    callList1.add("    (native_f1 1)")
+  let callBlock1 = callList1.join("\n")
 
-  let start = cpuTime()
-  discard VM.exec()
-  let duration = cpuTime() - start
+  let code1 = fmt"""
+    (repeat {repeats}
+{callBlock1})
+  """
 
-  let totalCalls = repeats * callsPerRepeat
-  let callsPerSecond = if duration > 0: totalCalls.float / duration else: 0.0
-
-  echo fmt"repeat count: {repeats}"
-  echo fmt"calls per repeat: {callsPerRepeat}"
-  echo fmt"total calls: {totalCalls}"
-  echo fmt"duration: {duration:.6f} seconds"
-  echo fmt"Native calls/sec: {callsPerSecond:.0f}"
+  runBenchmark(code1, "one-arg native call", ns)
