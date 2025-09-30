@@ -14,6 +14,30 @@ when not defined(noExtensions):
 
 const DEBUG_VM = false
 
+# Template to get the class of a value for unified method calls
+template get_value_class(val: Value): Class =
+  case val.kind:
+  of VkInstance:
+    types.ref(val).instance_class
+  of VkString:
+    types.ref(App.app.string_class).class
+  of VkArray:
+    types.ref(App.app.array_class).class
+  of VkMap:
+    types.ref(App.app.map_class).class
+  of VkFuture:
+    if App.app.future_class.kind == VkClass:
+      types.ref(App.app.future_class).class
+    else:
+      nil
+  of VkGenerator:
+    if App.app.generator_class.kind == VkClass:
+      types.ref(App.app.generator_class).class
+    else:
+      nil
+  else:
+    nil
+
 # Forward declarations from vm/core
 proc init_gene_namespace*()
 proc register_io_functions*()
@@ -4586,96 +4610,24 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString:
-          # OPTIMIZATION: Use inline cache for string method lookup
-          let string_class = App.app.string_class.ref.class
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
           let method_key = method_name.to_key()
-
-          var cache: ptr InlineCache
-          if self.pc < self.cu.inline_caches.len:
-            cache = self.cu.inline_caches[self.pc].addr
-          else:
-            while self.cu.inline_caches.len <= self.pc:
-              self.cu.inline_caches.add(InlineCache())
-            cache = self.cu.inline_caches[self.pc].addr
-
-          var meth: Method
-          if cache.class != nil and cache.class == string_class and cache.cached_method != nil:
-            # CACHE HIT: Use cached method
-            meth = cache.cached_method
-          else:
-            # CACHE MISS: Look up method and cache it
-            if string_class.methods.hasKey(method_key):
-              meth = string_class.methods[method_key]
-              cache.class = string_class
-              cache.cached_method = meth
-            else:
-              meth = nil
-
-          if meth != nil:
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
             case meth.callable.kind:
             of VkNativeFn:
-              # String method call with self as first argument
-              let method_result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
-              self.frame.push(method_result)
+              # Method call with self as first argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
+              self.frame.push(result)
             else:
-              not_allowed("String method must be a native function")
+              not_allowed($obj.kind & " method must be a native function")
           else:
-            not_allowed("Method " & method_name & " not found on string")
-        of VkFuture:
-          # Handle future methods
-          if App.app.future_class.kind == VkClass:
-            let future_class = App.app.future_class.ref.class
-            let method_key = method_name.to_key()
-            if future_class.methods.hasKey(method_key):
-              let meth = future_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Future method call with self as first argument
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
-                self.frame.push(result)
-              else:
-                not_allowed("Future method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on future")
-          else:
-            not_allowed("Future class not initialized")
-        of VkArray:
-          # Handle array methods
-          if App.app.array_class.kind == VkClass:
-            let array_class = App.app.array_class.ref.class
-            let method_key = method_name.to_key()
-            if array_class.methods.hasKey(method_key):
-              let meth = array_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Array method call with self as first argument
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
-                self.frame.push(result)
-              else:
-                not_allowed("Array method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on array")
-          else:
-            not_allowed("Array class not initialized")
-        of VkGenerator:
-          # Handle generator methods
-          if App.app.generator_class.kind == VkClass:
-            let generator_class = App.app.generator_class.ref.class
-            let method_key = method_name.to_key()
-            if generator_class.methods.hasKey(method_key):
-              let meth = generator_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Array method call with self as first argument
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
-                self.frame.push(result)
-              else:
-                not_allowed("Generator method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on generator")
-          else:
-            not_allowed("Generator class not initialized")
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
@@ -4783,75 +4735,24 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString:
-          # Handle string methods using the string class
-          let string_class = App.app.string_class.ref.class
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
           let method_key = method_name.to_key()
-          if string_class.methods.hasKey(method_key):
-            let meth = string_class.methods[method_key]
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
             case meth.callable.kind:
             of VkNativeFn:
-              # String method call with self and one argument
-              let method_result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
-              self.frame.push(method_result)
+              # Method call with self and one argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
+              self.frame.push(result)
             else:
-              not_allowed("String method must be a native function")
+              not_allowed($obj.kind & " method must be a native function")
           else:
-            not_allowed("Method " & method_name & " not found on string")
-        of VkFuture:
-          # Handle future methods
-          if App.app.future_class.kind == VkClass:
-            let future_class = App.app.future_class.ref.class
-            let method_key = method_name.to_key()
-            if future_class.methods.hasKey(method_key):
-              let meth = future_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Future method call with self and one argument
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
-                self.frame.push(result)
-              else:
-                not_allowed("Future method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on future")
-          else:
-            not_allowed("Future class not initialized")
-        of VkArray:
-          # Handle array methods
-          if App.app.array_class.kind == VkClass:
-            let array_class = App.app.array_class.ref.class
-            let method_key = method_name.to_key()
-            if array_class.methods.hasKey(method_key):
-              let meth = array_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Array method call with self and one argument
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
-                self.frame.push(result)
-              else:
-                not_allowed("Array method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on array")
-          else:
-            not_allowed("Array class not initialized")
-        of VkGenerator:
-          # Handle generator methods
-          if App.app.generator_class.kind == VkClass:
-            let generator_class = App.app.generator_class.ref.class
-            let method_key = method_name.to_key()
-            if generator_class.methods.hasKey(method_key):
-              let meth = generator_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Generator method call with self and one argument
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
-                self.frame.push(result)
-              else:
-                not_allowed("Generator method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on generator")
-          else:
-            not_allowed("Generator class not initialized")
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
@@ -4967,39 +4868,24 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString:
-          # Handle string methods using the string class
-          let string_class = App.app.string_class.ref.class
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
           let method_key = method_name.to_key()
-          if string_class.methods.hasKey(method_key):
-            let meth = string_class.methods[method_key]
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
             case meth.callable.kind:
             of VkNativeFn:
-              # String method call with self and two arguments
-              let method_result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
-              self.frame.push(method_result)
+              # Method call with self and two arguments
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              self.frame.push(result)
             else:
-              not_allowed("String method must be a native function")
+              not_allowed($obj.kind & " method must be a native function")
           else:
-            not_allowed("Method " & method_name & " not found on string")
-        of VkArray:
-          # Handle array methods
-          if App.app.array_class.kind == VkClass:
-            let array_class = App.app.array_class.ref.class
-            let method_key = method_name.to_key()
-            if array_class.methods.hasKey(method_key):
-              let meth = array_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Array method call with self and two arguments
-                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
-                self.frame.push(result)
-              else:
-                not_allowed("Array method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on array")
-          else:
-            not_allowed("Array class not initialized")
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
@@ -5066,83 +4952,26 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString:
-          # Handle string methods using the string class
-          let string_class = App.app.string_class.ref.class
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
           let method_key = method_name.to_key()
-          if string_class.methods.hasKey(method_key):
-            let meth = string_class.methods[method_key]
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
             case meth.callable.kind:
             of VkNativeFn:
-              # Multi-argument string method call with self as first argument
+              # Multi-argument method call with self as first argument
               var call_args = @[obj]
               call_args.add(args)
-              let method_result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
-              self.frame.push(method_result)
+              let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
+              self.frame.push(result)
             else:
-              not_allowed("String method must be a native function")
+              not_allowed($obj.kind & " method must be a native function")
           else:
-            not_allowed("Method " & method_name & " not found on string")
-        of VkFuture:
-          # Handle future methods
-          if App.app.future_class.kind == VkClass:
-            let future_class = App.app.future_class.ref.class
-            let method_key = method_name.to_key()
-            if future_class.methods.hasKey(method_key):
-              let meth = future_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Multi-argument future method call with self as first argument
-                var call_args = @[obj]
-                call_args.add(args)
-                let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
-                self.frame.push(result)
-              else:
-                not_allowed("Future method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on future")
-          else:
-            not_allowed("Future class not initialized")
-        of VkArray:
-          # Handle array methods
-          if App.app.array_class.kind == VkClass:
-            let array_class = App.app.array_class.ref.class
-            let method_key = method_name.to_key()
-            if array_class.methods.hasKey(method_key):
-              let meth = array_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Multi-argument array method call with self as first argument
-                var call_args = @[obj]
-                call_args.add(args)
-                let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
-                self.frame.push(result)
-              else:
-                not_allowed("Array method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on array")
-          else:
-            not_allowed("Array class not initialized")
-        of VkGenerator:
-          # Handle generator methods
-          if App.app.generator_class.kind == VkClass:
-            let generator_class = App.app.generator_class.ref.class
-            let method_key = method_name.to_key()
-            if generator_class.methods.hasKey(method_key):
-              let meth = generator_class.methods[method_key]
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Multi-argument array method call with self as first argument
-                var call_args = @[obj]
-                call_args.add(args)
-                let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
-                self.frame.push(result)
-              else:
-                not_allowed("Generator method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on generator")
-          else:
-            not_allowed("Generator class not initialized")
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
