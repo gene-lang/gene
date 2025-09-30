@@ -4616,32 +4616,59 @@ proc exec*(self: VirtualMachine): Value =
           if meth != nil:
             case meth.callable.kind:
             of VkFunction:
+              # OPTIMIZED: Follow IkCallMethod1 pattern for single-arg method calls
               let f = meth.callable.ref.fn
               if f.body_compiled == nil:
                 f.compile()
 
+              # Use exact same scope optimization as IkUnifiedMethodCall0
               var scope: Scope
               if f.matcher.is_empty():
+                # FAST PATH: Reuse parent scope directly
                 scope = f.parent_scope
                 if scope != nil:
                   scope.ref_count.inc()
               else:
+                # SLOW PATH: Create new scope and manually set self and arg
                 scope = new_scope(f.scope_tracker, f.parent_scope)
+                # Manual argument matching: set self and arg in scope without Gene objects
+                # Matcher should have 2 params: [self, arg_name]
+                if f.matcher.children.len >= 2:
+                  if f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
 
+                  let param = f.matcher.children[1]  # Second param is the actual argument
+                  if param.kind == MatchData and f.scope_tracker.mappings.hasKey(param.name_key):
+                    let arg_idx = f.scope_tracker.mappings[param.name_key]
+                    while scope.members.len <= arg_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg_idx] = arg
+
+              # ULTRA-OPTIMIZED: Minimal frame creation (like IkUnifiedMethodCall0)
               var new_frame = new_frame()
               new_frame.kind = FkFunction
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
-              new_frame.args = new_gene_value()
-              new_frame.args.gene.children.add(obj)  # Add self as first argument
-              new_frame.args.gene.children.add(arg)  # Add the argument
-              if not f.matcher.is_empty():
-                process_args(f.matcher, new_frame.args, scope)
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
               new_frame.ns = f.ns
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: -3,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
 
               self.frame = new_frame
               self.cu = f.body_compiled
@@ -4727,6 +4754,154 @@ proc exec*(self: VirtualMachine): Value =
               not_allowed("Method " & method_name & " not found on generator")
           else:
             not_allowed("Generator class not initialized")
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall2:
+        {.push checks: off}
+        # Two-argument unified method call
+        let method_name = inst.arg0.str
+        let arg2 = self.frame.pop()
+        let arg1 = self.frame.pop()
+        let obj = self.frame.pop()
+
+        case obj.kind:
+        of VkInstance:
+          # OPTIMIZATION: Use inline cache for method lookup
+          let class = obj.ref.instance_class
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            meth = class.get_method(method_name)
+            if meth != nil:
+              cache.class = class
+              cache.class_version = class.version
+              cache.cached_method = meth
+
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              # OPTIMIZED: Follow IkCallMethod pattern for two-arg method calls
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              # Use exact same scope optimization as IkUnifiedMethodCall0
+              var scope: Scope
+              if f.matcher.is_empty():
+                # FAST PATH: Reuse parent scope directly
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                # SLOW PATH: Create new scope and manually set self and args
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+                # Manual argument matching: set self and 2 args in scope without Gene objects
+                # Matcher should have 3 params: [self, arg1_name, arg2_name]
+                if f.matcher.children.len >= 3:
+                  if f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
+
+                  let param1 = f.matcher.children[1]
+                  if param1.kind == MatchData and f.scope_tracker.mappings.hasKey(param1.name_key):
+                    let arg1_idx = f.scope_tracker.mappings[param1.name_key]
+                    while scope.members.len <= arg1_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg1_idx] = arg1
+
+                  let param2 = f.matcher.children[2]
+                  if param2.kind == MatchData and f.scope_tracker.mappings.hasKey(param2.name_key):
+                    let arg2_idx = f.scope_tracker.mappings[param2.name_key]
+                    while scope.members.len <= arg2_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg2_idx] = arg2
+
+              # ULTRA-OPTIMIZED: Minimal frame creation
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: -3,
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Method call with self and two arguments
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        of VkString:
+          # Handle string methods using the string class
+          let string_class = App.app.string_class.ref.class
+          let method_key = method_name.to_key()
+          if string_class.methods.hasKey(method_key):
+            let meth = string_class.methods[method_key]
+            case meth.callable.kind:
+            of VkNativeFn:
+              # String method call with self and two arguments
+              let method_result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              self.frame.push(method_result)
+            else:
+              not_allowed("String method must be a native function")
+          else:
+            not_allowed("Method " & method_name & " not found on string")
+        of VkArray:
+          # Handle array methods
+          if App.app.array_class.kind == VkClass:
+            let array_class = App.app.array_class.ref.class
+            let method_key = method_name.to_key()
+            if array_class.methods.hasKey(method_key):
+              let meth = array_class.methods[method_key]
+              case meth.callable.kind:
+              of VkNativeFn:
+                # Array method call with self and two arguments
+                let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+                self.frame.push(result)
+              else:
+                not_allowed("Array method must be a native function")
+            else:
+              not_allowed("Method " & method_name & " not found on array")
+          else:
+            not_allowed("Array class not initialized")
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}

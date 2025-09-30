@@ -1461,6 +1461,10 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     # Use unified method call instructions
     if arg_count == 0:
       self.output.instructions.add(Instruction(kind: IkUnifiedMethodCall0, arg0: method_value))
+    elif arg_count == 1:
+      self.output.instructions.add(Instruction(kind: IkUnifiedMethodCall1, arg0: method_value))
+    elif arg_count == 2:
+      self.output.instructions.add(Instruction(kind: IkUnifiedMethodCall2, arg0: method_value))
     else:
       let total_args = arg_count + 1  # include self
       self.output.instructions.add(
