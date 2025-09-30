@@ -505,6 +505,80 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
       # Other values pass through unchanged
       return tpl
 
+proc call_instance_method(self: VirtualMachine, instance: Value, method_name: string, args: openArray[Value]): bool =
+  ## Helper to forward instance calls to 'call' method
+  ## Returns true if method was found and call was initiated (via continue), false otherwise
+  ## When returns true, the VM state has been set up for the call and caller should continue execution
+  let call_method_key = method_name.to_key()
+  let class = instance.ref.instance_class
+
+  if not class.methods.hasKey(call_method_key):
+    return false
+
+  let meth = class.methods[call_method_key]
+  case meth.callable.kind:
+  of VkFunction:
+    let f = meth.callable.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      # Manually set self and args in scope
+      var all_args = newSeq[Value](args.len + 1)
+      all_args[0] = instance
+      for i in 0..<args.len:
+        all_args[i + 1] = args[i]
+
+      # Process arguments using the direct method
+      if all_args.len > 0:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = meth.callable
+    new_frame.scope = scope
+    new_frame.current_method = meth
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: -3,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    # Call native 'call' method with instance as first argument
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = instance
+    for i in 0..<args.len:
+      all_args[i + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("call method must be a function or native function")
+    return false
+
 proc exec*(self: VirtualMachine): Value =
   # Initialize gene namespace if not already done
   init_gene_namespace()
@@ -4168,6 +4242,14 @@ proc exec*(self: VirtualMachine): Value =
             # No init method, just return the instance
             self.frame.push(instance)
 
+        of VkInstance:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", []):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+
         else:
           not_allowed("IkUnifiedCall0 requires a callable, got " & $target.kind)
         {.pop}
@@ -4320,6 +4402,14 @@ proc exec*(self: VirtualMachine): Value =
             # No init method, just return the instance (ignore the argument)
             self.frame.push(instance)
 
+        of VkInstance:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", [arg]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+
         else:
           not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
         {.pop}
@@ -4391,6 +4481,14 @@ proc exec*(self: VirtualMachine): Value =
           # Multi-argument - use new signature with helper
           let result = call_native_fn(target.ref.native_fn, self, args)
           self.frame.push(result)
+
+        of VkInstance:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", args):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
