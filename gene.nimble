@@ -11,6 +11,7 @@ bin           = @["gene"]
 
 # Dependencies
 requires "nim >= 1.4.0"
+requires "db_connector"
 
 task speedy, "Optimized build for maximum performance":
   exec "nim c -d:release --mm:orc --opt:speed --passC:\"-march=native -O3\" -o:gene src/gene.nim"
@@ -21,6 +22,7 @@ task bench, "Build and run benchmarks":
 task buildext, "Build extension modules":
   exec "mkdir -p build"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp.dylib src/genex/http.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libsqlite.dylib src/genex/sqlite.nim"
 
 task testcore, "Runs the test suite":
   exec "nim c -r tests/test_types.nim"

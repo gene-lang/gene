@@ -5240,6 +5240,7 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
 
 include "./vm/core"
 import "./vm/async"
-# Temporarily import http module until extension loading is fixed
+# Temporarily import http and sqlite modules until extension loading is fixed
 when not defined(noExtensions):
   import "../genex/http"
+  import "../genex/sqlite"
