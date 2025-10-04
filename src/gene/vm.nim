@@ -1090,7 +1090,7 @@ proc exec*(self: VirtualMachine): Value =
               self.frame.push(value)
 
       of IkSelf:
-        # Get self from first argument  
+        # Get self from first argument
         if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
           self.frame.push(self.frame.args.gene.children[0])
         else:
@@ -4583,6 +4583,10 @@ proc exec*(self: VirtualMachine): Value =
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
               new_frame.ns = f.ns
+              # Set frame.args so IkSelf can access self
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              new_frame.args = args_gene
 
               # If this is an async function, set up exception handler
               if f.async:
@@ -4707,6 +4711,11 @@ proc exec*(self: VirtualMachine): Value =
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
               new_frame.ns = f.ns
+              # Set frame.args so IkSelf can access self
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              args_gene.gene.children.add(arg)
+              new_frame.args = args_gene
 
               # If this is an async function, set up exception handler
               if f.async:
@@ -4840,6 +4849,12 @@ proc exec*(self: VirtualMachine): Value =
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
               new_frame.ns = f.ns
+              # Set frame.args so IkSelf can access self
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              args_gene.gene.children.add(arg1)
+              args_gene.gene.children.add(arg2)
+              new_frame.args = args_gene
 
               # If this is an async function, set up exception handler
               if f.async:
@@ -5062,7 +5077,12 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
       process_args_one(f.matcher, args[0], scope)
     else:
       process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
-  # No need to set new_frame.args for optimized exec_function
+
+  # Set frame.args so IkSelf can access arguments (especially self in methods)
+  let args_gene = new_gene_value()
+  for arg in args:
+    args_gene.gene.children.add(arg)
+  new_frame.args = args_gene
   
   # Set up VM for function execution
   self.frame = new_frame
