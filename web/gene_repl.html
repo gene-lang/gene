@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gene REPL - Interactive Programming</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #2d2d30;
+            padding: 15px 20px;
+            border-bottom: 2px solid #007acc;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            color: #007acc;
+            margin-bottom: 5px;
+        }
+
+        .header .subtitle {
+            font-size: 12px;
+            color: #858585;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .output-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #3e3e42;
+        }
+
+        .output-header {
+            background: #252526;
+            padding: 8px 15px;
+            border-bottom: 1px solid #3e3e42;
+            font-size: 12px;
+            color: #cccccc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .output-content {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .repl-line {
+            margin-bottom: 10px;
+        }
+
+        .repl-input {
+            color: #9cdcfe;
+        }
+
+        .repl-prompt {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+
+        .repl-output {
+            color: #ce9178;
+            margin-left: 20px;
+        }
+
+        .repl-error {
+            color: #f48771;
+            margin-left: 20px;
+        }
+
+        .input-panel {
+            width: 500px;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+        }
+
+        .input-header {
+            background: #252526;
+            padding: 8px 15px;
+            border-bottom: 1px solid #3e3e42;
+            font-size: 12px;
+            color: #cccccc;
+        }
+
+        .input-area {
+            flex: 1;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #codeInput {
+            flex: 1;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+            padding: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: none;
+            outline: none;
+        }
+
+        #codeInput:focus {
+            border-color: #007acc;
+        }
+
+        .button-group {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 13px;
+            border-radius: 2px;
+        }
+
+        button:hover {
+            background: #1177bb;
+        }
+
+        button:active {
+            background: #0d5a8f;
+        }
+
+        button.secondary {
+            background: #3e3e42;
+        }
+
+        button.secondary:hover {
+            background: #505050;
+        }
+
+        .help-text {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #858585;
+            line-height: 1.4;
+        }
+
+        .status-bar {
+            background: #007acc;
+            color: white;
+            padding: 5px 15px;
+            font-size: 11px;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #424242;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4e4e4e;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧬 Gene REPL</h1>
+        <div class="subtitle">Interactive Gene Programming Environment</div>
+    </div>
+
+    <div class="container">
+        <div class="output-panel">
+            <div class="output-header">
+                <span>Output</span>
+                <button class="secondary" onclick="clearOutput()" style="padding: 4px 8px; font-size: 11px;">Clear</button>
+            </div>
+            <div class="output-content" id="output">
+                <div class="repl-line">
+                    <div style="color: #858585; font-style: italic;">
+                        🧬 Welcome to Gene REPL v0.1.0<br>
+                        Type Gene expressions and press Ctrl+Enter to evaluate.<br>
+                        State persists between evaluations (like IRB).<br><br>
+                        <strong>Quick Examples:</strong><br>
+                        • Math: (+ 1 2 3), (* 5 (- 10 3))<br>
+                        • Variables: (var x 42), (var name "Gene")<br>
+                        • I/O: (println "Hello" x)<br>
+                        • Lists: [1 2 3], (first [10 20 30])<br>
+                        • Conditionals: (if (> x 10) "big" "small")<br>
+                        • Functions: (fn greet [name] (str "Hello " name))<br>
+                        • Loops: (for i in [1 2 3] (println i))<br><br>
+                        <strong>Try it:</strong> (var nums [1 2 3 4 5])<br>
+                        Then: (for n in nums (println "Number:" n))<br>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-panel">
+            <div class="input-header">Input (Ctrl+Enter to evaluate)</div>
+            <div class="input-area">
+                <textarea id="codeInput" placeholder="Enter Gene code here..."></textarea>
+                <div class="button-group">
+                    <button onclick="evaluateCode()">Evaluate (Ctrl+Enter)</button>
+                    <button class="secondary" onclick="resetVM()">Reset VM</button>
+                </div>
+                <div class="help-text">
+                    <strong>Keyboard Shortcuts:</strong><br>
+                    Ctrl+Enter - Evaluate code<br>
+                    Ctrl+L - Clear output<br>
+                    Ctrl+R - Reset VM
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+        Ready - Gene VM initialized
+    </div>
+
+    <script>
+        // Gene VM - Simplified JavaScript implementation
+        class GeneVM {
+            constructor() {
+                this.scope = new Map();
+                this.functions = new Map();
+                this.history = [];
+                this.outputs = [];
+                this.initBuiltins();
+            }
+
+            initBuiltins() {
+                // Math operators
+                this.functions.set('+', (...args) => args.reduce((a, b) => a + b, 0));
+                this.functions.set('-', (...args) => args.length === 1 ? -args[0] : args.reduce((a, b) => a - b));
+                this.functions.set('*', (...args) => args.reduce((a, b) => a * b, 1));
+                this.functions.set('/', (...args) => args.reduce((a, b) => a / b));
+                this.functions.set('%', (a, b) => a % b);
+
+                // Comparison
+                this.functions.set('==', (a, b) => a === b);
+                this.functions.set('!=', (a, b) => a !== b);
+                this.functions.set('<', (a, b) => a < b);
+                this.functions.set('>', (a, b) => a > b);
+                this.functions.set('<=', (a, b) => a <= b);
+                this.functions.set('>=', (a, b) => a >= b);
+
+                // Logical
+                this.functions.set('and', (...args) => args.every(x => x));
+                this.functions.set('or', (...args) => args.some(x => x));
+                this.functions.set('not', (a) => !a);
+
+                // String operations
+                this.functions.set('str', (...args) => args.map(a => this.toString(a)).join(''));
+                this.functions.set('join', (sep, ...args) => args.join(sep));
+
+                // List operations
+                this.functions.set('list', (...args) => args);
+                this.functions.set('first', (list) => Array.isArray(list) ? list[0] : null);
+                this.functions.set('rest', (list) => Array.isArray(list) ? list.slice(1) : []);
+                this.functions.set('length', (list) => Array.isArray(list) ? list.length : 0);
+
+                // I/O
+                this.functions.set('println', (...args) => {
+                    const output = args.map(a => this.toString(a)).join(' ');
+                    this.outputs.push(output);
+                    return null;  // println returns nil, not the output
+                });
+                this.functions.set('print', (...args) => {
+                    const output = args.map(a => this.toString(a)).join(' ');
+                    this.outputs.push(output);
+                    return null;  // print returns nil, not the output
+                });
+            }
+
+            eval(code) {
+                try {
+                    this.outputs = [];
+                    const lines = code.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+                    let result = null;
+
+                    for (const line of lines) {
+                        result = this.evaluate(line.trim());
+                    }
+
+                    this.history.push({ code, result, error: null, outputs: this.outputs });
+
+                    // Smart output formatting
+                    let output;
+                    if (this.outputs.length > 0) {
+                        // If we have println/print output
+                        if (result === null) {
+                            // println/print returns nil, just show the output
+                            output = this.outputs.join('\n');
+                        } else {
+                            // Other expressions that also printed - show both
+                            output = this.outputs.join('\n') + '\n=> ' + this.toString(result);
+                        }
+                    } else {
+                        // No print output, just show the result
+                        output = this.toString(result);
+                    }
+
+                    return { success: true, result: output };
+                } catch (error) {
+                    this.history.push({ code, result: null, error: error.message });
+                    return { success: false, error: error.message };
+                }
+            }
+
+            evaluate(code) {
+                if (!code.startsWith('(')) {
+                    // Atom
+                    return this.evalAtom(code);
+                }
+
+                // Parse and evaluate s-expression
+                const expr = this.parse(code);
+                return this.evalExpr(expr);
+            }
+
+            evalAtom(token) {
+                // String literal
+                if (token.startsWith('"') && token.endsWith('"')) {
+                    return token.slice(1, -1);
+                }
+
+                // Number
+                if (!isNaN(token)) {
+                    return parseFloat(token);
+                }
+
+                // Boolean
+                if (token === 'true') return true;
+                if (token === 'false') return false;
+                if (token === 'nil') return null;
+
+                // Variable
+                if (this.scope.has(token)) {
+                    return this.scope.get(token);
+                }
+
+                // Symbol
+                return token;
+            }
+
+            parse(code) {
+                const tokens = this.tokenize(code);
+                let index = 0;
+
+                const parseToken = () => {
+                    if (index >= tokens.length) {
+                        throw new Error('Unexpected end of input');
+                    }
+
+                    const token = tokens[index++];
+                    if (token === '(') {
+                        const list = [];
+                        while (index < tokens.length && tokens[index] !== ')') {
+                            list.push(parseToken());
+                        }
+                        if (index >= tokens.length) {
+                            throw new Error('Missing closing parenthesis');
+                        }
+                        index++; // skip ')'
+                        return list;
+                    } else if (token === ')') {
+                        throw new Error('Unexpected closing parenthesis');
+                    } else if (token === '[') {
+                        const list = [];
+                        while (index < tokens.length && tokens[index] !== ']') {
+                            list.push(parseToken());
+                        }
+                        if (index >= tokens.length) {
+                            throw new Error('Missing closing bracket');
+                        }
+                        index++; // skip ']'
+                        return ['list', ...list];
+                    } else {
+                        return token;
+                    }
+                };
+
+                return parseToken();
+            }
+
+            tokenize(code) {
+                // Handle string literals specially
+                const tokens = [];
+                let current = '';
+                let inString = false;
+
+                for (let i = 0; i < code.length; i++) {
+                    const char = code[i];
+
+                    if (char === '"') {
+                        if (inString) {
+                            current += char;
+                            tokens.push(current);
+                            current = '';
+                            inString = false;
+                        } else {
+                            if (current.trim()) tokens.push(current.trim());
+                            current = char;
+                            inString = true;
+                        }
+                    } else if (inString) {
+                        current += char;
+                    } else if ('()[]'.includes(char)) {
+                        if (current.trim()) tokens.push(current.trim());
+                        tokens.push(char);
+                        current = '';
+                    } else if (char === ' ' || char === '\n' || char === '\t') {
+                        if (current.trim()) tokens.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+
+                if (current.trim()) tokens.push(current.trim());
+                return tokens;
+            }
+
+            evalExpr(expr) {
+                if (!Array.isArray(expr)) {
+                    return this.evalAtom(expr);
+                }
+
+                if (expr.length === 0) {
+                    return null;
+                }
+
+                const [head, ...rest] = expr;
+
+                // Special forms
+                if (head === 'var') {
+                    const [name, value] = rest;
+                    const evalValue = this.evalExpr(value);
+                    this.scope.set(name, evalValue);
+                    return evalValue;
+                }
+
+                if (head === 'fn') {
+                    const [name, params, ...body] = rest;
+                    const fn = (...args) => {
+                        const savedScope = new Map(this.scope);
+                        params.forEach((param, i) => {
+                            this.scope.set(param, args[i]);
+                        });
+                        let result = null;
+                        for (const expr of body) {
+                            result = this.evalExpr(expr);
+                        }
+                        this.scope = savedScope;
+                        return result;
+                    };
+                    this.functions.set(name, fn);
+                    return fn;
+                }
+
+                if (head === 'if') {
+                    const [condition, thenExpr, elseExpr] = rest;
+                    const cond = this.evalExpr(condition);
+                    return cond ? this.evalExpr(thenExpr) : (elseExpr ? this.evalExpr(elseExpr) : null);
+                }
+
+                if (head === 'do') {
+                    let result = null;
+                    for (const expr of rest) {
+                        result = this.evalExpr(expr);
+                    }
+                    return result;
+                }
+
+                if (head === 'while') {
+                    const [condition, ...body] = rest;
+                    let result = null;
+                    while (this.evalExpr(condition)) {
+                        for (const expr of body) {
+                            result = this.evalExpr(expr);
+                        }
+                    }
+                    return result;
+                }
+
+                if (head === 'for') {
+                    const [varName, _, collection, ...body] = rest;
+                    const coll = this.evalExpr(collection);
+                    let result = null;
+                    if (Array.isArray(coll)) {
+                        const savedScope = new Map(this.scope);
+                        for (const item of coll) {
+                            this.scope.set(varName, item);
+                            for (const expr of body) {
+                                result = this.evalExpr(expr);
+                            }
+                        }
+                        this.scope = savedScope;
+                    }
+                    return result;
+                }
+
+                // Function application
+                const fn = this.functions.get(head);
+                if (fn) {
+                    const args = rest.map(arg => this.evalExpr(arg));
+                    return fn(...args);
+                }
+
+                throw new Error(`Unknown function or special form: ${head}`);
+            }
+
+            toString(value) {
+                if (value === null || value === undefined) {
+                    return 'nil';
+                }
+                if (typeof value === 'string') {
+                    return value;
+                }
+                if (typeof value === 'number') {
+                    return value.toString();
+                }
+                if (typeof value === 'boolean') {
+                    return value.toString();
+                }
+                if (Array.isArray(value)) {
+                    return '[' + value.map(v => this.toString(v)).join(' ') + ']';
+                }
+                if (typeof value === 'function') {
+                    return '<function>';
+                }
+                return JSON.stringify(value);
+            }
+
+            reset() {
+                this.scope.clear();
+                this.functions.clear();
+                this.history = [];
+                this.outputs = [];
+                this.initBuiltins();
+            }
+        }
+
+        // Global VM instance
+        const vm = new GeneVM();
+        let lineNumber = 1;
+
+        function addOutput(prompt, input, output, isError = false) {
+            const outputDiv = document.getElementById('output');
+            const line = document.createElement('div');
+            line.className = 'repl-line';
+
+            const promptSpan = document.createElement('div');
+            promptSpan.className = 'repl-prompt';
+            promptSpan.textContent = prompt;
+
+            const inputSpan = document.createElement('div');
+            inputSpan.className = 'repl-input';
+            inputSpan.textContent = input;
+
+            const outputSpan = document.createElement('div');
+            outputSpan.className = isError ? 'repl-error' : 'repl-output';
+            outputSpan.textContent = output;
+
+            line.appendChild(promptSpan);
+            line.appendChild(inputSpan);
+            if (output) {
+                line.appendChild(outputSpan);
+            }
+
+            outputDiv.appendChild(line);
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+        }
+
+        function evaluateCode() {
+            const input = document.getElementById('codeInput');
+            const code = input.value.trim();
+
+            if (!code) return;
+
+            const prompt = `gene[${lineNumber}]>`;
+            const result = vm.eval(code);
+
+            if (result.success) {
+                addOutput(prompt, code, `=> ${result.result}`, false);
+            } else {
+                addOutput(prompt, code, result.error, true);
+            }
+
+            lineNumber++;
+            input.value = '';
+            input.focus();
+
+            updateStatus(`Evaluated line ${lineNumber - 1}`);
+        }
+
+        function clearOutput() {
+            document.getElementById('output').innerHTML = '';
+            lineNumber = 1;
+            updateStatus('Output cleared');
+        }
+
+        function resetVM() {
+            vm.reset();
+            clearOutput();
+            addOutput('', '', 'VM reset - all state cleared', false);
+            updateStatus('VM reset');
+        }
+
+        function updateStatus(message) {
+            const statusBar = document.getElementById('statusBar');
+            statusBar.textContent = message;
+            setTimeout(() => {
+                statusBar.textContent = 'Ready';
+            }, 3000);
+        }
+
+        // Keyboard shortcuts
+        document.getElementById('codeInput').addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    evaluateCode();
+                } else if (e.key === 'l' || e.key === 'L') {
+                    e.preventDefault();
+                    clearOutput();
+                } else if (e.key === 'r' || e.key === 'R') {
+                    e.preventDefault();
+                    resetVM();
+                }
+            }
+        });
+
+        // Focus input on load
+        window.addEventListener('load', () => {
+            document.getElementById('codeInput').focus();
+        });
+    </script>
+</body>
+</html>
