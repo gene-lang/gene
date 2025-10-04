@@ -5046,6 +5046,9 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   new_frame.target = fn
   new_frame.scope = scope
   new_frame.ns = f.ns
+  # Increment ref_count when storing caller_frame
+  if saved_frame != nil:
+    saved_frame.ref_count.inc()
   new_frame.caller_frame = saved_frame  # Set the caller frame so return works
   new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
   # Mark this frame as coming from exec_function
