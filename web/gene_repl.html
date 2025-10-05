@@ -197,7 +197,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>🧬 Gene REPL</h1>
+        <h1>Gene REPL</h1>
         <div class="subtitle">Interactive Gene Programming Environment</div>
     </div>
 
@@ -214,11 +214,11 @@
                         Type Gene expressions and press Ctrl+Enter to evaluate.<br>
                         State persists between evaluations (like IRB).<br><br>
                         <strong>Quick Examples:</strong><br>
-                        • Math: (+ 1 2 3), (* 5 (- 10 3))<br>
+                        • Math: (1 + 2), (5 * (10 - 3))<br>
                         • Variables: (var x 42), (var name "Gene")<br>
                         • I/O: (println "Hello" x)<br>
-                        • Lists: [1 2 3], (first [10 20 30])<br>
-                        • Conditionals: (if (> x 10) "big" "small")<br>
+                        • Lists: [1 2 3]<br>
+                        • Conditionals: (if (x > 10) "big" else "small")<br>
                         • Functions: (fn greet [name] (str "Hello " name))<br>
                         • Loops: (for i in [1 2 3] (println i))<br><br>
                         <strong>Try it:</strong> (var nums [1 2 3 4 5])<br>
@@ -251,6 +251,46 @@
     </div>
 
     <script>
+        // Gene Error class for better error reporting
+        class GeneError extends Error {
+            constructor(message, context = {}) {
+                super(message);
+                this.name = 'GeneError';
+                this.context = context;
+                this.geneStack = [];
+            }
+
+            addStackFrame(expr, location) {
+                this.geneStack.push({ expr, location });
+            }
+
+            formatError() {
+                const errorType = this.context.type || 'Error';
+                let output = `${errorType}: ${this.message}\n`;
+
+                if (this.context.code) {
+                    output += `  in: ${this.context.code}\n`;
+                }
+
+                if (this.context.availableFunctions) {
+                    output += `  Available functions: ${this.context.availableFunctions}...\n`;
+                }
+
+                if (this.geneStack.length > 0) {
+                    output += '\nCall stack:\n';
+                    this.geneStack.forEach((frame, i) => {
+                        output += `  ${i + 1}. ${frame.expr}`;
+                        if (frame.location) {
+                            output += ` (in ${frame.location})`;
+                        }
+                        output += '\n';
+                    });
+                }
+
+                return output;
+            }
+        }
+
         // Gene VM - Simplified JavaScript implementation
         class GeneVM {
             constructor() {
@@ -258,6 +298,7 @@
                 this.functions = new Map();
                 this.history = [];
                 this.outputs = [];
+                this.callStack = [];
                 this.initBuiltins();
             }
 
@@ -308,6 +349,7 @@
             eval(code) {
                 try {
                     this.outputs = [];
+                    this.callStack = [];
                     const lines = code.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
                     let result = null;
 
@@ -329,14 +371,29 @@
                             output = this.outputs.join('\n') + '\n=> ' + this.toString(result);
                         }
                     } else {
-                        // No print output, just show the result
-                        output = this.toString(result);
+                        // No print output, show result with => prefix
+                        output = '=> ' + this.toString(result);
                     }
 
                     return { success: true, result: output };
                 } catch (error) {
-                    this.history.push({ code, result: null, error: error.message });
-                    return { success: false, error: error.message };
+                    // Format error with stack trace
+                    let errorMsg;
+                    if (error instanceof GeneError) {
+                        errorMsg = error.formatError();
+                    } else {
+                        // Wrap regular errors
+                        const geneError = new GeneError(error.message, { code });
+                        if (this.callStack.length > 0) {
+                            this.callStack.forEach(frame => {
+                                geneError.addStackFrame(frame.expr, frame.location);
+                            });
+                        }
+                        errorMsg = geneError.formatError();
+                    }
+
+                    this.history.push({ code, result: null, error: errorMsg });
+                    return { success: false, error: errorMsg };
                 }
             }
 
@@ -382,7 +439,11 @@
 
                 const parseToken = () => {
                     if (index >= tokens.length) {
-                        throw new Error('Unexpected end of input');
+                        throw new GeneError('Unexpected end of input', {
+                            code,
+                            type: 'ParseError',
+                            position: index
+                        });
                     }
 
                     const token = tokens[index++];
@@ -392,19 +453,31 @@
                             list.push(parseToken());
                         }
                         if (index >= tokens.length) {
-                            throw new Error('Missing closing parenthesis');
+                            throw new GeneError('Missing closing parenthesis', {
+                                code,
+                                type: 'ParseError',
+                                position: index
+                            });
                         }
                         index++; // skip ')'
                         return list;
                     } else if (token === ')') {
-                        throw new Error('Unexpected closing parenthesis');
+                        throw new GeneError('Unexpected closing parenthesis', {
+                            code,
+                            type: 'ParseError',
+                            position: index - 1
+                        });
                     } else if (token === '[') {
                         const list = [];
                         while (index < tokens.length && tokens[index] !== ']') {
                             list.push(parseToken());
                         }
                         if (index >= tokens.length) {
-                            throw new Error('Missing closing bracket');
+                            throw new GeneError('Missing closing bracket', {
+                                code,
+                                type: 'ParseError',
+                                position: index
+                            });
                         }
                         index++; // skip ']'
                         return ['list', ...list];
@@ -549,11 +622,36 @@
                 // Function application
                 const fn = this.functions.get(head);
                 if (fn) {
-                    const args = rest.map(arg => this.evalExpr(arg));
-                    return fn(...args);
+                    // Track call stack
+                    const exprStr = Array.isArray(expr)
+                        ? `(${head} ${rest.map(r => this.toString(r)).join(' ')})`
+                        : String(expr);
+                    this.callStack.push({ expr: exprStr, location: head });
+
+                    try {
+                        const args = rest.map(arg => this.evalExpr(arg));
+                        const result = fn(...args);
+                        this.callStack.pop();
+                        return result;
+                    } catch (error) {
+                        // Add current call to stack trace if not already a GeneError
+                        if (!(error instanceof GeneError)) {
+                            const geneError = new GeneError(error.message, {
+                                code: exprStr,
+                                type: 'RuntimeError'
+                            });
+                            geneError.addStackFrame(exprStr, head);
+                            throw geneError;
+                        }
+                        throw error;
+                    }
                 }
 
-                throw new Error(`Unknown function or special form: ${head}`);
+                throw new GeneError(`Unknown function or special form: ${head}`, {
+                    code: String(expr),
+                    type: 'NameError',
+                    availableFunctions: Array.from(this.functions.keys()).slice(0, 10).join(', ')
+                });
             }
 
             toString(value) {
@@ -628,7 +726,8 @@
             const result = vm.eval(code);
 
             if (result.success) {
-                addOutput(prompt, code, `=> ${result.result}`, false);
+                // vm.eval already formats the output (with => when appropriate)
+                addOutput(prompt, code, result.result, false);
             } else {
                 addOutput(prompt, code, result.error, true);
             }
