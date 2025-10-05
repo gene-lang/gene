@@ -474,7 +474,20 @@
                 }
 
                 if (head === 'fn') {
-                    const [name, params, ...body] = rest;
+                    const [name, paramsExpr, ...body] = rest;
+
+                    // Extract actual parameters from list expression
+                    // [a b c] becomes ['list', 'a', 'b', 'c']
+                    let params;
+                    if (Array.isArray(paramsExpr) && paramsExpr[0] === 'list') {
+                        params = paramsExpr.slice(1); // Skip 'list' keyword
+                    } else if (Array.isArray(paramsExpr)) {
+                        params = paramsExpr;
+                    } else {
+                        // Single parameter without brackets (edge case)
+                        params = [paramsExpr];
+                    }
+
                     const fn = (...args) => {
                         const savedScope = new Map(this.scope);
                         params.forEach((param, i) => {
