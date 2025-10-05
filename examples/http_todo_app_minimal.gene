@@ -1,0 +1,102 @@
+# Minimal TODO Demo - Just demonstrates SQLite integration
+# This works with current Gene features
+
+(println "=== Gene TODO Demo with SQLite ===")
+(println)
+
+# Open database
+(var db (gene/sqlite/open "/tmp/todo_minimal.db"))
+
+# Initialize database table
+(println "Creating todos table...")
+(db .execute "CREATE TABLE IF NOT EXISTS todos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  description TEXT NOT NULL,
+  status INTEGER DEFAULT 0
+)")
+
+# Clear existing data
+(db .execute "DELETE FROM todos")
+
+# Insert test data
+(println "Inserting sample todos...")
+(db .execute "INSERT INTO todos (description, status) VALUES ('Buy groceries', 0)")
+(db .execute "INSERT INTO todos (description, status) VALUES ('Write code', 0)")
+(db .execute "INSERT INTO todos (description, status) VALUES ('Read book', 1)")
+(db .execute "INSERT INTO todos (description, status) VALUES ('Exercise', 0)")
+
+# Query all todos
+(println)
+(println "All TODOs:")
+(var all_todos (db .exec "SELECT id, description, status FROM todos"))
+(for row in all_todos
+  (var id (row .get 0))
+  (var desc (row .get 1))
+  (var status (row .get 2))
+  (print "  [")
+  (print id)
+  (print "] ")
+  (print desc)
+  (print " - Status: ")
+  (println status)
+)
+
+# Query pending todos
+(println)
+(println "Pending TODOs:")
+(var pending (db .exec "SELECT id, description FROM todos WHERE status = 0"))
+(for row in pending
+  (var id (row .get 0))
+  (var desc (row .get 1))
+  (print "  [")
+  (print id)
+  (print "] ")
+  (println desc)
+)
+
+# Query completed todos
+(println)
+(println "Completed TODOs:")
+(var completed (db .exec "SELECT id, description FROM todos WHERE status = 1"))
+(for row in completed
+  (var id (row .get 0))
+  (var desc (row .get 1))
+  (print "  [")
+  (print id)
+  (print "] ")
+  (println desc)
+)
+
+# Update a todo
+(println)
+(println "Marking 'Write code' as completed...")
+(db .execute "UPDATE todos SET status = 1 WHERE id = 2")
+
+# Query again
+(println "Pending TODOs after update:")
+(var pending2 (db .exec "SELECT id, description FROM todos WHERE status = 0"))
+(for row in pending2
+  (var id (row .get 0))
+  (var desc (row .get 1))
+  (print "  [")
+  (print id)
+  (print "] ")
+  (println desc)
+)
+
+# Delete a todo
+(println)
+(println "Deleting 'Buy groceries'...")
+(db .execute "DELETE FROM todos WHERE id = 1")
+
+# Count remaining
+(println "Remaining TODOs:")
+(var remaining (db .exec "SELECT COUNT(*) FROM todos"))
+(var count_row (remaining .get 0))
+(var count (count_row .get 0))
+(println count)
+
+# Close database
+(db .close)
+(println)
+(println "Demo completed!")
