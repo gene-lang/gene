@@ -186,5 +186,4 @@ IkCall 2          # Call with 2 args
 
 ### Long-term Goals
 - Self-hosting compiler
-- WebAssembly target
 - Native code generation

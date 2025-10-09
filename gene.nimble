@@ -24,11 +24,6 @@ task buildext, "Build extension modules":
   exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp.dylib src/genex/http.nim"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libsqlite.dylib src/genex/sqlite.nim"
 
-task webrepl, "Start web REPL server":
-  echo "Starting Gene Web REPL on http://localhost:8000"
-  echo "Press Ctrl+C to stop"
-  exec "python3 -m http.server 8000 --directory web"
-
 task testcore, "Runs the test suite":
   exec "nim c -r tests/test_types.nim"
   exec "nim c -r tests/test_parser.nim"
