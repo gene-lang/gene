@@ -111,6 +111,7 @@ bin/gene run file.gene              # Run single file
 ```bash
 nimble build                        # Build gene executable to bin/
 nim c -d:release src/gene.nim      # Direct compilation
+nimble buildext                     # Build extension modules (HTTP, SQLite)
 ```
 
 ### Debugging

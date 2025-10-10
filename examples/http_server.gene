@@ -16,9 +16,9 @@
 
    # Helper method for constructing handlers from /middlewares and /handler
    (.fn construct_handler middleware_index
-      (if (< middleware_index (self/middlewares .size))
-         (var middleware (self/middlewares .get middleware_index))
-         (var handler    (self .construct_handler (+ middleware_index 1)))
+      (if (middleware_index < (self/middlewares .size))
+         (var middleware (/middlewares .get middleware_index))
+         (var handler    (.construct_handler (middleware_index + 1)))
          (middleware handler)
        else
          self/handler
@@ -31,8 +31,8 @@
       # Note: print and println inserts " " between arguments
       (println "Starting HTTP server at port" self/port "...")
 
-      (var root_handler (self .construct_handler 0))
-      (start_server self/port root_handler)
+      (var root_handler (.construct_handler 0))
+      (start_server /port root_handler)
       (gene/run_forever)
    )
 )
@@ -48,15 +48,14 @@
    # Define `call` method which enables the router to be invoked like any handler,
    # i.e. (<dummy router> req)
    (.fn call req
-      (println "Router.call called with self:" self " req:" req)
+      (println "Router.call called with self:" self "req:" req)
 
-      (for h in self/handlers
+      (for h in /handlers
          (var result (h req))
          (if result
-            then (do
-                   (println result/status req/method req/url)
-                   (return result)
-                 )
+          then
+            (println result/status req/method req/url)
+            (return result)
          )
       )
 
@@ -67,38 +66,24 @@
 
 # A simple handler that responds to /hello
 (fn hello [req]
-   (println "hello handler called with req:" req)
-   (println "  req/path =" req/path)
-   (println "  Comparing with /hello")
    (if (req/path != "/hello")
-      then (do
-             (println "  Path doesn't match /hello, returning nil")
-             (return)
-           )
-      else (do
-             (println "  Path matches /hello!")
-             (var params req/params)
-             (if (params .contains "name")
-                then (respond #"Hello #{params/name}!")
-                else (respond "Hello world!"))
-           )
+    then
+      (println "  Path doesn't match /hello, returning nil")
+      (return)
+    else
+      (println "  Path matches /hello!")
+      (var params req/params)
+      (if (params .contains "name")
+       then (respond #"Hello #{params/name}!")
+       else (respond "Hello world!"))
    )
 )
 
 # A handler that responds to /secret
 # Please note that the authentication is handled in `auth` middleware.
 (fn secret [req]
-   (println "secret handler called")
-   (println "  req/path =" req/path)
-   (if (req/path != "/secret")
-      then (do
-             (println "  Path doesn't match /secret, returning nil")
-             (return)
-           )
-      else (do
-             (println "  Path matches /secret!")
-             (respond "Sssh, do not tell this to anyone!")
-           )
+   (if (req/path == "/secret")
+      (respond "Sssh, do not tell this to anyone!")
    )
 )
 

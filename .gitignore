@@ -33,6 +33,8 @@ tests/test_*
 !tests/test_*.nim
 !tests/test_*.sh
 
+*.db
+
 # Nim cache
 nimcache/
 *.exe
