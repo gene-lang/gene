@@ -3230,7 +3230,11 @@ proc exec*(self: VirtualMachine): Value =
         
         # echo "DEBUG: Processing import ", import_gene
         
-        let (module_path, imports, module_ns, is_native) = self.handle_import(import_gene.gene)
+        let (module_path, imports, module_ns, is_native, handled) = self.handle_import(import_gene.gene)
+        
+        if handled:
+          self.frame.push(NIL)
+          continue
         
         # echo "DEBUG: Module path: ", module_path
         # echo "DEBUG: Imports: ", imports  
@@ -3306,7 +3310,7 @@ proc exec*(self: VirtualMachine): Value =
         let name = inst.arg0
         self.frame.ns[name.str.to_key()] = value
         self.frame.push(value)
-
+      
       of IkClass:
         let name = inst.arg0
         let class = new_class(name.str)
@@ -5109,9 +5113,12 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
   let compiled = parse_and_compile(code, module_name)
 
   let ns = new_namespace(module_name)
+  ns["__module_name__".to_key()] = module_name.to_value()
+  ns["__is_main__".to_key()] = TRUE
   
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
+  App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
   
   # Add eval function to the module namespace
   # Add eval function to the namespace if it exists in global_ns

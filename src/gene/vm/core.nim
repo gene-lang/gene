@@ -622,9 +622,40 @@ proc init_gene_namespace*() =
     let key = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
     if map.kind == VkMap and key.kind == VkString:
       return map.ref.map.hasKey(key.str.to_key()).to_value()
+    elif map.kind == VkMap and key.kind == VkSymbol:
+      return map.ref.map.hasKey(key.str.to_key()).to_value()
     return false.to_value()
-  
+
+  proc vm_map_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # map.get(key, default?) -> value|default|nil
+    if arg_count < 2:
+      not_allowed("Map.get expects at least a key argument")
+
+    let map = get_positional_arg(args, 0, has_keyword_args)
+    if map.kind != VkMap:
+      not_allowed("Map.get must be called on a map")
+
+    let keyVal = get_positional_arg(args, 1, has_keyword_args)
+    var key: Key
+
+    case keyVal.kind
+    of VkString:
+      key = keyVal.str.to_key()
+    of VkSymbol:
+      key = keyVal.str.to_key()
+    else:
+      not_allowed("Map.get key must be a string or symbol")
+
+    if map.ref.map.hasKey(key):
+      return map.ref.map[key]
+
+    if arg_count >= 3:
+      return get_positional_arg(args, 2, has_keyword_args)
+
+    return NIL
+
   map_class.def_native_method("contains", vm_map_contains)
+  map_class.def_native_method("get", vm_map_get)
   
   # set_class
   let set_class = new_class("Set")

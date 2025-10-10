@@ -126,6 +126,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       
       # Initialize the VM if not already initialized
       init_app_and_vm()
+      set_cmd_args(options.args)
       register_io_functions()  # Register IO functions after App is created
       
       # Enable tracing/profiling if requested
@@ -175,6 +176,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         
         let start = cpu_time()
         init_app_and_vm()
+        set_cmd_args(options.args)
         register_io_functions()  # Register IO functions after App is created
         
         if options.trace:
@@ -215,6 +217,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   
   # Initialize the VM if not already initialized
   init_app_and_vm()
+  set_cmd_args(options.args)
   register_io_functions()  # Register IO functions after App is created
   
   # Enable tracing if requested

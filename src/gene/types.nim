@@ -2061,6 +2061,9 @@ proc new_gene_value*(`type`: Value): Value {.inline.} =
 
 #################### Application #################
 
+proc refresh_env_map*()
+proc set_cmd_args*(args: seq[string])
+
 proc app*(self: Value): Application {.inline.} =
   self.ref.app
 
@@ -3363,11 +3366,33 @@ proc init_app_and_vm*() =
   let io_ns = new_namespace("io")
   App.app.gene_ns.ns["io".to_key()] = io_ns.to_value()
 
+  refresh_env_map()
+  set_cmd_args(@[])
 
   for callback in VmCreatedCallbacks:
     callback()
 
 #################### Helpers #####################
+
+proc refresh_env_map*() =
+  if App == NIL or App.kind != VkApplication:
+    return
+  var env_table = initTable[Key, Value]()
+  for pair in envPairs():
+    env_table[pair.key.to_key()] = pair.value.to_value()
+  App.app.gene_ns.ref.ns["env".to_key()] = new_map_value(env_table)
+
+proc set_cmd_args*(args: seq[string]) =
+  if App == NIL or App.kind != VkApplication:
+    init_app_and_vm()
+    if App == NIL or App.kind != VkApplication:
+      return
+  App.app.args = args
+  let arr_ref = new_ref(VkArray)
+  arr_ref.arr = @[]
+  for arg in args:
+    arr_ref.arr.add(arg.to_value())
+  App.app.gene_ns.ref.ns["cmd_args".to_key()] = arr_ref.to_ref_value()
 
 const SYM_UNDERSCORE* = SYMBOL_TAG or 0
 const SYM_SELF* = SYMBOL_TAG or 1

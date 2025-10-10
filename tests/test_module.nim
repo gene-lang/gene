@@ -66,6 +66,11 @@ test_vm """
   (x + y)
 """, 3
 
+test_vm """
+  (import value from "tests/fixtures/mod_if_main")
+  value
+""", 0
+
 # test_vm """
 #   (ns n
 #     (fn f _ 1)
@@ -141,16 +146,6 @@ test_vm """
 # #   check r.children[1].children.len == 1
 # #   check r.children[1].children[0].name == "c"
 # #   check r.children[1].children[0].as == "my_c"
-
-# test_core """
-#   (import gene/Class)
-#   (assert ((Class .name) == "Class"))
-# """
-
-# test_core """
-#   (import gene/*)
-#   (assert ((Class .name) == "Class"))
-# """
 
 # # test_core """
 # #   ($stop_inheritance)

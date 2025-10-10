@@ -10,6 +10,7 @@ const DEBUG = false
 proc compile*(self: Compiler, input: Value)
 proc compile_with(self: Compiler, gene: ptr Gene)
 proc compile_tap(self: Compiler, gene: ptr Gene)
+proc compile_if_main(self: Compiler, gene: ptr Gene)
 proc compile_parse(self: Compiler, gene: ptr Gene)
 proc compile_render(self: Compiler, gene: ptr Gene)
 proc compile_emit(self: Compiler, gene: ptr Gene)
@@ -1934,6 +1935,9 @@ proc compile_gene(self: Compiler, input: Value) =
             of "$emit":
               self.compile_emit(gene)
               return
+            of "$if_main":
+              self.compile_if_main(gene)
+              return
 
   self.compile_gene_unknown(gene)
 
@@ -2395,6 +2399,25 @@ proc compile_tap(self: Compiler, gene: ptr Gene) =
   self.output.instructions.add(Instruction(kind: IkSwap))  # dup_value, original_self -> original_self, dup_value
   self.output.instructions.add(Instruction(kind: IkSetSelf))
   # The dup_value remains on stack as the return value
+
+proc compile_if_main(self: Compiler, gene: ptr Gene) =
+  let cond_symbol = @["$ns", "__is_main__"].to_complex_symbol()
+  let if_gene = new_gene("if".to_symbol_value())
+  if_gene.props[COND_KEY.to_key()] = cond_symbol
+
+  let then_stream = new_stream_value()
+  if gene.children.len > 0:
+    for child in gene.children:
+      then_stream.ref.stream.add(child)
+  else:
+    then_stream.ref.stream.add(NIL)
+  if_gene.props[THEN_KEY.to_key()] = then_stream
+
+  let else_stream = new_stream_value()
+  else_stream.ref.stream.add(NIL)
+  if_gene.props[ELSE_KEY.to_key()] = else_stream
+
+  self.compile_if(if_gene)
 
 proc compile_parse(self: Compiler, gene: ptr Gene) =
   # ($parse string)
