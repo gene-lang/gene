@@ -67,7 +67,7 @@ type
     # ... etc
 ```
 
-### NaN-Boxing Optimization (Future)
+### NaN-Boxing Optimization
 The VM is designed to support NaN-boxing where all values fit in 64 bits:
 - Immediate values: nil, bool, int (up to 52 bits)
 - Pointer values: strings, arrays, objects (48-bit pointers)
