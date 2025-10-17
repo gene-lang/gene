@@ -77,6 +77,14 @@ Many more scenarios are sketched but commented out, signalling the intended scop
    - Extend the compiler’s desugaring logic to produce dedicated instructions or data structures instead of ad-hoc genes.
 
 3. **Execution Model**
+   - Distinguish strict vs tolerant path segments: intermediate segments use `IkGetMember` (which should raise on missing members once `void` semantics land) while the final segment uses `IkGetMemberOrNil` to provide a soft default.
+   - Introduce an `IkAssertNotVoid` instruction emitted by suffix operators such as `!` (e.g. `x/a/!` compiles to `IkResolve x; IkGetMember a; IkAssertNotVoid`) so callers can opt into hard guarantees inline.
+   - Represent `@...` selectors as compact values and delegate execution to a small set of native functions:
+     - `selector_call(selector, target)` → perform the read traversal and return the value (used for `(@a/b) obj` and `/` shorthand).
+     - `selector_update(selector, target, value)` → walk the path and assign the new value (used by `$set` and future `$update`).
+     - `selector_delete(selector, target)` → remove the addressed member/index.
+     - `selector_insert(selector, target, value)` → optional helper for collection inserts/appends when we need it.
+   - The compiler only needs to emit the selector literal and call the appropriate native function; traversal logic stays centralized in Nim.
    - Introduce richer selector values (structs) that carry mode flags, predicate callbacks, and path steps.
    - Implement traversal in the VM that can handle match-all vs match-first, descendant searches, and predicate evaluation efficiently, possibly via iterators or generators.
 
@@ -97,3 +105,30 @@ Many more scenarios are sketched but commented out, signalling the intended scop
 5. Iterate on performance once the feature set stabilizes; selector-heavy code should remain fast thanks to the bytecode VM.
 
 Selectors are central to making Gene feel fluid when manipulating nested data. By closing these gaps and committing to `void` semantics, we can deliver an access and transformation system that matches the flexibility promised by the language’s generic value model.
+
+## Implementation Priority
+
+1. **Correctness Guardrails**
+   - Introduce `void` propagation in `IkGetMemberOrNil`/`IkGetMemberDefault` and update `$set` to surface meaningful errors when a path is missing.
+   - Expand `tests/test_selector.nim` to cover nil vs void behaviour so regressions are caught early.
+
+2. **Selector Surface Clean-up**
+   2.1 Fix the compiler/parser to support chained shorthand (`@foo/bar`) and update docs/tests accordingly.
+   2.2 Implement range and list selectors for arrays (`(0 .. 2)`, `@ [0 1]`) alongside VM opcodes that can return multiple values.
+
+3. **Namespace & Gene Introspection**
+   - Deliver the planned built-ins like `:$type`, `:$children`, `_`, and key/value selectors so gene manipulation patterns become expressive.
+   - Provide helper selectors for namespaces/classes (e.g. grabbing static members or instance props) to keep behaviour consistent.
+
+4. **Selector Modes & Predicates**
+   - Define selector modes (match-first vs match-all, error-on-miss) and carry them through new selector data structures.
+   - Add predicate support (fnx filters) and descendant traversal to unblock search-style selectors.
+
+5. **Mutation & Transformation APIs**
+   - Extend `$set` with `append`, `update`, `remove`, and higher-order transformation hooks, ensuring we respect persistent data semantics.
+   - Offer a pipeline API that pairs selectors with callbacks, allowing transformations to be declared succinctly.
+   - Build `$update`, `$remove`, and related helpers on top of the native selector functions (`selector_update`, `selector_delete`, etc.) so all multi-segment paths (`@a/b`) share one traversal implementation while still supporting different operations.
+
+6. **Performance Pass**
+   - Profile selector-heavy workloads, cache repeated lookups, and consider dedicated bytecode for common patterns once functionality stabilises.
+   - Document best practices and potential pitfalls so users can write efficient selector code.
