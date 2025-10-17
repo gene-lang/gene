@@ -92,6 +92,29 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
     self.output.instructions.add(Instruction(kind: IkPushValue, arg0: input))
   else:
     let r = translate_symbol(input).ref
+    if r.csymbol.len > 0 and r.csymbol[0].startsWith("@"):
+      var segments: seq[Value] = @[]
+
+      proc addSegment(part: string) =
+        if part.len == 0:
+          not_allowed("@ selector segment cannot be empty")
+        try:
+          let index = parseInt(part)
+          segments.add(index.to_value())
+        except ValueError:
+          segments.add(part.to_value())
+
+      addSegment(r.csymbol[0][1..^1])
+      for part in r.csymbol[1..^1]:
+        addSegment(part)
+
+      if segments.len == 0:
+        not_allowed("@ selector requires at least one segment")
+
+      let selector_value = new_selector_value(segments)
+      self.output.instructions.add(Instruction(kind: IkPushValue, arg0: selector_value))
+      return
+
     let key = r.csymbol[0].to_key()
     if r.csymbol[0] == "SPECIAL_NS":
       # Handle $ns/... specially
@@ -149,30 +172,23 @@ proc compile_symbol(self: Compiler, input: Value) =
         return
       elif symbol_str.startsWith("@") and symbol_str.len > 1:
         # Handle @shorthand syntax: @test -> (@ "test"), @0 -> (@ 0)
-        let selector = new_gene("@".to_symbol_value())
         let prop_name = symbol_str[1..^1]
-        
-        # Check if it contains / for complex selectors like @test/0
-        if "/" in prop_name:
-          # Handle @test/0 or @0/test
-          let parts = prop_name.split("/")
-          for part in parts:
-            # Try to parse as int for numeric indices
-            try:
-              let index = parseInt(part)
-              selector.children.add(index.to_value())
-            except ValueError:
-              selector.children.add(part.to_value())
-        else:
-          # Simple @test case
-          # Try to parse as int for @0 syntax
+
+        var segments: seq[Value] = @[]
+        for part in prop_name.split("/"):
+          if part.len == 0:
+            not_allowed("@ selector segment cannot be empty")
           try:
-            let index = parseInt(prop_name)
-            selector.children.add(index.to_value())
+            let index = parseInt(part)
+            segments.add(index.to_value())
           except ValueError:
-            selector.children.add(prop_name.to_value())
-        
-        self.output.instructions.add(Instruction(kind: IkPushValue, arg0: selector.to_gene_value()))
+            segments.add(part.to_value())
+
+        if segments.len == 0:
+          not_allowed("@ selector requires at least one segment")
+
+        let selector_value = new_selector_value(segments)
+        self.output.instructions.add(Instruction(kind: IkPushValue, arg0: selector_value))
         return
       elif symbol_str.endsWith("..."):
         # Handle variable spread like "a..." - strip the ... and add spread
@@ -1261,21 +1277,6 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
       self.output.instructions.add(Instruction(kind: IkGeneEnd, label: end_label))
       return
-  # Special case: handle @ selector application
-  # ((@ "test") {^test 1}) - gene.type is (@ "test"), children is [{^test 1}]
-  if gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
-    # This is a selector being applied
-    if gene.children.len != 1:
-      not_allowed("@ selector expects exactly 1 argument when called")
-    
-    # Compile as (./ target property)
-    # gene.children[0] is the target
-    # gene.type.gene.children[0] is the property
-    self.compile(gene.children[0])  # target
-    self.compile(gene.type.gene.children[0])  # property
-    self.output.instructions.add(Instruction(kind: IkGetMemberOrNil))
-    return
-  
   # Check for selector syntax: (target ./ property) or (target ./property)
   if DEBUG:
     echo "DEBUG: compile_gene_unknown: gene.type = ", gene.type
@@ -1356,6 +1357,12 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       definitely_not_macro = true
     if func_name in ["return", "break", "continue", "throw"]:
       definitely_not_macro = false
+  elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
+    definitely_not_macro = true
+  elif gene.type.kind == VkComplexSymbol:
+    let parts = gene.type.ref.csymbol
+    if parts.len > 0 and parts[0].startsWith("@"):
+      definitely_not_macro = true
 
   if definitely_not_macro and gene.props.len == 0 and gene.children.len == 0:
     # No-argument call can use unified instruction
@@ -1373,6 +1380,12 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 
     # Use UnifiedCall1 - optimized function call without Gene object creation
     self.output.instructions.add(Instruction(kind: IkUnifiedCall1))
+    return
+
+  if definitely_not_macro and gene.props.len == 0 and gene.children.len >= 2:
+    for child in gene.children:
+      self.compile(child)
+    self.output.instructions.add(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
     return
 
   if definitely_not_macro:
@@ -1968,6 +1981,8 @@ proc compile*(self: Compiler, input: Value) =
       self.compile_array(input)
     of VkMap:
       self.compile_map(input)
+    of VkSelector:
+      self.compile_literal(input)
     of VkGene:
       self.compile_gene(input)
     of VkUnquote:
@@ -2545,15 +2560,19 @@ proc compile_at_selector(self: Compiler, gene: ptr Gene) =
   # and this gets compiled as a function call where (@ "test") is the function
   # and {^test 1} is the argument, we need to handle this specially
   
-  # For now, just push the property name as a special selector value
-  # The VM will need to handle this when it sees a selector being called
-  if gene.children.len != 1:
-    not_allowed("@ expects exactly 1 argument for basic property access")
-  
-  # Create a special selector value - for now use a gene with type @
-  let selector = new_gene("@".to_symbol_value())
-  selector.children.add(gene.children[0])
-  self.output.instructions.add(Instruction(kind: IkPushValue, arg0: selector.to_gene_value()))
+  if gene.children.len == 0:
+    not_allowed("@ expects at least 1 argument for selector creation")
+
+  var segments: seq[Value] = @[]
+  for child in gene.children:
+    case child.kind
+    of VkString, VkSymbol, VkInt:
+      segments.add(child)
+    else:
+      not_allowed("Unsupported selector segment type: " & $child.kind)
+
+  let selector_value = new_selector_value(segments)
+  self.output.instructions.add(Instruction(kind: IkPushValue, arg0: selector_value))
 
 proc compile_set(self: Compiler, gene: ptr Gene) =
   # ($set target @property value)
@@ -2564,45 +2583,39 @@ proc compile_set(self: Compiler, gene: ptr Gene) =
   # Compile the target
   self.compile(gene.children[0])
   
-  # The second argument should be a selector like @test or (@ "test")
-  var selector = gene.children[1]
-  
-  # Handle @shorthand syntax - @test becomes (@ "test")
-  if selector.kind == VkSymbol and selector.str.startsWith("@") and selector.str.len > 1:
-    let prop_name = selector.str[1..^1]
-    selector = new_gene("@".to_symbol_value()).to_gene_value()
-    
-    # Check if it contains / for complex selectors like @test/0
-    if "/" in prop_name:
-      # Handle @test/0 or @0/test
-      let parts = prop_name.split("/")
-      for part in parts:
-        # Try to parse as int for numeric indices
-        try:
-          let index = parseInt(part)
-          selector.gene.children.add(index.to_value())
-        except ValueError:
-          selector.gene.children.add(part.to_value())
-    else:
-      # Simple @test case
-      # Try to parse as int for @0 syntax
+  let selector_arg = gene.children[1]
+  var segments: seq[Value] = @[]
+
+  if selector_arg.kind == VkSymbol and selector_arg.str.startsWith("@") and selector_arg.str.len > 1:
+    let prop_name = selector_arg.str[1..^1]
+    for part in prop_name.split("/"):
+      if part.len == 0:
+        not_allowed("$set selector segment cannot be empty")
       try:
-        let index = parseInt(prop_name)
-        selector.gene.children.add(index.to_value())
+        let index = parseInt(part)
+        segments.add(index.to_value())
       except ValueError:
-        selector.gene.children.add(prop_name.to_value())
-  elif selector.kind != VkGene or selector.gene.type != "@".to_symbol_value():
+        segments.add(part.to_value())
+  elif selector_arg.kind == VkGene and selector_arg.gene.type == "@".to_symbol_value():
+    if selector_arg.gene.children.len == 0:
+      not_allowed("$set selector requires at least one segment")
+    for child in selector_arg.gene.children:
+      case child.kind
+      of VkString, VkSymbol, VkInt:
+        segments.add(child)
+      else:
+        not_allowed("Unsupported selector segment type: " & $child.kind)
+  else:
     not_allowed("$set expects a selector (@property) as second argument")
-  
-  # Extract the property name
-  if selector.gene.children.len != 1:
+
+  if segments.len != 1:
     not_allowed("$set selector must have exactly one property")
-  
-  let prop = selector.gene.children[0]
-  
+
+  let prop = segments[0]
+
   # Compile the value
   self.compile(gene.children[2])
-  
+
   # Check if property is an integer (for array/gene child access)
   if prop.kind == VkInt:
     # Use SetChild for integer indices

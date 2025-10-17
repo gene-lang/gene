@@ -656,6 +656,113 @@ proc init_gene_namespace*() =
 
   map_class.def_native_method("contains", vm_map_contains)
   map_class.def_native_method("get", vm_map_get)
+
+  # selector_class
+  let selector_class = new_class("Selector")
+
+  proc selector_call(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 2:
+      not_allowed("Selector.call expects a target value")
+
+    let selector_val = get_positional_arg(args, 0, has_keyword_args)
+    if selector_val.kind != VkSelector:
+      not_allowed("Selector.call must be invoked on a selector")
+
+    let target = get_positional_arg(args, 1, has_keyword_args)
+    let has_default = arg_count >= 3
+    let default_value = if has_default: get_positional_arg(args, 2, has_keyword_args) else: NIL
+
+    var current = target
+    var found = true
+
+    for seg in selector_val.ref.selector_path:
+      if current.kind == VkNil:
+        found = false
+        break
+
+      case seg.kind:
+      of VkString, VkSymbol:
+        let key = seg.str.to_key()
+        case current.kind:
+        of VkMap:
+          if key in current.ref.map:
+            current = current.ref.map[key]
+          else:
+            found = false
+            break
+        of VkGene:
+          if key in current.gene.props:
+            current = current.gene.props[key]
+          else:
+            found = false
+            break
+        of VkNamespace:
+          if current.ref.ns.has_key(key):
+            current = current.ref.ns[key]
+          else:
+            found = false
+            break
+        of VkClass:
+          if current.ref.class.ns.has_key(key):
+            current = current.ref.class.ns[key]
+          else:
+            found = false
+            break
+        of VkInstance:
+          if key in current.ref.instance_props:
+            current = current.ref.instance_props[key]
+          else:
+            found = false
+            break
+        else:
+          found = false
+          break
+      of VkInt:
+        let idx64 = seg.int64
+        case current.kind:
+        of VkArray:
+          let arr_len = current.ref.arr.len.int64
+          var resolved = idx64
+          if resolved < 0:
+            resolved = arr_len + resolved
+          if resolved >= 0 and resolved < arr_len:
+            current = current.ref.arr[resolved.int]
+          else:
+            found = false
+            break
+        of VkGene:
+          let children_len = current.gene.children.len.int64
+          var resolved = idx64
+          if resolved < 0:
+            resolved = children_len + resolved
+          if resolved >= 0 and resolved < children_len:
+            current = current.gene.children[resolved.int]
+          else:
+            found = false
+            break
+        else:
+          found = false
+          break
+      else:
+        not_allowed("Invalid selector segment type: " & $seg.kind)
+
+      if not found:
+        break
+
+    if not found:
+      if has_default:
+        return default_value
+      return NIL
+
+    return current
+
+  selector_class.def_native_method("call", selector_call)
+
+  r = new_ref(VkClass)
+  r.class = selector_class
+  App.app.selector_class = r.to_ref_value()
+  if App.app.gene_ns.kind == VkNamespace:
+    App.app.gene_ns.ref.ns["Selector".to_key()] = App.app.selector_class
   
   # set_class
   let set_class = new_class("Set")

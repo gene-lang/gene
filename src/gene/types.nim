@@ -194,6 +194,7 @@ type
         range_step*: Value
       of VkSelector:
         selector_pattern*: string
+        selector_path*: seq[Value]
 
       # Date and time types
       of VkDate:
@@ -1423,6 +1424,8 @@ proc is_literal*(self: Value): bool =
               if not is_literal(v):
                 return false
             return true
+          of VkSelector:
+            return true
           else:
             result = false
       of GENE_TAG:
@@ -1487,6 +1490,8 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
           result &= "^" & get_symbol(symbol_index.int) & " " & v.str_no_quotes()
           first = false
         result &= "}"
+      of VkSelector:
+        result = "@(" & self.ref.selector_pattern & ")"
       of VkGene:
         result = $self.gene
       of VkRange:
@@ -1564,6 +1569,8 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result &= "^" & get_symbol(symbol_index.int) & " " & $v
           first = false
         result &= "}"
+      of VkSelector:
+        result = "@(" & self.ref.selector_pattern & ")"
       of VkGene:
         result = $self.gene
       of VkRange:
@@ -2011,6 +2018,28 @@ proc new_range_value*(start: Value, `end`: Value, step: Value): Value =
   r.range_start = start
   r.range_end = `end`
   r.range_step = step
+  result = r.to_ref_value()
+
+proc new_selector_value*(segments: openArray[Value]): Value =
+  if segments.len == 0:
+    not_allowed("Selector requires at least one segment")
+
+  let r = new_ref(VkSelector)
+  r.selector_path = @[]
+
+  var pattern_parts: seq[string] = @[]
+  for seg in segments:
+    case seg.kind:
+      of VkString, VkSymbol:
+        pattern_parts.add(seg.str)
+        r.selector_path.add(seg)
+      of VkInt:
+        pattern_parts.add($seg.int64)
+        r.selector_path.add(seg)
+      else:
+        not_allowed("Invalid selector segment: " & $seg.kind)
+
+  r.selector_pattern = pattern_parts.join("/")
   result = r.to_ref_value()
 
 #################### Gene ########################

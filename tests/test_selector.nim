@@ -185,6 +185,26 @@ test_vm """
   ((@ "test") {^test 1})
 """, 1
 
+test_vm """
+  (var data {^a {^b 42}})
+  ((@ "a" "b") data)
+""", 42
+
+test_vm """
+  (var data {^a {^b 99}})
+  (@a/b data)
+""", 99
+
+test_vm """
+  (var data {})
+  (@a/b data 123)
+""", 123
+
+test_vm """
+  (var arr [{^name "n"}])
+  (@0/name arr)
+""", "n"
+
 # This test uses @test shorthand which requires special parsing
 # For now, @test creates a selector that needs to be applied differently
 # test_vm """

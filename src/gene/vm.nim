@@ -25,6 +25,11 @@ template get_value_class(val: Value): Class =
     types.ref(App.app.array_class).class
   of VkMap:
     types.ref(App.app.map_class).class
+  of VkSelector:
+    if App.app.selector_class.kind == VkClass:
+      types.ref(App.app.selector_class).class
+    else:
+      nil
   of VkFuture:
     if App.app.future_class.kind == VkClass:
       types.ref(App.app.future_class).class
@@ -601,6 +606,78 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
 
   else:
     not_allowed("call method must be a function or native function")
+    return false
+
+proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
+  ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
+  let value_class = get_value_class(value)
+  if value_class == nil:
+    return false
+
+  let method_key = method_name.to_key()
+  if not value_class.methods.hasKey(method_key):
+    return false
+
+  let meth = value_class.methods[method_key]
+  case meth.callable.kind:
+  of VkFunction:
+    let f = meth.callable.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      # Build argument list including self and positional args
+      var all_args = newSeq[Value](args.len + 1)
+      all_args[0] = value
+      for i in 0..<args.len:
+        all_args[i + 1] = args[i]
+
+      if all_args.len > 0:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = meth.callable
+    new_frame.scope = scope
+    new_frame.current_method = meth
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: -3,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = value
+    for i in 0..<args.len:
+      all_args[i + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("Method must be a function or native function")
     return false
 
 proc exec*(self: VirtualMachine): Value =
@@ -4282,6 +4359,13 @@ proc exec*(self: VirtualMachine): Value =
             continue
           else:
             not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", []):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
 
         else:
           not_allowed("IkUnifiedCall0 requires a callable, got " & $target.kind)
@@ -4442,6 +4526,13 @@ proc exec*(self: VirtualMachine): Value =
             continue
           else:
             not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", @[arg]):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
 
         else:
           not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
@@ -4522,6 +4613,13 @@ proc exec*(self: VirtualMachine): Value =
             continue
           else:
             not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
