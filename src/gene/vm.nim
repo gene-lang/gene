@@ -19,12 +19,57 @@ template get_value_class(val: Value): Class =
   case val.kind:
   of VkInstance:
     types.ref(val).instance_class
+  of VkNil:
+    if App.app.nil_class.kind == VkClass:
+      types.ref(App.app.nil_class).class
+    else:
+      nil
+  of VkBool:
+    if App.app.bool_class.kind == VkClass:
+      types.ref(App.app.bool_class).class
+    else:
+      nil
+  of VkInt:
+    if App.app.int_class.kind == VkClass:
+      types.ref(App.app.int_class).class
+    else:
+      nil
+  of VkFloat:
+    if App.app.float_class.kind == VkClass:
+      types.ref(App.app.float_class).class
+    else:
+      nil
+  of VkChar:
+    if App.app.char_class.kind == VkClass:
+      types.ref(App.app.char_class).class
+    else:
+      nil
   of VkString:
     types.ref(App.app.string_class).class
+  of VkSymbol:
+    if App.app.symbol_class.kind == VkClass:
+      types.ref(App.app.symbol_class).class
+    else:
+      nil
+  of VkComplexSymbol:
+    if App.app.complex_symbol_class.kind == VkClass:
+      types.ref(App.app.complex_symbol_class).class
+    else:
+      nil
   of VkArray:
     types.ref(App.app.array_class).class
   of VkMap:
     types.ref(App.app.map_class).class
+  of VkGene:
+    if App.app.gene_class.kind == VkClass:
+      types.ref(App.app.gene_class).class
+    else:
+      nil
+  of VkSet:
+    if App.app.set_class.kind == VkClass:
+      types.ref(App.app.set_class).class
+    else:
+      nil
   of VkSelector:
     if App.app.selector_class.kind == VkClass:
       types.ref(App.app.selector_class).class
@@ -40,8 +85,16 @@ template get_value_class(val: Value): Class =
       types.ref(App.app.generator_class).class
     else:
       nil
+  of VkClass:
+    if App.app.class_class.kind == VkClass:
+      types.ref(App.app.class_class).class
+    else:
+      nil
   else:
-    nil
+    if App.app.object_class.kind == VkClass:
+      types.ref(App.app.object_class).class
+    else:
+      nil
 
 # Forward declarations from vm/core
 proc init_gene_namespace*()
@@ -612,13 +665,17 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
   let value_class = get_value_class(value)
   if value_class == nil:
+    when not defined(release):
+      if self.trace:
+        echo "call_value_method: no class for ", value.kind, " method ", method_name
     return false
 
-  let method_key = method_name.to_key()
-  if not value_class.methods.hasKey(method_key):
+  let meth = value_class.get_method(method_name)
+  if meth == nil:
+    when not defined(release):
+      if self.trace:
+        echo "call_value_method: method ", method_name, " missing on ", value.kind
     return false
-
-  let meth = value_class.methods[method_key]
   case meth.callable.kind:
   of VkFunction:
     let f = meth.callable.ref.fn
@@ -4630,7 +4687,11 @@ proc exec*(self: VirtualMachine): Value =
         # Zero-argument unified method call
         let method_name = inst.arg0.str
         let obj = self.frame.pop()
-
+        if call_value_method(self, obj, method_name, []):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+        
         case obj.kind:
         of VkInstance:
           # OPTIMIZATION: Use inline cache for method lookup
@@ -4749,6 +4810,11 @@ proc exec*(self: VirtualMachine): Value =
         let method_name = inst.arg0.str
         let arg = self.frame.pop()
         let obj = self.frame.pop()
+
+        if call_value_method(self, obj, method_name, [arg]):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
 
         case obj.kind:
         of VkInstance:
@@ -4880,6 +4946,11 @@ proc exec*(self: VirtualMachine): Value =
         let arg2 = self.frame.pop()
         let arg1 = self.frame.pop()
         let obj = self.frame.pop()
+
+        if call_value_method(self, obj, method_name, [arg1, arg2]):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
 
         case obj.kind:
         of VkInstance:
@@ -5021,6 +5092,11 @@ proc exec*(self: VirtualMachine): Value =
         for i in countdown(arg_count - 1, 0):
           args[i] = self.frame.pop()
         let obj = self.frame.pop()
+
+        if call_value_method(self, obj, method_name, args):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
 
         case obj.kind:
         of VkInstance:

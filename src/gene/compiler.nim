@@ -1556,7 +1556,10 @@ proc compile_gene(self: Compiler, input: Value) =
     self.compile_literal(gene.type)
     return
   
-  if self.quote_level > 0 or gene.type == "_".to_symbol_value() or gene.type.kind == VkQuote:
+  let is_quoted_symbol_method_call = gene.type.kind == VkQuote and gene.type.ref.quote.kind == VkSymbol and
+    gene.children.len >= 1 and gene.children[0].kind == VkSymbol and gene.children[0].str.starts_with(".")
+
+  if self.quote_level > 0 or gene.type == "_".to_symbol_value() or (gene.type.kind == VkQuote and not is_quoted_symbol_method_call):
     self.compile_gene_default(gene)
     return
 

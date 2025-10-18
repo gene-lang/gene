@@ -1933,6 +1933,10 @@ var SYMBOLS*: ManagedSymbols
 proc get_symbol*(i: int): string {.inline.} =
   SYMBOLS.store[i]
 
+proc get_symbol_gcsafe*(i: int): string {.inline, gcsafe.} =
+  {.cast(gcsafe).}:
+    result = SYMBOLS.store[i]
+
 proc to_symbol_value*(s: string): Value =
   {.cast(gcsafe).}:
     let found = SYMBOLS.map.get_or_default(s, -1)

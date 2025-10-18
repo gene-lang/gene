@@ -462,32 +462,169 @@ proc init_gene_namespace*() =
   # Initialize basic classes needed by get_class
   var r: ptr Reference
   
+  # object_class
+  let object_class = new_class("Object")
+  r = new_ref(VkClass)
+  r.class = object_class
+  App.app.object_class = r.to_ref_value()
+
+  proc display_value(val: Value; topLevel: bool): string {.gcsafe.}
+  proc value_class_value(val: Value): Value =
+    case val.kind
+    of VkNil:
+      App.app.nil_class
+    of VkBool:
+      App.app.bool_class
+    of VkInt:
+      App.app.int_class
+    of VkFloat:
+      App.app.float_class
+    of VkChar:
+      App.app.char_class
+    of VkString:
+      App.app.string_class
+    of VkSymbol:
+      App.app.symbol_class
+    of VkComplexSymbol:
+      App.app.complex_symbol_class
+    of VkArray:
+      App.app.array_class
+    of VkMap:
+      App.app.map_class
+    of VkGene:
+      App.app.gene_class
+    of VkSet:
+      if App.app.set_class.kind == VkClass:
+        App.app.set_class
+      else:
+        App.app.object_class
+    of VkFuture:
+      if App.app.future_class.kind == VkClass:
+        App.app.future_class
+      else:
+        App.app.object_class
+    of VkGenerator:
+      if App.app.generator_class.kind == VkClass:
+        App.app.generator_class
+      else:
+        App.app.object_class
+    of VkNamespace:
+      App.app.namespace_class
+    of VkClass:
+      App.app.class_class
+    of VkInstance:
+      let class_ref = new_ref(VkClass)
+      class_ref.class = val.ref.instance_class
+      return class_ref.to_ref_value()
+    of VkSelector:
+      App.app.selector_class
+    else:
+      App.app.object_class
+
+  proc object_class_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return App.app.object_class
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    result = value_class_value(self_arg)
+
+  proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
+    case val.kind
+    of VkNil:
+      if topLevel:
+        ""
+      else:
+        "nil"
+    of VkString:
+      if topLevel:
+        val.str
+      else:
+        "\"" & val.str & "\""
+    of VkSymbol:
+      val.str
+    of VkBool:
+      if val == TRUE: "true" else: "false"
+    of VkInt:
+      $(to_int(val))
+    of VkFloat:
+      $(cast[float64](val))
+    of VkArray:
+      var parts: seq[string] = @[]
+      for item in val.ref.arr:
+        parts.add(display_value(item, false))
+      "[" & parts.join(" ") & "]"
+    of VkMap:
+      var parts: seq[string] = @[]
+      for k, v in val.ref.map:
+        let symbol_value = cast[Value](k)
+        let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+        let key_name = get_symbol_gcsafe(symbol_index.int)
+        parts.add("^" & key_name & " " & display_value(v, false))
+      "{" & parts.join(" ") & "}"
+    of VkGene:
+      var segments: seq[string] = @[]
+      if not val.gene.type.is_nil():
+        segments.add(display_value(val.gene.type, false))
+      for k, v in val.gene.props:
+        let symbol_value = cast[Value](k)
+        let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+        let key_name = get_symbol_gcsafe(symbol_index.int)
+        segments.add("^" & key_name & " " & display_value(v, false))
+      for child in val.gene.children:
+        segments.add(display_value(child, false))
+      "(" & segments.join(" ") & ")"
+    else:
+      $val
+
+  proc object_to_s_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return "".to_value()
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    display_value(self_arg, true).to_value()
+
+  object_class.def_native_method("class", object_class_method)
+  object_class.def_native_method("to_s", object_to_s_method)
+  App.app.gene_ns.ns["Object".to_key()] = App.app.object_class
+  App.app.global_ns.ns["Object".to_key()] = App.app.object_class
+  
   # nil_class
   let nil_class = new_class("Nil")
+  nil_class.parent = object_class
   r = new_ref(VkClass)
   r.class = nil_class
   App.app.nil_class = r.to_ref_value()
+  App.app.gene_ns.ns["Nil".to_key()] = App.app.nil_class
+  App.app.global_ns.ns["Nil".to_key()] = App.app.nil_class
   
   # bool_class
   let bool_class = new_class("Bool")
+  bool_class.parent = object_class
   r = new_ref(VkClass)
   r.class = bool_class
   App.app.bool_class = r.to_ref_value()
+  App.app.gene_ns.ns["Bool".to_key()] = App.app.bool_class
+  App.app.global_ns.ns["Bool".to_key()] = App.app.bool_class
   
   # int_class
   let int_class = new_class("Int")
+  int_class.parent = object_class
   r = new_ref(VkClass)
   r.class = int_class
   App.app.int_class = r.to_ref_value()
+  App.app.gene_ns.ns["Int".to_key()] = App.app.int_class
+  App.app.global_ns.ns["Int".to_key()] = App.app.int_class
   
   # float_class
   let float_class = new_class("Float")
+  float_class.parent = object_class
   r = new_ref(VkClass)
   r.class = float_class
   App.app.float_class = r.to_ref_value()
+  App.app.gene_ns.ns["Float".to_key()] = App.app.float_class
+  App.app.global_ns.ns["Float".to_key()] = App.app.float_class
   
   # string_class
   let string_class = new_class("String")
+  string_class.parent = object_class
   
   # Add String methods
   # append method
@@ -558,24 +695,35 @@ proc init_gene_namespace*() =
   r = new_ref(VkClass)
   r.class = string_class
   App.app.string_class = r.to_ref_value()
+  App.app.gene_ns.ns["String".to_key()] = App.app.string_class
+  App.app.global_ns.ns["String".to_key()] = App.app.string_class
   
   # symbol_class
   let symbol_class = new_class("Symbol")
+  symbol_class.parent = object_class
   r = new_ref(VkClass)
   r.class = symbol_class
   App.app.symbol_class = r.to_ref_value()
+  App.app.gene_ns.ns["Symbol".to_key()] = App.app.symbol_class
+  App.app.global_ns.ns["Symbol".to_key()] = App.app.symbol_class
   
   # complex_symbol_class
   let complex_symbol_class = new_class("ComplexSymbol")
+  complex_symbol_class.parent = object_class
   r = new_ref(VkClass)
   r.class = complex_symbol_class
   App.app.complex_symbol_class = r.to_ref_value()
+  App.app.gene_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
+  App.app.global_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
   
   # array_class
   let array_class = new_class("Array")
+  array_class.parent = object_class
   r = new_ref(VkClass)
   r.class = array_class
   App.app.array_class = r.to_ref_value()
+  App.app.gene_ns.ns["Array".to_key()] = App.app.array_class
+  App.app.global_ns.ns["Array".to_key()] = App.app.array_class
   
   # Add array methods
   proc vm_array_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -611,9 +759,12 @@ proc init_gene_namespace*() =
   
   # map_class
   let map_class = new_class("Map")
+  map_class.parent = object_class
   r = new_ref(VkClass)
   r.class = map_class
   App.app.map_class = r.to_ref_value()
+  App.app.gene_ns.ns["Map".to_key()] = App.app.map_class
+  App.app.global_ns.ns["Map".to_key()] = App.app.map_class
   
   # Add map methods
   proc vm_map_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -659,6 +810,7 @@ proc init_gene_namespace*() =
 
   # selector_class
   let selector_class = new_class("Selector")
+  selector_class.parent = object_class
 
   proc selector_call(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 2:
@@ -766,45 +918,66 @@ proc init_gene_namespace*() =
   
   # set_class
   let set_class = new_class("Set")
+  set_class.parent = object_class
   r = new_ref(VkClass)
   r.class = set_class
   App.app.set_class = r.to_ref_value()
+  App.app.gene_ns.ns["Set".to_key()] = App.app.set_class
+  App.app.global_ns.ns["Set".to_key()] = App.app.set_class
   
   # gene_class
   let gene_class = new_class("Gene")
+  gene_class.parent = object_class
   r = new_ref(VkClass)
   r.class = gene_class
   App.app.gene_class = r.to_ref_value()
+  App.app.gene_ns.ns["Gene".to_key()] = App.app.gene_class
+  App.app.global_ns.ns["Gene".to_key()] = App.app.gene_class
   
   # function_class
   let function_class = new_class("Function")
+  function_class.parent = object_class
   r = new_ref(VkClass)
   r.class = function_class
   App.app.function_class = r.to_ref_value()
+  App.app.gene_ns.ns["Function".to_key()] = App.app.function_class
+  App.app.global_ns.ns["Function".to_key()] = App.app.function_class
   
   # char_class
   let char_class = new_class("Char")
+  char_class.parent = object_class
   r = new_ref(VkClass)
   r.class = char_class
   App.app.char_class = r.to_ref_value()
+  App.app.gene_ns.ns["Char".to_key()] = App.app.char_class
+  App.app.global_ns.ns["Char".to_key()] = App.app.char_class
   
   # application_class
   let application_class = new_class("Application")
+  application_class.parent = object_class
   r = new_ref(VkClass)
   r.class = application_class
   App.app.application_class = r.to_ref_value()
+  App.app.gene_ns.ns["Application".to_key()] = App.app.application_class
+  App.app.global_ns.ns["Application".to_key()] = App.app.application_class
   
   # package_class
   let package_class = new_class("Package")
+  package_class.parent = object_class
   r = new_ref(VkClass)
   r.class = package_class
   App.app.package_class = r.to_ref_value()
+  App.app.gene_ns.ns["Package".to_key()] = App.app.package_class
+  App.app.global_ns.ns["Package".to_key()] = App.app.package_class
   
   # namespace_class
   let namespace_class = new_class("Namespace")
+  namespace_class.parent = object_class
   r = new_ref(VkClass)
   r.class = namespace_class
   App.app.namespace_class = r.to_ref_value()
+  App.app.gene_ns.ns["Namespace".to_key()] = App.app.namespace_class
+  App.app.global_ns.ns["Namespace".to_key()] = App.app.namespace_class
 
   App.app.gene_ns.ns["debug".to_key()] = debug
   App.app.gene_ns.ns["println".to_key()] = println
@@ -847,12 +1020,35 @@ proc init_gene_namespace*() =
   stdlib_system.init_system_namespace(App.app.global_ns.ref.ns)
 
   let class = new_class("Class")
+  class.parent = object_class
   class.def_native_macro_method("ctor", class_ctor)
   class.def_native_macro_method("fn", class_fn)
+  class.def_native_method "parent", proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return NIL
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkClass:
+      not_allowed("Class.parent must be called on a class")
+    let parent_class = self_arg.ref.class.parent
+    if parent_class != nil:
+      let parent_ref = new_ref(VkClass)
+      parent_ref.class = parent_class
+      parent_ref.to_ref_value()
+    else:
+      NIL
+  class.def_native_method "name", proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return "".to_value()
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkClass:
+      not_allowed("Class.name must be called on a class")
+    self_arg.ref.class.name.to_value()
 
   r = new_ref(VkClass)
   r.class = class
   App.app.class_class = r.to_ref_value()
+  App.app.gene_ns.ns["Class".to_key()] = App.app.class_class
+  App.app.global_ns.ns["Class".to_key()] = App.app.class_class
 
   let vm_ns = new_namespace("vm")
   App.app.gene_ns.ns["vm".to_key()] = vm_ns.to_value()
