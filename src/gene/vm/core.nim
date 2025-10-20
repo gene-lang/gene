@@ -968,6 +968,127 @@ proc init_gene_namespace*() =
     return NIL
   
   array_class.def_native_method("get", vm_array_get)
+
+  proc normalize_index(len: int, raw: int64): int {.inline.} =
+    var idx = raw.int
+    if idx < 0:
+      idx = len + idx
+    idx
+
+  proc vm_array_set(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 3:
+      not_allowed("Array.set requires index and value")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("set must be called on an array")
+    let index_val = get_positional_arg(args, 1, has_keyword_args)
+    if index_val.kind != VkInt:
+      not_allowed("set index must be an integer")
+    let arr_ref = arr.ref
+    let len = arr_ref.arr.len
+    var idx = normalize_index(len, index_val.int64)
+    if idx < 0 or idx >= len:
+      not_allowed("set index out of bounds")
+    let value = get_positional_arg(args, 2, has_keyword_args)
+    arr_ref.arr[idx] = value
+    arr
+
+  array_class.def_native_method("set", vm_array_set)
+
+  proc vm_array_del(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.del requires index")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("del must be called on an array")
+    let index_val = get_positional_arg(args, 1, has_keyword_args)
+    if index_val.kind != VkInt:
+      not_allowed("del index must be an integer")
+    let arr_ref = arr.ref
+    let len = arr_ref.arr.len
+    var idx = normalize_index(len, index_val.int64)
+    if idx < 0 or idx >= len:
+      not_allowed("del index out of bounds")
+    let removed = arr_ref.arr[idx]
+    arr_ref.arr.delete(idx)
+    removed
+
+  array_class.def_native_method("del", vm_array_del)
+
+  proc vm_array_empty(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.empty requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("empty must be called on an array")
+    (arr.ref.arr.len == 0).to_value()
+
+  array_class.def_native_method("empty", vm_array_empty)
+
+  proc vm_array_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.contains requires value")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("contains must be called on an array")
+    let needle = get_positional_arg(args, 1, has_keyword_args)
+    for item in arr.ref.arr:
+      if item == needle:
+        return TRUE
+    FALSE
+
+  array_class.def_native_method("contains", vm_array_contains)
+
+  proc vm_array_each(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.each requires a function")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("each must be called on an array")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    case callback.kind
+    of VkFunction:
+      for item in arr.ref.arr:
+        {.cast(gcsafe).}:
+          discard vm.exec_function(callback, @[item])
+    of VkNativeFn:
+      for item in arr.ref.arr:
+        {.cast(gcsafe).}:
+          discard call_native_fn(callback.ref.native_fn, vm, [item])
+    else:
+      not_allowed("each callback must be a function")
+    arr
+
+  array_class.def_native_method("each", vm_array_each)
+
+  proc vm_array_map(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.map requires a function")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("map must be called on an array")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    var mapped: seq[Value] = @[]
+    case callback.kind
+    of VkFunction:
+      for item in arr.ref.arr:
+        var mapped_value: Value
+        {.cast(gcsafe).}:
+          mapped_value = vm.exec_function(callback, @[item])
+        mapped.add(mapped_value)
+    of VkNativeFn:
+      for item in arr.ref.arr:
+        var mapped_value: Value
+        {.cast(gcsafe).}:
+          mapped_value = call_native_fn(callback.ref.native_fn, vm, [item])
+        mapped.add(mapped_value)
+    else:
+      not_allowed("map callback must be a function")
+    let result_ref = new_ref(VkArray)
+    result_ref.arr = mapped
+    result_ref.to_ref_value()
+
+  array_class.def_native_method("map", vm_array_map)
   
   # map_class
   let map_class = new_class("Map")
