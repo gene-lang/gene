@@ -1330,6 +1330,42 @@ proc init_gene_namespace*() =
   App.app.gene_class = r.to_ref_value()
   App.app.gene_ns.ns["Gene".to_key()] = App.app.gene_class
   App.app.global_ns.ns["Gene".to_key()] = App.app.gene_class
+
+  proc gene_type_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Gene.type requires self")
+    let gene_val = get_positional_arg(args, 0, has_keyword_args)
+    if gene_val.kind != VkGene:
+      not_allowed("Gene.type must be called on a gene")
+    gene_val.gene.type
+
+  gene_class.def_native_method("type", gene_type_method)
+
+  proc gene_props_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Gene.props requires self")
+    let gene_val = get_positional_arg(args, 0, has_keyword_args)
+    if gene_val.kind != VkGene:
+      not_allowed("Gene.props must be called on a gene")
+    let result_ref = new_ref(VkMap)
+    for key, value in gene_val.gene.props:
+      result_ref.map[key] = value
+    result_ref.to_ref_value()
+
+  gene_class.def_native_method("props", gene_props_method)
+
+  proc gene_children_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Gene.children requires self")
+    let gene_val = get_positional_arg(args, 0, has_keyword_args)
+    if gene_val.kind != VkGene:
+      not_allowed("Gene.children must be called on a gene")
+    let result_ref = new_ref(VkArray)
+    for child in gene_val.gene.children:
+      result_ref.arr.add(child)
+    result_ref.to_ref_value()
+
+  gene_class.def_native_method("children", gene_children_method)
   
   # function_class
   let function_class = new_class("Function")

@@ -63,7 +63,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_stdlib_string.nim"
   exec "nim c -r tests/test_stdlib_array.nim"
   exec "nim c -r tests/test_stdlib_map.nim"
-  # exec "nim c -r tests/test_stdlib_gene.nim"
+  exec "nim c -r tests/test_stdlib_gene.nim"
   # exec "nim c -r tests/test_stdlib_regex.nim"
   # exec "nim c -r tests/test_stdlib_io.nim"
   # exec "nim c -r tests/test_stdlib_datetime.nim"

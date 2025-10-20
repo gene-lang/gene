@@ -1,0 +1,26 @@
+import unittest
+import tables
+import ./helpers
+import gene/types
+
+test_vm """
+  (var g :(1 ^a 2 3 4))
+  (g .type)
+""", 1.to_value()
+
+test_vm """
+  (var g :(1 ^a 2 3 4))
+  (g .props)
+""", proc(result: Value) =
+  check result.kind == VkMap
+  check result.ref.map.len == 1
+  check result.ref.map["a".to_key()] == 2.to_value()
+
+test_vm """
+  (var g :(1 ^a 2 3 4))
+  (g .children)
+""", proc(result: Value) =
+  check result.kind == VkArray
+  check result.ref.arr.len == 2
+  check result.ref.arr[0] == 3.to_value()
+  check result.ref.arr[1] == 4.to_value()
