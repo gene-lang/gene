@@ -1099,6 +1099,21 @@ const EMPTY_STRING = SHORT_STR_TAG
 
 const BIGGEST_INT = 2^61 - 1
 
+proc short_equals_long(short_raw: uint64, long_ptr: ptr String): bool {.inline, noSideEffect.} =
+  ## Compare a NaN-boxed short string payload with a long string reference
+  if long_ptr == nil:
+    return false
+  let text = long_ptr.str
+  if text.len > 6:
+    return false
+  var payload = short_raw and PAYLOAD_MASK
+  for i in 0..<text.len:
+    let byte = char((payload and 0xFF'u64).int)
+    if byte != text[i]:
+      return false
+    payload = payload shr 8
+  return payload == 0
+
 var VM* {.threadvar.}: VirtualMachine   # The current virtual machine
 var App* {.threadvar.}: Value
 
@@ -1302,7 +1317,14 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
     let tag1 = u1 and 0xFFFF_0000_0000_0000u64
     let tag2 = u2 and 0xFFFF_0000_0000_0000u64
     if tag1 != tag2:
-      return false
+      if tag1 == SHORT_STR_TAG and tag2 == LONG_STR_TAG:
+        let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+        return short_equals_long(u1, str2)
+      elif tag1 == LONG_STR_TAG and tag2 == SHORT_STR_TAG:
+        let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
+        return short_equals_long(u2, str1)
+      else:
+        return false
 
     # Both short strings
     if tag1 == SHORT_STR_TAG:

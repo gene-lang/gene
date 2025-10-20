@@ -64,7 +64,7 @@ proc translate_symbol(input: Value): Value =
   case input.kind:
     of VkSymbol:
       let s = input.str
-      if s.starts_with("$"):
+      if s.starts_with("$") and s.len > 1:
         # Special case for $ns - translate to special symbol
         if s == "$ns":
           result = cast[Value](SYM_NS)

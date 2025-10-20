@@ -1,4 +1,4 @@
-import base64
+import base64, strutils
 import ../stdlib/core as stdlib_core
 import ../stdlib/math as stdlib_math
 import ../stdlib/io as stdlib_io
@@ -627,26 +627,65 @@ proc init_gene_namespace*() =
   string_class.parent = object_class
   
   # Add String methods
-  # append method
-  proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-    if arg_count < 2:
-      raise new_exception(types.Exception, "String.append requires 2 arguments (self and string to append)")
+  proc ensure_mutable_string(vm: VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
+    ## Ensure the string value is backed by a mutable heap allocation
+    let self_index = if has_keyword_args: 1 else: 0
+    let original = args[self_index]
+    let raw = cast[uint64](original)
+    let tag = raw and 0xFFFF_0000_0000_0000u64
 
-    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    case tag
+    of LONG_STR_TAG:
+      return original
+    of SHORT_STR_TAG:
+      let converted = new_str_value(original.str)
+      args[self_index] = converted
+
+      # Update the active scope slot so future accesses see the heap-backed value
+      if vm.frame != nil:
+        var scope = vm.frame.scope
+        var updated = false
+        while scope != nil and not updated:
+          for i in 0..<scope.members.len:
+            if scope.members[i] == original:
+              scope.members[i] = converted
+              updated = true
+              break
+          if not updated:
+            scope = scope.parent
+      return converted
+    else:
+      return original
+
+  # append method
+  proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.append requires a value to append")
+
+    var self_arg = get_positional_arg(args, 0, has_keyword_args)
     let append_arg = get_positional_arg(args, 1, has_keyword_args)
 
     if self_arg.kind != VkString:
-      raise new_exception(types.Exception, "append can only be called on a string")
-    if append_arg.kind != VkString:
-      raise new_exception(types.Exception, "append requires a string argument")
+      not_allowed("append must be called on a string")
 
-    let result = self_arg.str & append_arg.str
-    return result.to_value()
+    var addition: string
+    if append_arg.kind == VkString:
+      addition = append_arg.str
+    else:
+      addition = display_value(append_arg, true)
+
+    self_arg = ensure_mutable_string(vm, args, has_keyword_args)
+    let ptr_addr = cast[uint64](self_arg) and PAYLOAD_MASK
+    if ptr_addr == 0:
+      not_allowed("append must be called on a string")
+    let str_ref = cast[ptr String](ptr_addr)
+    str_ref.str.add(addition)
+    self_arg
   
   var append_fn = new_ref(VkNativeFn)
   append_fn.native_fn = string_append
   string_class.def_native_method("append", append_fn.native_fn)
-  
+
   # length method
   proc string_length(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:
@@ -657,10 +696,11 @@ proc init_gene_namespace*() =
       raise new_exception(types.Exception, "length can only be called on a string")
 
     return self_arg.str.len.int64.to_value()
-  
+
   var length_fn = new_ref(VkNativeFn)
   length_fn.native_fn = string_length
   string_class.def_native_method("length", length_fn.native_fn)
+  string_class.def_native_method("size", length_fn.native_fn)
   
   # to_upper method
   proc string_to_upper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -691,6 +731,178 @@ proc init_gene_namespace*() =
   var to_lower_fn = new_ref(VkNativeFn)
   to_lower_fn.native_fn = string_to_lower
   string_class.def_native_method("to_lower", to_lower_fn.native_fn)
+  string_class.def_native_method("to_lowercase", to_lower_fn.native_fn)
+
+  proc string_to_uppercase(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    string_to_upper(vm, args, arg_count, has_keyword_args)
+
+  proc string_to_lowercase(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    string_to_lower(vm, args, arg_count, has_keyword_args)
+
+  string_class.def_native_method("to_uppercase", string_to_uppercase)
+  string_class.def_native_method("to_lowercase", string_to_lowercase)
+
+  proc string_substr(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.substr requires start index")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("substr must be called on a string")
+    let s = self_arg.str
+    let len = s.len
+    if len == 0:
+      return "".to_value()
+
+    proc adjust(idx: int64; allowLen: bool): int =
+      var res = int(idx)
+      if res < 0:
+        res = len + res
+      if res < 0:
+        res = 0
+      if allowLen:
+        if res > len:
+          res = len
+      else:
+        if res >= len:
+          res = len - 1
+      res
+
+    let start_idx64 = get_positional_arg(args, 1, has_keyword_args).to_int()
+    var start_idx = adjust(start_idx64, true)
+    if start_idx >= len:
+      return "".to_value()
+
+    if get_positional_count(arg_count, has_keyword_args) == 2:
+      return s[start_idx..^1].to_value()
+
+    let end_idx64 = get_positional_arg(args, 2, has_keyword_args).to_int()
+    var end_idx = adjust(end_idx64, false)
+    if end_idx < start_idx:
+      return "".to_value()
+    result = s[start_idx..end_idx].to_value()
+
+  string_class.def_native_method("substr", string_substr)
+
+  proc string_split(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.split requires separator")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("split must be called on a string")
+    let sep_arg = get_positional_arg(args, 1, has_keyword_args)
+    if sep_arg.kind != VkString:
+      not_allowed("split separator must be a string")
+    let sep = sep_arg.str
+    var parts: seq[string]
+    if get_positional_count(arg_count, has_keyword_args) >= 3:
+      let limit = max(1, get_positional_arg(args, 2, has_keyword_args).to_int().int)
+      parts = self_arg.str.split(sep, limit - 1)
+    else:
+      parts = self_arg.str.split(sep)
+    let arr_ref = new_ref(VkArray)
+    for part in parts:
+      arr_ref.arr.add(part.to_value())
+    arr_ref.to_ref_value()
+
+  string_class.def_native_method("split", string_split)
+
+  proc string_index(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.index requires substring")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("index must be called on a string")
+    let needle = get_positional_arg(args, 1, has_keyword_args)
+    if needle.kind != VkString:
+      not_allowed("index substring must be a string")
+    let pos = self_arg.str.find(needle.str)
+    pos.to_value()
+
+  string_class.def_native_method("index", string_index)
+
+  proc string_rindex(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.rindex requires substring")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("rindex must be called on a string")
+    let needle = get_positional_arg(args, 1, has_keyword_args)
+    if needle.kind != VkString:
+      not_allowed("rindex substring must be a string")
+    let pos = self_arg.str.rfind(needle.str)
+    pos.to_value()
+
+  string_class.def_native_method("rindex", string_rindex)
+
+  proc string_trim(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.trim requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("trim must be called on a string")
+    self_arg.str.strip().to_value()
+
+  string_class.def_native_method("trim", string_trim)
+
+  proc string_starts_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.starts_with requires prefix")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let prefix = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or prefix.kind != VkString:
+      not_allowed("starts_with expects string arguments")
+    self_arg.str.startsWith(prefix.str).to_value()
+
+  proc string_ends_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.ends_with requires suffix")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let suffix = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or suffix.kind != VkString:
+      not_allowed("ends_with expects string arguments")
+    self_arg.str.endsWith(suffix.str).to_value()
+
+  string_class.def_native_method("starts_with", string_starts_with)
+  string_class.def_native_method("ends_with", string_ends_with)
+
+  proc string_char_at(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.char_at requires index")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let idx_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or idx_val.kind != VkInt:
+      not_allowed("char_at expects string and integer")
+    let idx = idx_val.int64.int
+    if idx < 0 or idx >= self_arg.str.len:
+      not_allowed("char_at index out of bounds")
+    self_arg.str[idx].to_value()
+
+  string_class.def_native_method("char_at", string_char_at)
+
+  proc string_replace(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 3:
+      not_allowed("String.replace requires target and replacement")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let from_val = get_positional_arg(args, 1, has_keyword_args)
+    let to_val = get_positional_arg(args, 2, has_keyword_args)
+    if self_arg.kind != VkString or from_val.kind != VkString or to_val.kind != VkString:
+      not_allowed("replace expects string arguments")
+    self_arg.str.replace(from_val.str, to_val.str).to_value()
+
+  string_class.def_native_method("replace", string_replace)
+
+  proc gene_dollar(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    var buffer = newStringOfCap(16)
+    for i in 0..<positional:
+      let arg = get_positional_arg(args, i, has_keyword_args)
+      buffer.add(display_value(arg, true))
+    buffer.to_value()
+
+  var dollar_fn = new_ref(VkNativeFn)
+  dollar_fn.native_fn = gene_dollar
+  App.app.gene_ns.ns["$".to_key()] = dollar_fn.to_ref_value()
+  App.app.global_ns.ns["$".to_key()] = dollar_fn.to_ref_value()
   
   r = new_ref(VkClass)
   r.class = string_class
