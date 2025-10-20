@@ -1100,7 +1100,7 @@ proc init_gene_namespace*() =
   App.app.global_ns.ns["Map".to_key()] = App.app.map_class
   
   # Add map methods
-  proc vm_map_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc vm_map_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     # First argument is the map (self), second is the key
     let map = get_positional_arg(args, 0, has_keyword_args)
     let key = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
@@ -1139,6 +1139,70 @@ proc init_gene_namespace*() =
     return NIL
 
   map_class.def_native_method("contains", vm_map_contains)
+  
+  proc vm_map_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.size requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("size must be called on a map")
+    map_val.ref.map.len.to_value()
+
+  map_class.def_native_method("size", vm_map_size)
+
+  proc vm_map_keys(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.keys requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("keys must be called on a map")
+    let result_ref = new_ref(VkArray)
+    for key, _ in map_val.ref.map:
+      let key_val = cast[Value](key)
+      result_ref.arr.add(key_val.str.to_value())
+    result_ref.to_ref_value()
+
+  map_class.def_native_method("keys", vm_map_keys)
+
+  proc vm_map_values(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.values requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("values must be called on a map")
+    let result_ref = new_ref(VkArray)
+    for _, value in map_val.ref.map:
+      result_ref.arr.add(value)
+    result_ref.to_ref_value()
+
+  map_class.def_native_method("values", vm_map_values)
+
+  proc vm_map_map(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Map.map requires a function")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("map must be called on a map")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    let result_ref = new_ref(VkArray)
+    case callback.kind
+    of VkFunction:
+      for key, value in map_val.ref.map:
+        let key_val = cast[Value](key)
+        {.cast(gcsafe).}:
+          let mapped = vm.exec_function(callback, @[key_val, value])
+          result_ref.arr.add(mapped)
+    of VkNativeFn:
+      for key, value in map_val.ref.map:
+        let key_val = cast[Value](key)
+        {.cast(gcsafe).}:
+          let mapped = call_native_fn(callback.ref.native_fn, vm, [key_val, value])
+          result_ref.arr.add(mapped)
+    else:
+      not_allowed("map callback must be a function")
+    result_ref.to_ref_value()
+
+  map_class.def_native_method("map", vm_map_map)
   map_class.def_native_method("get", vm_map_get)
 
   # selector_class
