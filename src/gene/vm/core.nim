@@ -1,4 +1,5 @@
 import base64, strutils, re
+import std/[json, tables]
 import ../stdlib/core as stdlib_core
 import ../stdlib/math as stdlib_math
 import ../stdlib/io as stdlib_io
@@ -44,6 +45,74 @@ proc extract_regex(value: Value, pattern: var string, flags: var uint8) =
     flags = 0
   else:
     not_allowed("Expected a regex or string pattern")
+
+proc parse_json_node(node: json.JsonNode): Value {.gcsafe.}
+
+proc parse_json_node(node: json.JsonNode): Value {.gcsafe.} =
+  case node.kind
+  of json.JNull:
+    return NIL
+  of json.JBool:
+    return node.bval.to_value()
+  of json.JInt:
+    return int64(node.num).to_value()
+  of json.JFloat:
+    return node.fnum.to_value()
+  of json.JString:
+    return node.str.to_value()
+  of json.JObject:
+    var map_table = initTable[Key, Value]()
+    for k, v in node.fields:
+      map_table[to_key(k)] = parse_json_node(v)
+    return new_map_value(map_table)
+  of json.JArray:
+    let arr_ref = new_ref(VkArray)
+    for elem in node.elems:
+      arr_ref.arr.add(parse_json_node(elem))
+    return arr_ref.to_ref_value()
+
+proc parse_json_string(json_str: string): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let parsed = json.parseJson(json_str)
+    return parse_json_node(parsed)
+
+proc value_to_json(val: Value): string {.gcsafe.} =
+  case val.kind
+  of VkNil:
+    result = "null"
+  of VkBool:
+    result = if val.to_bool: "true" else: "false"
+  of VkInt:
+    result = $val.to_int
+  of VkFloat:
+    result = $val.to_float
+  of VkString:
+    result = json.escapeJson(val.str)
+  of VkSymbol:
+    result = json.escapeJson(val.str)
+  of VkArray, VkVector:
+    var items: seq[string] = @[]
+    for item in val.ref.arr:
+      items.add(value_to_json(item))
+    result = "[" & items.join(",") & "]"
+  of VkMap:
+    var items: seq[string] = @[]
+    for k, v in val.ref.map:
+      let key_val = cast[Value](k)
+      let key_str =
+        case key_val.kind
+        of VkSymbol, VkString:
+          key_val.str
+        of VkInt:
+          $key_val.to_int
+        of VkFloat:
+          $key_val.to_float
+        else:
+          $key_val
+      items.add(json.escapeJson(key_str) & ":" & value_to_json(v))
+    result = "{" & items.join(",") & "}"
+  else:
+    result = json.escapeJson($val)
 
 # Show the code
 # JIT the code (create a temporary block, reuse the frame)
@@ -1079,6 +1148,16 @@ proc init_gene_namespace*() =
     FALSE
 
   array_class.def_native_method("contains", vm_array_contains)
+  
+  proc vm_array_to_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.to_json requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("to_json must be called on an array")
+    value_to_json(arr).to_value()
+
+  array_class.def_native_method("to_json", vm_array_to_json)
 
   proc vm_array_each(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -1179,6 +1258,8 @@ proc init_gene_namespace*() =
 
     return NIL
 
+  map_class.def_native_method("get", vm_map_get)
+
   map_class.def_native_method("contains", vm_map_contains)
   
   proc vm_map_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -1244,6 +1325,16 @@ proc init_gene_namespace*() =
     result_ref.to_ref_value()
 
   map_class.def_native_method("map", vm_map_map)
+  
+  proc vm_map_to_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.to_json requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("to_json must be called on a map")
+    value_to_json(map_val).to_value()
+
+  map_class.def_native_method("to_json", vm_map_to_json)
 
   proc regex_create(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -1318,9 +1409,25 @@ proc init_gene_namespace*() =
     if capture_index >= captures.len:
       return NIL
     let capture_value = captures[capture_index]
-    if capture_value.len == 0:
-      return NIL
     capture_value.to_value()
+
+  proc json_parse_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("json.parse requires a string argument")
+    let json_arg = get_positional_arg(args, 0, has_keyword_args)
+    if json_arg.kind != VkString:
+      not_allowed("json.parse expects a string")
+    try:
+      {.cast(gcsafe).}:
+        return parse_json_string(json_arg.str)
+    except json.JsonParsingError as e:
+      raise new_exception(types.Exception, "Invalid JSON: " & e.msg)
+
+  proc json_stringify_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("json.stringify requires a value")
+    let value_arg = get_positional_arg(args, 0, has_keyword_args)
+    value_to_json(value_arg).to_value()
 
   var regex_create_fn = new_ref(VkNativeFn)
   regex_create_fn.native_fn = regex_create
@@ -1333,7 +1440,15 @@ proc init_gene_namespace*() =
   var regex_find_fn = new_ref(VkNativeFn)
   regex_find_fn.native_fn = regex_find
   App.app.gene_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
-  map_class.def_native_method("get", vm_map_get)
+
+  var json_parse_fn = new_ref(VkNativeFn)
+  json_parse_fn.native_fn = json_parse_native
+  var json_stringify_fn = new_ref(VkNativeFn)
+  json_stringify_fn.native_fn = json_stringify_native
+  let json_ns = new_namespace("json")
+  json_ns["parse".to_key()] = json_parse_fn.to_ref_value()
+  json_ns["stringify".to_key()] = json_stringify_fn.to_ref_value()
+  App.app.gene_ns.ns["json".to_key()] = json_ns.to_value()
 
   # selector_class
   let selector_class = new_class("Selector")
