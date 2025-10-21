@@ -2046,6 +2046,12 @@ proc new_range_value*(start: Value, `end`: Value, step: Value): Value =
   r.range_step = step
   result = r.to_ref_value()
 
+proc new_regex_value*(pattern: string, flags: uint8 = 0'u8): Value =
+  let r = new_ref(VkRegex)
+  r.regex_pattern = pattern
+  r.regex_flags = flags
+  result = r.to_ref_value()
+
 proc new_selector_value*(segments: openArray[Value]): Value =
   if segments.len == 0:
     not_allowed("Selector requires at least one segment")

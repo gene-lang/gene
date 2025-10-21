@@ -1,8 +1,49 @@
-import base64, strutils
+import base64, strutils, re
 import ../stdlib/core as stdlib_core
 import ../stdlib/math as stdlib_math
 import ../stdlib/io as stdlib_io
 import ../stdlib/system as stdlib_system
+
+const
+  REGEX_FLAG_IGNORE_CASE = 0x1'u8
+  REGEX_FLAG_MULTILINE = 0x2'u8
+
+type RegexCacheKey = tuple[pattern: string, flags: uint8]
+
+var regex_cache {.threadvar.}: Table[RegexCacheKey, Regex]
+var regex_cache_initialized {.threadvar.}: bool
+
+proc build_regex_flags(ignore_case: bool, multiline: bool): uint8 {.inline.} =
+  result = 0
+  if ignore_case:
+    result = result or REGEX_FLAG_IGNORE_CASE
+  if multiline:
+    result = result or REGEX_FLAG_MULTILINE
+
+proc get_compiled_regex(pattern: string, flags: uint8): Regex =
+  if not regex_cache_initialized:
+    regex_cache = init_table[RegexCacheKey, Regex]()
+    regex_cache_initialized = true
+  let key = (pattern, flags)
+  if not regex_cache.hasKey(key):
+    var opts: set[RegexFlag] = {}
+    if (flags and REGEX_FLAG_IGNORE_CASE) != 0:
+      opts.incl(reIgnoreCase)
+    if (flags and REGEX_FLAG_MULTILINE) != 0:
+      opts.incl(reMultiLine)
+    regex_cache[key] = re(pattern, opts)
+  regex_cache[key]
+
+proc extract_regex(value: Value, pattern: var string, flags: var uint8) =
+  case value.kind
+  of VkRegex:
+    pattern = value.ref.regex_pattern
+    flags = value.ref.regex_flags
+  of VkString:
+    pattern = value.str
+    flags = 0
+  else:
+    not_allowed("Expected a regex or string pattern")
 
 # Show the code
 # JIT the code (create a temporary block, reuse the frame)
@@ -1203,6 +1244,95 @@ proc init_gene_namespace*() =
     result_ref.to_ref_value()
 
   map_class.def_native_method("map", vm_map_map)
+
+  proc regex_create(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional == 0:
+      not_allowed("regex_create requires at least a pattern string")
+    var pattern = ""
+    var ignore_case = false
+    var multiline = false
+    var seen_bool = 0
+    var idx = 0
+    while idx < positional:
+      let arg = get_positional_arg(args, idx, has_keyword_args)
+      case arg.kind
+      of VkString:
+        pattern.add(arg.str)
+      of VkBool:
+        if seen_bool == 0:
+          ignore_case = arg.to_bool()
+        elif seen_bool == 1:
+          multiline = arg.to_bool()
+        else:
+          not_allowed("regex_create accepts at most two boolean flag arguments")
+        inc(seen_bool)
+      else:
+        not_allowed("regex_create expects string or bool arguments")
+      inc idx
+    if pattern.len == 0:
+      not_allowed("regex_create pattern cannot be empty")
+    let flags = build_regex_flags(ignore_case, multiline)
+    new_regex_value(pattern, flags)
+
+  proc regex_match(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("regex_match requires input string and pattern")
+    let input_val = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if input_val.kind != VkString:
+      not_allowed("regex_match input must be a string")
+    var pattern: string
+    var flags: uint8
+    extract_regex(pattern_val, pattern, flags)
+    let regex_obj = get_compiled_regex(pattern, flags)
+    (re.find(input_val.str, regex_obj) >= 0).to_value()
+
+  proc regex_find(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 2:
+      not_allowed("regex_find requires input string and pattern")
+    let input_val = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if input_val.kind != VkString:
+      not_allowed("regex_find input must be a string")
+    var capture_idx = 0
+    if positional >= 3:
+      capture_idx = get_positional_arg(args, 2, has_keyword_args).to_int().int
+      if capture_idx < 0:
+        not_allowed("regex_find capture index must be non-negative")
+    var pattern: string
+    var flags: uint8
+    extract_regex(pattern_val, pattern, flags)
+    let regex_obj = get_compiled_regex(pattern, flags)
+    var captures: array[MaxSubpatterns, string]
+    let start_idx = re.find(input_val.str, regex_obj, captures)
+    if start_idx < 0:
+      return NIL
+    let match_length = re.matchLen(input_val.str, regex_obj, start_idx)
+    if match_length < 0:
+      return NIL
+    if capture_idx == 0:
+      return input_val.str[start_idx ..< start_idx + match_length].to_value()
+    let capture_index = capture_idx - 1
+    if capture_index >= captures.len:
+      return NIL
+    let capture_value = captures[capture_index]
+    if capture_value.len == 0:
+      return NIL
+    capture_value.to_value()
+
+  var regex_create_fn = new_ref(VkNativeFn)
+  regex_create_fn.native_fn = regex_create
+  App.app.gene_ns.ns["regex_create".to_key()] = regex_create_fn.to_ref_value()
+
+  var regex_match_fn = new_ref(VkNativeFn)
+  regex_match_fn.native_fn = regex_match
+  App.app.gene_ns.ns["regex_match".to_key()] = regex_match_fn.to_ref_value()
+
+  var regex_find_fn = new_ref(VkNativeFn)
+  regex_find_fn.native_fn = regex_find
+  App.app.gene_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
   map_class.def_native_method("get", vm_map_get)
 
   # selector_class
