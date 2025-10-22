@@ -65,6 +65,16 @@ template get_value_class(val: Value): Class =
       types.ref(App.app.gene_class).class
     else:
       nil
+  of VkDate:
+    if App.app.date_class.kind == VkClass:
+      types.ref(App.app.date_class).class
+    else:
+      nil
+  of VkDateTime:
+    if App.app.datetime_class.kind == VkClass:
+      types.ref(App.app.datetime_class).class
+    else:
+      nil
   of VkSet:
     if App.app.set_class.kind == VkClass:
       types.ref(App.app.set_class).class

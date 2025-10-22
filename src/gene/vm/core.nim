@@ -1,4 +1,4 @@
-import base64, strutils, re
+import base64, strutils, re, times
 import std/[json, tables]
 import ../stdlib/core as stdlib_core
 import ../stdlib/math as stdlib_math
@@ -87,9 +87,9 @@ proc value_to_json(val: Value): string {.gcsafe.} =
   of VkFloat:
     result = $val.to_float
   of VkString:
-    result = json.escapeJson(val.str)
+    result = "\"" & json.escapeJson(val.str) & "\""
   of VkSymbol:
-    result = json.escapeJson(val.str)
+    result = "\"" & json.escapeJson(val.str) & "\""
   of VkArray, VkVector:
     var items: seq[string] = @[]
     for item in val.ref.arr:
@@ -109,10 +109,10 @@ proc value_to_json(val: Value): string {.gcsafe.} =
           $key_val.to_float
         else:
           $key_val
-      items.add(json.escapeJson(key_str) & ":" & value_to_json(v))
+      items.add("\"" & json.escapeJson(key_str) & "\":" & value_to_json(v))
     result = "{" & items.join(",") & "}"
   else:
-    result = json.escapeJson($val)
+    result = "\"" & json.escapeJson($val) & "\""
 
 # Show the code
 # JIT the code (create a temporary block, reuse the frame)
@@ -603,6 +603,10 @@ proc init_gene_namespace*() =
       App.app.map_class
     of VkGene:
       App.app.gene_class
+    of VkDate:
+      App.app.date_class
+    of VkDateTime:
+      App.app.datetime_class
     of VkSet:
       if App.app.set_class.kind == VkClass:
         App.app.set_class
@@ -1336,6 +1340,89 @@ proc init_gene_namespace*() =
 
   map_class.def_native_method("to_json", vm_map_to_json)
 
+  # date_class
+  let date_class = new_class("Date")
+  date_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = date_class
+  App.app.date_class = r.to_ref_value()
+  App.app.gene_ns.ns["Date".to_key()] = App.app.date_class
+  App.app.global_ns.ns["Date".to_key()] = App.app.date_class
+
+  proc date_year(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Date.year requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDate:
+      not_allowed("Date.year must be called on a date")
+    self_val.ref.date_year.int.to_value()
+
+  proc date_month(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Date.month requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDate:
+      not_allowed("Date.month must be called on a date")
+    self_val.ref.date_month.int.to_value()
+
+  proc date_day(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Date.day requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDate:
+      not_allowed("Date.day must be called on a date")
+    self_val.ref.date_day.int.to_value()
+
+  date_class.def_native_method("year", date_year)
+  date_class.def_native_method("month", date_month)
+  date_class.def_native_method("day", date_day)
+
+  # datetime_class
+  let datetime_class = new_class("DateTime")
+  datetime_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = datetime_class
+  App.app.datetime_class = r.to_ref_value()
+  App.app.gene_ns.ns["DateTime".to_key()] = App.app.datetime_class
+  App.app.global_ns.ns["DateTime".to_key()] = App.app.datetime_class
+
+  proc datetime_year(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.year requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.year must be called on a datetime")
+    self_val.ref.dt_year.int.to_value()
+
+  proc datetime_month(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.month requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.month must be called on a datetime")
+    self_val.ref.dt_month.int.to_value()
+
+  proc datetime_day(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.day requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.day must be called on a datetime")
+    self_val.ref.dt_day.int.to_value()
+
+  proc datetime_hour(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.hour requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.hour must be called on a datetime")
+    self_val.ref.dt_hour.int.to_value()
+
+  datetime_class.def_native_method("year", datetime_year)
+  datetime_class.def_native_method("month", datetime_month)
+  datetime_class.def_native_method("day", datetime_day)
+  datetime_class.def_native_method("hour", datetime_hour)
+
   proc regex_create(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional == 0:
@@ -1449,6 +1536,38 @@ proc init_gene_namespace*() =
   json_ns["parse".to_key()] = json_parse_fn.to_ref_value()
   json_ns["stringify".to_key()] = json_stringify_fn.to_ref_value()
   App.app.gene_ns.ns["json".to_key()] = json_ns.to_value()
+
+  proc gene_today_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now()
+    new_date_value(dt.year, ord(dt.month), dt.monthday)
+
+  proc gene_now_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now()
+    new_datetime_value(dt)
+
+  proc gene_yesterday_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now() - initDuration(days = 1)
+    new_date_value(dt.year, ord(dt.month), dt.monthday)
+
+  proc gene_tomorrow_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now() + initDuration(days = 1)
+    new_date_value(dt.year, ord(dt.month), dt.monthday)
+
+  var today_fn = new_ref(VkNativeFn)
+  today_fn.native_fn = gene_today_native
+  App.app.gene_ns.ns["today".to_key()] = today_fn.to_ref_value()
+
+  var now_fn = new_ref(VkNativeFn)
+  now_fn.native_fn = gene_now_native
+  App.app.gene_ns.ns["now".to_key()] = now_fn.to_ref_value()
+
+  var yesterday_fn = new_ref(VkNativeFn)
+  yesterday_fn.native_fn = gene_yesterday_native
+  App.app.gene_ns.ns["yesterday".to_key()] = yesterday_fn.to_ref_value()
+
+  var tomorrow_fn = new_ref(VkNativeFn)
+  tomorrow_fn.native_fn = gene_tomorrow_native
+  App.app.gene_ns.ns["tomorrow".to_key()] = tomorrow_fn.to_ref_value()
 
   # selector_class
   let selector_class = new_class("Selector")

@@ -2052,6 +2052,32 @@ proc new_regex_value*(pattern: string, flags: uint8 = 0'u8): Value =
   r.regex_flags = flags
   result = r.to_ref_value()
 
+proc new_date_value*(year: int, month: int, day: int): Value =
+  let r = new_ref(VkDate)
+  r.date_year = year.int16
+  r.date_month = month.int8
+  r.date_day = day.int8
+  result = r.to_ref_value()
+
+proc new_datetime_value*(dt: DateTime): Value =
+  let r = new_ref(VkDateTime)
+  r.dt_year = dt.year.int16
+  r.dt_month = ord(dt.month).int8
+  r.dt_day = dt.monthday.int8
+  r.dt_hour = dt.hour.int8
+  r.dt_minute = dt.minute.int8
+  r.dt_second = dt.second.int8
+  r.dt_timezone = (dt.utcOffset div 60).int16
+  result = r.to_ref_value()
+
+proc new_time_value*(hour: int, minute: int, second: int, microsecond: int = 0): Value =
+  let r = new_ref(VkTime)
+  r.time_hour = hour.int8
+  r.time_minute = minute.int8
+  r.time_second = second.int8
+  r.time_microsecond = microsecond.int32
+  result = r.to_ref_value()
+
 proc new_selector_value*(segments: openArray[Value]): Value =
   if segments.len == 0:
     not_allowed("Selector requires at least one segment")
