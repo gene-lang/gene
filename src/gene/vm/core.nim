@@ -1,5 +1,5 @@
 import base64, strutils, re, times
-import std/[json, tables]
+import std/[json, tables, osproc]
 import ../stdlib/core as stdlib_core
 import ../stdlib/math as stdlib_math
 import ../stdlib/io as stdlib_io
@@ -1809,6 +1809,21 @@ proc init_gene_namespace*() =
   App.app.global_ns.ns["eval".to_key()] = vm_eval.to_value()
   App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation.to_value()
   App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
+
+  proc os_exec_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("os.exec requires a command string")
+    let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
+    if cmd_arg.kind != VkString:
+      not_allowed("os.exec expects a string command")
+    let (output, _) = execCmdEx(cmd_arg.str)
+    output.to_value()
+
+  let os_ns = new_namespace("os")
+  var os_exec_fn = new_ref(VkNativeFn)
+  os_exec_fn.native_fn = os_exec_native
+  os_ns["exec".to_key()] = os_exec_fn.to_ref_value()
+  App.app.gene_ns.ref.ns["os".to_key()] = os_ns.to_value()
 
   # Initialize standard library namespaces
   stdlib_core.init_core_namespace(App.app.global_ns.ref.ns)

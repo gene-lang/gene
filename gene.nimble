@@ -68,6 +68,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_stdlib_json.nim"
   exec "nim c -r tests/test_stdlib_datetime.nim"
   exec "nim c -r tests/test_stdlib_sqlite.nim"
+  exec "nim c -r tests/test_stdlib_os.nim"
   # exec "nim c -r tests/test_stdlib_os.nim"
   # exec "nim c -r tests/test_custom_compiler.nim"
   # exec "nim c -r tests/test_ffi.nim"
