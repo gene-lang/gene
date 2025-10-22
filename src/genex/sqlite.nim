@@ -199,8 +199,8 @@ proc init_sqlite_classes*() =
     {.cast(gcsafe).}:
       statement_class_ref.class = statement_class_global
 
-    if App.app.gene_ns.kind == VkNamespace:
-      # Create a sqlite namespace
+    if App.app.genex_ns.kind == VkNamespace:
+      # Create a sqlite namespace under genex
       let sqlite_ns = new_ref(VkNamespace)
       sqlite_ns.ns = new_namespace("sqlite")
 
@@ -213,8 +213,8 @@ proc init_sqlite_classes*() =
       sqlite_ns.ns["Connection".to_key()] = connection_class_ref.to_ref_value()
       sqlite_ns.ns["Statement".to_key()] = statement_class_ref.to_ref_value()
 
-      # Add sqlite namespace to gene namespace
-      App.app.gene_ns.ref.ns["sqlite".to_key()] = sqlite_ns.to_ref_value()
+      # Attach to genex namespace
+      App.app.genex_ns.ref.ns["sqlite".to_key()] = sqlite_ns.to_ref_value()
 
 # Call init function
 init_sqlite_classes()
