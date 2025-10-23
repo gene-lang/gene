@@ -139,8 +139,10 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
         # gene is executed.
         self.output.instructions.add(Instruction(kind: IkResolveMethod, arg0: s[1..^1].to_symbol_value()))
       elif s == "...":
-        # Handle spread operator for variables like "a..."
-        self.output.instructions.add(Instruction(kind: IkSpread))
+        # Spread operator in complex symbols - not yet implemented
+        # This would handle cases like a/.../b but is an edge case
+        # For now, just treat it as a regular member access
+        not_allowed("Spread operator (...) in complex symbols not supported")
       else:
         let key = s.to_key()
         self.output.instructions.add(Instruction(kind: IkGetMember, arg0: cast[Value](key)))
@@ -191,19 +193,9 @@ proc compile_symbol(self: Compiler, input: Value) =
         self.output.instructions.add(Instruction(kind: IkPushValue, arg0: selector_value))
         return
       elif symbol_str.endsWith("..."):
-        # Handle variable spread like "a..." - strip the ... and add spread
-        let base_symbol = symbol_str[0..^4].to_symbol_value()  # Remove "..."
-        let key = base_symbol.str.to_key()
-        let found = self.scope_tracker.locate(key)
-        if found.local_index >= 0:
-          if found.parent_index == 0:
-            self.output.instructions.add(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
-          else:
-            self.output.instructions.add(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
-        else:
-          self.output.instructions.add(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
-        self.output.instructions.add(Instruction(kind: IkSpread))
-        return
+        # Spread suffix like "a..." - this should be handled by compile_array/compile_gene
+        # If we get here, it's being used outside of those contexts which is an error
+        not_allowed("Spread operator (...) can only be used in arrays, maps, or gene expressions")
       let key = input.str.to_key()
       let found = self.scope_tracker.locate(key)
       if found.local_index >= 0:
@@ -218,16 +210,49 @@ proc compile_symbol(self: Compiler, input: Value) =
 
 proc compile_array(self: Compiler, input: Value) =
   self.output.instructions.add(Instruction(kind: IkArrayStart))
-  for child in input.ref.arr:
+
+  var i = 0
+  let arr = input.ref.arr
+  while i < arr.len:
+    let child = arr[i]
+
+    # Check for standalone postfix spread: expr ...
+    if i + 1 < arr.len and arr[i + 1].kind == VkSymbol and arr[i + 1].str == "...":
+      # Compile the expression and add with spread
+      self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkArrayAddSpread))
+      i += 2  # Skip both the expr and the ... symbol
+      continue
+
+    # Check for suffix spread: a...
+    if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+      # Compile the base symbol and add with spread
+      let base_symbol = child.str[0..^4].to_symbol_value()  # Remove "..."
+      self.compile(base_symbol)
+      self.output.instructions.add(Instruction(kind: IkArrayAddSpread))
+      i += 1
+      continue
+
+    # Normal element - compile and add
     self.compile(child)
     self.output.instructions.add(Instruction(kind: IkArrayAddChild))
+    i += 1
+
   self.output.instructions.add(Instruction(kind: IkArrayEnd))
 
 proc compile_map(self: Compiler, input: Value) =
   self.output.instructions.add(Instruction(kind: IkMapStart))
   for k, v in input.ref.map:
-    self.compile(v)
-    self.output.instructions.add(Instruction(kind: IkMapSetProp, arg0: k))
+    let key_str = $k
+    # Check for spread key: ^..., ^...1, ^...2, etc.
+    if key_str.startsWith("..."):
+      # Spread map into current map
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkMapSpread))
+    else:
+      # Normal key-value pair
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkMapSetProp, arg0: k))
   self.output.instructions.add(Instruction(kind: IkMapEnd))
 
 proc compile_do(self: Compiler, gene: ptr Gene) =
@@ -1218,12 +1243,48 @@ proc compile_gene_default(self: Compiler, gene: ptr Gene) {.inline.} =
   self.output.instructions.add(Instruction(kind: IkGeneStart))
   self.compile(gene.type)
   self.output.instructions.add(Instruction(kind: IkGeneSetType))
+
+  # Handle properties with spread support
   for k, v in gene.props:
-    self.compile(v)
-    self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-  for child in gene.children:
+    let key_str = $k
+    # Check for spread property: ^..., ^...1, ^...2, etc.
+    if key_str.startsWith("..."):
+      # Spread map into properties
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+    else:
+      # Normal property
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+
+  # Handle children with spread support
+  var i = 0
+  let children = gene.children
+  while i < children.len:
+    let child = children[i]
+
+    # Check for standalone postfix spread: expr ...
+    if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+      # Compile the expression and add with spread
+      self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+      i += 2  # Skip both the expr and the ... symbol
+      continue
+
+    # Check for suffix spread: a...
+    if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+      # Compile the base symbol and add with spread
+      let base_symbol = child.str[0..^4].to_symbol_value()  # Remove "..."
+      self.compile(base_symbol)
+      self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+      i += 1
+      continue
+
+    # Normal child - compile and add
     self.compile(child)
     self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+    i += 1
+
   # Use IkTailCall when in tail position
   if self.tail_position:
     when DEBUG:
@@ -1266,12 +1327,43 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       
       # Add any explicit arguments
       self.quote_level.inc()
+
+      # Handle properties with spread support
       for k, v in gene.props:
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-      for child in gene.children:
+        let key_str = $k
+        if key_str.startsWith("..."):
+          self.compile(v)
+          self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+        else:
+          self.compile(v)
+          self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+
+      # Handle children with spread support
+      var i = 0
+      let children = gene.children
+      while i < children.len:
+        let child = children[i]
+
+        # Check for standalone postfix spread: expr ...
+        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+          self.compile(child)
+          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+          i += 2
+          continue
+
+        # Check for suffix spread: a...
+        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+          let base_symbol = child.str[0..^4].to_symbol_value()
+          self.compile(base_symbol)
+          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+          i += 1
+          continue
+
+        # Normal child
         self.compile(child)
         self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+        i += 1
+
       self.quote_level.dec()
       
       self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
@@ -1383,10 +1475,22 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     return
 
   if definitely_not_macro and gene.props.len == 0 and gene.children.len >= 2:
-    for child in gene.children:
-      self.compile(child)
-    self.output.instructions.add(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
-    return
+    # Check if any child uses spread - if so, can't use IkUnifiedCall
+    var has_spread = false
+    var i = 0
+    while i < gene.children.len:
+      let child = gene.children[i]
+      if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
+         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
+        has_spread = true
+        break
+      i += 1
+
+    if not has_spread:
+      for child in gene.children:
+        self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
+      return
 
   if definitely_not_macro:
     # For functions that are definitely not macros, only compile the regular branch
@@ -1398,12 +1502,42 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     self.output.instructions.add(Instruction(kind: IkNoop, label: next_label))
 
     # Compile arguments directly (will be evaluated)
+    # Handle properties with spread support
     for k, v in gene.props:
-      self.compile(v)
-      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-    for child in gene.children:
+      let key_str = $k
+      if key_str.startsWith("..."):
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+      else:
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+
+    # Handle children with spread support
+    var i = 0
+    let children = gene.children
+    while i < children.len:
+      let child = children[i]
+
+      # Check for standalone postfix spread: expr ...
+      if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+        self.compile(child)
+        self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+        i += 2
+        continue
+
+      # Check for suffix spread: a...
+      if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+        let base_symbol = child.str[0..^4].to_symbol_value()
+        self.compile(base_symbol)
+        self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+        i += 1
+        continue
+
+      # Normal child
       self.compile(child)
       self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      i += 1
+
     self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos))
   else:
     # For functions that might be macros, generate dual branches
@@ -1414,12 +1548,44 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 
     # Compile arguments for macro branch (will be passed as quoted/unevaluated)
     self.quote_level.inc()
+
+    # Handle properties with spread support
     for k, v in gene.props:
-      self.compile(v)
-      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-    for child in gene.children:
-      self.compile(child)
-      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      let key_str = $k
+      if key_str.startsWith("..."):
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+      else:
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+
+    # Handle children with spread support
+    block:
+      var i = 0
+      let children = gene.children
+      while i < children.len:
+        let child = children[i]
+
+        # Check for standalone postfix spread: expr ...
+        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+          self.compile(child)
+          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+          i += 2
+          continue
+
+        # Check for suffix spread: a...
+        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+          let base_symbol = child.str[0..^4].to_symbol_value()
+          self.compile(base_symbol)
+          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+          i += 1
+          continue
+
+        # Normal child
+        self.compile(child)
+        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+        i += 1
+
     self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
     self.quote_level.dec()
 
@@ -1428,12 +1594,42 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
 
     # Compile arguments for regular function branch (will be evaluated)
+    # Handle properties with spread support
     for k, v in gene.props:
-      self.compile(v)
-      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-    for child in gene.children:
-      self.compile(child)
-      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      let key_str = $k
+      if key_str.startsWith("..."):
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+      else:
+        self.compile(v)
+        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+
+    # Handle children with spread support
+    block:
+      var i = 0
+      let children = gene.children
+      while i < children.len:
+        let child = children[i]
+
+        # Check for standalone postfix spread: expr ...
+        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+          self.compile(child)
+          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+          i += 2
+          continue
+
+        # Check for suffix spread: a...
+        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+          let base_symbol = child.str[0..^4].to_symbol_value()
+          self.compile(base_symbol)
+          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+          i += 1
+          continue
+
+        # Normal child
+        self.compile(child)
+        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+        i += 1
     # Use fn_label if they're the same, otherwise use end_label
     let gene_end_label = if fn_label == end_label: fn_label else: end_label
     self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
@@ -1769,13 +1965,6 @@ proc compile_gene(self: Compiler, input: Value) =
             not_allowed("not expects exactly 1 argument")
           self.compile_unary_not(gene.children[0])
           return
-        of "...":
-          # Spread operator - compile the argument and emit IkSpread
-          if gene.children.len != 1:
-            not_allowed("... expects exactly 1 argument")
-          self.compile(gene.children[0])
-          self.output.instructions.add(Instruction(kind: IkSpread))
-          return
         of "..":
           self.compile_range_operator(gene)
           return
@@ -1865,13 +2054,6 @@ proc compile_gene(self: Compiler, input: Value) =
         return
       of "range":
         self.compile_range(gene)
-        return
-      of "...":
-        # Spread operator - compile the argument and emit IkSpread
-        if gene.children.len != 1:
-          not_allowed("... expects exactly 1 argument")
-        self.compile(gene.children[0])
-        self.output.instructions.add(Instruction(kind: IkSpread))
         return
       of "async":
         self.compile_async(gene)

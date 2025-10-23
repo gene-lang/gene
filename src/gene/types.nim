@@ -108,7 +108,6 @@ type
     VkUnquote
     VkReference
     VkRefTarget
-    VkExplode            # For unpacking operations
 
     # Language construct types
     VkApplication
@@ -257,8 +256,6 @@ type
         ref_target*: Value
       of VkRefTarget:
         target_id*: int64
-      of VkExplode:
-        explode_value*: Value
       of VkFuture:
         future*: FutureObj
       of VkGenerator:
@@ -678,7 +675,6 @@ type
     IkOr
     IkNot
 
-    IkSpread      # Spread operator (...)
     IkCreateRange
     IkCreateEnum
     IkEnumAddMember
@@ -727,11 +723,14 @@ type
     IkMapStart
     IkMapSetProp        # args: key
     IkMapSetPropValue   # args: key, literal value
+    IkMapSpread         # Spread map key-value pairs into current map
     IkMapEnd
 
     IkArrayStart
-    IkArrayAddChild
+    IkArrayAddChild     # Normal add (legacy name, same as IkArrayAdd)
+    IkArrayAdd          # Normal add - add single element to array
     IkArrayAddChildValue # args: literal value
+    IkArrayAddSpread    # Spread add - unpack array and add all elements
     IkArrayEnd
 
     IkGeneStart
@@ -739,8 +738,11 @@ type
     IkGeneSetType
     IkGeneSetProp
     IkGeneSetPropValue        # args: key, literal value
-    IkGeneAddChild
+    IkGenePropsSpread         # Spread map key-value pairs into gene properties
+    IkGeneAddChild            # Normal add (legacy name, same as IkGeneAdd)
+    IkGeneAdd                 # Normal add - add single child to gene
     IkGeneAddChildValue       # args: literal value
+    IkGeneAddSpread           # Spread add - unpack array and add all elements as children
     IkGeneEnd
 
     IkRepeatInit

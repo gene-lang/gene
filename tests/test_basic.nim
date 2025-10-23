@@ -228,14 +228,8 @@ test_vm """
 """, new_array_value(1, 2, 3, 4)
 
 test_vm """
-  [1 (... [2 3]) 4]
+  [1 [2 3]... 4]
 """, new_array_value(1, 2, 3, 4)
-
-# Gene explode value
-test_vm """
-  (... [2 3])
-""", proc(r: Value) =
-  check r.kind == VkExplode
 
 # Advanced loop control with continue
 # Note: remove noisy echo from original test

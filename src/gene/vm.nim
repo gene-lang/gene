@@ -573,13 +573,7 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
       # Render children
       for child in gene.children:
         let rendered = self.render_template(child)
-        if rendered.kind == VkExplode:
-          # Handle %_ spread operator
-          if rendered.ref.explode_value.kind == VkArray:
-            for item in rendered.ref.explode_value.ref.arr:
-              new_gene.children.add(item)
-        else:
-          new_gene.children.add(rendered)
+        new_gene.children.add(rendered)
       
       return new_gene.to_gene_value()
     
@@ -591,11 +585,6 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
         # Skip NIL values that come from %_ (unquote discard)
         if rendered.kind == VkNil and item.kind == VkUnquote and item.ref.unquote_discard:
           continue
-        elif rendered.kind == VkExplode:
-          # Handle spread in arrays
-          if rendered.ref.explode_value.kind == VkArray:
-            for sub_item in rendered.ref.explode_value.ref.arr:
-              new_arr.arr.add(sub_item)
         else:
           new_arr.arr.add(rendered)
       return new_arr.to_ref_value()
@@ -1772,20 +1761,22 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkArrayStart:
         self.frame.push(new_array_value())
-      of IkArrayAddChild:
+      of IkArrayAddChild, IkArrayAdd:
         var child: Value
         self.frame.pop2(child)
-        case child.kind:
-          of VkExplode:
-            # Expand the exploded array into individual elements
-            case child.ref.explode_value.kind:
-              of VkArray:
-                for item in child.ref.explode_value.ref.arr:
-                  self.frame.current().ref.arr.add(item)
-              else:
-                not_allowed("Can only explode arrays")
+        self.frame.current().ref.arr.add(child)
+      of IkArrayAddSpread:
+        # Spread operator - pop value and spread its elements
+        let value = self.frame.pop()
+        case value.kind:
+          of VkArray:
+            for item in value.ref.arr:
+              self.frame.current().ref.arr.add(item)
           else:
-            self.frame.current().ref.arr.add(child)
+            not_allowed("... can only spread arrays in array context, got " & $value.kind)
+      of IkArrayAddChildValue:
+        # Add a literal value to array
+        self.frame.current().ref.arr.add(inst.arg0)
       of IkArrayEnd:
         when not defined(release):
           if self.trace:
@@ -1800,6 +1791,19 @@ proc exec*(self: VirtualMachine): Value =
         var value: Value
         self.frame.pop2(value)
         self.frame.current().ref.map[key] = value
+      of IkMapSetPropValue:
+        # Set property with literal value
+        let key = inst.arg0.Key
+        self.frame.current().ref.map[key] = inst.arg1
+      of IkMapSpread:
+        # Spread map key-value pairs into current map
+        let value = self.frame.pop()
+        case value.kind:
+          of VkMap:
+            for k, v in value.ref.map:
+              self.frame.current().ref.map[k] = v
+          else:
+            not_allowed("... can only spread maps in map context, got " & $value.kind)
       of IkMapEnd:
         discard
 
@@ -2113,41 +2117,11 @@ proc exec*(self: VirtualMachine): Value =
             # For function calls, we need to set up the args gene with children
             if v.ref.frame.args.kind != VkGene:
               v.ref.frame.args = new_gene_value()
-            case child.kind:
-              of VkExplode:
-                # Expand the exploded array into individual elements
-                case child.ref.explode_value.kind:
-                  of VkArray:
-                    for item in child.ref.explode_value.ref.arr:
-                      v.ref.frame.args.gene.children.add(item)
-                  else:
-                    not_allowed("Can only explode arrays")
-              else:
-                v.ref.frame.args.gene.children.add(child)
+            v.ref.frame.args.gene.children.add(child)
           of VkNativeFrame:
-            case child.kind:
-              of VkExplode:
-                # Expand the exploded array into individual elements
-                case child.ref.explode_value.kind:
-                  of VkArray:
-                    for item in child.ref.explode_value.ref.arr:
-                      v.ref.native_frame.args.gene.children.add(item)
-                  else:
-                    not_allowed("Can only explode arrays")
-              else:
-                v.ref.native_frame.args.gene.children.add(child)
+            v.ref.native_frame.args.gene.children.add(child)
           of VkGene:
-            case child.kind:
-              of VkExplode:
-                # Expand the exploded array into individual elements
-                case child.ref.explode_value.kind:
-                  of VkArray:
-                    for item in child.ref.explode_value.ref.arr:
-                      v.gene.children.add(item)
-                  else:
-                    not_allowed("Can only explode arrays")
-              else:
-                v.gene.children.add(child)
+            v.gene.children.add(child)
           of VkNil:
             # Skip adding to nil - this might happen in conditional contexts
             discard
@@ -2159,6 +2133,113 @@ proc exec*(self: VirtualMachine): Value =
             # For other value types, we can't add children directly
             # This might be an error in the compilation or a special case
             todo("GeneAddChild: " & $v.kind)
+        {.pop.}
+
+      of IkGeneAdd:
+        # Same as IkGeneAddChild - add single child
+        {.push checks: off}
+        var child: Value
+        self.frame.pop2(child)
+        let v = self.frame.current()
+        case v.kind:
+          of VkFrame:
+            if v.ref.frame.args.kind != VkGene:
+              v.ref.frame.args = new_gene_value()
+            v.ref.frame.args.gene.children.add(child)
+          of VkNativeFrame:
+            v.ref.native_frame.args.gene.children.add(child)
+          of VkGene:
+            v.gene.children.add(child)
+          of VkNil:
+            discard
+          of VkBoundMethod:
+            discard
+          else:
+            todo("GeneAdd: " & $v.kind)
+        {.pop.}
+
+      of IkGeneAddSpread:
+        # Spread array into gene children
+        {.push checks: off}
+        let value = self.frame.pop()
+        let v = self.frame.current()
+        case value.kind:
+          of VkArray:
+            case v.kind:
+              of VkFrame:
+                if v.ref.frame.args.kind != VkGene:
+                  v.ref.frame.args = new_gene_value()
+                for item in value.ref.arr:
+                  v.ref.frame.args.gene.children.add(item)
+              of VkNativeFrame:
+                for item in value.ref.arr:
+                  v.ref.native_frame.args.gene.children.add(item)
+              of VkGene:
+                for item in value.ref.arr:
+                  v.gene.children.add(item)
+              else:
+                not_allowed("... can only spread arrays into gene children, got " & $v.kind)
+          else:
+            not_allowed("... can only spread arrays in gene children context, got " & $value.kind)
+        {.pop.}
+
+      of IkGeneAddChildValue:
+        # Add a literal value as gene child
+        {.push checks: off}
+        let v = self.frame.current()
+        case v.kind:
+          of VkFrame:
+            if v.ref.frame.args.kind != VkGene:
+              v.ref.frame.args = new_gene_value()
+            v.ref.frame.args.gene.children.add(inst.arg0)
+          of VkNativeFrame:
+            v.ref.native_frame.args.gene.children.add(inst.arg0)
+          of VkGene:
+            v.gene.children.add(inst.arg0)
+          else:
+            todo("GeneAddChildValue: " & $v.kind)
+        {.pop.}
+
+      of IkGeneSetPropValue:
+        # Set property with literal value
+        {.push checks: off}
+        let key = inst.arg0.Key
+        let current = self.frame.current()
+        case current.kind:
+          of VkGene:
+            current.gene.props[key] = inst.arg1
+          of VkFrame:
+            if current.ref.frame.args.kind != VkGene:
+              current.ref.frame.args = new_gene_value()
+            current.ref.frame.args.gene.props[key] = inst.arg1
+          of VkNativeFrame:
+            discard
+          else:
+            todo("GeneSetPropValue for " & $current.kind)
+        {.pop.}
+
+      of IkGenePropsSpread:
+        # Spread map key-value pairs into gene properties
+        {.push checks: off}
+        let value = self.frame.pop()
+        let current = self.frame.current()
+        case value.kind:
+          of VkMap:
+            case current.kind:
+              of VkGene:
+                for k, v in value.ref.map:
+                  current.gene.props[k] = v
+              of VkFrame:
+                if current.ref.frame.args.kind != VkGene:
+                  current.ref.frame.args = new_gene_value()
+                for k, v in value.ref.map:
+                  current.ref.frame.args.gene.props[k] = v
+              of VkNativeFrame:
+                discard
+              else:
+                not_allowed("... can only spread maps into gene properties, got " & $current.kind)
+          else:
+            not_allowed("... can only spread maps in gene properties context, got " & $value.kind)
         {.pop.}
 
       of IkGeneEnd:
@@ -2962,16 +3043,6 @@ proc exec*(self: VirtualMachine): Value =
         else:
           self.frame.push(TRUE)
 
-      of IkSpread:
-        # Spread operator - pop array and create explode marker
-        let value = self.frame.pop()
-        case value.kind:
-          of VkArray:
-            let r = new_ref(VkExplode)
-            r.explode_value = value
-            self.frame.push(r.to_ref_value())
-          else:
-            not_allowed("... can only spread arrays")
 
       of IkCreateRange:
         let step = self.frame.pop()
