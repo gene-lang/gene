@@ -3,7 +3,7 @@
 # Expected: HELLO
 # Expected: hello
 # Expected: helloworld
-# Expected: hello
+# Expected: helloworld
 # Expected: String method tests done
 
 (var original "hello")

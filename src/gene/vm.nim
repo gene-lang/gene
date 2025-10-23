@@ -247,6 +247,20 @@ proc exec*(self: VirtualMachine): Value
 
 #################### Unified Callable System ####################
 
+proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: bool, base: uint16, count: int] {.inline.} =
+  ## Retrieve call base metadata if present, otherwise fall back to expected count.
+  if vm.frame.call_bases.is_empty():
+    result.hasBase = false
+    result.base = 0
+    result.count = expected
+  else:
+    result.hasBase = true
+    result.base = vm.frame.pop_call_base()
+    result.count = vm.frame.call_arg_count_from(result.base)
+    when not defined(release):
+      if expected >= 0 and result.count != expected:
+        discard
+
 proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
                            args: seq[Value], self_value: Value = NIL,
                            is_tail_call: bool = false): Value =
@@ -4279,6 +4293,10 @@ proc exec*(self: VirtualMachine): Value =
       of IkUnifiedCall0:
         {.push checks: off}
         # Zero-argument unified call
+        let call_info = self.pop_call_base_info(0)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 0:
+            raise new_exception(types.Exception, fmt"IkUnifiedCall0 expected 0 args, got {call_info.count}")
         let target = self.frame.pop()
 
         case target.kind:
@@ -4441,6 +4459,10 @@ proc exec*(self: VirtualMachine): Value =
       of IkUnifiedCall1:
         {.push checks: off}
         # Single-argument unified call
+        let call_info = self.pop_call_base_info(1)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 1:
+            raise new_exception(types.Exception, fmt"IkUnifiedCall1 expected 1 arg, got {call_info.count}")
         let arg = self.frame.pop()
         let target = self.frame.pop()
 
@@ -4608,7 +4630,8 @@ proc exec*(self: VirtualMachine): Value =
       of IkUnifiedCall:
         {.push checks: off}
         # Multi-argument unified call
-        let arg_count = inst.arg1
+        let call_info = self.pop_call_base_info(inst.arg1.int)
+        let arg_count = call_info.count
         var args = newSeq[Value](arg_count)
         for i in countdown(arg_count - 1, 0):
           args[i] = self.frame.pop()
@@ -4695,6 +4718,10 @@ proc exec*(self: VirtualMachine): Value =
       of IkUnifiedMethodCall0:
         {.push checks: off}
         # Zero-argument unified method call
+        let call_info = self.pop_call_base_info(0)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 0:
+            raise new_exception(types.Exception, fmt"IkUnifiedMethodCall0 expected 0 args, got {call_info.count}")
         let method_name = inst.arg0.str
         let obj = self.frame.pop()
         if call_value_method(self, obj, method_name, []):
@@ -4817,6 +4844,10 @@ proc exec*(self: VirtualMachine): Value =
       of IkUnifiedMethodCall1:
         {.push checks: off}
         # Single-argument unified method call
+        let call_info = self.pop_call_base_info(1)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 1:
+            raise new_exception(types.Exception, fmt"IkUnifiedMethodCall1 expected 1 arg, got {call_info.count}")
         let method_name = inst.arg0.str
         let arg = self.frame.pop()
         let obj = self.frame.pop()
@@ -4952,6 +4983,10 @@ proc exec*(self: VirtualMachine): Value =
       of IkUnifiedMethodCall2:
         {.push checks: off}
         # Two-argument unified method call
+        let call_info = self.pop_call_base_info(2)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 2:
+            raise new_exception(types.Exception, fmt"IkUnifiedMethodCall2 expected 2 args, got {call_info.count}")
         let method_name = inst.arg0.str
         let arg2 = self.frame.pop()
         let arg1 = self.frame.pop()
@@ -5097,7 +5132,8 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         # Multi-argument unified method call
         let method_name = inst.arg0.str
-        let arg_count = inst.arg1 - 1  # Subtract 1 for self
+        let call_info = self.pop_call_base_info((inst.arg1 - 1).int)
+        let arg_count = call_info.count  # Excludes self
         var args = newSeq[Value](arg_count)
         for i in countdown(arg_count - 1, 0):
           args[i] = self.frame.pop()

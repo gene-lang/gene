@@ -922,6 +922,9 @@ type
     # FkBoundMethod
     # FkBoundNativeMethod
 
+  CallBaseStack* = object
+    data: seq[uint16]
+
   FrameObj = object
     ref_count*: int32
     kind*: FrameKind
@@ -935,6 +938,7 @@ type
     stack*: array[256, Value]
     current_method*: Method  # Currently executing method (for super calls)
     stack_index*: uint16
+    call_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function
     is_generator*: bool  # Set when executing in generator context
 
@@ -3175,6 +3179,29 @@ const INITIAL_FRAME_POOL_SIZE = 1024
 
 var FRAMES {.threadvar.}: seq[Frame]
 
+proc init*(self: var CallBaseStack) {.inline.} =
+  self.data = newSeq[uint16](0)
+
+proc reset*(self: var CallBaseStack) {.inline.} =
+  if self.data.len > 0:
+    self.data.setLen(0)
+
+proc push*(self: var CallBaseStack, base: uint16) {.inline.} =
+  self.data.add(base)
+
+proc pop*(self: var CallBaseStack): uint16 {.inline.} =
+  assert self.data.len > 0, "Call base stack underflow"
+  let idx = self.data.len - 1
+  result = self.data[idx]
+  self.data.setLen(idx)
+
+proc peek*(self: CallBaseStack): uint16 {.inline.} =
+  assert self.data.len > 0, "Call base stack is empty"
+  result = self.data[self.data.len - 1]
+
+proc is_empty*(self: CallBaseStack): bool {.inline.} =
+  self.data.len == 0
+
 proc reset_frame*(self: Frame) {.inline.} =
   # Reset only necessary fields, avoiding full memory clear
   self.kind = FkFunction
@@ -3188,6 +3215,7 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.args = NIL
   self.current_method = nil
   self.stack_index = 0
+  self.call_bases.reset()
   # Stack array will be overwritten as needed, no need to clear
 
 proc free*(self: var Frame) =
@@ -3218,6 +3246,7 @@ proc new_frame*(): Frame {.inline.} =
     FRAME_ALLOCS.inc()
   result.ref_count = 1
   result.stack_index = 0  # Reset stack index
+  result.call_bases.init()
   {.pop.}
 
 proc new_frame*(ns: Namespace): Frame {.inline.} =
@@ -3272,6 +3301,27 @@ template pop2*(self: var Frame, to: var Value) =
   copy_mem(to.addr, self.stack[self.stack_index].addr, 8)
   self.stack[self.stack_index] = NIL
   {.pop.}
+
+proc push_call_base*(self: Frame) {.inline.} =
+  assert self.stack_index > 0, "Cannot push call base without callee on stack"
+  let base = self.stack_index - 1
+  self.call_bases.push(base)
+
+proc peek_call_base*(self: Frame): uint16 {.inline.} =
+  self.call_bases.peek()
+
+proc pop_call_base*(self: Frame): uint16 {.inline.} =
+  self.call_bases.pop()
+
+proc call_arg_count_from*(self: Frame, base: uint16): int {.inline.} =
+  let stack_top = int(self.stack_index)
+  let base_index = int(base)
+  assert stack_top >= base_index + 1, "Call base exceeds stack height"
+  stack_top - (base_index + 1)
+
+proc pop_call_arg_count*(self: Frame): int {.inline.} =
+  let base = self.pop_call_base()
+  self.call_arg_count_from(base)
 
 #################### COMPILER ####################
 
