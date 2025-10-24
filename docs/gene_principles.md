@@ -27,13 +27,13 @@ Gene expressions serve multiple purposes:
 **Code:**
 ```gene
 (fn add [a b] (+ a b))
-(if (> x 5) "big" "small")
+(if (> x 5) "big" else "small")
 ```
 
 **Data:**
 ```gene
-(user "Alice" :age 30 :active true)
-(post :title "Hello" :content "World" :tags ["news" "tech"])
+(user "Alice" ^age 30 ^active true)
+(post ^title "Hello" ^content "World" ^tags ["news" "tech"])
 ```
 
 **Templates:**
@@ -46,12 +46,12 @@ Gene expressions serve multiple purposes:
 **DSLs:**
 ```gene
 (http/get "/api/users"
-  :headers {^auth token}
-  :timeout 5000)
+  ^headers {^auth token}
+  ^timeout 5000)
 
 (sql/select [:name :email]
-  :from "users"
-  :where (> age 18))
+  ^from "users"
+  ^where (> age 18))
 ```
 
 ### Homoiconicity
@@ -84,13 +84,13 @@ g/1  # => 2
 **Planned:**
 ```gene
 # Method-based access
-((user :name "Alice" :age 30) .get :name)  # => "Alice"
-((user :name "Alice" :age 30) .type)       # => user
-((user :name "Alice" :age 30) .children)   # => [:name "Alice" :age 30]
+((user ^name "Alice" ^age 30) .get :name)  # => "Alice"
+((user ^name "Alice" ^age 30) .type)       # => user
+((user ^name "Alice" ^age 30) .children)   # => [:name "Alice" :age 30]
 
 # Transform
-((user :name "Alice" :age 30)
-  .update :age 31)  # => (user :name "Alice" :age 31)
+((user ^name "Alice" ^age 30)
+  .update :age 31)  # => (user ^name "Alice" ^age 31)
 
 # Pattern matching
 (match data
@@ -145,8 +145,8 @@ g/0                          # => 1 (element access)
 (3.14 .round)                # => 3
 
 # Gene manipulation methods
-((user :name "Alice") .get :name)   # => "Alice"
-((user :name "Alice") .type)        # => user
+((user ^name "Alice") .get :name)   # => "Alice"
+((user ^name "Alice") .type)        # => user
 ```
 
 ### Benefits
@@ -174,14 +174,16 @@ string_class.def_native_method("to_upper", string_to_upper)
 
 ```gene
 # Define instance method
-(defmethod Array map [self f]
-  [(for item in self
-    ($emit (f item)))])
+(class Array
+  (method map [self f]
+    [(for item in self
+      ($emit (f item)))])
 
-# Define class method
-(defmethod Array from_range [cls start end]
-  [(for i in (range start end)
-    ($emit i))])
+  # Define class method
+  (method /from_range [cls start end]
+    [(for i in (range start end)
+      ($emit i))])
+)
 
 # Usage
 ([1 2 3] .map double)           # Instance method
@@ -203,10 +205,13 @@ Objects provide:
 ```gene
 # Method chaining (OOP style) - PLANNED
 (data
-  .filter is-active
-  .map transform-user
-  .sort-by :name
+  .filter is-active;
+  .map transform-user;
+  .sort-by :name;
   .take 10)
+
+# ; is a shorthand for wrapping up the previous expression
+(a b; c) => ((a b) c)
 ```
 
 ### Functional Composition
@@ -230,9 +235,6 @@ Functions provide:
 (double-then-add-5 3)  # => 11  (3*2+5)
 
 # Higher-order functions
-(fn map [f xs]
-  [(for x in xs ($emit (f x)))])
-
 (map double [1 2 3])  # => [2 4 6]
 ```
 
@@ -254,9 +256,9 @@ Functions provide:
 # OOP + FP together (PLANNED - needs class syntax)
 (class UserService
   (fn active-user-names [self]
-    (self.users
-      .filter (fn [u] u.active)
-      .map (fn [u] u.name)
+    (self/users
+      .filter (fn [u] u.active);
+      .map (fn [u] u.name);
       .sort)))
 ```
 
@@ -348,10 +350,10 @@ Templates work with quote/unquote for code generation:
 
 ```gene
 # Macro that generates code using templates
-(fn when! [condition & body]
+(fn when! [condition body...]
   ($caller_eval
-    :(if %condition
-      (do %@body))))
+    ($render
+      :(if %condition %body ...))))
 
 # Usage
 (when! (> x 5)
@@ -364,9 +366,9 @@ Templates work with quote/unquote for code generation:
 **1. Control flow extensions:**
 ```gene
 # When - execute body only if condition is true
-(fn when! [condition & body]
+(fn when! [condition body...]
   (if ($caller_eval condition)
-    ($caller_eval :(do %@body))))
+    ($caller_eval body...)))
 
 (when! (> x 5)
   (println "x is large")
@@ -388,9 +390,9 @@ Templates work with quote/unquote for code generation:
 (debug_var! x)  # Prints: Variable x = 42
 
 # Let-like binding (simplified)
-(fn let! [bindings & body]
+(fn let! [bindings body...]
   # Would need template generation for full implementation
-  ($caller_eval :(do %@body)))
+  ($caller_eval body...))
 ```
 
 **3. Code generation with templates:**
