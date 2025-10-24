@@ -957,12 +957,6 @@ proc compile_return(self: Compiler, gene: ptr Gene) =
     self.output.instructions.add(Instruction(kind: IkPushNil))
   self.output.instructions.add(Instruction(kind: IkReturn))
 
-proc compile_macro(self: Compiler, input: Value) =
-  self.output.instructions.add(Instruction(kind: IkMacro, arg0: input))
-  var r = new_ref(VkScopeTracker)
-  r.scope_tracker = self.scope_tracker
-  self.output.instructions.add(Instruction(kind: IkData, arg0: r.to_ref_value()))
-
 proc compile_block(self: Compiler, input: Value) =
   self.output.instructions.add(Instruction(kind: IkBlock, arg0: input))
   var r = new_ref(VkScopeTracker)
@@ -1439,200 +1433,85 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   #   self.output.instructions.add(Instruction(kind: IkGeneEnd))
   #   return
 
-  # Check if we can determine at compile time that this is definitely NOT a macro
-  # For now, assume functions with symbol names that don't end with '!' are not macros
-  var definitely_not_macro = false
-  if gene.type.kind == VkSymbol:
-    let func_name = gene.type.str
-    # Built-in functions and functions not ending with '!' are likely not macros
-    if not func_name.ends_with("!"):
-      definitely_not_macro = true
-    if func_name in ["return", "break", "continue", "throw"]:
-      definitely_not_macro = false
-  elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
-    definitely_not_macro = true
-  elif gene.type.kind == VkComplexSymbol:
-    let parts = gene.type.ref.csymbol
-    if parts.len > 0 and parts[0].startsWith("@"):
-      definitely_not_macro = true
+  # Dual-branch compilation:
+  # - Macro branch (quoted args): for VkFunction with is_macro_like=true - continues to next instruction
+  # - Function branch (evaluated args): for VkFunction with is_macro_like=false - jumps to fn_label
+  # Runtime dispatch checks is_macro_like flag to determine which branch to use
 
-  if definitely_not_macro and gene.props.len == 0 and gene.children.len == 0:
-    # No-argument call can use unified instruction
-    self.output.instructions.add(Instruction(kind: IkUnifiedCall0))
-    return
+  let fn_label = new_label()
+  let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
+  self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
 
-  # Check if we can optimize to direct function call
-  # Conditions: 1) definitely not macro, 2) exactly one argument
-  if definitely_not_macro and gene.props.len == 0 and gene.children.len == 1:
-    # Optimize single-argument function calls to direct call
-    # Function is already on stack from self.compile(gene.type) above
+  # Macro branch: compile arguments as quoted (for macro-like functions)
+  self.quote_level.inc()
 
-    # Compile the single argument directly onto stack
-    self.compile(gene.children[0])
+  for k, v in gene.props:
+    let key_str = $k
+    if key_str.startsWith("..."):
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+    else:
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
 
-    # Use UnifiedCall1 - optimized function call without Gene object creation
-    self.output.instructions.add(Instruction(kind: IkUnifiedCall1))
-    return
-
-  if definitely_not_macro and gene.props.len == 0 and gene.children.len >= 2:
-    # Check if any child uses spread - if so, can't use IkUnifiedCall
-    var has_spread = false
-    var i = 0
-    while i < gene.children.len:
-      let child = gene.children[i]
-      if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
-         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
-        has_spread = true
-        break
-      i += 1
-
-    if not has_spread:
-      for child in gene.children:
-        self.compile(child)
-      self.output.instructions.add(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
-      return
-
-  if definitely_not_macro:
-    # For functions that are definitely not macros, only compile the regular branch
-    # Create a label that points to the next instruction (no actual jump needed)
-    let next_label = new_label()
-    self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: next_label.to_value()))
-
-    # Mark the next instruction with the label (effectively a no-op)
-    self.output.instructions.add(Instruction(kind: IkNoop, label: next_label))
-
-    # Compile arguments directly (will be evaluated)
-    # Handle properties with spread support
-    for k, v in gene.props:
-      let key_str = $k
-      if key_str.startsWith("..."):
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
-      else:
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-
-    # Handle children with spread support
+  block:
     var i = 0
     let children = gene.children
     while i < children.len:
       let child = children[i]
-
-      # Check for standalone postfix spread: expr ...
       if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
         self.compile(child)
         self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
         i += 2
         continue
-
-      # Check for suffix spread: a...
       if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
         let base_symbol = child.str[0..^4].to_symbol_value()
         self.compile(base_symbol)
         self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
         i += 1
         continue
-
-      # Normal child
       self.compile(child)
       self.output.instructions.add(Instruction(kind: IkGeneAddChild))
       i += 1
 
-    self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos))
-  else:
-    # For functions that might be macros, generate dual branches
-    let fn_label = new_label()
-    # When there are no children and props, use the same label for both fn and end
-    let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
-    self.output.instructions.add(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
+  self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
+  self.quote_level.dec()
 
-    # Compile arguments for macro branch (will be passed as quoted/unevaluated)
-    self.quote_level.inc()
+  # Function branch: compile arguments as evaluated (for VkFunction)
+  if fn_label != end_label:
+    self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
 
-    # Handle properties with spread support
-    for k, v in gene.props:
-      let key_str = $k
-      if key_str.startsWith("..."):
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
-      else:
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
+  for k, v in gene.props:
+    let key_str = $k
+    if key_str.startsWith("..."):
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
+    else:
+      self.compile(v)
+      self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
 
-    # Handle children with spread support
-    block:
-      var i = 0
-      let children = gene.children
-      while i < children.len:
-        let child = children[i]
-
-        # Check for standalone postfix spread: expr ...
-        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
-          self.compile(child)
-          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
-          i += 2
-          continue
-
-        # Check for suffix spread: a...
-        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-          let base_symbol = child.str[0..^4].to_symbol_value()
-          self.compile(base_symbol)
-          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
-          i += 1
-          continue
-
-        # Normal child
+  block:
+    var i = 0
+    let children = gene.children
+    while i < children.len:
+      let child = children[i]
+      if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
         self.compile(child)
-        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+        self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
+        i += 2
+        continue
+      if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+        let base_symbol = child.str[0..^4].to_symbol_value()
+        self.compile(base_symbol)
+        self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
         i += 1
+        continue
+      self.compile(child)
+      self.output.instructions.add(Instruction(kind: IkGeneAddChild))
+      i += 1
 
-    self.output.instructions.add(Instruction(kind: IkJump, arg0: end_label.to_value()))
-    self.quote_level.dec()
-
-    # Only add the Noop if fn_label is different from end_label
-    if fn_label != end_label:
-      self.output.instructions.add(Instruction(kind: IkNoop, label: fn_label))
-
-    # Compile arguments for regular function branch (will be evaluated)
-    # Handle properties with spread support
-    for k, v in gene.props:
-      let key_str = $k
-      if key_str.startsWith("..."):
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGenePropsSpread))
-      else:
-        self.compile(v)
-        self.output.instructions.add(Instruction(kind: IkGeneSetProp, arg0: k))
-
-    # Handle children with spread support
-    block:
-      var i = 0
-      let children = gene.children
-      while i < children.len:
-        let child = children[i]
-
-        # Check for standalone postfix spread: expr ...
-        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
-          self.compile(child)
-          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
-          i += 2
-          continue
-
-        # Check for suffix spread: a...
-        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-          let base_symbol = child.str[0..^4].to_symbol_value()
-          self.compile(base_symbol)
-          self.output.instructions.add(Instruction(kind: IkGeneAddSpread))
-          i += 1
-          continue
-
-        # Normal child
-        self.compile(child)
-        self.output.instructions.add(Instruction(kind: IkGeneAddChild))
-        i += 1
-    # Use fn_label if they're the same, otherwise use end_label
-    let gene_end_label = if fn_label == end_label: fn_label else: end_label
-    self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
+  let gene_end_label = if fn_label == end_label: fn_label else: end_label
+  self.output.instructions.add(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
   # echo fmt"Added GeneEnd with label {end_label} at position {self.output.instructions.len - 1}"
 
 # TODO: handle special cases:
@@ -2019,9 +1898,6 @@ proc compile_gene(self: Compiler, input: Value) =
       of "fn", "fn!", "fnx", "fnxx":
         self.compile_fn(input)
         return
-      of "macro":
-        self.compile_macro(input)
-        return
       of "->":
         self.compile_block(input)
         return
@@ -2404,42 +2280,6 @@ proc compile*(f: Function) =
   self.output.update_jumps()
   f.body_compiled = self.output
   f.body_compiled.matcher = f.matcher
-
-proc compile*(m: Macro) =
-  if m.body_compiled != nil:
-    return
-
-  var self = Compiler(output: new_compilation_unit(), tail_position: false)
-  self.output.instructions.add(Instruction(kind: IkStart))
-  self.scope_trackers.add(m.scope_tracker)
-
-  # generate code for arguments
-  for i, m in m.matcher.children:
-    self.scope_tracker.mappings[m.name_key] = i.int16
-    let label = new_label()
-    self.output.instructions.add(Instruction(
-      kind: IkJumpIfMatchSuccess,
-      arg0: i.to_value(),
-      arg1: label,
-    ))
-    if m.default_value != nil:
-      self.compile(m.default_value)
-      self.add_scope_start()
-      self.output.instructions.add(Instruction(kind: IkVar, arg0: m.name_key.to_value()))
-      self.output.instructions.add(Instruction(kind: IkPop))
-    else:
-      self.output.instructions.add(Instruction(kind: IkThrow))
-    self.output.instructions.add(Instruction(kind: IkNoop, label: label))
-
-  self.compile(m.body)
-
-  self.end_scope()
-  self.output.instructions.add(Instruction(kind: IkEnd))
-  self.output.optimize_noops()  # Optimize BEFORE resolving jumps
-  self.output.update_jumps()
-  m.body_compiled = self.output
-  m.body_compiled.kind = CkMacro
-  m.body_compiled.matcher = m.matcher
 
 proc compile*(b: Block) =
   if b.body_compiled != nil:

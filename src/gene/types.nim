@@ -39,8 +39,6 @@ type
 
   ExceptionData* = ref object
   Interception* = ref object
-  Expression* = ref object
-  GeneProcessor* = ref object
   Future* = ref object
   Thread* = ref object
   ThreadMessage* = ref object
@@ -94,7 +92,6 @@ type
     VkSet
     VkMap
     VkGene
-    VkArguments          # Function argument container
     VkStream
     VkDocument
 
@@ -115,9 +112,7 @@ type
     VkModule
     VkNamespace
     VkFunction
-    VkBoundFunction      # Function bound to specific scope
     VkCompileFn
-    VkMacro
     VkBlock
     VkClass
     VkMixin              # For mixin support
@@ -135,10 +130,6 @@ type
     # Exception handling
     VkException = 128    # Start exceptions at 128
     VkInterception       # AOP interception
-
-    # Expression and evaluation
-    VkExpr               # Abstract syntax tree expressions
-    VkGeneProcessor      # Gene processing context
 
     # Concurrency types
 
@@ -224,9 +215,6 @@ type
         set*: HashSet[Value]
       of VkMap:
         map*: Table[Key, Value]
-      of VkArguments:
-        arg_props*: Table[Key, Value]
-        arg_children*: seq[Value]
       of VkStream:
         stream*: seq[Value]
         stream_index*: int64
@@ -270,12 +258,10 @@ type
         module*: Module
       of VkNamespace:
         ns*: Namespace
-      of VkFunction, VkBoundFunction:
+      of VkFunction:
         fn*: Function
       of VkCompileFn:
         `compile_fn`*: CompileFn
-      of VkMacro:
-        `macro`*: Macro
       of VkBlock:
         `block`*: Block
       of VkClass:
@@ -303,17 +289,10 @@ type
       of VkNativeMethod, VkNativeMethod2:
         native_method*: NativeFn
 
-      # Exception and interception
       of VkException:
         exception_data*: ExceptionData
       of VkInterception:
         interception*: Interception
-
-      # Expression types
-      of VkExpr:
-        expr*: Expression
-      of VkGeneProcessor:
-        processor*: GeneProcessor
 
       # Concurrency types
 
@@ -516,16 +495,6 @@ type
     # ret*: Expr
 
   CompileFn* = ref object
-    ns*: Namespace
-    name*: string
-    scope_tracker*: ScopeTracker
-    parent_scope*: Scope
-    matcher*: RootMatcher
-    # matching_hint*: MatchingHint
-    body*: seq[Value]
-    body_compiled*: CompilationUnit
-
-  Macro* = ref object
     ns*: Namespace
     name*: string
     scope_tracker*: ScopeTracker
@@ -761,7 +730,6 @@ type
     IkUnifiedMethodCall  # Multi-argument method call
 
     # Macro-specific instructions
-    IkCallMacro       # Direct macro call with known target
     IkNewMacro        # Macro constructor call
 
     IkResolveSymbol
@@ -817,7 +785,6 @@ type
     CkDefault
     CkFunction
     CkCompileFn
-    CkMacro
     CkBlock
     CkModule
     CkInit      # namespace / class / object initialization
@@ -1024,8 +991,6 @@ type
     CkNativeFunction    # Nim function
     CkMethod            # Gene method
     CkNativeMethod      # Nim method
-    CkMacro             # Gene macro
-    CkMacroMethod       # Gene macro method
     CkBlock             # Lambda/block
 
   CallableFlags* = enum
@@ -1039,7 +1004,7 @@ type
 
   Callable* = ref object
     case kind*: CallableKind
-    of CkFunction, CkMethod, CkMacro, CkMacroMethod:
+    of CkFunction, CkMethod:
       fn*: Function
     of CkNativeFunction, CkNativeMethod:
       native_fn*: NativeFn
@@ -2587,7 +2552,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var is_generator = false
   var is_macro_like = false
 
-  # Check if this is a macro-like function (fn!)
+  # Check if defined with fn! type
   if node.gene.type != NIL and node.gene.type == "fn!".to_symbol_value():
     is_macro_like = true
 
@@ -2605,20 +2570,20 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     case first.kind:
       of VkSymbol, VkString:
         name = first.str
-        # Check if function name ends with * (generator function)
-        if name.len > 0 and name[^1] == '*':
-          is_generator = true
         # Check if function name ends with ! (macro-like function)
         if name.len > 0 and name[^1] == '!':
           is_macro_like = true
+        # Check if function name ends with * (generator function)
+        elif name.len > 0 and name[^1] == '*':
+          is_generator = true
       of VkComplexSymbol:
         name = first.ref.csymbol[^1]
-        # Check if function name ends with * (generator function)
-        if name.len > 0 and name[^1] == '*':
-          is_generator = true
         # Check if function name ends with ! (macro-like function)
         if name.len > 0 and name[^1] == '!':
           is_macro_like = true
+        # Check if function name ends with * (generator function)
+        elif name.len > 0 and name[^1] == '*':
+          is_generator = true
       else:
         todo($first.kind)
 
@@ -2678,37 +2643,6 @@ proc to_compile_fn*(node: Value): CompileFn {.gcsafe.} =
 
   # body = wrap_with_try(body)
   result = new_compile_fn(name, matcher, body)
-
-# compile method needs to be defined - see compiler.nim
-
-#################### Macro #######################
-
-proc new_macro*(name: string, matcher: RootMatcher, body: sink seq[Value]): Macro =
-  return Macro(
-    name: name,
-    matcher: matcher,
-    # matching_hint: matcher.hint,
-    body: body,
-  )
-
-proc to_macro*(node: Value): Macro =
-  let first = node.gene.children[0]
-  var name: string
-  if first.kind == VkSymbol:
-    name = first.str
-  elif first.kind == VkComplexSymbol:
-    name = first.ref.csymbol[^1]
-
-  let matcher = new_arg_matcher()
-  matcher.parse(node.gene.children[1])
-  matcher.check_hint()
-
-  var body: seq[Value] = @[]
-  for i in 2..<node.gene.children.len:
-    body.add node.gene.children[i]
-
-  # body = wrap_with_try(body)
-  result = new_macro(name, matcher, body)
 
 # compile method needs to be defined - see compiler.nim
 
@@ -2990,10 +2924,6 @@ proc new_callable*(kind: CallableKind, name: string = ""): Callable =
     result.flags = {CfEvaluateArgs, CfIsMethod, CfNeedsSelf}
   of CkNativeMethod:
     result.flags = {CfEvaluateArgs, CfIsMethod, CfNeedsSelf, CfIsNative}
-  of CkMacro:
-    result.flags = {CfIsMacro}
-  of CkMacroMethod:
-    result.flags = {CfIsMacro, CfIsMethod, CfNeedsSelf}
   of CkBlock:
     result.flags = {CfEvaluateArgs}
 
@@ -3008,9 +2938,6 @@ proc to_callable*(fn: Function): Callable =
   result = new_callable(CkFunction, fn.name)
   result.fn = fn
   result.arity = fn.matcher.get_arity()
-  if fn.is_macro_like:
-    result.kind = CkMacro
-    result.flags = {CfIsMacro}
 
 proc to_callable*(native_fn: NativeFn, name: string = "", arity: int = 0): Callable =
   result = new_callable(CkNativeFunction, name)
@@ -3350,7 +3277,7 @@ proc `$`*(self: Instruction): string =
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
-      IkTailCall, IkCallMacro, IkNewMacro:
+      IkTailCall, IkNewMacro:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
       else:

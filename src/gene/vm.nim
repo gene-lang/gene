@@ -361,53 +361,6 @@ proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
       vm.pc = 0
       return vm.exec()
 
-  of CkMacro, CkMacroMethod:
-    # Handle macros - similar to functions but with caller context
-    let f = callable.fn
-    if f.body_compiled == nil:
-      f.compile()
-
-    var scope: Scope
-    if f.matcher.is_empty():
-      scope = f.parent_scope
-    else:
-      scope = new_scope(f.scope_tracker, f.parent_scope)
-
-    var new_frame = new_frame()
-    new_frame.kind = FkMacro
-    let r2 = new_ref(VkMacro)
-    r2.`macro` = Macro(
-      name: f.name,
-      ns: f.ns,
-      scope_tracker: f.scope_tracker,
-      parent_scope: f.parent_scope,
-      matcher: f.matcher,
-      body: f.body,
-      body_compiled: f.body_compiled
-    )
-    new_frame.target = r2.to_ref_value()
-    new_frame.scope = scope
-    new_frame.caller_frame = vm.frame
-    new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
-    new_frame.caller_context = vm.frame  # For $caller_eval
-    new_frame.ns = f.ns
-
-    # Create args Gene for argument processing (unevaluated for macros)
-    var args_gene = new_gene_value()
-    for arg in final_args:
-      args_gene.gene.children.add(arg)
-    new_frame.args = args_gene
-
-    # Process arguments if matcher exists
-    if not f.matcher.is_empty():
-      process_args(f.matcher, args_gene, new_frame.scope)
-
-    # Switch to new frame and execute
-    vm.frame = new_frame
-    vm.cu = f.body_compiled
-    vm.pc = 0
-    return vm.exec()
-
   of CkBlock:
     # Handle blocks - similar to functions but with captured scope
     let blk = callable.block_fn
@@ -455,19 +408,6 @@ proc value_to_callable*(value: Value): Callable =
     return to_callable(value.ref.native_fn)
   of VkBlock:
     return value.ref.block.to_callable()
-  of VkMacro:
-    let `macro` = value.ref.`macro`
-    result = new_callable(CkMacro, `macro`.name)
-    result.fn = Function(
-      name: `macro`.name,
-      ns: `macro`.ns,
-      scope_tracker: `macro`.scope_tracker,
-      parent_scope: `macro`.parent_scope,
-      matcher: `macro`.matcher,
-      body: `macro`.body,
-      body_compiled: `macro`.body_compiled
-    )
-    result.arity = `macro`.matcher.get_arity()
   of VkBoundMethod:
     # Convert bound method to appropriate callable
     let bm = value.ref.bound_method
@@ -841,16 +781,6 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             self.frame.update(self.frame.caller_frame)
             self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
-            continue
-          elif self.cu.kind == CkMacro:
-            # Return to caller who will handle macro expansion
-            self.cu = self.frame.caller_address.cu
-            self.pc = self.frame.caller_address.pc
-            inst = self.cu.instructions[self.pc].addr
-            self.frame.update(self.frame.caller_frame)
-            self.frame.ref_count.dec()
-            # Push the macro result for the caller to process
-            self.frame.push(v)
             continue
 
           let skip_return = self.cu.skip_return
@@ -1815,12 +1745,8 @@ proc exec*(self: VirtualMachine): Value =
         let gene_type = self.frame.current()
         case gene_type.kind:
           of VkFunction:
-            # if inst.arg1 == 2:
-            #   not_allowed("Macro not allowed here")
-            # inst.arg1 = 1
-
             let f = gene_type.ref.fn
-            
+
             # Check if this is a generator function
             if f.is_generator:
               # Don't create generator here, just continue to collect arguments
@@ -1830,61 +1756,55 @@ proc exec*(self: VirtualMachine): Value =
               self.pc.inc()
               inst = self.cu.instructions[self.pc].addr
               continue
-            
-            # Normal function call (or macro-like function call)
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              # Increment ref_count since the frame will own this reference
-              if scope != nil:
-                scope.ref_count.inc()
-            else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            var r = new_ref(VkFrame)
-            r.frame = new_frame()
-            r.frame.kind = FkFunction
-            r.frame.target = gene_type
-            r.frame.scope = scope
-            self.frame.replace(r.to_ref_value())
-            # Enable caller context for macro-like functions
+            # Check if this is a macro-like function
             if f.is_macro_like:
+              # Macro-like function: use quoted arguments branch
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                # Increment ref_count since the frame will own this reference
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var r = new_ref(VkFrame)
+              r.frame = new_frame()
+              r.frame.kind = FkMacro
+              r.frame.target = gene_type
+              r.frame.scope = scope
+
+              # Pass caller's context as implicit argument (for $caller_eval)
               r.frame.caller_context = self.frame
-              # Continue to macro branch (quoted arguments) - next instruction
+
+              self.frame.replace(r.to_ref_value())
+              # Continue to next instruction (macro branch with quoted args)
               self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             else:
-              # Jump to regular function branch (evaluated arguments)
-              # inst.arg0 contains fn_label which is the start of regular function branch
+              # Normal function call: use evaluated arguments branch
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                # Increment ref_count since the frame will own this reference
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var r = new_ref(VkFrame)
+              r.frame = new_frame()
+              r.frame.kind = FkFunction
+              r.frame.target = gene_type
+              r.frame.scope = scope
+              self.frame.replace(r.to_ref_value())
+              # Jump to function branch (evaluated arguments)
+              # inst.arg0 contains fn_label which is the start of function branch
               self.pc = inst.arg0.int64.int
-            inst = self.cu.instructions[self.pc].addr
-            continue
-
-          of VkMacro:
-            # if inst.arg1 == 1:
-            #   not_allowed("Macro expected here")
-            # inst.arg1 = 2
-
-            var scope: Scope
-            let m = gene_type.ref.macro
-            if m.matcher.is_empty():
-              scope = m.parent_scope
-            else:
-              scope = new_scope(m.scope_tracker, m.parent_scope)
-
-            var r = new_ref(VkFrame)
-            r.frame = new_frame()
-            r.frame.kind = FkMacro
-            r.frame.target = gene_type
-            r.frame.scope = scope
-            
-            # Pass caller's context as implicit argument (design decision D)
-            # Store a reference to the current frame for $caller_eval
-            r.frame.caller_context = self.frame
-            
-            self.frame.replace(r.to_ref_value())
-            self.pc.inc()
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
           of VkBlock:
             # if inst.arg1 == 2:
@@ -2373,23 +2293,24 @@ proc exec*(self: VirtualMachine): Value =
                 continue
 
               of FkMacro:
-                let m = frame.target.ref.macro
-                if m.body_compiled == nil:
-                  m.compile()
+                # Handle macro-like function (VkFunction with is_macro_like=true)
+                let f = frame.target.ref.fn
+                if f.body_compiled == nil:
+                  f.compile()
 
                 self.pc.inc()
                 frame.caller_frame.update(self.frame)
                 frame.caller_address = Address(cu: self.cu, pc: self.pc)
-                frame.ns = m.ns
+                frame.ns = f.ns
                 # Pop the frame from the stack before switching context
                 discard self.frame.pop()
                 self.frame.update(frame)
-                self.cu = m.body_compiled
-                
+                self.cu = f.body_compiled
+
                 # Process arguments if matcher exists
-                if not m.matcher.is_empty():
-                  process_args(m.matcher, frame.args, frame.scope)
-                
+                if not f.matcher.is_empty():
+                  process_args(f.matcher, frame.args, frame.scope)
+
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
                 continue
@@ -3281,27 +3202,6 @@ proc exec*(self: VirtualMachine): Value =
         
         self.frame.push(v)
         {.pop.}
-
-      of IkMacro:
-        let m = to_macro(inst.arg0)
-        m.ns = self.frame.ns
-        # More data are stored in the next instruction slot
-        self.pc.inc()
-        inst = self.cu.instructions[self.pc].addr
-        when not defined(release):
-          if inst.kind != IkData:
-            raise new_exception(types.Exception, fmt"Expected IkData after IkMacro, got {inst.kind}")
-        # Capture parent scope with proper reference counting
-        if self.frame.scope != nil:
-          self.frame.scope.ref_count.inc()
-        m.parent_scope = self.frame.scope
-        m.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
-        
-        let r = new_ref(VkMacro)
-        r.macro = m
-        let v = r.to_ref_value()
-        m.ns[m.name.to_key()] = v
-        self.frame.push(v)
 
       of IkBlock:
         {.push checks: off}
