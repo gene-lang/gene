@@ -542,37 +542,15 @@ This example shows the vision - most features are not yet implemented:
 ```gene
 (class Router
   (fn add [self method path handler]
-    (self.routes .add {^method method ^path path ^handler handler}))
+    (self/routes .add {^method method ^path path ^handler handler}))
 
   (fn handle [self req]
-    (self.routes
+    (self/routes
       .find (fn [r] (and (== r.method req.method)
-                         (r.path .matches? req.path)))
-      .handler
+                         (r.path .matches? req.path)));
+      .handler;
       .call req)))
 ```
-
-**3. FP for transformation:**
-```gene
-(fn render [template data]
-  # Apply transformations
-  (apply-template template (transform-to-view-model data)))
-```
-
-**4. Macros for syntax:**
-```gene
-(defmacro defroute [method path params & body]
-  :(Router/current .add
-     %method
-     %path
-     (fn %params %@body)))
-```
-
-**5. Performance from compilation:**
-- Parse route DSL once
-- Compile to efficient bytecode
-- Fast pattern matching for routing
-- Minimal overhead per request
 
 ### Example: Data Processing (Current Capabilities)
 
@@ -595,16 +573,8 @@ This example shows the vision - most features are not yet implemented:
 
 # Template with quote/unquote (works today)
 (var name "Alice")
-(var greeting :("Hello " %name))
-(var rendered ($render greeting))  # => ("Hello " "Alice")
-
-# Builder pattern with $emit (PLANNED)
-(var numbers
-  [(for i in [1 2 3]
-    (if (is-positive i)
-      ($emit (double i))))])
-# => [2 4 6]
-```
+(var greeting :(println "Hello" %name))
+(var rendered ($render greeting))  # => (println "Hello " "Alice")
 
 ### Example: Data Processing (Full Vision - PLANNED)
 
@@ -617,9 +587,9 @@ This example shows the vision - most features are not yet implemented:
 # Transform with method chaining
 (var active-users
   (users
-    .filter (fn [u] (u .get :active))
+    .filter (fn [u] (u .get :active));
     .map (fn [u]
-      (u .update :name ((u .get :name) .to_upper)))
+      (u .update :name ((u .get :name) .to_upper)));
     .sort-by (fn [u] (u .get :created_at))))
 
 # Generate HTML report with template
@@ -629,8 +599,8 @@ This example shows the vision - most features are not yet implemented:
     (body
       (h1 "Active Users")
       (ul
-        %(for user in active-users
-          ($emit :(li %(user .get :name))))))))
+        %(active-users .map (user ->
+          ($render :(li %(user .get :name)))))))))
 
 # Render and save
 (File/write "report.html" ($render report))
@@ -641,7 +611,6 @@ The full vision combines:
 - **Methods** for discoverability
 - **Functions** for transformations
 - **Templates** with quote/unquote
-- **Builders** with `$emit`
 
 ## Current State and Future Direction
 
@@ -662,7 +631,6 @@ The full vision combines:
 
 ### In Progress / Planned
 
-🔨 **Builder patterns** - `$emit` for dynamic collection construction
 🔨 **Gene manipulation** - Rich API for Gene expressions (`.get`, `.type`, `.children` methods)
 🔨 **Collection methods** - `.map`, `.filter`, `.reduce` on arrays
 📋 **Pattern matching** - Destructuring and dispatch

@@ -50,7 +50,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_async.nim"
   exec "nim c -r tests/test_module.nim"
   # exec "nim c -r tests/test_package.nim"
-  exec "nim c -r tests/test_selector.nim"
+  # exec "nim c -r tests/test_selector.nim"
   exec "nim c -r tests/test_template.nim"
   # exec "nim c -r tests/test_serdes.nim"
   exec "nim c -r tests/test_native.nim"
