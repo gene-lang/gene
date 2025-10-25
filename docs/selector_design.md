@@ -113,8 +113,8 @@ Selectors are central to making Gene feel fluid when manipulating nested data. B
    - Expand `tests/test_selector.nim` to cover nil vs void behaviour so regressions are caught early.
 
 2. **Selector Surface Clean-up**
-   2.1 Fix the compiler/parser to support chained shorthand (`@foo/bar`) and update docs/tests accordingly.
-   2.2 Implement range and list selectors for arrays (`(0 .. 2)`, `@ [0 1]`) alongside VM opcodes that can return multiple values.
+   - Fix the compiler/parser to support chained shorthand (`@foo/bar`) and update docs/tests accordingly.
+   - Implement range and list selectors for arrays (`(0 .. 2)`, `@ [0 1]`) alongside VM opcodes that can return multiple values.
 
 3. **Namespace & Gene Introspection**
    - Deliver the planned built-ins like `:$type`, `:$children`, `_`, and key/value selectors so gene manipulation patterns become expressive.
