@@ -20,6 +20,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   output &= "  repl     Start interactive REPL\n"
   output &= "  parse    Parse Gene code and output AST\n"
   output &= "  compile  Compile Gene code and output bytecode\n"
+  output &= "  gir      Show instructions from a GIR file\n"
   output &= "  help     Show this help message\n"
   output &= "\n"
   output &= "Examples:\n"

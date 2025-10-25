@@ -24,6 +24,9 @@ type
     symbols*: seq[string]
     instructions*: seq[Instruction]
     metadata*: JsonNode
+    kind*: string
+    unit_id*: Id
+    skip_return*: bool
 
 # Serialization helpers
 proc write_string(stream: Stream, s: string) =
@@ -130,7 +133,13 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   # Calculate source hash if provided
   if source_path != "" and fileExists(source_path):
     let source_content = readFile(source_path)
-    header.source_hash = hash(source_content)
+    let raw_hash = cast[uint64](hash(source_content))
+    let truncated = raw_hash and 0x7FFF_FFFF_FFFF_FFFF'u64
+    header.source_hash = cast[Hash](truncated.int)
+    let info = getFileInfo(source_path)
+    header.timestamp = info.lastWriteTime.toUnix()
+  else:
+    header.timestamp = now().toTime().toUnix()
   
   # Write header fields
   stream.write(header.magic)
@@ -140,7 +149,8 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   stream.write(header.timestamp)
   stream.write(header.debug)
   stream.write(header.published)
-  stream.write(header.source_hash.int64)
+  let stored_hash = cast[int64](header.source_hash)
+  stream.write(stored_hash)
   
   # Collect constants from instructions
   var constants: seq[Value] = @[]
@@ -165,55 +175,74 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   stream.write(cast[int64](cu.id))
   stream.write(cu.skip_return)
 
-proc load_gir*(path: string): CompilationUnit =
-  ## Load a compilation unit from a GIR file
+proc load_gir_file*(path: string): GirFile =
+  ## Load a GIR file and return its structured contents
   if not fileExists(path):
     raise new_exception(types.Exception, "GIR file not found: " & path)
-  
+
   var stream = newFileStream(path, fmRead)
+  if stream == nil:
+    raise new_exception(types.Exception, "Failed to open GIR file: " & path)
   defer: stream.close()
-  
-  # Read and validate header
+
   var header: GirHeader
   discard stream.readData(header.magic[0].addr, 4)
   if header.magic != ['G', 'E', 'N', 'E']:
     raise new_exception(types.Exception, "Invalid GIR file: bad magic")
-  
+
   header.version = stream.readUint32()
   if header.version != GIR_VERSION:
     raise new_exception(types.Exception, "Unsupported GIR version: " & $header.version)
-  
+
   header.compiler_version = stream.read_string()
   header.vm_abi = stream.read_string()
   header.timestamp = stream.readInt64()
   header.debug = stream.readBool()
   header.published = stream.readBool()
   header.source_hash = stream.readInt64().Hash
-  
-  # Read constants
+
   let constant_count = stream.readUint32()
   var constants: seq[Value] = @[]
-  for i in 0..<constant_count:
+  for _ in 0..<constant_count:
     constants.add(stream.read_value())
-  
-  # Read symbol table
+
   let symbol_count = stream.readUint32()
   var symbols: seq[string] = @[]
-  for i in 0..<symbol_count:
+  for _ in 0..<symbol_count:
     symbols.add(stream.read_string())
-  
-  # Read instructions
+
   let instruction_count = stream.readUint32()
-  result = new_compilation_unit()
-  for i in 0..<instruction_count:
-    result.instructions.add(stream.readInstruction())
-  
-  # Read metadata
+  var instructions: seq[Instruction] = @[]
+  for _ in 0..<instruction_count:
+    instructions.add(stream.readInstruction())
+
   let kind_str = stream.read_string()
-  if kind_str != "":
-    result.kind = parseEnum[CompilationUnitKind](kind_str)
-  result.id = stream.readInt64().Id
-  result.skip_return = stream.readBool()
+  let unit_id = stream.readInt64()
+  let skip_return = stream.readBool()
+
+  result.header = header
+  result.constants = constants
+  result.symbols = symbols
+  result.instructions = instructions
+  result.metadata = newJObject()
+  result.metadata["kind"] = newJString(kind_str)
+  result.metadata["id"] = newJInt(unit_id)
+  result.metadata["skipReturn"] = newJBool(skip_return)
+  result.metadata["timestamp"] = newJInt(header.timestamp)
+  result.kind = kind_str
+  result.unit_id = unit_id.Id
+  result.skip_return = skip_return
+
+proc load_gir*(path: string): CompilationUnit =
+  ## Load a compilation unit from a GIR file
+  let gir_file = load_gir_file(path)
+  result = new_compilation_unit()
+  result.instructions = gir_file.instructions
+
+  if gir_file.kind.len > 0:
+    result.kind = parseEnum[CompilationUnitKind](gir_file.kind)
+  result.id = gir_file.unit_id
+  result.skip_return = gir_file.skip_return
 
 proc is_gir_up_to_date*(gir_path: string, source_path: string): bool =
   ## Check if a GIR file is up-to-date with its source
