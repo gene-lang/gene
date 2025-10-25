@@ -1690,29 +1690,36 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(length.to_value())
 
       of IkArrayStart:
-        self.frame.push(new_array_value())
-      of IkArrayAddChild, IkArrayAdd:
-        var child: Value
-        self.frame.pop2(child)
-        self.frame.current().ref.arr.add(child)
+        # Mark current stack position as array base
+        self.frame.call_bases.push(self.frame.stack_index)
+
       of IkArrayAddSpread:
-        # Spread operator - pop value and spread its elements
+        # Spread operator - pop array and push all its elements onto stack
         let value = self.frame.pop()
         case value.kind:
           of VkArray:
+            # Push each element onto stack
             for item in value.ref.arr:
-              self.frame.current().ref.arr.add(item)
+              self.frame.push(item)
           else:
             not_allowed("... can only spread arrays in array context, got " & $value.kind)
-      of IkArrayAddChildValue:
-        # Add a literal value to array
-        self.frame.current().ref.arr.add(inst.arg0)
+
       of IkArrayEnd:
-        when not defined(release):
-          if self.trace:
-            echo fmt"IkArrayEnd: array on stack = {self.frame.current()}"
-            # Let's also check what happens next
-        discard
+        # Collect all elements from call base into array
+        let base = self.frame.pop_call_base()
+        let count = int(self.frame.stack_index) - int(base)
+
+        # Create array with exact capacity
+        let arr = new_array_value()
+        if count > 0:
+          arr.ref.arr.setLen(count)
+          # Copy elements from stack
+          for i in 0..<count:
+            arr.ref.arr[i] = self.frame.stack[base + uint16(i)]
+
+        # Pop all elements and push array
+        self.frame.stack_index = base
+        self.frame.push(arr)
 
       of IkMapStart:
         self.frame.push(new_map_value())

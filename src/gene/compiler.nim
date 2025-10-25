@@ -209,6 +209,7 @@ proc compile_symbol(self: Compiler, input: Value) =
       self.compile_complex_symbol(input)
 
 proc compile_array(self: Compiler, input: Value) =
+  # Use call base approach: push base, compile elements onto stack, collect at end
   self.output.instructions.add(Instruction(kind: IkArrayStart))
 
   var i = 0
@@ -218,7 +219,7 @@ proc compile_array(self: Compiler, input: Value) =
 
     # Check for standalone postfix spread: expr ...
     if i + 1 < arr.len and arr[i + 1].kind == VkSymbol and arr[i + 1].str == "...":
-      # Compile the expression and add with spread
+      # Compile the expression and spread its elements
       self.compile(child)
       self.output.instructions.add(Instruction(kind: IkArrayAddSpread))
       i += 2  # Skip both the expr and the ... symbol
@@ -226,18 +227,18 @@ proc compile_array(self: Compiler, input: Value) =
 
     # Check for suffix spread: a...
     if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-      # Compile the base symbol and add with spread
+      # Compile the base symbol and spread its elements
       let base_symbol = child.str[0..^4].to_symbol_value()  # Remove "..."
       self.compile(base_symbol)
       self.output.instructions.add(Instruction(kind: IkArrayAddSpread))
       i += 1
       continue
 
-    # Normal element - compile and add
+    # Normal element - just compile it (pushes to stack)
     self.compile(child)
-    self.output.instructions.add(Instruction(kind: IkArrayAddChild))
     i += 1
 
+  # Collect all elements from call base into array
   self.output.instructions.add(Instruction(kind: IkArrayEnd))
 
 proc compile_map(self: Compiler, input: Value) =
@@ -2540,7 +2541,7 @@ proc compile_await(self: Compiler, gene: ptr Gene) =
     for child in gene.children:
       self.compile(child)
       self.output.instructions.add(Instruction(kind: IkAwait))
-      self.output.instructions.add(Instruction(kind: IkArrayAddChild))
+      # Awaited value is on stack, will be collected by IkArrayEnd
     self.output.instructions.add(Instruction(kind: IkArrayEnd))
 
 proc compile_yield(self: Compiler, gene: ptr Gene) =

@@ -696,10 +696,7 @@ type
     IkMapEnd
 
     IkArrayStart
-    IkArrayAddChild     # Normal add (legacy name, same as IkArrayAdd)
-    IkArrayAdd          # Normal add - add single element to array
-    IkArrayAddChildValue # args: literal value
-    IkArrayAddSpread    # Spread add - unpack array and add all elements
+    IkArrayAddSpread    # Spread add - pop array and push all elements onto stack
     IkArrayEnd
 
     IkGeneStart
@@ -3273,7 +3270,6 @@ proc `$`*(self: Instruction): string =
       IkIncVar, IkDecVar,
       IkLtValue, IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue,
       IkMapSetProp, IkMapSetPropValue,
-      IkArrayAddChildValue,
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
