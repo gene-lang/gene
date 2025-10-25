@@ -1434,6 +1434,58 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   #   self.output.instructions.add(Instruction(kind: IkGeneEnd))
   #   return
 
+  # Check if we can determine at compile time that this is definitely NOT a macro
+  # For performance: avoid dual-branch compilation for regular function calls
+  var definitely_not_macro = false
+  if gene.type.kind == VkSymbol:
+    let func_name = gene.type.str
+    # Functions not ending with '!' are regular functions (not macro-like)
+    if not func_name.ends_with("!"):
+      definitely_not_macro = true
+    # Exception: control flow keywords might still need special handling
+    if func_name in ["return", "break", "continue", "throw"]:
+      definitely_not_macro = false
+  elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
+    # Selector results are not macros
+    definitely_not_macro = true
+  elif gene.type.kind == VkComplexSymbol:
+    let parts = gene.type.ref.csymbol
+    if parts.len > 0 and parts[0].startsWith("@"):
+      # Selector results are not macros
+      definitely_not_macro = true
+
+  # Fast path optimizations for regular function calls (no properties)
+  if definitely_not_macro and gene.props.len == 0:
+    # Zero-argument optimization
+    if gene.children.len == 0:
+      self.output.instructions.add(Instruction(kind: IkUnifiedCall0))
+      return
+
+    # Single-argument optimization
+    if gene.children.len == 1:
+      self.compile(gene.children[0])
+      self.output.instructions.add(Instruction(kind: IkUnifiedCall1))
+      return
+
+    # Multi-argument optimization (only if no spreads)
+    var has_spread = false
+    var i = 0
+    while i < gene.children.len:
+      let child = gene.children[i]
+      if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
+         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
+        has_spread = true
+        break
+      i += 1
+
+    if not has_spread:
+      # Compile all arguments onto stack
+      for child in gene.children:
+        self.compile(child)
+      # Single unified call instruction with argument count
+      self.output.instructions.add(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
+      return
+
   # Dual-branch compilation:
   # - Macro branch (quoted args): for VkFunction with is_macro_like=true - continues to next instruction
   # - Function branch (evaluated args): for VkFunction with is_macro_like=false - jumps to fn_label
