@@ -14,6 +14,9 @@ proc compile_if_main(self: Compiler, gene: ptr Gene)
 proc compile_parse(self: Compiler, gene: ptr Gene)
 proc compile_render(self: Compiler, gene: ptr Gene)
 proc compile_emit(self: Compiler, gene: ptr Gene)
+proc compile*(f: Function, eager_functions: bool)
+proc compile*(b: Block, eager_functions: bool)
+proc compile*(f: CompileFn, eager_functions: bool)
 
 proc compile(self: Compiler, input: seq[Value]) =
   for i, v in input:
@@ -947,9 +950,17 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
 
 proc compile_fn(self: Compiler, input: Value) =
   self.output.instructions.add(Instruction(kind: IkFunction, arg0: input))
-  var r = new_ref(VkScopeTracker)
-  r.scope_tracker = copy_scope_tracker(self.scope_tracker)  # Create a copy, not a reference
-  self.output.instructions.add(Instruction(kind: IkData, arg0: r.to_ref_value()))
+  let tracker_copy = copy_scope_tracker(self.scope_tracker)
+
+  var compiled_body: CompilationUnit = nil
+  if self.eager_functions:
+    var fn_obj = to_function(input)
+    fn_obj.scope_tracker = tracker_copy
+    compile(fn_obj, true)
+    compiled_body = fn_obj.body_compiled
+
+  let info = new_function_def_info(tracker_copy, compiled_body)
+  self.output.instructions.add(Instruction(kind: IkData, arg0: info.to_value()))
 
 proc compile_return(self: Compiler, gene: ptr Gene) =
   if gene.children.len > 0:
@@ -2278,8 +2289,8 @@ proc optimize_noops(self: CompilationUnit) =
   self.instructions = new_instructions
 
 
-proc compile*(input: seq[Value]): CompilationUnit =
-  let self = Compiler(output: new_compilation_unit(), tail_position: false)
+proc compile*(input: seq[Value], eager_functions: bool): CompilationUnit =
+  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions)
   self.output.instructions.add(Instruction(kind: IkStart))
   self.start_scope()
 
@@ -2295,11 +2306,14 @@ proc compile*(input: seq[Value]): CompilationUnit =
   self.output.update_jumps()
   result = self.output
 
-proc compile*(f: Function) =
+proc compile*(input: seq[Value]): CompilationUnit =
+  compile(input, false)
+
+proc compile*(f: Function, eager_functions: bool) =
   if f.body_compiled != nil:
     return
 
-  var self = Compiler(output: new_compilation_unit(), tail_position: false)
+  var self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions)
   self.output.instructions.add(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -2331,14 +2345,18 @@ proc compile*(f: Function) =
   self.output.optimize_noops()  # Optimize BEFORE resolving jumps
   self.output.peephole_optimize()  # Apply peephole optimizations
   self.output.update_jumps()
+  self.output.kind = CkFunction
   f.body_compiled = self.output
   f.body_compiled.matcher = f.matcher
 
-proc compile*(b: Block) =
+proc compile*(f: Function) =
+  compile(f, false)
+
+proc compile*(b: Block, eager_functions: bool) =
   if b.body_compiled != nil:
     return
 
-  var self = Compiler(output: new_compilation_unit(), tail_position: false)
+  var self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions)
   self.output.instructions.add(Instruction(kind: IkStart))
   self.scope_trackers.add(b.scope_tracker)
 
@@ -2369,11 +2387,14 @@ proc compile*(b: Block) =
   b.body_compiled = self.output
   b.body_compiled.matcher = b.matcher
 
-proc compile*(f: CompileFn) =
+proc compile*(b: Block) =
+  compile(b, false)
+
+proc compile*(f: CompileFn, eager_functions: bool) =
   if f.body_compiled != nil:
     return
 
-  let self = Compiler(output: new_compilation_unit(), tail_position: false)
+  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions)
   self.output.instructions.add(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -2407,6 +2428,9 @@ proc compile*(f: CompileFn) =
   f.body_compiled = self.output
   f.body_compiled.kind = CkCompileFn
   f.body_compiled.matcher = f.matcher
+
+proc compile*(f: CompileFn) =
+  compile(f, false)
 
 proc compile_with(self: Compiler, gene: ptr Gene) =
   # ($with value body...)

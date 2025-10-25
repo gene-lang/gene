@@ -18,6 +18,7 @@ type
     out_dir: string  # Output directory for GIR files
     force: bool      # Force rebuild even if cache is up-to-date
     emit_debug: bool # Include debug info in GIR
+    eager_functions: bool
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
 
@@ -27,6 +28,7 @@ let long_no_val = @[
   "addresses",
   "force",
   "emit-debug",
+  "eager",
 ]
 
 let help_text = """
@@ -42,6 +44,7 @@ Options:
   -a, --addresses         Show instruction addresses
   --force                 Rebuild even if cache is up-to-date
   --emit-debug            Include debug info in GIR files
+  --eager                Eagerly compile function bodies (compile command only)
 
 Examples:
   gene compile file.gene                  # Compile to build/file.gir
@@ -86,6 +89,8 @@ proc parseArgs(args: seq[string]): CompileOptions =
         result.force = true
       of "emit-debug":
         result.emit_debug = true
+      of "eager":
+        result.eager_functions = true
       else:
         stderr.writeLine("Error: Unknown option: " & key)
         quit(1)
@@ -139,7 +144,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         
         try:
           let parsed = read_all(code)
-          let compiled = compile(parsed)
+          let compiled = compile(parsed, options.eager_functions)
           
           # Save to GIR file
           save_gir(compiled, gir_path, file, options.emit_debug)
@@ -160,7 +165,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         
         try:
           let parsed = read_all(code)
-          let compiled = compile(parsed)
+          let compiled = compile(parsed, options.eager_functions)
           
           echo "Instructions (" & $compiled.instructions.len & "):"
           for i, inst in compiled.instructions:
@@ -197,7 +202,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   # Compile single code string
   try:
     let parsed = read_all(code)
-    let compiled = compile(parsed)
+    let compiled = compile(parsed, options.eager_functions)
     
     echo "Instructions (" & $compiled.instructions.len & "):"
     for i, inst in compiled.instructions:

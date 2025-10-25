@@ -3171,8 +3171,29 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.scope.ref_count.inc()
           # Function captured scope, ref_count incremented
         f.parent_scope = self.frame.scope
-        
-        f.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
+
+        var scope_tracker_obj: ScopeTracker = nil
+        var precompiled: CompilationUnit = nil
+        let data_value = inst.arg0
+
+        case data_value.kind
+        of VkFunctionDef:
+          let info = to_function_def_info(data_value)
+          scope_tracker_obj = new_scope_tracker(info.scope_tracker)
+          if info.compiled_body.kind == VkCompiledUnit:
+            precompiled = info.compiled_body.ref.cu
+        of VkScopeTracker:
+          scope_tracker_obj = new_scope_tracker(data_value.ref.scope_tracker)
+        else:
+          scope_tracker_obj = ScopeTracker()
+
+        if scope_tracker_obj == nil:
+          scope_tracker_obj = ScopeTracker()
+
+        f.scope_tracker = scope_tracker_obj
+
+        if precompiled != nil:
+          f.body_compiled = precompiled
 
         if not f.matcher.is_empty():
           for child in f.matcher.children:

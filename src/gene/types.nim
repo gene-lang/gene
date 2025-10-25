@@ -140,11 +140,23 @@ type
     VkCompiledUnit
     VkInstruction
     VkScopeTracker
+    VkFunctionDef
     VkScope
     VkFrame
     VkNativeFrame
 
   Key* = distinct int64
+
+  ScopeTrackerSnapshot* = ref object
+    next_index*: int16
+    parent_index_max*: int16
+    scope_started*: bool
+    mappings*: seq[(Key, int16)]
+    parent*: ScopeTrackerSnapshot
+
+  FunctionDefInfo* = ref object
+    scope_tracker*: ScopeTracker
+    compiled_body*: Value
 
   # Extended Reference type supporting all ValueKind variants
   Reference* = object
@@ -308,6 +320,8 @@ type
         instr*: Instruction
       of VkScopeTracker:
         scope_tracker*: ScopeTracker
+      of VkFunctionDef:
+        function_def*: FunctionDefInfo
       of VkScope:
         scope*: Scope
       of VkFrame:
@@ -574,6 +588,7 @@ type
     scope_trackers*: seq[ScopeTracker]
     loop_stack*: seq[LoopInfo]
     tail_position*: bool  # Track if we're in tail position for tail call optimization
+    eager_functions*: bool
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop
@@ -2326,6 +2341,57 @@ proc copy_scope_tracker*(source: ScopeTracker): ScopeTracker =
 proc add*(self: var ScopeTracker, name: Key) =
   self.mappings[name] = self.next_index
   self.next_index.inc()
+
+proc snapshot_scope_tracker*(tracker: ScopeTracker): ScopeTrackerSnapshot =
+  if tracker == nil:
+    return nil
+
+  result = ScopeTrackerSnapshot(
+    next_index: tracker.next_index,
+    parent_index_max: tracker.parent_index_max,
+    scope_started: tracker.scope_started,
+    mappings: @[],
+    parent: snapshot_scope_tracker(tracker.parent)
+  )
+
+  for key, value in tracker.mappings:
+    result.mappings.add((key, value))
+
+proc materialize_scope_tracker*(snapshot: ScopeTrackerSnapshot): ScopeTracker =
+  if snapshot == nil:
+    return nil
+
+  result = ScopeTracker(
+    next_index: snapshot.next_index,
+    parent_index_max: snapshot.parent_index_max,
+    scope_started: snapshot.scope_started,
+    parent: materialize_scope_tracker(snapshot.parent)
+  )
+
+  for pair in snapshot.mappings:
+    result.mappings[pair[0]] = pair[1]
+
+proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil): FunctionDefInfo =
+  var body_value = NIL
+  if body != nil:
+    let cu_ref = new_ref(VkCompiledUnit)
+    cu_ref.cu = body
+    body_value = cu_ref.to_ref_value()
+
+  result = FunctionDefInfo(
+    scope_tracker: tracker,
+    compiled_body: body_value
+  )
+
+proc to_value*(info: FunctionDefInfo): Value =
+  let r = new_ref(VkFunctionDef)
+  r.function_def = info
+  result = r.to_ref_value()
+
+proc to_function_def_info*(value: Value): FunctionDefInfo =
+  if value.kind != VkFunctionDef:
+    not_allowed("Expected FunctionDef info value")
+  result = value.ref.function_def
 
 #################### Pattern Matching ############
 

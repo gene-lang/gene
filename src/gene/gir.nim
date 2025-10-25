@@ -40,6 +40,66 @@ proc read_string(stream: Stream): string =
     result = newString(len)
     discard stream.readData(result[0].addr, len.int)
 
+proc writeScopeTrackerSnapshot(stream: Stream, snapshot: ScopeTrackerSnapshot) =
+  if snapshot == nil:
+    stream.write(0'u8)
+    return
+
+  stream.write(1'u8)
+  stream.write(snapshot.next_index)
+  stream.write(snapshot.parent_index_max)
+  stream.write(if snapshot.scope_started: 1'u8 else: 0'u8)
+  stream.write(snapshot.mappings.len.uint32)
+  for pair in snapshot.mappings:
+    stream.write(cast[int64](pair[0]))
+    stream.write(pair[1])
+
+  writeScopeTrackerSnapshot(stream, snapshot.parent)
+
+proc readScopeTrackerSnapshot(stream: Stream): ScopeTrackerSnapshot =
+  if stream.readUint8() == 0:
+    return nil
+
+  result = ScopeTrackerSnapshot(
+    next_index: stream.readInt16(),
+    parent_index_max: stream.readInt16(),
+    scope_started: stream.readUint8() == 1,
+    mappings: @[]
+  )
+
+  let map_len = stream.readUint32()
+  for _ in 0..<map_len:
+    let key = cast[Key](stream.readInt64())
+    let value = stream.readInt16()
+    result.mappings.add((key, value))
+
+  result.parent = readScopeTrackerSnapshot(stream)
+
+proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit)
+
+proc readCompilationUnitBlock(stream: Stream): CompilationUnit
+
+proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
+  writeScopeTrackerSnapshot(stream, snapshot_scope_tracker(info.scope_tracker))
+  if info.compiled_body.kind == VkCompiledUnit:
+    stream.write(1'u8)
+    writeCompilationUnitBlock(stream, info.compiled_body.ref.cu)
+  else:
+    stream.write(0'u8)
+
+proc readFunctionDef(stream: Stream): FunctionDefInfo =
+  let snapshot = readScopeTrackerSnapshot(stream)
+  var compiled_value = NIL
+  if stream.readUint8() == 1:
+    let compiled = readCompilationUnitBlock(stream)
+    let ref_value = new_ref(VkCompiledUnit)
+    ref_value.cu = compiled
+    compiled_value = ref_value.to_ref_value()
+  result = FunctionDefInfo(
+    scope_tracker: materialize_scope_tracker(snapshot),
+    compiled_body: compiled_value
+  )
+
 proc write_value(stream: Stream, v: Value) =
   # Special handling for scope trackers - write NIL instead
   if v.kind == VkScopeTracker:
@@ -65,6 +125,8 @@ proc write_value(stream: Stream, v: Value) =
     stream.write_string(v.str)
   of VkChar:
     stream.write(v.char.uint32)
+  of VkFunctionDef:
+    writeFunctionDef(stream, v.ref.function_def)
   else:
     # Complex types stored as indices into constant pool
     # or serialized separately
@@ -92,9 +154,37 @@ proc read_value(stream: Stream): Value =
     result = stream.read_string().to_symbol_value()
   of VkChar:
     result = stream.readUint32().char.to_value()
+  of VkFunctionDef:
+    let info = readFunctionDef(stream)
+    result = info.to_value()
   else:
     # Complex types - read raw value for now
     result = cast[Value](stream.readUint64())
+
+proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit) =
+  stream.write(cu.kind.int8)
+  stream.write(if cu.skip_return: 1'u8 else: 0'u8)
+  stream.write(cu.instructions.len.uint32)
+  for inst in cu.instructions:
+    stream.write(inst.kind.uint16)
+    stream.write(inst.label.uint32)
+    write_value(stream, inst.arg0)
+    stream.write(inst.arg1)
+
+proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
+  let kind = cast[CompilationUnitKind](stream.readInt8())
+  let skip = stream.readUint8() == 1
+  let count = stream.readUint32()
+  result = new_compilation_unit()
+  result.kind = kind
+  result.skip_return = skip
+  for _ in 0..<count:
+    var inst: Instruction
+    inst.kind = cast[InstructionKind](stream.readUint16())
+    inst.label = stream.readUint32().Label
+    inst.arg0 = read_value(stream)
+    inst.arg1 = stream.readInt32()
+    result.instructions.add(inst)
 
 proc write_instruction(stream: Stream, inst: Instruction) =
   stream.write(inst.kind.uint16)
