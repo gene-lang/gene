@@ -15,6 +15,25 @@ Examples:
   gene gir show build/examples/hello_world.gir
 """
 
+proc appendInstructions(lines: var seq[string], instructions: openArray[Instruction], indent: int) =
+  let indentStr = "  ".repeat(indent)
+  var i = 0
+  while i < instructions.len:
+    let inst = instructions[i]
+    var line = formatInstruction(inst, i, "pretty", true)
+    if indent > 0:
+      line = indentStr & line
+    lines.add(line)
+
+    if inst.kind == IkFunction and i + 1 < instructions.len:
+      let dataInst = instructions[i + 1]
+      if dataInst.kind == IkData and dataInst.arg0.kind == VkFunctionDef:
+        let info = to_function_def_info(dataInst.arg0)
+        if info.compiled_body.kind == VkCompiledUnit and info.compiled_body.ref.cu != nil:
+          lines.add(indentStr & "  function body:")
+          appendInstructions(lines, info.compiled_body.ref.cu.instructions, indent + 1)
+    inc i
+
 proc handle_show(file_path: string): CommandResult =
   if file_path.len == 0:
     return failure("Missing GIR file path. Usage: gene gir show <file>")
@@ -38,7 +57,7 @@ proc handle_show(file_path: string): CommandResult =
     lines.add("VM ABI  : " & gir_file.header.vm_abi)
     lines.add("Version : " & $gir_file.header.version)
     lines.add("Flags   : debug=" & $gir_file.header.debug & ", published=" & $gir_file.header.published)
-    lines.add("Source  : hash=" & to_hex(int(gir_file.header.source_hash), 8))
+    lines.add("Source  : hash=0x" & gir_file.header.source_hash.int.toHex(8))
     lines.add("Timestamp: " & timestampStr)
     lines.add("")
 
@@ -55,8 +74,7 @@ proc handle_show(file_path: string): CommandResult =
       lines.add("")
 
     lines.add("Instructions (" & $gir_file.instructions.len & "):")
-    for i, inst in gir_file.instructions:
-      lines.add(formatInstruction(inst, i, "pretty", true))
+    appendInstructions(lines, gir_file.instructions, 0)
 
     return success(lines.join("\n"))
   except types.Exception as e:
