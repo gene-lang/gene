@@ -21,11 +21,18 @@ proc formatValue*(value: Value): string =
   else:
     result = $value
 
+proc instructionName(kind: InstructionKind): string =
+  let name = $kind
+  if name.len >= 2 and name.startsWith("Ik"):
+    return name[2..^1]
+  name
+
 proc formatInstruction*(inst: Instruction, index: int, format: string, show_addresses: bool): string =
+  let kindName = instructionName(inst.kind)
   case format
   of "bytecode":
     # Raw bytecode format
-    result = $inst.kind
+    result = kindName
     case inst.kind
     # Instructions with no arguments
     of IkNoop, IkEnd, IkScopeEnd, IkSelf, IkSetSelf, IkRotate, IkParse, IkRender,
@@ -81,7 +88,7 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
     else:
       result = "  "
 
-    result &= ($inst.kind).alignLeft(20)
+    result &= kindName.alignLeft(20)
 
     case inst.kind
     of IkNoop, IkEnd, IkScopeEnd, IkSelf, IkSetSelf, IkRotate, IkParse, IkRender,
