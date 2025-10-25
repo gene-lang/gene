@@ -1,6 +1,7 @@
 import os, tables
 import gene/commands/base
 import gene/commands/[run, eval, repl, help, parse, compile, gir]
+import gene/vm/thread
 
 var CommandMgr = CommandManager(data: initTable[string, Command](), help: "")
 
@@ -14,6 +15,9 @@ compile.init(CommandMgr)
 gir.init(CommandMgr)
 
 proc main() =
+  # Initialize thread pool for multi-threading support
+  init_thread_pool()
+
   var args = command_line_params()
   
   if args.len == 0:

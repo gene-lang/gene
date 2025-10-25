@@ -338,6 +338,7 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
 proc compile_caller_eval(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_async(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_await(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_spawn(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_yield(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
@@ -2001,6 +2002,9 @@ proc compile_gene(self: Compiler, input: Value) =
       of "await":
         self.compile_await(gene)
         return
+      of "spawn":
+        self.compile_spawn(gene)
+        return
       of "yield":
         self.compile_yield(gene)
         return
@@ -2619,6 +2623,34 @@ proc compile_await(self: Compiler, gene: ptr Gene) =
       self.output.instructions.add(Instruction(kind: IkAwait))
       # Awaited value is on stack, will be collected by IkArrayEnd
     self.output.instructions.add(Instruction(kind: IkArrayEnd))
+
+proc compile_spawn(self: Compiler, gene: ptr Gene) =
+  # (spawn expr) - spawn thread to execute expression
+  # (spawn return: expr) - spawn and return future
+  if gene.children.len == 0:
+    not_allowed("spawn expects at least 1 argument")
+
+  var return_value = false
+  var expr_idx = 0
+
+  # Check for return: keyword argument
+  if gene.children.len == 2:
+    let first = gene.children[0]
+    if first.kind == VkSymbol and first.str == "return:":
+      return_value = true
+      expr_idx = 1
+
+  let expr = gene.children[expr_idx]
+
+  # Pass the Gene AST as-is to the thread (it will compile locally)
+  # This avoids sharing CompilationUnit refs across threads
+  self.output.instructions.add(Instruction(kind: IkPushValue, arg0: cast[Value](expr)))
+
+  # Push return_value flag
+  self.output.instructions.add(Instruction(kind: IkPushValue, arg0: if return_value: TRUE else: FALSE))
+
+  # Emit spawn instruction
+  self.output.instructions.add(Instruction(kind: IkSpawnThread))
 
 proc compile_yield(self: Compiler, gene: ptr Gene) =
   # (yield value) - suspend generator and return value

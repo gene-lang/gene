@@ -39,8 +39,35 @@ type
 
   ExceptionData* = ref object
   Interception* = ref object
+
+  # Threading support types
+  ThreadMessageType* = enum
+    MtSend          # Send data, no reply expected
+    MtSendWithReply # Send data, expect reply
+    MtRun           # Run code, no reply expected
+    MtRunWithReply  # Run code, expect reply
+    MtReply         # Reply to previous message
+    MtTerminate     # Terminate thread
+
+  ThreadState* = enum
+    TsUninitialized  # Thread slot not initialized
+    TsFree           # Thread slot available
+    TsBusy           # Thread is running
+
   Thread* = ref object
+    id*: int              # Thread ID (index in THREADS array)
+    secret*: int          # Secret for validation
+
   ThreadMessage* = ref object
+    id*: int                    # Unique message ID
+    msg_type*: ThreadMessageType    # Type of message (renamed to avoid 'type' keyword)
+    payload*: Value             # Data payload
+    code*: Value                # Gene AST to compile and execute (not bytecode!)
+    from_message_id*: int       # For MtReply
+    from_thread_id*: int        # Sender thread ID
+    from_thread_secret*: int    # Sender thread secret
+    handled*: bool              # For user callbacks
+
   NativeFn2* = proc(vm_data: pointer, args: Value): Value {.gcsafe.}
 
 type
@@ -78,6 +105,8 @@ type
     # Async types
     VkFuture             # Async future/promise
     VkGenerator          # Generator instance
+    VkThread             # Thread reference
+    VkThreadMessage      # Thread message
 
     # Date and time types
     VkDate               # Date only
@@ -259,6 +288,10 @@ type
         future*: FutureObj
       of VkGenerator:
         generator*: GeneratorObj  # Store the generator ref object directly
+      of VkThread:
+        thread*: Thread
+      of VkThreadMessage:
+        thread_message*: ThreadMessage
 
       # Language constructs
       of VkApplication:
@@ -764,6 +797,9 @@ type
     IkAsyncEnd     # End async block and create future
     IkAwait        # Wait for Future to complete
 
+    # Threading
+    IkSpawnThread  # Spawn a new thread (pops: return_value flag, CompilationUnit; pushes: thread ref or future)
+
     # Superinstructions for common patterns
     IkPushCallPop      # PUSH; CALL; POP (common for void function calls)
     IkLoadCallPop      # LOADK; CALL1; POP
@@ -861,6 +897,16 @@ type
     class*: Class         # Cached class for method lookup
     class_version*: uint64
     cached_method*: Method       # Cached method reference
+
+  ThreadMetadata* = object
+    id*: int
+    secret*: int              # Random token for validation
+    state*: ThreadState
+    in_use*: bool
+    parent_id*: int           # Parent thread ID
+    parent_secret*: int       # Parent thread secret
+    # Note: thread and channel fields will be added in vm/thread.nim module
+    # which will properly import std/channels and std/locks with --threads:on
 
   VirtualMachine* = ref object
     cu*: CompilationUnit
@@ -1098,6 +1144,12 @@ proc short_equals_long(short_raw: uint64, long_ptr: ptr String): bool {.inline, 
 
 var VM* {.threadvar.}: VirtualMachine   # The current virtual machine
 var App* {.threadvar.}: Value
+
+# Threading support
+const CHANNEL_LIMIT* = 1000  # Maximum messages in channel
+const MAX_THREADS* = 64      # Maximum number of threads in pool
+
+var THREADS* {.threadvar.}: array[0..MAX_THREADS, ThreadMetadata]
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 
@@ -3418,6 +3470,16 @@ converter to_value*(i: Instruction): Value =
   let r = new_ref(VkInstruction)
   r.instr = i
   result = r.to_ref_value()
+
+converter to_value*(t: Thread): Value {.inline.} =
+  let r = new_ref(VkThread)
+  r.thread = t
+  return r.to_ref_value()
+
+converter to_value*(m: ThreadMessage): Value {.inline.} =
+  let r = new_ref(VkThreadMessage)
+  r.thread_message = m
+  return r.to_ref_value()
 
 proc new_instr*(kind: InstructionKind): Instruction =
   Instruction(

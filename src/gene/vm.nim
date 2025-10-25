@@ -8,11 +8,141 @@ import ./vm/args
 import ./vm/module
 import ./vm/arithmetic
 import ./vm/generator
+import ./vm/thread
 
 when not defined(noExtensions):
   import ./vm/extension
 
 const DEBUG_VM = false
+
+# ========== Threading Support ==========
+
+# Forward declaration (defined later in this file)
+proc exec*(self: VirtualMachine): Value
+
+var next_message_id {.threadvar.}: int
+
+# VM initialization for worker threads
+proc init_vm_for_thread(thread_id: int) =
+  ## Initialize VM for a worker thread
+  init_app_and_vm()
+  # TODO: Register IO functions (need to fix circular import issue)
+  #register_io_functions()
+
+  # Add $main_thread variable to global namespace
+  let main_thread_ref = types.Thread(
+    id: 0,
+    secret: THREADS[0].secret
+  )
+  App.app.global_ns.ref.ns["$main_thread".to_key()] = main_thread_ref.to_value()
+
+# Thread handler
+proc thread_handler(thread_id: int) {.thread.} =
+  ## Main thread execution loop
+  {.cast(gcsafe).}:
+    try:
+      # Initialize VM for this thread
+      init_vm_for_thread(thread_id)
+
+      # Message loop
+      when DEBUG_VM:
+        echo "DEBUG thread_handler: Starting message loop for thread ", thread_id
+      while true:
+        # Receive message (blocking)
+        let msg = THREAD_DATA[thread_id].channel.recv()
+
+        # Check for termination
+        if msg.msg_type == MtTerminate:
+          break
+
+        # Reset VM state from previous execution
+        reset_vm_state()
+
+        # Execute based on message type
+        case msg.msg_type:
+        of MtRun, MtRunWithReply:
+          # Compile the Gene AST locally (thread-safe, no shared refs)
+          when DEBUG_VM:
+            echo "DEBUG thread_handler: Compiling code: ", msg.code
+          let cu = compile_init(msg.code)
+
+          # Set up VM with scope tracker
+          let scope_tracker = new_scope_tracker()
+          VM.frame = new_frame()
+          VM.frame.stack_index = 0
+          VM.frame.scope = new_scope(scope_tracker)
+          VM.frame.ns = App.app.gene_ns.ref.ns  # Set namespace for symbol lookup
+          VM.cu = cu
+          VM.pc = 0
+
+          # Execute
+          let result = VM.exec()
+
+          # Send reply if requested
+          if msg.msg_type == MtRunWithReply:
+            let reply = ThreadMessage(
+              id: next_message_id,
+              msg_type: MtReply,
+              payload: result,
+              from_message_id: msg.id,
+              from_thread_id: thread_id,
+              from_thread_secret: THREADS[thread_id].secret
+            )
+            next_message_id += 1
+            THREAD_DATA[msg.from_thread_id].channel.send(reply)
+
+        of MtSend, MtSendWithReply:
+          # User message - would be handled by callbacks (MVP: skip)
+          discard
+
+        of MtReply:
+          # Reply message - would complete futures (MVP: skip)
+          discard
+
+        of MtTerminate:
+          break  # Already checked above
+
+      # Clean up thread
+      cleanup_thread(thread_id)
+    except CatchableError as e:
+      echo "Thread ", thread_id, " crashed: ", e.msg
+
+# Spawn functions
+proc spawn_thread(code: ptr Gene, return_value: bool): Value =
+  ## Spawn a new thread to execute Gene AST
+  ## Returns thread reference or future
+  let thread_id = get_free_thread()
+
+  if thread_id == -1:
+    raise newException(ValueError, "Thread pool exhausted (max " & $MAX_THREADS & " threads)")
+
+  # Initialize thread
+  let parent_id = 0  # TODO: Track current thread ID
+  init_thread(thread_id, parent_id)
+
+  # Create thread
+  createThread(THREAD_DATA[thread_id].thread, thread_handler, thread_id)
+
+  # Create message - use new() to allocate to avoid GC issues with threading
+  var msg: ThreadMessage
+  new(msg)
+  msg.id = next_message_id
+  msg.msg_type = if return_value: MtRunWithReply else: MtRun
+  msg.payload = NIL
+  msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)
+  msg.from_thread_id = 0  # TODO: Track current thread ID
+  msg.from_thread_secret = THREADS[0].secret
+  next_message_id += 1
+
+  # Send message to thread (send the ref directly)
+  THREAD_DATA[thread_id].channel.send(msg)
+
+  # Return value
+  # WORKAROUND: Cannot create Thread ref object due to threading memory issues
+  # TODO: Fix Thread to not be a ref type, or find thread-safe way to create it
+  return NIL
+
+# ========== End Threading Support ==========
 
 # Template to get the class of a value for unified method calls
 template get_value_class(val: Value): Class =
@@ -241,9 +371,6 @@ proc print_instruction_profile*(self: VirtualMachine) =
   
   echo fmt"Total time: {total_time * 1000.0:.3f} ms"
   echo "Instructions profiled: ", stats.len
-
-# Forward declaration
-proc exec*(self: VirtualMachine): Value
 
 #################### Unified Callable System ####################
 
@@ -693,7 +820,7 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
 proc exec*(self: VirtualMachine): Value =
   # Initialize gene namespace if not already done
   init_gene_namespace()
-  
+
   # Reset self.pc for new execution (unless we're resuming a generator)
   # Generators set their PC before calling exec and need to preserve it
   if self.frame == nil or not self.frame.is_generator:
@@ -4176,10 +4303,18 @@ proc exec*(self: VirtualMachine): Value =
             # For now, we don't support actual async operations
             not_allowed("Cannot await a pending future in pseudo-async mode")
         {.pop.}
-      
 
-
-
+      of IkSpawnThread:
+        # Spawn a new thread
+        {.push checks: off}
+        # Threading support - spawn_thread is imported at top level
+        let return_value_flag = self.frame.pop()
+        let code_val = self.frame.pop()
+        let return_value = return_value_flag == TRUE
+        let code = cast[ptr Gene](code_val)  # Gene AST
+        let result = spawn_thread(code, return_value)
+        self.frame.push(result)
+        {.pop.}
 
       # Superinstructions for performance
       of IkPushCallPop:
