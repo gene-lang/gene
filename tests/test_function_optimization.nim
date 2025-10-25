@@ -2,7 +2,7 @@ import unittest
 import strformat
 import times
 
-import ../src/gene/types
+import ../src/gene/types except Exception
 import ../src/gene/parser
 import ../src/gene/compiler
 import ../src/gene/vm

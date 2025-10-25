@@ -3,7 +3,7 @@ import db_connector/db_sqlite
 import unittest
 
 import ./helpers
-import gene/types
+import gene/types except Exception
 
 const dbFile = "/tmp/gene-test.db"
 

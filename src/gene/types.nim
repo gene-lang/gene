@@ -39,7 +39,6 @@ type
 
   ExceptionData* = ref object
   Interception* = ref object
-  Future* = ref object
   Thread* = ref object
   ThreadMessage* = ref object
   NativeFn2* = proc(vm_data: pointer, args: Value): Value {.gcsafe.}

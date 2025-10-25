@@ -1,5 +1,5 @@
 import unittest, tables, strutils
-import ../src/gene/types
+import ../src/gene/types except Exception
 import ../src/gene/vm/extension
 import ./helpers
 

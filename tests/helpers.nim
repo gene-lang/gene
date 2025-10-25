@@ -1,6 +1,6 @@
 import unittest, strutils, tables
 
-import ../src/gene/types
+import ../src/gene/types except Exception
 import ../src/gene/parser
 import ../src/gene/vm
 import ../src/gene/serdes

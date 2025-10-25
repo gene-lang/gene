@@ -1,7 +1,7 @@
 import unittest
 import tables
 import ./helpers
-import gene/types
+import gene/types except Exception
 
 test_vm """
   (var g :(1 ^a 2 3 4))

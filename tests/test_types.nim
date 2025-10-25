@@ -1,7 +1,7 @@
 import unicode
 import unittest
 
-import gene/types
+import gene/types except Exception
 
 test "Value kind":
   check NIL.kind == VkNil

@@ -1,5 +1,5 @@
 import ./helpers
-import gene/types
+import gene/types except Exception
 
 test_vm """
   (regex_match "a" (regex_create "a"))

@@ -1,7 +1,7 @@
 import unittest
 import std/times
 import ./helpers
-import gene/types
+import gene/types except Exception
 
 test_vm """
   ((gene/today) .year)

@@ -1,6 +1,6 @@
 import unittest
 import ./helpers
-import gene/types
+import gene/types except Exception
 
 test_vm """
   ({^a 1 ^b 2} .size)

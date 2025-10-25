@@ -1,7 +1,7 @@
 import unittest
 import os
 
-import gene/types
+import gene/types except Exception
 import gene/parser
 import gene/compiler
 import gene/vm
