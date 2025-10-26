@@ -292,6 +292,48 @@ proc handle_text_document_hover*(id: JsonNode, params: JsonNode): Future[string]
   except CatchableError as e:
     return newErrorResponse(id, -32603, "Hover failed: " & e.msg)
 
+proc handle_text_document_references*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
+  try:
+    let text_doc = params["textDocument"]
+    let position = params["position"]
+    let context = params.getOrDefault("context")
+    let uri = text_doc["uri"].getStr()
+    let line = position["line"].getInt()
+    let character = position["character"].getInt()
+
+    # Check if we should include declaration
+    var includeDeclaration = true
+    if context != nil and context.hasKey("includeDeclaration"):
+      includeDeclaration = context["includeDeclaration"].getBool()
+
+    if lsp_config.trace:
+      echo "LSP References requested for: ", uri, " at ", line, ":", character
+
+    # Find all references to the symbol at cursor
+    let references = findReferencesAtPosition(uri, line, character, includeDeclaration)
+
+    # Convert to LSP Location array
+    var resultArray = newJArray()
+    for loc in references:
+      resultArray.add(%*{
+        "uri": loc.uri,
+        "range": %*{
+          "start": %*{
+            "line": loc.range.start.line,
+            "character": loc.range.start.character
+          },
+          "end": %*{
+            "line": loc.range.finish.line,
+            "character": loc.range.finish.character
+          }
+        }
+      })
+
+    return newResponse(id, resultArray)
+
+  except CatchableError as e:
+    return newErrorResponse(id, -32603, "References failed: " & e.msg)
+
 proc handle_workspace_symbol*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
     if lsp_config.trace:
@@ -336,6 +378,8 @@ proc handle_lsp_request*(request_text: string): Future[string] {.async.} =
         return await handle_text_document_definition(id, params)
       of "textDocument/hover":
         return await handle_text_document_hover(id, params)
+      of "textDocument/references":
+        return await handle_text_document_references(id, params)
       of "workspace/symbol":
         return await handle_workspace_symbol(id, params)
       else:
@@ -369,6 +413,7 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
         },
         definitionProvider: %*true,
         hoverProvider: %*true,
+        referencesProvider: %*true,
         workspaceSymbolProvider: %*true
       )
     )

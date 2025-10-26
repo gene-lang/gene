@@ -6,12 +6,18 @@ import ../types, ../parser
 import ./types
 
 type
+  SymbolReference* = object
+    name*: string
+    location*: Location
+    isDefinition*: bool  # True if this is the definition, false if usage
+
   ParsedDocument* = ref object
     uri*: string
     version*: int
     content*: string
     ast*: seq[Value]  # Parsed AST nodes
-    symbols*: seq[SymbolInfo]  # Extracted symbols
+    symbols*: seq[SymbolInfo]  # Extracted symbols (definitions)
+    references*: seq[SymbolReference]  # All symbol references (definitions + usages)
     diagnostics*: seq[Diagnostic]  # Parse errors and warnings
     parseError*: bool  # Whether parsing failed
 
@@ -90,6 +96,7 @@ proc parseDocument*(uri: string, content: string, version: int): ParsedDocument 
     content: content,
     ast: @[],
     symbols: @[],
+    references: @[],
     diagnostics: @[],
     parseError: false
   )
@@ -263,11 +270,77 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
     # Other value types don't contain symbols
     discard
 
+proc extractReferencesFromValue(value: Value, uri: string, references: var seq[SymbolReference], depth: int = 0) =
+  ## Recursively extract all symbol references (definitions and usages)
+  if value.is_nil or depth > 10:
+    return
+
+  case value.kind:
+  of VkSymbol:
+    # This is a symbol reference (could be usage or definition)
+    let (line, col) = getPositionFromValue(value)
+    if line > 0:  # Only track if we have position info
+      references.add(SymbolReference(
+        name: value.str,
+        location: Location(
+          uri: uri,
+          range: Range(
+            start: Position(line: line, character: col),
+            finish: Position(line: line, character: col + value.str.len)
+          )
+        ),
+        isDefinition: false  # Will be marked as definition later if it is one
+      ))
+
+  of VkGene:
+    let gene = value.gene
+    if gene.type.kind == VkSymbol:
+      let type_name = gene.type.str
+
+      # Mark definition references
+      case type_name:
+      of "var", "let", "const", "fn", "fnx", "class", "module", "ns", "namespace":
+        if gene.children.len >= 1:
+          let name_val = gene.children[0]
+          if name_val.kind == VkSymbol:
+            let (line, col) = getPositionFromValue(name_val)
+            if line > 0:
+              # This is a definition
+              references.add(SymbolReference(
+                name: name_val.str,
+                location: Location(
+                  uri: uri,
+                  range: Range(
+                    start: Position(line: line, character: col),
+                    finish: Position(line: line, character: col + name_val.str.len)
+                  )
+                ),
+                isDefinition: true
+              ))
+      else:
+        discard
+
+    # Recursively process children
+    for child in gene.children:
+      extractReferencesFromValue(child, uri, references, depth + 1)
+
+  of VkVector:
+    for elem in value.ref.arr:
+      extractReferencesFromValue(elem, uri, references, depth + 1)
+
+  else:
+    discard
+
 proc extractSymbols*(doc: ParsedDocument) =
   ## Extract symbols from parsed AST
   doc.symbols = @[]
   for node in doc.ast:
     extractSymbolsFromValue(node, doc.uri, doc.symbols)
+
+  # Also extract all references
+  doc.references = @[]
+  for node in doc.ast:
+    extractReferencesFromValue(node, doc.uri, doc.references)
 
 proc getDocument*(uri: string): ParsedDocument =
   ## Get a document from cache
@@ -317,6 +390,33 @@ proc findSymbolAtPosition*(uri: string, line: int, character: int): SymbolInfo =
       return symbol
 
   return nil
+
+proc findReferencesAtPosition*(uri: string, line: int, character: int, includeDeclaration: bool = true): seq[Location] =
+  ## Find all references to the symbol at the given position
+  result = @[]
+
+  let doc = getDocument(uri)
+  if doc == nil:
+    return
+
+  # First, find what symbol is at this position
+  var target_name = ""
+  for reference in doc.references:
+    let rng = reference.location.range
+    if line == rng.start.line:
+      if character >= rng.start.character and character <= rng.finish.character:
+        target_name = reference.name
+        break
+
+  if target_name.len == 0:
+    return
+
+  # Now find all references to this symbol
+  for reference in doc.references:
+    if reference.name == target_name:
+      # Include or exclude declaration based on parameter
+      if includeDeclaration or not reference.isDefinition:
+        result.add(reference.location)
 
 proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[CompletionItem] =
   ## Get completion items at a specific position
