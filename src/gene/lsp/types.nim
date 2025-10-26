@@ -59,6 +59,7 @@ type
     ckClass
     ckModule
     ckProperty
+    ckKeyword
 
   CompletionItem* = ref object
     label*: string

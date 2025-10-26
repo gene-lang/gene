@@ -2,7 +2,7 @@
 
 import asyncdispatch, json, strutils, net, asyncnet, tables, os
 import ../types
-import ./types
+import ./types, ./document
 
 # LSP Server Configuration
 type
@@ -89,11 +89,24 @@ proc handle_text_document_did_open*(id: JsonNode, params: JsonNode): Future[stri
   try:
     let text_doc = params["textDocument"]
     let uri = text_doc["uri"].getStr()
+    let content = text_doc["text"].getStr()
+    let version = text_doc.getOrDefault("version").getInt(0)
 
     if lsp_config.trace:
-      echo "LSP Document opened: ", uri
+      echo "LSP Document opened: ", uri, " (version ", version, ")"
 
-    # TODO: Parse Gene document and update symbols
+    # Parse the document and cache it
+    let doc = updateDocument(uri, content, version)
+
+    if lsp_config.trace:
+      echo "  Parsed ", doc.ast.len, " top-level forms"
+      if doc.diagnostics.len > 0:
+        echo "  Found ", doc.diagnostics.len, " diagnostics"
+
+    # Send diagnostics to client if any
+    if doc.diagnostics.len > 0:
+      # TODO: Send diagnostics as a notification
+      discard
 
     return newResponse(id, newJNull())
 
@@ -108,6 +121,9 @@ proc handle_text_document_did_close*(id: JsonNode, params: JsonNode): Future[str
     if lsp_config.trace:
       echo "LSP Document closed: ", uri
 
+    # Remove document from cache
+    removeDocument(uri)
+
     return newResponse(id, newJNull())
 
   except CatchableError as e:
@@ -117,12 +133,25 @@ proc handle_text_document_did_change*(id: JsonNode, params: JsonNode): Future[st
   try:
     let text_doc = params["textDocument"]
     let uri = text_doc["uri"].getStr()
+    let version = text_doc.getOrDefault("version").getInt(0)
     let content_changes = params["contentChanges"]
 
     if lsp_config.trace:
-      echo "LSP Document changed: ", uri, " changes: ", $content_changes.len
+      echo "LSP Document changed: ", uri, " (version ", version, "), changes: ", content_changes.len
 
-    # TODO: Update document content and reparse
+    # For full document sync (change = 1), we get the full text
+    if content_changes.len > 0:
+      let change = content_changes[0]
+      if change.hasKey("text"):
+        let new_content = change["text"].getStr()
+
+        # Reparse the document
+        let doc = updateDocument(uri, new_content, version)
+
+        if lsp_config.trace:
+          echo "  Reparsed ", doc.ast.len, " top-level forms"
+          if doc.diagnostics.len > 0:
+            echo "  Found ", doc.diagnostics.len, " diagnostics"
 
     return newResponse(id, newJNull())
 
@@ -134,14 +163,28 @@ proc handle_text_document_completion*(id: JsonNode, params: JsonNode): Future[st
     let text_doc = params["textDocument"]
     let position = params["position"]
     let uri = text_doc["uri"].getStr()
+    let line = position["line"].getInt()
+    let character = position["character"].getInt()
 
     if lsp_config.trace:
-      echo "LSP Completion requested for: ", uri, " at position: ", $position
+      echo "LSP Completion requested for: ", uri, " at ", line, ":", character
 
-    # TODO: Implement actual completion logic
+    # Get completions from document parser
+    let completions = getCompletionsAtPosition(uri, line, character)
+
+    # Convert to LSP completion items
+    var items = newJArray()
+    for comp in completions:
+      items.add(%*{
+        "label": comp.label,
+        "kind": comp.kind.int,
+        "detail": comp.detail,
+        "documentation": comp.documentation
+      })
+
     let resultData = %*{
       "isIncomplete": false,
-      "items": @[]
+      "items": items
     }
 
     return newResponse(id, resultData)
