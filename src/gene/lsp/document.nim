@@ -61,29 +61,8 @@ proc toJson*(diag: Diagnostic): JsonNode =
   if diag.code.len > 0:
     result["code"] = %diag.code
 
-# Helper to get position from Gene node
-proc getPosition*(gene: ptr Gene): tuple[line: int, col: int] =
-  ## Extract line and column from gene props (using internal keys)
-  result = (line: 0, col: 0)
-
-  let line_key = "__line__".to_key()
-  let col_key = "__col__".to_key()
-
-  if gene.props.hasKey(line_key):
-    let line_val = gene.props[line_key]
-    if line_val.kind == VkInt:
-      result.line = line_val.to_int()
-
-  if gene.props.hasKey(col_key):
-    let col_val = gene.props[col_key]
-    if col_val.kind == VkInt:
-      result.col = col_val.to_int()
-
-proc getPositionFromValue*(value: Value): tuple[line: int, col: int] =
-  ## Extract position from a Value (if it's a Gene)
-  result = (line: 0, col: 0)
-  if value.kind == VkGene:
-    result = getPosition(value.gene)
+# Position tracking removed - LSP features will work without exact positions
+# Symbols will be tracked by name only, not by exact line/column
 
 # Forward declaration
 proc extractSymbols*(doc: ParsedDocument)
@@ -103,8 +82,7 @@ proc parseDocument*(uri: string, content: string, version: int): ParsedDocument 
 
   # Try to parse the document
   try:
-    # Enable position tracking for LSP
-    var parser = new_parser(track_positions = true)
+    var parser = new_parser()
     result.ast = parser.read_all(content)
 
     # If parsing succeeded, extract symbols
@@ -148,7 +126,6 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
   case value.kind:
   of VkGene:
     let gene = value.gene
-    let (line, col) = getPosition(gene)
 
     if gene.type.kind == VkSymbol:
       let type_name = gene.type.str
@@ -159,19 +136,14 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
-            # Get position of the name symbol if available
-            let (name_line, name_col) = getPositionFromValue(name_val)
-            let actual_line = if name_line > 0: name_line else: line
-            let actual_col = if name_col > 0: name_col else: col
-
             symbols.add(SymbolInfo(
               name: name_val.str,
               kind: skVariable,
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: actual_line, character: actual_col),
-                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
                 )
               ),
               details: "variable"
@@ -182,10 +154,6 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 2:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
-            let (name_line, name_col) = getPositionFromValue(name_val)
-            let actual_line = if name_line > 0: name_line else: line
-            let actual_col = if name_col > 0: name_col else: col
-
             var signature = name_val.str & " "
             # Try to get argument list
             if gene.children.len >= 2 and gene.children[1].kind == VkVector:
@@ -203,8 +171,8 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: actual_line, character: actual_col),
-                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
                 )
               ),
               details: signature
@@ -215,18 +183,14 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
-            let (name_line, name_col) = getPositionFromValue(name_val)
-            let actual_line = if name_line > 0: name_line else: line
-            let actual_col = if name_col > 0: name_col else: col
-
             symbols.add(SymbolInfo(
               name: name_val.str,
               kind: skClass,
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: actual_line, character: actual_col),
-                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
                 )
               ),
               details: "class"
@@ -241,18 +205,14 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
-            let (name_line, name_col) = getPositionFromValue(name_val)
-            let actual_line = if name_line > 0: name_line else: line
-            let actual_col = if name_col > 0: name_col else: col
-
             symbols.add(SymbolInfo(
               name: name_val.str,
               kind: skModule,
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: actual_line, character: actual_col),
-                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
                 )
               ),
               details: "module"
@@ -279,19 +239,18 @@ proc extractReferencesFromValue(value: Value, uri: string, references: var seq[S
   case value.kind:
   of VkSymbol:
     # This is a symbol reference (could be usage or definition)
-    let (line, col) = getPositionFromValue(value)
-    if line > 0:  # Only track if we have position info
-      references.add(SymbolReference(
-        name: value.str,
-        location: Location(
-          uri: uri,
-          range: Range(
-            start: Position(line: line, character: col),
-            finish: Position(line: line, character: col + value.str.len)
-          )
-        ),
-        isDefinition: false  # Will be marked as definition later if it is one
-      ))
+    # Without position tracking, we just track by name
+    references.add(SymbolReference(
+      name: value.str,
+      location: Location(
+        uri: uri,
+        range: Range(
+          start: Position(line: 0, character: 0),
+          finish: Position(line: 0, character: 0)
+        )
+      ),
+      isDefinition: false  # Will be marked as definition later if it is one
+    ))
 
   of VkGene:
     let gene = value.gene
@@ -304,20 +263,18 @@ proc extractReferencesFromValue(value: Value, uri: string, references: var seq[S
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
-            let (line, col) = getPositionFromValue(name_val)
-            if line > 0:
-              # This is a definition
-              references.add(SymbolReference(
-                name: name_val.str,
-                location: Location(
-                  uri: uri,
-                  range: Range(
-                    start: Position(line: line, character: col),
-                    finish: Position(line: line, character: col + name_val.str.len)
-                  )
-                ),
-                isDefinition: true
-              ))
+            # This is a definition
+            references.add(SymbolReference(
+              name: name_val.str,
+              location: Location(
+                uri: uri,
+                range: Range(
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
+                )
+              ),
+              isDefinition: true
+            ))
       else:
         discard
 

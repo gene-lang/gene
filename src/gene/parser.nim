@@ -34,7 +34,6 @@ type
     error*: ParseErrorKind
     # references*: References
     document_props_done*: bool  # flag to tell whether we have read document properties
-    track_positions*: bool  # When true, store line/col info for LSP/compiler
 
   TokenKind* = enum
     TkError
@@ -204,7 +203,7 @@ proc new_parser*(options: ParseOptions): Parser =
     # references: References(),
   )
 
-proc new_parser*(track_positions: bool = false): Parser =
+proc new_parser*(): Parser =
   if parser_config == nil or not parser_config.initialized:
     init()
 
@@ -212,7 +211,6 @@ proc new_parser*(track_positions: bool = false): Parser =
     # document: Document(),
     options: default_options(),
     # references: References(),
-    track_positions: track_positions,
   )
 
 proc non_constituent(c: char): bool =
@@ -844,29 +842,18 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
   result.list = list
 
 proc add_line_col(self: var Parser, gene: ptr Gene) =
-  # Only store position info when track_positions is enabled (for LSP/compiler)
-  if self.track_positions and gene != nil:
-    let line = self.line_number
-    let col = self.get_col_number(self.bufpos)
-    # Use special internal keys that won't conflict with user props
-    gene.props["__line__".to_key()] = line.to_value()
-    gene.props["__col__".to_key()] = col.to_value()
+  # Position tracking removed for simplicity
+  # Compiler errors will report what context they have available
+  discard
 
 proc read_gene(self: var Parser): Value {.gcsafe.} =
   var gene = new_gene()
   #echo "line ", getCurrentLine(p), "lineno: ", p.line_number, " col: ", getColNumber(p, p.bufpos)
   #echo $get_current_line(p) & " LINENO(" & $p.line_number & ")"
-
-  # Add position info first (if tracking enabled)
   self.add_line_col(gene)
-
   gene.type = self.read_gene_type()
   var result_list = self.read_delimited_list(')', true)
-
-  # Merge user props from delimited list (don't overwrite position info)
-  for k, v in result_list.map:
-    gene.props[k] = v
-
+  gene.props = result_list.map
   gene.children = result_list.list
   if not gene.type.is_nil() and gene.type.kind == VkSymbol:
     let key = gene.type.str.to_key()
