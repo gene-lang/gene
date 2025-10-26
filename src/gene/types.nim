@@ -1153,8 +1153,8 @@ var THREADS* {.threadvar.}: array[0..MAX_THREADS, ThreadMetadata]
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 
-# Flag to track if gene namespace has been initialized
-var gene_namespace_initialized* = false
+# Flag to track if gene namespace has been initialized (thread-local for worker threads)
+var gene_namespace_initialized* {.threadvar.}: bool
 
 randomize()
 

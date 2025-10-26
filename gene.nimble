@@ -55,6 +55,7 @@ task test, "Runs the test suite":
   # exec "nim c -r tests/test_serdes.nim"
   exec "nim c -r tests/test_native.nim"
   exec "nim c -r tests/test_ext.nim"
+  exec "nim c -r tests/test_thread.nim"
   # exec "nim c -r tests/test_metaprogramming.nim"
   # exec "nim c -r tests/test_array_like.nim"
   # exec "nim c -r tests/test_map_like.nim"

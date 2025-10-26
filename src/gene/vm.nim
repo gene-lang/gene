@@ -17,8 +17,10 @@ const DEBUG_VM = false
 
 # ========== Threading Support ==========
 
-# Forward declaration (defined later in this file)
+# Forward declarations
 proc exec*(self: VirtualMachine): Value
+proc register_io_functions*()  # From vm/core
+proc init_gene_namespace*()     # From vm/core
 
 var next_message_id {.threadvar.}: int
 
@@ -26,8 +28,8 @@ var next_message_id {.threadvar.}: int
 proc init_vm_for_thread(thread_id: int) =
   ## Initialize VM for a worker thread
   init_app_and_vm()
-  # TODO: Register IO functions (need to fix circular import issue)
-  #register_io_functions()
+  init_gene_namespace()  # Register println, print, and other core functions
+  register_io_functions()
 
   # Add $main_thread variable to global namespace
   let main_thread_ref = types.Thread(
@@ -237,8 +239,6 @@ template get_value_class(val: Value): Class =
       nil
 
 # Forward declarations from vm/core
-proc init_gene_namespace*()
-proc register_io_functions*()
 proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =

@@ -1,0 +1,24 @@
+# Basic Threading Example
+# Demonstrates spawning threads and running code concurrently
+# Shows println working from both main thread and worker threads
+
+(println "Main thread started")
+
+# Spawn a child thread that sets its own variables
+(spawn
+  (var child_thread_var 1)
+  (var another_var 2)
+  (var sum (+ child_thread_var another_var))
+  (println "In child thread 1:" sum)
+))
+
+# Spawn multiple threads
+(spawn
+  (println "In child thread 2")
+)
+
+(println "Main thread 2")
+# Give the child threads time to execute
+(sleep 100)
+
+(println "Main thread 3")
