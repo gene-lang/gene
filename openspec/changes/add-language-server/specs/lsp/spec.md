@@ -20,13 +20,15 @@
 - ✅ Go-to-definition navigation
 - ⚠️ Incremental parsing (full reparse on changes)
 
-### Phase 3: Advanced Features (PLANNED)
-- ❌ Code completion with context awareness
-- ❌ Go to definition
-- ❌ Find references
-- ❌ Hover information
-- ❌ Workspace symbols
+### Phase 3: Advanced Features (CORE COMPLETE)
+- ✅ Find references (all usages in document)
+- ✅ Workspace symbols (project-wide search)
+- ✅ Reference tracking (definitions + usages)
+- ⚠️ Code completion (basic, needs scope awareness)
 - ❌ Document formatting
+- ❌ Rename refactoring
+- ❌ Signature help
+- ❌ Code actions
 
 ## ADDED Requirements
 

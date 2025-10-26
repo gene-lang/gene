@@ -26,14 +26,16 @@ Gene now includes a Language Server Protocol (LSP) implementation that provides 
 - ✅ **Go-to-Definition**: Navigate to symbol definition using positions
 - ⚠️ **Incremental Parsing**: Full document reparse on changes (optimization needed)
 
-### Phase 3: Advanced Features 📋 PLANNED
-- ❌ **Code Completion**: Context-aware symbol completion with ranking
-- ❌ **Go to Definition**: Navigate to symbol definitions across files
-- ❌ **Find References**: Locate all symbol usages in workspace
-- ❌ **Hover Information**: Display type information and documentation
-- ❌ **Workspace Symbols**: Project-wide symbol search
+### Phase 3: Advanced Features ✅ CORE COMPLETE
+- ✅ **Find References**: Locate all usages of a symbol in document
+- ✅ **Workspace Symbols**: Project-wide symbol search across all documents
+- ✅ **Reference Tracking**: Tracks both definitions and usages
+- ⚠️ **Scope-Aware Completion**: Basic completion (needs scope analysis)
 - ❌ **Document Formatting**: Automatic S-expression formatting
 - ❌ **Rename Symbol**: Safe refactoring with scope awareness
+- ❌ **Signature Help**: Function parameter hints while typing
+- ❌ **Code Actions**: Quick fixes and refactorings
+- ❌ **Incremental Parsing**: Optimize for large files
 
 ## Usage
 
@@ -153,15 +155,18 @@ src/gene/lsp/types.nim (Protocol data structures)
 - ✅ Reports parse errors as diagnostics in real-time
 - ✅ Shows position-aware hover (symbol at cursor)
 - ✅ Go-to-definition navigation
+- ✅ Find-references (all usages of a symbol)
+- ✅ Workspace symbols (project-wide search)
+- ✅ Reference tracking (definitions + usages)
 - ✅ Integrated into main `gene` CLI (no separate binary needed)
 
-**What's Next (Phase 3):**
-- Add find-references functionality
+**What's Next (Phase 4):**
 - Implement scope-aware completion (local variables, imports)
 - Add incremental parsing for better performance
 - Implement document formatting (S-expression pretty-printing)
-- Add rename refactoring
-- Implement workspace-wide symbol search
+- Add rename refactoring with scope awareness
+- Implement signature help (parameter hints)
+- Add code actions (quick fixes)
 
 ### Next Steps
 
