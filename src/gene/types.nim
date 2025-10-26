@@ -2150,8 +2150,12 @@ proc to_gene_value*(v: ptr Gene): Value {.inline.} =
 
 proc `$`*(self: ptr Gene): string =
   result = "(" & $self.type
+  # Filter out internal position tracking props when printing
+  let line_key = "line".to_key()
+  let col_key = "col".to_key()
   for k, v in self.props:
-    result &= " ^" & get_symbol(k.int64) & " " & $v
+    if k != line_key and k != col_key:
+      result &= " ^" & get_symbol(k.int64) & " " & $v
   for child in self.children:
     result &= " " & $child
   result &= ")"
