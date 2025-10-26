@@ -636,16 +636,24 @@ proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     else:
       raise new_exception(types.Exception, "sleep_async requires a number (milliseconds)")
 
-  # Create a Gene Future
-  let gene_future_val = new_future_value()
-  let gene_future = gene_future_val.ref.future
+  # Create a Nim async future using sleepAsync
+  # sleepAsync returns Future[void], we need to convert it to Future[Value]
+  proc sleep_wrapper(): Future[Value] {.async.} =
+    await sleepAsync(duration_ms)
+    return NIL  # Return NIL as the value
 
-  # For now, perform synchronous sleep and complete immediately
-  # In a real implementation, this would use async timers
-  sleep(duration_ms)
-  gene_future.complete(NIL)
+  let nim_future = sleep_wrapper()
 
-  return gene_future_val
+  # Wrap it in a Gene Future
+  let gene_future_obj = new_future(nim_future)
+  let gene_future_val = new_ref(VkFuture)
+  gene_future_val.future = gene_future_obj
+  let result = gene_future_val.to_ref_value()
+
+  # Add to VM's pending futures list so it gets polled
+  vm.pending_futures.add(gene_future_obj)
+
+  return result
 
 # I/O functions
 proc file_read(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =

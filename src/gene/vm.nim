@@ -4318,8 +4318,48 @@ proc exec*(self: VirtualMachine): Value =
               # No handler, raise Nim exception
               raise new_exception(types.Exception, "Gene exception: " & $future.value)
           of FsPending:
-            # For now, we don't support actual async operations
-            not_allowed("Cannot await a pending future in pseudo-async mode")
+            # Poll event loop until future completes
+            # This is the polling-based await implementation (Phase 2)
+            while future.state == FsPending:
+              # Poll the event loop to process async operations
+              try:
+                poll(0)  # Non-blocking poll
+
+                # Update all pending futures
+                var i = 0
+                while i < self.pending_futures.len:
+                  let pending_future = self.pending_futures[i]
+                  update_future_from_nim(self, pending_future)
+
+                  # If future completed, remove from pending list
+                  if pending_future.state != FsPending:
+                    self.pending_futures.delete(i)
+                  else:
+                    i.inc()
+              except ValueError:
+                discard  # No async operations pending
+
+            # Future has completed, handle the result
+            case future.state:
+              of FsSuccess:
+                self.frame.push(future.value)
+              of FsFailure:
+                # Re-throw the exception
+                self.current_exception = future.value
+                if self.exception_handlers.len > 0:
+                  let handler = self.exception_handlers[^1]
+                  self.cu = handler.cu
+                  self.pc = handler.catch_pc
+                  if self.pc < self.cu.instructions.len:
+                    inst = self.cu.instructions[self.pc].addr
+                  else:
+                    raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
+                  continue
+                else:
+                  raise new_exception(types.Exception, "Gene exception: " & $future.value)
+              of FsPending:
+                # Should not happen
+                not_allowed("Future still pending after polling")
         {.pop.}
 
       of IkSpawnThread:
