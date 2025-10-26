@@ -1,5 +1,4 @@
 import dynlib, strutils
-
 import ../types
 
 type

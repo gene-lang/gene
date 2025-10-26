@@ -201,3 +201,1874 @@ proc init_core_namespace*(global_ns: Namespace) =
   vm_ns["print_stack".to_key()] = core_vm_print_stack.to_value()
   vm_ns["print_instructions".to_key()] = core_vm_print_instructions.to_value()
   global_ns["vm".to_key()] = vm_ns.to_value()
+
+# ===== Content from vm/core.nim merged below =====
+
+import strutils, re, times
+import std/[json, tables, osproc]
+import ../stdlib/math as stdlib_math
+import ../stdlib/io as stdlib_io
+import ../stdlib/system as stdlib_system
+
+const
+  REGEX_FLAG_IGNORE_CASE = 0x1'u8
+  REGEX_FLAG_MULTILINE = 0x2'u8
+
+type RegexCacheKey = tuple[pattern: string, flags: uint8]
+
+var regex_cache {.threadvar.}: Table[RegexCacheKey, Regex]
+var regex_cache_initialized {.threadvar.}: bool
+
+proc build_regex_flags(ignore_case: bool, multiline: bool): uint8 {.inline.} =
+  result = 0
+  if ignore_case:
+    result = result or REGEX_FLAG_IGNORE_CASE
+  if multiline:
+    result = result or REGEX_FLAG_MULTILINE
+
+proc get_compiled_regex(pattern: string, flags: uint8): Regex =
+  if not regex_cache_initialized:
+    regex_cache = init_table[RegexCacheKey, Regex]()
+    regex_cache_initialized = true
+  let key = (pattern, flags)
+  if not regex_cache.hasKey(key):
+    var opts: set[RegexFlag] = {}
+    if (flags and REGEX_FLAG_IGNORE_CASE) != 0:
+      opts.incl(reIgnoreCase)
+    if (flags and REGEX_FLAG_MULTILINE) != 0:
+      opts.incl(reMultiLine)
+    regex_cache[key] = re(pattern, opts)
+  regex_cache[key]
+
+proc extract_regex(value: Value, pattern: var string, flags: var uint8) =
+  case value.kind
+  of VkRegex:
+    pattern = value.ref.regex_pattern
+    flags = value.ref.regex_flags
+  of VkString:
+    pattern = value.str
+    flags = 0
+  else:
+    not_allowed("Expected a regex or string pattern")
+
+proc parse_json_node(node: json.JsonNode): Value {.gcsafe.}
+
+proc parse_json_node(node: json.JsonNode): Value {.gcsafe.} =
+  case node.kind
+  of json.JNull:
+    return NIL
+  of json.JBool:
+    return node.bval.to_value()
+  of json.JInt:
+    return int64(node.num).to_value()
+  of json.JFloat:
+    return node.fnum.to_value()
+  of json.JString:
+    return node.str.to_value()
+  of json.JObject:
+    var map_table = initTable[Key, Value]()
+    for k, v in node.fields:
+      map_table[to_key(k)] = parse_json_node(v)
+    return new_map_value(map_table)
+  of json.JArray:
+    let arr_ref = new_ref(VkArray)
+    for elem in node.elems:
+      arr_ref.arr.add(parse_json_node(elem))
+    return arr_ref.to_ref_value()
+
+proc parse_json_string(json_str: string): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let parsed = json.parseJson(json_str)
+    return parse_json_node(parsed)
+
+proc value_to_json(val: Value): string {.gcsafe.} =
+  case val.kind
+  of VkNil:
+    result = "null"
+  of VkBool:
+    result = if val.to_bool: "true" else: "false"
+  of VkInt:
+    result = $val.to_int
+  of VkFloat:
+    result = $val.to_float
+  of VkString:
+    result = "\"" & json.escapeJson(val.str) & "\""
+  of VkSymbol:
+    result = "\"" & json.escapeJson(val.str) & "\""
+  of VkArray, VkVector:
+    var items: seq[string] = @[]
+    for item in val.ref.arr:
+      items.add(value_to_json(item))
+    result = "[" & items.join(",") & "]"
+  of VkMap:
+    var items: seq[string] = @[]
+    for k, v in val.ref.map:
+      let key_val = cast[Value](k)
+      let key_str =
+        case key_val.kind
+        of VkSymbol, VkString:
+          key_val.str
+        of VkInt:
+          $key_val.to_int
+        of VkFloat:
+          $key_val.to_float
+        else:
+          $key_val
+      items.add("\"" & json.escapeJson(key_str) & "\":" & value_to_json(v))
+    result = "{" & items.join(",") & "}"
+  else:
+    result = "\"" & json.escapeJson($val) & "\""
+
+# Show the code
+# JIT the code (create a temporary block, reuse the frame)
+# Execute the code
+# Show the result
+proc debug(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  todo()
+
+proc println(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  var s = ""
+  for i in 0..<get_positional_count(arg_count, has_keyword_args):
+    let k = get_positional_arg(args, i, has_keyword_args)
+    s &= k.str_no_quotes()
+    if i < get_positional_count(arg_count, has_keyword_args) - 1:
+      s &= " "
+  echo s
+
+proc print(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  var s = ""
+  for i in 0..<get_positional_count(arg_count, has_keyword_args):
+    let k = get_positional_arg(args, i, has_keyword_args)
+    s &= k.str_no_quotes()
+    if i < get_positional_count(arg_count, has_keyword_args) - 1:
+      s &= " "
+  stdout.write(s)
+
+proc gene_assert(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count > 0:
+    let condition = get_positional_arg(args, 0, has_keyword_args)
+    if not condition.to_bool():
+      var msg = "Assertion failed"
+      if arg_count > 1:
+        msg = get_positional_arg(args, 1, has_keyword_args).str
+      raise new_exception(types.Exception, msg)
+
+proc base64_encode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "base64_encode requires a string argument")
+
+  let input = get_positional_arg(args, 0, has_keyword_args)
+  if input.kind != VkString:
+    raise new_exception(types.Exception, "base64_encode requires a string argument")
+
+  let encoded = base64.encode(input.str)
+  return encoded.to_value()
+
+proc base64_decode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "base64_decode requires a string argument")
+
+  let input = get_positional_arg(args, 0, has_keyword_args)
+  if input.kind != VkString:
+    raise new_exception(types.Exception, "base64_decode requires a string argument")
+
+  try:
+    let decoded = base64.decode(input.str)
+    return decoded.to_value()
+  except ValueError as e:
+    raise new_exception(types.Exception, "Invalid base64 string: " & e.msg)
+
+proc trace_start(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  vm.trace = true
+  return NIL
+
+proc trace_end(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  vm.trace = false
+  return NIL
+
+proc print_stack(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  var s = "Stack: "
+  for i, reg in vm.frame.stack:
+    if i > 0:
+      s &= ", "
+    if i == vm.frame.stack_index.int:
+      s &= "=> "
+    s &= $vm.frame.stack[i]
+  echo s
+  return NIL
+
+proc print_instructions(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  echo vm.cu
+  return NIL
+
+proc to_ctor(node: Value): Function =
+  let name = "ctor"
+
+  let matcher = new_arg_matcher()
+  matcher.parse(node.gene.children[0])
+  matcher.check_hint()
+
+  var body: seq[Value] = @[]
+  for i in 1..<node.gene.children.len:
+    body.add node.gene.children[i]
+
+  # body = wrap_with_try(body)
+  result = new_fn(name, matcher, body)
+
+proc class_ctor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    not_allowed("class_ctor requires arguments")
+
+  let args_gene = create_gene_args(args, arg_count, has_keyword_args)
+  let fn = to_ctor(args_gene)
+  fn.ns = vm.frame.ns
+  let r = new_ref(VkFunction)
+  r.fn = fn
+  # Get class from first argument (bound method self)
+  let x = args_gene.gene.type.ref.bound_method.self
+  if x.kind == VkClass:
+    x.ref.class.constructor = r.to_ref_value()
+  else:
+    not_allowed("Constructor can only be defined on classes")
+
+proc class_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    not_allowed("class_fn requires arguments")
+
+  let args_gene = create_gene_args(args, arg_count, has_keyword_args)
+  let x = args_gene.gene.type.ref.bound_method.self
+  # define a fn like method on a class
+  let fn = to_function(args_gene)
+
+  let r = new_ref(VkFunction)
+  r.fn = fn
+  let m = Method(
+     name: fn.name,
+    callable: r.to_ref_value(),
+  )
+  case x.kind:
+  of VkClass:
+    let class = x.ref.class
+    m.class = class
+    fn.ns = class.ns
+    class.methods[m.name.to_key()] = m
+  # of VkMixin:
+  #   fn.ns = x.mixin.ns
+  #   x.mixin.methods[m.name] = m
+  else:
+    not_allowed()
+
+proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if arg_count < 1:
+      not_allowed("vm_compile requires an argument")
+
+    let compiler = Compiler(output: new_compilation_unit())
+    let scope_tracker = vm.frame.caller_frame.scope.tracker
+    # compiler.output.scope_tracker = scope_tracker
+    compiler.scope_trackers.add(scope_tracker)
+    compiler.compile(get_positional_arg(args, 0, has_keyword_args))
+    let instrs = new_ref(VkArray)
+    for instr in compiler.output.instructions:
+      instrs.arr.add instr.to_value()
+    result = instrs.to_ref_value()
+
+proc vm_push(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    not_allowed("vm_push requires an argument")
+  new_instr(IkPushValue, get_positional_arg(args, 0, has_keyword_args))
+
+proc vm_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  new_instr(IkAdd)
+
+proc current_ns(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  # Return the current namespace
+  let r = new_ref(VkNamespace)
+  r.ns = vm.frame.ns
+  result = r.to_ref_value()
+
+# vm_not function removed - now handled by IkNot instruction at compile time
+
+# vm_spread function removed - ... is now handled as compile-time keyword
+
+proc vm_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  # Parse Gene code from string
+  if arg_count != 1:
+    not_allowed("$parse expects exactly 1 argument")
+  let arg = get_positional_arg(args, 0, has_keyword_args)
+  case arg.kind:
+    of VkString:
+      let code = arg.str
+      # Use the actual Gene parser to parse the code
+      try:
+        let parsed = read_all(code)
+        if parsed.len > 0:
+          return parsed[0]
+        else:
+          return NIL
+      except:
+        # Fallback to simple parsing for basic literals
+        case code:
+          of "true":
+            return TRUE
+          of "false":
+            return FALSE
+          of "nil":
+            return NIL
+          else:
+            # Try to parse as number
+            try:
+              let int_val = parseInt(code)
+              return int_val.to_value()
+            except ValueError:
+              try:
+                let float_val = parseFloat(code)
+                return float_val.to_value()
+              except ValueError:
+                # Return as symbol for now
+                return code.to_symbol_value()
+    else:
+      not_allowed("$parse expects a string argument")
+
+proc vm_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  # $with sets self to the first argument and executes the body, returns the original value
+  if arg_count < 2:
+    not_allowed("$with expects at least 2 arguments")
+
+  let original_value = get_positional_arg(args, 0, has_keyword_args)
+  # Self is now managed through arguments, not frame field
+  # The compiler should handle passing the value as the first argument
+
+  # Execute the body (all arguments after the first)
+  for i in 1..<get_positional_count(arg_count, has_keyword_args):
+    discard # Body execution would happen during compilation/evaluation
+
+  return original_value
+
+proc vm_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  # $tap executes the body with self set to the first argument, returns the original value
+  if arg_count < 2:
+    not_allowed("$tap expects at least 2 arguments")
+
+  let original_value = get_positional_arg(args, 0, has_keyword_args)
+
+  # If second argument is a symbol, bind it to the value
+  var binding_name: string = ""
+  var body_start_index = 1
+  if arg_count > 2:
+    let second_arg = get_positional_arg(args, 1, has_keyword_args)
+    if second_arg.kind == VkSymbol:
+      binding_name = second_arg.str
+      body_start_index = 2
+
+  # Self is now managed through arguments
+  # The compiler should handle passing the value as the first argument
+
+  # Execute the body
+  for i in body_start_index..<get_positional_count(arg_count, has_keyword_args):
+    discard # Body execution would happen during compilation/evaluation
+
+  return original_value
+
+# String interpolation handler
+proc vm_str_interpolation(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  # #Str concatenates all arguments as strings
+  var result = ""
+  for i in 0..<get_positional_count(arg_count, has_keyword_args):
+    let child = get_positional_arg(args, i, has_keyword_args)
+    case child.kind:
+    of VkString:
+      result.add(child.str)
+    of VkInt:
+      result.add($child.int64)
+    of VkBool:
+      result.add(if child.bool: "true" else: "false")
+    of VkNil:
+      result.add("nil")
+    of VkChar:
+      result.add($child.char)
+    of VkFloat:
+      result.add($child.float)
+    else:
+      # For other types, use $ operator
+      result.add($child)
+
+  return result.to_value()
+
+proc vm_eval(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    # This function is not used - eval is handled by IkEval instruction
+    # The compiler generates IkEval instructions for each argument
+    not_allowed("vm_eval should not be called directly")
+
+# TODO: Implement while loop properly - needs compiler-level support like loop/if
+
+
+# Sleep functions
+proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "sleep requires 1 argument")
+
+  let duration_arg = get_positional_arg(args, 0, has_keyword_args)
+  var duration_ms: int
+
+  case duration_arg.kind:
+    of VkInt:
+      duration_ms = duration_arg.int64.int
+    of VkFloat:
+      duration_ms = (duration_arg.float64 * 1000).int
+    else:
+      raise new_exception(types.Exception, "sleep requires a number (milliseconds)")
+
+  # Use Nim's sleep function (takes milliseconds)
+  sleep(duration_ms)
+  return NIL
+
+proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "sleep_async requires 1 argument")
+
+  let duration_arg = get_positional_arg(args, 0, has_keyword_args)
+  var duration_ms: int
+
+  case duration_arg.kind:
+    of VkInt:
+      duration_ms = duration_arg.int64.int
+    of VkFloat:
+      duration_ms = (duration_arg.float64 * 1000).int
+    else:
+      raise new_exception(types.Exception, "sleep_async requires a number (milliseconds)")
+
+  # Create a Gene Future
+  let gene_future_val = new_future_value()
+  let gene_future = gene_future_val.ref.future
+
+  # For now, perform synchronous sleep and complete immediately
+  # In a real implementation, this would use async timers
+  sleep(duration_ms)
+  gene_future.complete(NIL)
+
+  return gene_future_val
+
+# I/O functions
+proc file_read(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "File/read requires 1 argument")
+
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  if path_arg.kind != VkString:
+    raise new_exception(types.Exception, "File/read requires a string path")
+
+  let path = path_arg.str
+  try:
+    let content = readFile(path)
+    return content.to_value()
+  except IOError as e:
+    raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
+
+proc file_write(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 2:
+    raise new_exception(types.Exception, "File/write requires 2 arguments")
+
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  let content_arg = get_positional_arg(args, 1, has_keyword_args)
+
+  if path_arg.kind != VkString:
+    raise new_exception(types.Exception, "File/write requires a string path")
+  if content_arg.kind != VkString:
+    raise new_exception(types.Exception, "File/write requires string content")
+
+  let path = path_arg.str
+  let content = content_arg.str
+
+  try:
+    writeFile(path, content)
+    return NIL
+  except IOError as e:
+    raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
+
+proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "File/read_async requires 1 argument")
+
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  if path_arg.kind != VkString:
+    raise new_exception(types.Exception, "File/read_async requires a string path")
+
+  let path = path_arg.str
+
+  # Create a Gene Future
+  let gene_future_val = new_future_value()
+  let gene_future = gene_future_val.ref.future
+
+  # For now, perform synchronous read and complete immediately
+  try:
+    let content = readFile(path)
+    gene_future.complete(content.to_value())
+  except IOError as e:
+    let error_msg = "Failed to read file '" & path & "': " & e.msg
+    gene_future.fail(error_msg.to_value())
+
+  return gene_future_val
+
+proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 2:
+    raise new_exception(types.Exception, "File/write_async requires 2 arguments")
+
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  let content_arg = get_positional_arg(args, 1, has_keyword_args)
+
+  if path_arg.kind != VkString:
+    raise new_exception(types.Exception, "File/write_async requires a string path")
+  if content_arg.kind != VkString:
+    raise new_exception(types.Exception, "File/write_async requires string content")
+
+  let path = path_arg.str
+  let content = content_arg.str
+
+  # Create a Gene Future
+  let gene_future_val = new_future_value()
+  let gene_future = gene_future_val.ref.future
+
+  # For now, perform synchronous write and complete immediately
+  try:
+    writeFile(path, content)
+    gene_future.complete(NIL)
+  except IOError as e:
+    let error_msg = "Failed to write file '" & path & "': " & e.msg
+    gene_future.fail(error_msg.to_value())
+
+  return gene_future_val
+
+proc register_io_functions*() =
+  # Get the io namespace that was created in init_app_and_vm
+  let io_key = "io".to_key()
+  if not App.app.gene_ns.ns.has_key(io_key):
+    return  # io namespace doesn't exist
+  
+  let io_val = App.app.gene_ns.ns[io_key]
+  if io_val.kind != VkNamespace:
+    return  # io is not a namespace
+  
+  let io_ns = io_val.ns
+  
+  # Add synchronous functions
+  var read_ref = new_ref(VkNativeFn)
+  read_ref.native_fn = file_read
+  io_ns["read".to_key()] = read_ref.to_ref_value()
+
+  var write_ref = new_ref(VkNativeFn)
+  write_ref.native_fn = file_write
+  io_ns["write".to_key()] = write_ref.to_ref_value()
+
+  # Add asynchronous functions
+  var read_async_ref = new_ref(VkNativeFn)
+  read_async_ref.native_fn = file_read_async
+  io_ns["read_async".to_key()] = read_async_ref.to_ref_value()
+
+  var write_async_ref = new_ref(VkNativeFn)
+  write_async_ref.native_fn = file_write_async
+  io_ns["write_async".to_key()] = write_async_ref.to_ref_value()
+
+proc init_gene_namespace*() =
+  if types.gene_namespace_initialized:
+    return
+  types.gene_namespace_initialized = true
+  # Initialize basic classes needed by get_class
+  var r: ptr Reference
+  
+  # object_class
+  let object_class = new_class("Object")
+  r = new_ref(VkClass)
+  r.class = object_class
+  App.app.object_class = r.to_ref_value()
+
+  proc display_value(val: Value; topLevel: bool): string {.gcsafe.}
+  proc value_class_value(val: Value): Value =
+    case val.kind
+    of VkNil:
+      App.app.nil_class
+    of VkBool:
+      App.app.bool_class
+    of VkInt:
+      App.app.int_class
+    of VkFloat:
+      App.app.float_class
+    of VkChar:
+      App.app.char_class
+    of VkString:
+      App.app.string_class
+    of VkSymbol:
+      App.app.symbol_class
+    of VkComplexSymbol:
+      App.app.complex_symbol_class
+    of VkArray:
+      App.app.array_class
+    of VkMap:
+      App.app.map_class
+    of VkGene:
+      App.app.gene_class
+    of VkDate:
+      App.app.date_class
+    of VkDateTime:
+      App.app.datetime_class
+    of VkSet:
+      if App.app.set_class.kind == VkClass:
+        App.app.set_class
+      else:
+        App.app.object_class
+    of VkFuture:
+      if App.app.future_class.kind == VkClass:
+        App.app.future_class
+      else:
+        App.app.object_class
+    of VkGenerator:
+      if App.app.generator_class.kind == VkClass:
+        App.app.generator_class
+      else:
+        App.app.object_class
+    of VkNamespace:
+      App.app.namespace_class
+    of VkClass:
+      App.app.class_class
+    of VkInstance:
+      let class_ref = new_ref(VkClass)
+      class_ref.class = val.ref.instance_class
+      return class_ref.to_ref_value()
+    of VkSelector:
+      App.app.selector_class
+    else:
+      App.app.object_class
+
+  proc object_class_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return App.app.object_class
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    result = value_class_value(self_arg)
+
+  proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
+    case val.kind
+    of VkNil:
+      if topLevel:
+        ""
+      else:
+        "nil"
+    of VkString:
+      if topLevel:
+        val.str
+      else:
+        "\"" & val.str & "\""
+    of VkSymbol:
+      val.str
+    of VkBool:
+      if val == TRUE: "true" else: "false"
+    of VkInt:
+      $(to_int(val))
+    of VkFloat:
+      $(cast[float64](val))
+    of VkArray:
+      var parts: seq[string] = @[]
+      for item in val.ref.arr:
+        parts.add(display_value(item, false))
+      "[" & parts.join(" ") & "]"
+    of VkMap:
+      var parts: seq[string] = @[]
+      for k, v in val.ref.map:
+        let symbol_value = cast[Value](k)
+        let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+        let key_name = get_symbol_gcsafe(symbol_index.int)
+        parts.add("^" & key_name & " " & display_value(v, false))
+      "{" & parts.join(" ") & "}"
+    of VkGene:
+      var segments: seq[string] = @[]
+      if not val.gene.type.is_nil():
+        segments.add(display_value(val.gene.type, false))
+      for k, v in val.gene.props:
+        let symbol_value = cast[Value](k)
+        let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+        let key_name = get_symbol_gcsafe(symbol_index.int)
+        segments.add("^" & key_name & " " & display_value(v, false))
+      for child in val.gene.children:
+        segments.add(display_value(child, false))
+      "(" & segments.join(" ") & ")"
+    else:
+      $val
+
+  proc object_to_s_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return "".to_value()
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    display_value(self_arg, true).to_value()
+
+  object_class.def_native_method("class", object_class_method)
+  object_class.def_native_method("to_s", object_to_s_method)
+  App.app.gene_ns.ns["Object".to_key()] = App.app.object_class
+  App.app.global_ns.ns["Object".to_key()] = App.app.object_class
+  
+  # nil_class
+  let nil_class = new_class("Nil")
+  nil_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = nil_class
+  App.app.nil_class = r.to_ref_value()
+  App.app.gene_ns.ns["Nil".to_key()] = App.app.nil_class
+  App.app.global_ns.ns["Nil".to_key()] = App.app.nil_class
+  
+  # bool_class
+  let bool_class = new_class("Bool")
+  bool_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = bool_class
+  App.app.bool_class = r.to_ref_value()
+  App.app.gene_ns.ns["Bool".to_key()] = App.app.bool_class
+  App.app.global_ns.ns["Bool".to_key()] = App.app.bool_class
+  
+  # int_class
+  let int_class = new_class("Int")
+  int_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = int_class
+  App.app.int_class = r.to_ref_value()
+  App.app.gene_ns.ns["Int".to_key()] = App.app.int_class
+  App.app.global_ns.ns["Int".to_key()] = App.app.int_class
+  
+  # float_class
+  let float_class = new_class("Float")
+  float_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = float_class
+  App.app.float_class = r.to_ref_value()
+  App.app.gene_ns.ns["Float".to_key()] = App.app.float_class
+  App.app.global_ns.ns["Float".to_key()] = App.app.float_class
+  
+  # string_class
+  let string_class = new_class("String")
+  string_class.parent = object_class
+  
+  # Add String methods
+  proc ensure_mutable_string(vm: VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
+    ## Ensure the string value is backed by a mutable heap allocation
+    let self_index = if has_keyword_args: 1 else: 0
+    let original = args[self_index]
+    let raw = cast[uint64](original)
+    let tag = raw and 0xFFFF_0000_0000_0000u64
+
+    case tag
+    of LONG_STR_TAG:
+      return original
+    of SHORT_STR_TAG:
+      let converted = new_str_value(original.str)
+      args[self_index] = converted
+
+      # Update the active scope slot so future accesses see the heap-backed value
+      if vm.frame != nil:
+        var scope = vm.frame.scope
+        var updated = false
+        while scope != nil and not updated:
+          for i in 0..<scope.members.len:
+            if scope.members[i] == original:
+              scope.members[i] = converted
+              updated = true
+              break
+          if not updated:
+            scope = scope.parent
+      return converted
+    else:
+      return original
+
+  # append method
+  proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.append requires a value to append")
+
+    var self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let append_arg = get_positional_arg(args, 1, has_keyword_args)
+
+    if self_arg.kind != VkString:
+      not_allowed("append must be called on a string")
+
+    var addition: string
+    if append_arg.kind == VkString:
+      addition = append_arg.str
+    else:
+      addition = display_value(append_arg, true)
+
+    self_arg = ensure_mutable_string(vm, args, has_keyword_args)
+    let ptr_addr = cast[uint64](self_arg) and PAYLOAD_MASK
+    if ptr_addr == 0:
+      not_allowed("append must be called on a string")
+    let str_ref = cast[ptr String](ptr_addr)
+    str_ref.str.add(addition)
+    self_arg
+  
+  var append_fn = new_ref(VkNativeFn)
+  append_fn.native_fn = string_append
+  string_class.def_native_method("append", append_fn.native_fn)
+
+  # length method
+  proc string_length(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
+      raise new_exception(types.Exception, "String.length requires self argument")
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      raise new_exception(types.Exception, "length can only be called on a string")
+
+    return self_arg.str.len.int64.to_value()
+
+  var length_fn = new_ref(VkNativeFn)
+  length_fn.native_fn = string_length
+  string_class.def_native_method("length", length_fn.native_fn)
+  string_class.def_native_method("size", length_fn.native_fn)
+  
+  # to_upper method
+  proc string_to_upper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
+      raise new_exception(types.Exception, "String.to_upper requires self argument")
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      raise new_exception(types.Exception, "to_upper can only be called on a string")
+
+    return self_arg.str.toUpperAscii().to_value()
+  
+  var to_upper_fn = new_ref(VkNativeFn)
+  to_upper_fn.native_fn = string_to_upper
+  string_class.def_native_method("to_upper", to_upper_fn.native_fn)
+  
+  # to_lower method
+  proc string_to_lower(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
+      raise new_exception(types.Exception, "String.to_lower requires self argument")
+
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      raise new_exception(types.Exception, "to_lower can only be called on a string")
+
+    return self_arg.str.toLowerAscii().to_value()
+  
+  var to_lower_fn = new_ref(VkNativeFn)
+  to_lower_fn.native_fn = string_to_lower
+  string_class.def_native_method("to_lower", to_lower_fn.native_fn)
+  string_class.def_native_method("to_lowercase", to_lower_fn.native_fn)
+
+  proc string_to_uppercase(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    string_to_upper(vm, args, arg_count, has_keyword_args)
+
+  proc string_to_lowercase(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    string_to_lower(vm, args, arg_count, has_keyword_args)
+
+  string_class.def_native_method("to_uppercase", string_to_uppercase)
+  string_class.def_native_method("to_lowercase", string_to_lowercase)
+
+  proc string_substr(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.substr requires start index")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("substr must be called on a string")
+    let s = self_arg.str
+    let len = s.len
+    if len == 0:
+      return "".to_value()
+
+    proc adjust(idx: int64; allowLen: bool): int =
+      var res = int(idx)
+      if res < 0:
+        res = len + res
+      if res < 0:
+        res = 0
+      if allowLen:
+        if res > len:
+          res = len
+      else:
+        if res >= len:
+          res = len - 1
+      res
+
+    let start_idx64 = get_positional_arg(args, 1, has_keyword_args).to_int()
+    var start_idx = adjust(start_idx64, true)
+    if start_idx >= len:
+      return "".to_value()
+
+    if get_positional_count(arg_count, has_keyword_args) == 2:
+      return s[start_idx..^1].to_value()
+
+    let end_idx64 = get_positional_arg(args, 2, has_keyword_args).to_int()
+    var end_idx = adjust(end_idx64, false)
+    if end_idx < start_idx:
+      return "".to_value()
+    result = s[start_idx..end_idx].to_value()
+
+  string_class.def_native_method("substr", string_substr)
+
+  proc string_split(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.split requires separator")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("split must be called on a string")
+    let sep_arg = get_positional_arg(args, 1, has_keyword_args)
+    if sep_arg.kind != VkString:
+      not_allowed("split separator must be a string")
+    let sep = sep_arg.str
+    var parts: seq[string]
+    if get_positional_count(arg_count, has_keyword_args) >= 3:
+      let limit = max(1, get_positional_arg(args, 2, has_keyword_args).to_int().int)
+      parts = self_arg.str.split(sep, limit - 1)
+    else:
+      parts = self_arg.str.split(sep)
+    let arr_ref = new_ref(VkArray)
+    for part in parts:
+      arr_ref.arr.add(part.to_value())
+    arr_ref.to_ref_value()
+
+  string_class.def_native_method("split", string_split)
+
+  proc string_index(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.index requires substring")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("index must be called on a string")
+    let needle = get_positional_arg(args, 1, has_keyword_args)
+    if needle.kind != VkString:
+      not_allowed("index substring must be a string")
+    let pos = self_arg.str.find(needle.str)
+    pos.to_value()
+
+  string_class.def_native_method("index", string_index)
+
+  proc string_rindex(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.rindex requires substring")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("rindex must be called on a string")
+    let needle = get_positional_arg(args, 1, has_keyword_args)
+    if needle.kind != VkString:
+      not_allowed("rindex substring must be a string")
+    let pos = self_arg.str.rfind(needle.str)
+    pos.to_value()
+
+  string_class.def_native_method("rindex", string_rindex)
+
+  proc string_trim(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.trim requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("trim must be called on a string")
+    self_arg.str.strip().to_value()
+
+  string_class.def_native_method("trim", string_trim)
+
+  proc string_starts_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.starts_with requires prefix")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let prefix = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or prefix.kind != VkString:
+      not_allowed("starts_with expects string arguments")
+    self_arg.str.startsWith(prefix.str).to_value()
+
+  proc string_ends_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.ends_with requires suffix")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let suffix = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or suffix.kind != VkString:
+      not_allowed("ends_with expects string arguments")
+    self_arg.str.endsWith(suffix.str).to_value()
+
+  string_class.def_native_method("starts_with", string_starts_with)
+  string_class.def_native_method("ends_with", string_ends_with)
+
+  proc string_char_at(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.char_at requires index")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let idx_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or idx_val.kind != VkInt:
+      not_allowed("char_at expects string and integer")
+    let idx = idx_val.int64.int
+    if idx < 0 or idx >= self_arg.str.len:
+      not_allowed("char_at index out of bounds")
+    self_arg.str[idx].to_value()
+
+  string_class.def_native_method("char_at", string_char_at)
+
+  proc string_replace(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 3:
+      not_allowed("String.replace requires target and replacement")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let from_val = get_positional_arg(args, 1, has_keyword_args)
+    let to_val = get_positional_arg(args, 2, has_keyword_args)
+    if self_arg.kind != VkString or from_val.kind != VkString or to_val.kind != VkString:
+      not_allowed("replace expects string arguments")
+    self_arg.str.replace(from_val.str, to_val.str).to_value()
+
+  string_class.def_native_method("replace", string_replace)
+
+  proc gene_dollar(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    var buffer = newStringOfCap(16)
+    for i in 0..<positional:
+      let arg = get_positional_arg(args, i, has_keyword_args)
+      buffer.add(display_value(arg, true))
+    buffer.to_value()
+
+  var dollar_fn = new_ref(VkNativeFn)
+  dollar_fn.native_fn = gene_dollar
+  App.app.gene_ns.ns["$".to_key()] = dollar_fn.to_ref_value()
+  App.app.global_ns.ns["$".to_key()] = dollar_fn.to_ref_value()
+  
+  r = new_ref(VkClass)
+  r.class = string_class
+  App.app.string_class = r.to_ref_value()
+  App.app.gene_ns.ns["String".to_key()] = App.app.string_class
+  App.app.global_ns.ns["String".to_key()] = App.app.string_class
+  
+  # symbol_class
+  let symbol_class = new_class("Symbol")
+  symbol_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = symbol_class
+  App.app.symbol_class = r.to_ref_value()
+  App.app.gene_ns.ns["Symbol".to_key()] = App.app.symbol_class
+  App.app.global_ns.ns["Symbol".to_key()] = App.app.symbol_class
+  
+  # complex_symbol_class
+  let complex_symbol_class = new_class("ComplexSymbol")
+  complex_symbol_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = complex_symbol_class
+  App.app.complex_symbol_class = r.to_ref_value()
+  App.app.gene_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
+  App.app.global_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
+  
+  # array_class
+  let array_class = new_class("Array")
+  array_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = array_class
+  App.app.array_class = r.to_ref_value()
+  App.app.gene_ns.ns["Array".to_key()] = App.app.array_class
+  App.app.global_ns.ns["Array".to_key()] = App.app.array_class
+  
+  # Add array methods
+  proc vm_array_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # First argument is the array (self), second is the value to add
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    let value = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
+    if arr.kind == VkArray:
+      arr.ref.arr.add(value)
+    return arr
+  
+  array_class.def_native_method("add", vm_array_add)
+  
+  proc vm_array_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # First argument is the array (self)
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind == VkArray:
+      return arr.ref.arr.len.to_value()
+    return 0.to_value()
+  
+  array_class.def_native_method("size", vm_array_size)
+  
+  proc vm_array_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # First argument is the array (self), second is the index
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    let index = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: 0.to_value()
+    if arr.kind == VkArray and index.kind == VkInt:
+      let idx = index.int64.int
+      if idx >= 0 and idx < arr.ref.arr.len:
+        return arr.ref.arr[idx]
+    return NIL
+  
+  array_class.def_native_method("get", vm_array_get)
+
+  proc normalize_index(len: int, raw: int64): int {.inline.} =
+    var idx = raw.int
+    if idx < 0:
+      idx = len + idx
+    idx
+
+  proc vm_array_set(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 3:
+      not_allowed("Array.set requires index and value")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("set must be called on an array")
+    let index_val = get_positional_arg(args, 1, has_keyword_args)
+    if index_val.kind != VkInt:
+      not_allowed("set index must be an integer")
+    let arr_ref = arr.ref
+    let len = arr_ref.arr.len
+    var idx = normalize_index(len, index_val.int64)
+    if idx < 0 or idx >= len:
+      not_allowed("set index out of bounds")
+    let value = get_positional_arg(args, 2, has_keyword_args)
+    arr_ref.arr[idx] = value
+    arr
+
+  array_class.def_native_method("set", vm_array_set)
+
+  proc vm_array_del(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.del requires index")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("del must be called on an array")
+    let index_val = get_positional_arg(args, 1, has_keyword_args)
+    if index_val.kind != VkInt:
+      not_allowed("del index must be an integer")
+    let arr_ref = arr.ref
+    let len = arr_ref.arr.len
+    var idx = normalize_index(len, index_val.int64)
+    if idx < 0 or idx >= len:
+      not_allowed("del index out of bounds")
+    let removed = arr_ref.arr[idx]
+    arr_ref.arr.delete(idx)
+    removed
+
+  array_class.def_native_method("del", vm_array_del)
+
+  proc vm_array_empty(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.empty requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("empty must be called on an array")
+    (arr.ref.arr.len == 0).to_value()
+
+  array_class.def_native_method("empty", vm_array_empty)
+
+  proc vm_array_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.contains requires value")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("contains must be called on an array")
+    let needle = get_positional_arg(args, 1, has_keyword_args)
+    for item in arr.ref.arr:
+      if item == needle:
+        return TRUE
+    FALSE
+
+  array_class.def_native_method("contains", vm_array_contains)
+  
+  proc vm_array_to_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.to_json requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("to_json must be called on an array")
+    value_to_json(arr).to_value()
+
+  array_class.def_native_method("to_json", vm_array_to_json)
+
+  proc vm_array_each(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.each requires a function")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("each must be called on an array")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    case callback.kind
+    of VkFunction:
+      for item in arr.ref.arr:
+        {.cast(gcsafe).}:
+          discard vm.exec_function(callback, @[item])
+    of VkNativeFn:
+      for item in arr.ref.arr:
+        {.cast(gcsafe).}:
+          discard call_native_fn(callback.ref.native_fn, vm, [item])
+    else:
+      not_allowed("each callback must be a function")
+    arr
+
+  array_class.def_native_method("each", vm_array_each)
+
+  proc vm_array_map(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.map requires a function")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("map must be called on an array")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    var mapped: seq[Value] = @[]
+    case callback.kind
+    of VkFunction:
+      for item in arr.ref.arr:
+        var mapped_value: Value
+        {.cast(gcsafe).}:
+          mapped_value = vm.exec_function(callback, @[item])
+        mapped.add(mapped_value)
+    of VkNativeFn:
+      for item in arr.ref.arr:
+        var mapped_value: Value
+        {.cast(gcsafe).}:
+          mapped_value = call_native_fn(callback.ref.native_fn, vm, [item])
+        mapped.add(mapped_value)
+    else:
+      not_allowed("map callback must be a function")
+    let result_ref = new_ref(VkArray)
+    result_ref.arr = mapped
+    result_ref.to_ref_value()
+
+  array_class.def_native_method("map", vm_array_map)
+  
+  # map_class
+  let map_class = new_class("Map")
+  map_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = map_class
+  App.app.map_class = r.to_ref_value()
+  App.app.gene_ns.ns["Map".to_key()] = App.app.map_class
+  App.app.global_ns.ns["Map".to_key()] = App.app.map_class
+  
+  # Add map methods
+  proc vm_map_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    # First argument is the map (self), second is the key
+    let map = get_positional_arg(args, 0, has_keyword_args)
+    let key = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
+    if map.kind == VkMap and key.kind == VkString:
+      return map.ref.map.hasKey(key.str.to_key()).to_value()
+    elif map.kind == VkMap and key.kind == VkSymbol:
+      return map.ref.map.hasKey(key.str.to_key()).to_value()
+    return false.to_value()
+
+  proc vm_map_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # map.get(key, default?) -> value|default|nil
+    if arg_count < 2:
+      not_allowed("Map.get expects at least a key argument")
+
+    let map = get_positional_arg(args, 0, has_keyword_args)
+    if map.kind != VkMap:
+      not_allowed("Map.get must be called on a map")
+
+    let keyVal = get_positional_arg(args, 1, has_keyword_args)
+    var key: Key
+
+    case keyVal.kind
+    of VkString:
+      key = keyVal.str.to_key()
+    of VkSymbol:
+      key = keyVal.str.to_key()
+    else:
+      not_allowed("Map.get key must be a string or symbol")
+
+    if map.ref.map.hasKey(key):
+      return map.ref.map[key]
+
+    if arg_count >= 3:
+      return get_positional_arg(args, 2, has_keyword_args)
+
+    return NIL
+
+  map_class.def_native_method("get", vm_map_get)
+
+  map_class.def_native_method("contains", vm_map_contains)
+  
+  proc vm_map_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.size requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("size must be called on a map")
+    map_val.ref.map.len.to_value()
+
+  map_class.def_native_method("size", vm_map_size)
+
+  proc vm_map_keys(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.keys requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("keys must be called on a map")
+    let result_ref = new_ref(VkArray)
+    for key, _ in map_val.ref.map:
+      let key_val = cast[Value](key)
+      result_ref.arr.add(key_val.str.to_value())
+    result_ref.to_ref_value()
+
+  map_class.def_native_method("keys", vm_map_keys)
+
+  proc vm_map_values(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.values requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("values must be called on a map")
+    let result_ref = new_ref(VkArray)
+    for _, value in map_val.ref.map:
+      result_ref.arr.add(value)
+    result_ref.to_ref_value()
+
+  map_class.def_native_method("values", vm_map_values)
+
+  proc vm_map_map(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Map.map requires a function")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("map must be called on a map")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    let result_ref = new_ref(VkArray)
+    case callback.kind
+    of VkFunction:
+      for key, value in map_val.ref.map:
+        let key_val = cast[Value](key)
+        {.cast(gcsafe).}:
+          let mapped = vm.exec_function(callback, @[key_val, value])
+          result_ref.arr.add(mapped)
+    of VkNativeFn:
+      for key, value in map_val.ref.map:
+        let key_val = cast[Value](key)
+        {.cast(gcsafe).}:
+          let mapped = call_native_fn(callback.ref.native_fn, vm, [key_val, value])
+          result_ref.arr.add(mapped)
+    else:
+      not_allowed("map callback must be a function")
+    result_ref.to_ref_value()
+
+  map_class.def_native_method("map", vm_map_map)
+  
+  proc vm_map_to_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.to_json requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("to_json must be called on a map")
+    value_to_json(map_val).to_value()
+
+  map_class.def_native_method("to_json", vm_map_to_json)
+
+  # date_class
+  let date_class = new_class("Date")
+  date_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = date_class
+  App.app.date_class = r.to_ref_value()
+  App.app.gene_ns.ns["Date".to_key()] = App.app.date_class
+  App.app.global_ns.ns["Date".to_key()] = App.app.date_class
+
+  proc date_year(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Date.year requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDate:
+      not_allowed("Date.year must be called on a date")
+    self_val.ref.date_year.int.to_value()
+
+  proc date_month(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Date.month requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDate:
+      not_allowed("Date.month must be called on a date")
+    self_val.ref.date_month.int.to_value()
+
+  proc date_day(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Date.day requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDate:
+      not_allowed("Date.day must be called on a date")
+    self_val.ref.date_day.int.to_value()
+
+  date_class.def_native_method("year", date_year)
+  date_class.def_native_method("month", date_month)
+  date_class.def_native_method("day", date_day)
+
+  # datetime_class
+  let datetime_class = new_class("DateTime")
+  datetime_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = datetime_class
+  App.app.datetime_class = r.to_ref_value()
+  App.app.gene_ns.ns["DateTime".to_key()] = App.app.datetime_class
+  App.app.global_ns.ns["DateTime".to_key()] = App.app.datetime_class
+
+  proc datetime_year(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.year requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.year must be called on a datetime")
+    self_val.ref.dt_year.int.to_value()
+
+  proc datetime_month(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.month requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.month must be called on a datetime")
+    self_val.ref.dt_month.int.to_value()
+
+  proc datetime_day(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.day requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.day must be called on a datetime")
+    self_val.ref.dt_day.int.to_value()
+
+  proc datetime_hour(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.hour requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.hour must be called on a datetime")
+    self_val.ref.dt_hour.int.to_value()
+
+  datetime_class.def_native_method("year", datetime_year)
+  datetime_class.def_native_method("month", datetime_month)
+  datetime_class.def_native_method("day", datetime_day)
+  datetime_class.def_native_method("hour", datetime_hour)
+
+  proc regex_create(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional == 0:
+      not_allowed("regex_create requires at least a pattern string")
+    var pattern = ""
+    var ignore_case = false
+    var multiline = false
+    var seen_bool = 0
+    var idx = 0
+    while idx < positional:
+      let arg = get_positional_arg(args, idx, has_keyword_args)
+      case arg.kind
+      of VkString:
+        pattern.add(arg.str)
+      of VkBool:
+        if seen_bool == 0:
+          ignore_case = arg.to_bool()
+        elif seen_bool == 1:
+          multiline = arg.to_bool()
+        else:
+          not_allowed("regex_create accepts at most two boolean flag arguments")
+        inc(seen_bool)
+      else:
+        not_allowed("regex_create expects string or bool arguments")
+      inc idx
+    if pattern.len == 0:
+      not_allowed("regex_create pattern cannot be empty")
+    let flags = build_regex_flags(ignore_case, multiline)
+    new_regex_value(pattern, flags)
+
+  proc regex_match(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("regex_match requires input string and pattern")
+    let input_val = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if input_val.kind != VkString:
+      not_allowed("regex_match input must be a string")
+    var pattern: string
+    var flags: uint8
+    extract_regex(pattern_val, pattern, flags)
+    let regex_obj = get_compiled_regex(pattern, flags)
+    (re.find(input_val.str, regex_obj) >= 0).to_value()
+
+  proc regex_find(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 2:
+      not_allowed("regex_find requires input string and pattern")
+    let input_val = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if input_val.kind != VkString:
+      not_allowed("regex_find input must be a string")
+    var capture_idx = 0
+    if positional >= 3:
+      capture_idx = get_positional_arg(args, 2, has_keyword_args).to_int().int
+      if capture_idx < 0:
+        not_allowed("regex_find capture index must be non-negative")
+    var pattern: string
+    var flags: uint8
+    extract_regex(pattern_val, pattern, flags)
+    let regex_obj = get_compiled_regex(pattern, flags)
+    var captures: array[MaxSubpatterns, string]
+    let start_idx = re.find(input_val.str, regex_obj, captures)
+    if start_idx < 0:
+      return NIL
+    let match_length = re.matchLen(input_val.str, regex_obj, start_idx)
+    if match_length < 0:
+      return NIL
+    if capture_idx == 0:
+      return input_val.str[start_idx ..< start_idx + match_length].to_value()
+    let capture_index = capture_idx - 1
+    if capture_index >= captures.len:
+      return NIL
+    let capture_value = captures[capture_index]
+    capture_value.to_value()
+
+  proc json_parse_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("json.parse requires a string argument")
+    let json_arg = get_positional_arg(args, 0, has_keyword_args)
+    if json_arg.kind != VkString:
+      not_allowed("json.parse expects a string")
+    try:
+      {.cast(gcsafe).}:
+        return parse_json_string(json_arg.str)
+    except json.JsonParsingError as e:
+      raise new_exception(types.Exception, "Invalid JSON: " & e.msg)
+
+  proc json_stringify_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("json.stringify requires a value")
+    let value_arg = get_positional_arg(args, 0, has_keyword_args)
+    value_to_json(value_arg).to_value()
+
+  var regex_create_fn = new_ref(VkNativeFn)
+  regex_create_fn.native_fn = regex_create
+  App.app.gene_ns.ns["regex_create".to_key()] = regex_create_fn.to_ref_value()
+
+  var regex_match_fn = new_ref(VkNativeFn)
+  regex_match_fn.native_fn = regex_match
+  App.app.gene_ns.ns["regex_match".to_key()] = regex_match_fn.to_ref_value()
+
+  var regex_find_fn = new_ref(VkNativeFn)
+  regex_find_fn.native_fn = regex_find
+  App.app.gene_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
+
+  var json_parse_fn = new_ref(VkNativeFn)
+  json_parse_fn.native_fn = json_parse_native
+  var json_stringify_fn = new_ref(VkNativeFn)
+  json_stringify_fn.native_fn = json_stringify_native
+  let json_ns = new_namespace("json")
+  json_ns["parse".to_key()] = json_parse_fn.to_ref_value()
+  json_ns["stringify".to_key()] = json_stringify_fn.to_ref_value()
+  App.app.gene_ns.ns["json".to_key()] = json_ns.to_value()
+
+  proc gene_today_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now()
+    new_date_value(dt.year, ord(dt.month), dt.monthday)
+
+  proc gene_now_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now()
+    new_datetime_value(dt)
+
+  proc gene_yesterday_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now() - initDuration(days = 1)
+    new_date_value(dt.year, ord(dt.month), dt.monthday)
+
+  proc gene_tomorrow_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let dt = times.now() + initDuration(days = 1)
+    new_date_value(dt.year, ord(dt.month), dt.monthday)
+
+  var today_fn = new_ref(VkNativeFn)
+  today_fn.native_fn = gene_today_native
+  App.app.gene_ns.ns["today".to_key()] = today_fn.to_ref_value()
+
+  var now_fn = new_ref(VkNativeFn)
+  now_fn.native_fn = gene_now_native
+  App.app.gene_ns.ns["now".to_key()] = now_fn.to_ref_value()
+
+  var yesterday_fn = new_ref(VkNativeFn)
+  yesterday_fn.native_fn = gene_yesterday_native
+  App.app.gene_ns.ns["yesterday".to_key()] = yesterday_fn.to_ref_value()
+
+  var tomorrow_fn = new_ref(VkNativeFn)
+  tomorrow_fn.native_fn = gene_tomorrow_native
+  App.app.gene_ns.ns["tomorrow".to_key()] = tomorrow_fn.to_ref_value()
+
+  # selector_class
+  let selector_class = new_class("Selector")
+  selector_class.parent = object_class
+
+  proc selector_call(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 2:
+      not_allowed("Selector.call expects a target value")
+
+    let selector_val = get_positional_arg(args, 0, has_keyword_args)
+    if selector_val.kind != VkSelector:
+      not_allowed("Selector.call must be invoked on a selector")
+
+    let target = get_positional_arg(args, 1, has_keyword_args)
+    let has_default = arg_count >= 3
+    let default_value = if has_default: get_positional_arg(args, 2, has_keyword_args) else: NIL
+
+    var current = target
+    var found = true
+
+    for seg in selector_val.ref.selector_path:
+      if current.kind == VkNil:
+        found = false
+        break
+
+      case seg.kind:
+      of VkString, VkSymbol:
+        let key = seg.str.to_key()
+        case current.kind:
+        of VkMap:
+          if key in current.ref.map:
+            current = current.ref.map[key]
+          else:
+            found = false
+            break
+        of VkGene:
+          if key in current.gene.props:
+            current = current.gene.props[key]
+          else:
+            found = false
+            break
+        of VkNamespace:
+          if current.ref.ns.has_key(key):
+            current = current.ref.ns[key]
+          else:
+            found = false
+            break
+        of VkClass:
+          if current.ref.class.ns.has_key(key):
+            current = current.ref.class.ns[key]
+          else:
+            found = false
+            break
+        of VkInstance:
+          if key in current.ref.instance_props:
+            current = current.ref.instance_props[key]
+          else:
+            found = false
+            break
+        else:
+          found = false
+          break
+      of VkInt:
+        let idx64 = seg.int64
+        case current.kind:
+        of VkArray:
+          let arr_len = current.ref.arr.len.int64
+          var resolved = idx64
+          if resolved < 0:
+            resolved = arr_len + resolved
+          if resolved >= 0 and resolved < arr_len:
+            current = current.ref.arr[resolved.int]
+          else:
+            found = false
+            break
+        of VkGene:
+          let children_len = current.gene.children.len.int64
+          var resolved = idx64
+          if resolved < 0:
+            resolved = children_len + resolved
+          if resolved >= 0 and resolved < children_len:
+            current = current.gene.children[resolved.int]
+          else:
+            found = false
+            break
+        else:
+          found = false
+          break
+      else:
+        not_allowed("Invalid selector segment type: " & $seg.kind)
+
+      if not found:
+        break
+
+    if not found:
+      if has_default:
+        return default_value
+      return NIL
+
+    return current
+
+  selector_class.def_native_method("call", selector_call)
+
+  r = new_ref(VkClass)
+  r.class = selector_class
+  App.app.selector_class = r.to_ref_value()
+  if App.app.gene_ns.kind == VkNamespace:
+    App.app.gene_ns.ref.ns["Selector".to_key()] = App.app.selector_class
+  
+  # set_class
+  let set_class = new_class("Set")
+  set_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = set_class
+  App.app.set_class = r.to_ref_value()
+  App.app.gene_ns.ns["Set".to_key()] = App.app.set_class
+  App.app.global_ns.ns["Set".to_key()] = App.app.set_class
+  
+  # gene_class
+  let gene_class = new_class("Gene")
+  gene_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = gene_class
+  App.app.gene_class = r.to_ref_value()
+  App.app.gene_ns.ns["Gene".to_key()] = App.app.gene_class
+  App.app.global_ns.ns["Gene".to_key()] = App.app.gene_class
+
+  proc gene_type_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Gene.type requires self")
+    let gene_val = get_positional_arg(args, 0, has_keyword_args)
+    if gene_val.kind != VkGene:
+      not_allowed("Gene.type must be called on a gene")
+    gene_val.gene.type
+
+  gene_class.def_native_method("type", gene_type_method)
+
+  proc gene_props_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Gene.props requires self")
+    let gene_val = get_positional_arg(args, 0, has_keyword_args)
+    if gene_val.kind != VkGene:
+      not_allowed("Gene.props must be called on a gene")
+    let result_ref = new_ref(VkMap)
+    for key, value in gene_val.gene.props:
+      result_ref.map[key] = value
+    result_ref.to_ref_value()
+
+  gene_class.def_native_method("props", gene_props_method)
+
+  proc gene_children_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Gene.children requires self")
+    let gene_val = get_positional_arg(args, 0, has_keyword_args)
+    if gene_val.kind != VkGene:
+      not_allowed("Gene.children must be called on a gene")
+    let result_ref = new_ref(VkArray)
+    for child in gene_val.gene.children:
+      result_ref.arr.add(child)
+    result_ref.to_ref_value()
+
+  gene_class.def_native_method("children", gene_children_method)
+  
+  # function_class
+  let function_class = new_class("Function")
+  function_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = function_class
+  App.app.function_class = r.to_ref_value()
+  App.app.gene_ns.ns["Function".to_key()] = App.app.function_class
+  App.app.global_ns.ns["Function".to_key()] = App.app.function_class
+  
+  # char_class
+  let char_class = new_class("Char")
+  char_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = char_class
+  App.app.char_class = r.to_ref_value()
+  App.app.gene_ns.ns["Char".to_key()] = App.app.char_class
+  App.app.global_ns.ns["Char".to_key()] = App.app.char_class
+  
+  # application_class
+  let application_class = new_class("Application")
+  application_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = application_class
+  App.app.application_class = r.to_ref_value()
+  App.app.gene_ns.ns["Application".to_key()] = App.app.application_class
+  App.app.global_ns.ns["Application".to_key()] = App.app.application_class
+  
+  # package_class
+  let package_class = new_class("Package")
+  package_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = package_class
+  App.app.package_class = r.to_ref_value()
+  App.app.gene_ns.ns["Package".to_key()] = App.app.package_class
+  App.app.global_ns.ns["Package".to_key()] = App.app.package_class
+  
+  # namespace_class
+  let namespace_class = new_class("Namespace")
+  namespace_class.parent = object_class
+  r = new_ref(VkClass)
+  r.class = namespace_class
+  App.app.namespace_class = r.to_ref_value()
+  App.app.gene_ns.ns["Namespace".to_key()] = App.app.namespace_class
+  App.app.global_ns.ns["Namespace".to_key()] = App.app.namespace_class
+
+  App.app.gene_ns.ns["debug".to_key()] = debug
+  App.app.gene_ns.ns["println".to_key()] = println
+  App.app.gene_ns.ns["print".to_key()] = print
+  App.app.gene_ns.ns["assert".to_key()] = gene_assert
+  App.app.gene_ns.ns["base64_encode".to_key()] = base64_encode
+  App.app.gene_ns.ns["base64_decode".to_key()] = base64_decode
+  App.app.gene_ns.ns["trace_start".to_key()] = trace_start
+  App.app.gene_ns.ns["trace_end".to_key()] = trace_end
+  App.app.gene_ns.ns["print_stack".to_key()] = print_stack
+  App.app.gene_ns.ns["print_instructions".to_key()] = print_instructions
+  App.app.gene_ns.ns["ns".to_key()] = current_ns
+  # not and ... are now handled by compile-time instructions, no need to register
+  App.app.gene_ns.ns["parse".to_key()] = vm_parse.to_value()  # $parse translates to gene/parse
+  App.app.gene_ns.ns["with".to_key()] = vm_with.to_value()    # $with translates to gene/with
+  App.app.gene_ns.ns["tap".to_key()] = vm_tap.to_value()      # $tap translates to gene/tap
+  App.app.gene_ns.ns["eval".to_key()] = vm_eval.to_value()    # eval function
+
+  # Add sleep functions directly to gene namespace
+  var sleep_ref = new_ref(VkNativeFn)
+  sleep_ref.native_fn = gene_sleep
+  App.app.gene_ns.ns["sleep".to_key()] = sleep_ref.to_ref_value()
+
+  var sleep_async_ref = new_ref(VkNativeFn)
+  sleep_async_ref.native_fn = gene_sleep_async
+  App.app.gene_ns.ns["sleep_async".to_key()] = sleep_async_ref.to_ref_value()
+
+  # Also add to global namespace
+  App.app.global_ns.ns["parse".to_key()] = vm_parse.to_value()
+  App.app.global_ns.ns["with".to_key()] = vm_with.to_value()
+  App.app.global_ns.ns["tap".to_key()] = vm_tap.to_value()
+  App.app.global_ns.ns["eval".to_key()] = vm_eval.to_value()
+  App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation.to_value()
+  App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
+
+  proc os_exec_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("os.exec requires a command string")
+    let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
+    if cmd_arg.kind != VkString:
+      not_allowed("os.exec expects a string command")
+    let (output, _) = execCmdEx(cmd_arg.str)
+    output.to_value()
+
+  let os_ns = new_namespace("os")
+  var os_exec_fn = new_ref(VkNativeFn)
+  os_exec_fn.native_fn = os_exec_native
+  os_ns["exec".to_key()] = os_exec_fn.to_ref_value()
+  App.app.gene_ns.ref.ns["os".to_key()] = os_ns.to_value()
+
+  # Initialize standard library namespaces
+  init_core_namespace(App.app.global_ns.ref.ns)
+  stdlib_math.init_math_namespace(App.app.global_ns.ref.ns)
+  stdlib_io.init_io_namespace(App.app.global_ns.ref.ns)
+  stdlib_system.init_system_namespace(App.app.global_ns.ref.ns)
+
+  let class = new_class("Class")
+  class.parent = object_class
+  class.def_native_macro_method("ctor", class_ctor)
+  class.def_native_macro_method("fn", class_fn)
+  class.def_native_method "parent", proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return NIL
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkClass:
+      not_allowed("Class.parent must be called on a class")
+    let parent_class = self_arg.ref.class.parent
+    if parent_class != nil:
+      let parent_ref = new_ref(VkClass)
+      parent_ref.class = parent_class
+      parent_ref.to_ref_value()
+    else:
+      NIL
+  class.def_native_method "name", proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) == 0:
+      return "".to_value()
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkClass:
+      not_allowed("Class.name must be called on a class")
+    self_arg.ref.class.name.to_value()
+
+  r = new_ref(VkClass)
+  r.class = class
+  App.app.class_class = r.to_ref_value()
+  App.app.gene_ns.ns["Class".to_key()] = App.app.class_class
+  App.app.global_ns.ns["Class".to_key()] = App.app.class_class
+
+  let vm_ns = new_namespace("vm")
+  App.app.gene_ns.ns["vm".to_key()] = vm_ns.to_value()
+  vm_ns["compile".to_key()] = vm_compile.to_value()
+  vm_ns["PUSH".to_key()] = vm_push.to_value()
+  vm_ns["ADD".to_key()] = vm_add.to_value()

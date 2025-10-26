@@ -1,5 +1,5 @@
-import ../types
 import strformat
+import ../types
 
 proc new_generator_value*(f: Function, args: seq[Value]): Value {.inline.} =
   ## Helper for constructing generator instances.

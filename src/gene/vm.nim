@@ -5612,7 +5612,7 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   
   return result
 
-include "./vm/core"
+include "./stdlib/core"
 import "./vm/async"
 # Temporarily import http and sqlite modules until extension loading is fixed
 when not defined(noExtensions):

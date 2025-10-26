@@ -1,6 +1,5 @@
+import tables, sets
 import ../types
-import tables
-import sets
 
 # Forward declaration for original process_args function
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)

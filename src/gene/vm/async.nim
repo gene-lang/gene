@@ -1,5 +1,5 @@
-import ../types
 import std/strformat
+import ../types
 
 # Future methods
 proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
