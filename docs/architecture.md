@@ -66,8 +66,8 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
 ## Memory Model & Scope Lifetime
 
 - Frames are pooled; `new_frame` reuses objects when possible to cut allocations.
-- Scopes (`ScopeObj`) are manually ref-counted. `IkScopeEnd` decrements count and frees the scope when it drops to 1.  
-  ⚠️ Async code can still double-free scopes because futures execute synchronously but still hold references; fixes are tracked in the VM TODO.
+- Scopes (`ScopeObj`) are manually ref-counted. `IkScopeEnd` calls `scope.free()` which decrements the ref count and only deallocates when it reaches 0.
+  ✅ Scope lifetime is correctly managed - async code can safely capture scopes and they won't be freed prematurely.
 - Nim ORC/ARC handles heap references (`Reference`) while the VM keeps hot paths allocation-free by using POD `Value`s.
 
 ## Native Integration

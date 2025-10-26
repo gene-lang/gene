@@ -17,10 +17,10 @@ This is the **current focus** - a bytecode VM implementation for better performa
 - ✅ Basic control flow (if/else, loops, try/catch/finally)
 - ✅ CLI commands (`run`, `eval`, `repl`, `parse`, `compile`)
 - ✅ Async/await via synchronous futures (pseudo-async)
+- ✅ Scope lifetime management with proper ref-counting (async-safe)
 - 🚧 Classes/OOP: constructors, inheritance, and method dispatch coverage still limited
 - 🚧 Pattern matching: argument binders work; general `match` forms incomplete
 - 🚧 Module/import system and package tooling
-- ⚠️ Known VM limitation: scope lifetime around async blocks (`IkScopeEnd`) can trigger use-after-free; see `src/gene/vm.nim`
 
 ### Performance
 - fib(24) benchmark (2025 ARM64 measurements): ~3.8M function calls/sec

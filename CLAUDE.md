@@ -40,8 +40,8 @@ Key modules:
 - ✅ Macros and macro-like functions (`fn!`, `$caller_eval`) with unevaluated arguments.
 - ✅ Basic classes (`class`, `new`, nested classes) and namespace plumbing.
 - ✅ Futures run synchronously; `async` wraps expressions and `await` unwraps results.
+- ✅ Scope lifetime management: `IkScopeEnd` correctly uses ref-counting to prevent premature freeing when async blocks capture scopes.
 - ⚠️ Pattern matching beyond argument binders is still experimental (`match` tests largely disabled).
-- ⚠️ Async scope management is fragile: `IkScopeEnd` frees scopes eagerly and can trigger use-after-free when awaiting closures.
 - ⚠️ Module/import system and richer class method dispatch (constructors, inheritance, keyword args) are incomplete.
 
 ## Language Syntax Quick Look
@@ -105,7 +105,6 @@ When adding new instructions: extend the enum, teach the compiler (emit case), a
 
 ## Known Hazards
 
-- **Scope lifetime**: `IkScopeEnd` (`src/gene/vm.nim:~419`) frees scopes immediately; defer freeing when async blocks capture locals.
 - **Exception handling**: use `catch *`; naming the exception (`catch ex`) still panics on macOS.
 - **String methods**: `IkCallMethod1` must dispatch to `App.app.string_class` for string-specific natives.
 - **Value initialisation**: manually allocate (`alloc0`) structures; always set `members = newSeq[Value]()` for new scopes.

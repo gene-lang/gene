@@ -28,9 +28,9 @@ Real async support would enable:
 - **Event Loop Polling**: Integrate Nim's `asyncdispatch.poll()` in VM main loop
 - **Async I/O**: Replace blocking I/O with Nim's async primitives (`asyncfile`, `asyncnet`)
 - **Future Tracking**: Store active futures in VM, poll until completion
-- **Scope Fix**: Fix scope lifetime management to support pending futures
+- **Scope Fix**: ✅ COMPLETED - Fixed scope lifetime management to support pending futures
 
-**Design Principle:** Simple polling-based approach. No CPS transformation, no complex state machines.
+**Design Principle:** Simple polling-based approach. **No CPS transformation**, no complex state machines, no VM suspension. `await` blocks but the event loop continues processing other futures.
 
 ### Specific Changes
 - Add `pending_futures: seq[Future[Value]]` to VirtualMachine
@@ -38,7 +38,7 @@ Real async support would enable:
 - Modify `FutureObj` to wrap Nim's `Future[Value]`
 - Update `IkAwait` to poll event loop while waiting for completion
 - Convert I/O functions to use async primitives
-- Fix scope ref counting in `IkScopeEnd` (vm.nim:419)
+- ✅ Fix scope ref counting in `IkScopeEnd` - COMPLETED
 
 ### **BREAKING** Changes
 - Async I/O operations now return pending futures (not completed immediately)
@@ -46,10 +46,11 @@ Real async support would enable:
 - I/O function names change (e.g., `file_read` → `file_read_async`)
 
 ### Non-Goals (Out of Scope)
-- CPS transformation (complex, deferred - see tmp/cps_support.md)
-- True VM suspension (await still blocks, but I/O is concurrent)
-- Async generators/iterators (future work)
-- Multi-threading (use threads feature instead)
+- **CPS transformation** - Too complex, not needed for concurrent I/O
+- **VM suspension/resumption** - `await` blocks the current execution but event loop continues
+- **Async generators/iterators** - Future work
+- **Multi-threading** - Use threads feature instead
+- **Async function detection** - No special compiler analysis needed
 
 ## Impact
 
@@ -70,8 +71,8 @@ Real async support would enable:
 - No code changes needed for correct programs
 
 ### Risk Assessment
-- **Low Complexity**: Simple polling, no CPS (~300 lines of changes)
-- **Scope Bug**: Must fix scope lifetime before implementation (critical)
+- **Low Complexity**: Simple polling, no CPS (~200-300 lines of changes)
+- **Scope Bug**: ✅ FIXED - Scope lifetime now correctly managed
 - **Performance**: <1% overhead for non-async code (counter increment)
 - **Testing Burden**: Need concurrency tests (multiple concurrent operations)
 
@@ -82,13 +83,13 @@ Real async support would enable:
 - **Await blocking**: Await still blocks execution, but event loop keeps other futures progressing
 
 ### Timeline Estimate
-- Phase 0 (Scope Fix): 1 week
-- Phase 1 (Event Loop): 1-2 weeks
-- Phase 2 (Async I/O): 1-2 weeks
+- Phase 0 (Scope Fix): ✅ COMPLETED
+- Phase 1 (Event Loop Integration): 1-2 weeks
+- Phase 2 (Async I/O Functions): 1-2 weeks
 - Phase 3 (Await Polling): 1 week
-- Phase 4 (Testing): 1-2 weeks
+- Phase 4 (Testing & Validation): 1-2 weeks
 
-**Total: 5-8 weeks** for complete implementation
+**Total: 4-7 weeks** for complete implementation (Phase 0 already done)
 
 ### Benefits
 - **Concurrent I/O**: Multiple file/network operations overlap

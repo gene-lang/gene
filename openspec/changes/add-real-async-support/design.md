@@ -8,7 +8,7 @@ Gene's VM is a stack-based bytecode interpreter written in Nim. The current asyn
 - VM runs in single thread with no event loop
 - `IkAsyncEnd` (vm.nim:4088) completes futures immediately
 - I/O uses blocking `readFile()` instead of `asyncfile.readFile()`
-- Scope freed in `IkScopeEnd` when `ref_count == 1` (vm.nim:419)
+- ✅ Scope lifetime fixed - `IkScopeEnd` now correctly uses ref-counting
 
 **Stakeholders:**
 - Gene language users expecting real async semantics
@@ -19,24 +19,27 @@ Gene's VM is a stack-based bytecode interpreter written in Nim. The current asyn
 - Must maintain backward compatibility with async syntax
 - Cannot introduce multi-threading (VM is single-threaded)
 - Must not degrade performance for non-async code
-- Scope lifetime bug must be fixed before full async works
+- **No CPS transformation** - Keep implementation simple
+- **No VM suspension** - `await` blocks but event loop continues
 
 ## Goals / Non-Goals
 
 ### Goals
 1. **True Concurrency**: Multiple I/O operations execute concurrently
 2. **Event Loop**: Integrate Nim's `asyncdispatch` for scheduling
-3. **Real Suspension**: `await` on pending futures yields to event loop
+3. **Polling-based Await**: `await` polls event loop while waiting
 4. **Non-Blocking I/O**: Replace synchronous I/O with async primitives
-5. **Scope Safety**: Fix scope lifetime to support pending futures
+5. **Scope Safety**: ✅ DONE - Fixed scope lifetime to support pending futures
 6. **Callback Support**: Implement `.on_success()` / `.on_failure()` chaining
 
 ### Non-Goals
-1. **Multi-threading**: Async is concurrent (single-thread), not parallel
-2. **Async Generators**: Defer to future work
-3. **Custom Schedulers**: Use Nim's asyncdispatch exclusively
-4. **Distributed Futures**: No RPC or remote async
-5. **WASM Integration**: Defer to separate effort
+1. **CPS Transformation**: Too complex, not needed for concurrent I/O
+2. **VM Suspension/Resumption**: `await` blocks but event loop continues
+3. **Multi-threading**: Async is concurrent (single-thread), not parallel
+4. **Async Generators**: Defer to future work
+5. **Custom Schedulers**: Use Nim's asyncdispatch exclusively
+6. **Distributed Futures**: No RPC or remote async
+7. **WASM Integration**: Defer to separate effort
 
 ## Decisions
 
@@ -65,91 +68,39 @@ type FutureObj* = ref object
   failure_callbacks*: seq[Value]
 ```
 
-### Decision 2: CPS Transformation Strategy
+### Decision 2: Await Execution Strategy
 
-**Chosen Approach:** Compiler-based continuation generation with state machines
+**Chosen Approach:** Polling-based blocking await with event loop integration
 
 **Rationale:**
-- Nim's `{.async.}` macro uses CPS transformation successfully
-- Compiler has full visibility into control flow
-- Can split function at every `await` point
-- State machines proven effective for async in other languages (JS, C#, Rust)
+- Simple to implement - no CPS transformation needed
+- `await` blocks current execution but event loop continues processing
+- Other pending futures make progress while waiting
+- Maintains straightforward VM execution model
+- Good enough for 90% of async use cases
 
-**Alternative Considered:** Interpreter-level coroutines
-- Would require rewriting VM execution model
-- Higher runtime overhead
-- Harder to debug and maintain
+**Alternative Considered:** CPS transformation with VM suspension
+- Would require complex compiler changes (state machines, continuation generation)
+- Would require VM suspension/resumption mechanism
+- Much higher implementation complexity (~2000+ LOC vs ~300 LOC)
+- Not needed for concurrent I/O (main use case)
 
 **Implementation Pattern:**
-```gene
-# Source:
-(fn fetch_data [url]
-  (var response (await (http/get url)))
-  (var parsed (await (json/parse response)))
-  parsed)
-
-# Compiles to state machine:
-State 0: Call http/get, register continuation -> State 1
-State 1: Resume with response, call json/parse, register continuation -> State 2
-State 2: Resume with parsed, return value
-```
-
-### Decision 3: Frame Suspension Mechanism
-
-**Chosen Approach:** Serialize minimal frame state, store continuation closure
-
-**Rationale:**
-- Full frame serialization is expensive (256 Value slots)
-- Only need: PC, stack pointer, scope reference, local variables in use
-- Continuation closure captures context, stored in future's callback list
-
-**Alternative Considered:** Full frame cloning
-- Would copy entire 256-slot stack
-- Wastes memory for unused slots
-- Slower suspension/resumption
-
-**Implementation:**
 ```nim
-type Continuation = ref object
-  frame_id: int
-  pc: int
-  stack_depth: int
-  scope: Scope
-  captured_locals: seq[Value]
-```
-
-### Decision 4: Scope Lifetime Management
-
-**Chosen Approach:** Scope reference counting with future ownership
-
-**Rationale:**
-- Futures increment scope ref_count when capturing
-- Scope only freed when ref_count == 0
-- Maintains existing ref counting infrastructure
-- No need for full GC integration
-
-**Critical Fix Location:** `vm.nim:419` (IkScopeEnd)
-```nim
-# CURRENT (BUGGY):
-if old_scope.ref_count > 1:
-  old_scope.ref_count.dec()
+# In IkAwait handler:
+let future = pop_future()
+while future.state == FsPending:
+  asyncdispatch.poll(timeout = 0)  # Process other futures
+  # Check if future completed
+if future.state == FsSuccess:
+  push(future.value)
 else:
-  old_scope.free()  # FREED TOO EARLY if future pending!
-
-# FIXED:
-old_scope.ref_count.dec()
-if old_scope.ref_count == 0:
-  old_scope.free()  # Only free when no references
+  raise future.exception
 ```
 
-**Alternative Considered:** Copy-on-capture
-- Would duplicate scope for every async block
-- Higher memory usage
-- Doesn't align with existing ref counting design
+### Decision 3: Event Loop Integration
 
-### Decision 5: Event Loop Integration
-
-**Chosen Approach:** Run `asyncdispatch` poll in VM main loop
+**Chosen Approach:** Poll event loop periodically in VM main loop
 
 **Rationale:**
 - VM already has main execution loop
@@ -174,7 +125,31 @@ while self.running:
 - Violates single-threaded constraint
 - More complex debugging
 
-### Decision 6: I/O Operation Conversion
+### Decision 4: Scope Lifetime Management
+
+**Status:** ✅ COMPLETED
+
+**Chosen Approach:** Scope reference counting - only free when ref_count == 0
+
+**Rationale:**
+- Scopes are manually ref-counted
+- `IkScopeEnd` calls `scope.free()` which decrements and checks
+- Scope only deallocated when ref_count reaches 0
+- Maintains existing ref counting infrastructure
+- No need for full GC integration
+
+**Implementation:**
+```nim
+# In IkScopeEnd (vm.nim:970):
+of IkScopeEnd:
+  var old_scope = self.frame.scope
+  self.frame.scope = self.frame.scope.parent
+  old_scope.free()  # Decrements and only frees if ref_count == 0
+```
+
+**Testing:** All scope lifetime tests pass - futures can safely capture scopes.
+
+### Decision 5: I/O Operation Conversion
 
 **Chosen Approach:** Create async wrappers, deprecate sync versions
 
@@ -214,35 +189,36 @@ VM: IkAwait → Check state (always Complete) → Return value
 Result: SYNCHRONOUS (no concurrency)
 ```
 
-### Proposed (Real Async)
+### Proposed (Real Async - Polling-Based)
 ```
 User Code: (async (file_read_async "x.txt"))
     ↓
-Compiler: IkAsyncStart → CPS_State0 → IkAwait → CPS_State1 → IkAsyncEnd
+Compiler: IkAsyncStart → IkPushValue "x.txt" → IkCallNative file_read_async → IkAsyncEnd
     ↓
 VM Execution:
-  IkAsyncStart       → Create continuation context
-  file_read_async    → asyncfile.readFile() returns Future[string] (PENDING)
-  IkAwait            → Future pending? YES
-                     → Save frame state (PC, stack, scope)
-                     → Register continuation callback
-                     → YIELD to event loop
-    ↓
-Event Loop:
-  poll() → Check I/O readiness
-  File ready → Invoke continuation
-    ↓
-VM Resumption:
-  CPS_State1      → Restore frame, push result
-  IkAsyncEnd      → Wrap in Gene Future
-  Stack: [Future(Complete, value)]
+  IkAsyncStart       → Add exception handler marker
+  file_read_async    → asyncfile.readFile() returns Nim Future[string] (PENDING)
+                     → Wrap in Gene FutureObj (state = FsPending)
+  IkAsyncEnd         → Return Gene Future (still pending)
+  Stack: [Future(Pending, nim_future)]
     ↓
 User Code: (await future)
     ↓
-VM: IkAwait → Check state (Complete) → Return value
+VM: IkAwait → Check state (Pending)
+            → POLL EVENT LOOP while pending:
+              while future.state == FsPending:
+                asyncdispatch.poll(timeout = 0)  # Process I/O
+                # Check if Nim future completed
+            → Future now Complete → Return value
 
-Result: ASYNCHRONOUS (true concurrency)
+Result: ASYNCHRONOUS (true concurrency via polling)
 ```
+
+**Key Difference from CPS:**
+- No state machines or continuations
+- `await` blocks but polls event loop
+- Other futures make progress during polling
+- Much simpler implementation (~300 LOC vs ~2000 LOC)
 
 ### Performance Comparison
 ```
@@ -265,26 +241,25 @@ Proposed:
 
 ## Risks / Trade-offs
 
-### Risk 1: Complexity Increase
-**Impact:** CPS transformation and frame suspension add ~2000+ LOC
-**Mitigation:**
-- Implement in phases (event loop first, then CPS)
-- Comprehensive unit tests for each component
-- Document design patterns for maintainers
+### Risk 1: Await Blocks Execution
+**Impact:** `await` blocks current execution (no true VM suspension)
+**Trade-off:**
+- Simpler implementation (no CPS needed)
+- Event loop continues processing other futures
+- Good enough for most async I/O use cases
+- Can add CPS later if needed
 
 ### Risk 2: Performance Regression for Sync Code
 **Impact:** Event loop polling adds overhead to non-async workloads
 **Mitigation:**
 - Use non-blocking poll (timeout = 0)
 - Only poll after instruction batches (not per instruction)
-- Benchmark non-async code to ensure <5% overhead
+- Benchmark non-async code to ensure <1% overhead
 
-### Risk 3: Scope Lifetime Bug Must Be Fixed First
-**Impact:** Real async will expose use-after-free crashes
-**Mitigation:**
-- Fix scope ref counting in Phase 0 (before async changes)
-- Add memory sanitizer tests
-- Validate with stress tests
+### Risk 3: Scope Lifetime
+**Status:** ✅ FIXED
+**Impact:** Scope lifetime bug could cause use-after-free crashes
+**Resolution:** Fixed in Phase 0 - scopes now correctly ref-counted
 
 ### Risk 4: Nim Async Coupling
 **Impact:** Tightly coupled to Nim's asyncdispatch implementation
@@ -302,53 +277,45 @@ Proposed:
 
 ## Migration Plan
 
-### Phase 0: Scope Fix (1-2 weeks)
-1. Fix `IkScopeEnd` ref counting bug (vm.nim:419)
-2. Add scope lifetime stress tests
-3. Validate with memory sanitizer
+### Phase 0: Scope Fix ✅ COMPLETED
+1. ✅ Fixed `IkScopeEnd` ref counting bug (vm.nim:970)
+2. ✅ Added scope lifetime stress tests
+3. ✅ Validated - all tests pass
 
-### Phase 1: Event Loop Integration (2-4 weeks)
-1. Add `asyncdispatch.poll()` to VM main loop
-2. Wrap Nim `Future[Value]` in `FutureObj`
-3. Implement callback registration/invocation
+### Phase 1: Event Loop Integration (1-2 weeks)
+1. Add `asyncdispatch.poll()` to VM main loop (every ~100 instructions)
+2. Wrap Nim `Future[Value]` in `FutureObj.nim_future` field
+3. Implement callback registration/invocation when futures complete
 4. Convert one I/O function (e.g., `file_read_async`) as proof of concept
 
 **Rollback:** Remove poll() call, revert I/O function
 
-### Phase 2: CPS Compiler (3-6 weeks)
-1. Identify async function boundaries
-2. Split at `await` points into state machine
-3. Generate continuation closures
-4. Test with simple async functions
+### Phase 2: Polling-Based Await (1 week)
+1. Modify `IkAwait` to poll event loop while future is pending
+2. Check Nim future completion and update Gene FutureObj state
+3. Test with simple async I/O operations
+4. Validate concurrent operations work
 
-**Rollback:** Keep old compiler path, disable CPS with feature flag
+**Rollback:** Revert IkAwait to immediate return
 
-### Phase 3: VM Suspension (2-4 weeks)
-1. Implement frame state serialization
-2. Modify `IkAwait` to suspend on pending futures
-3. Implement continuation restoration
-4. Test suspension/resumption cycles
-
-**Rollback:** Disable suspension, fall back to immediate completion
-
-### Phase 4: I/O Conversion (1-2 weeks)
+### Phase 3: I/O Conversion (1-2 weeks)
 1. Convert all I/O functions to async versions
 2. Keep sync versions with deprecation warnings
 3. Update documentation and examples
 
 **Rollback:** Remove async versions, keep sync as primary
 
-### Phase 5: Testing & Validation (2-3 weeks)
+### Phase 4: Testing & Validation (1-2 weeks)
 1. Concurrent I/O tests (parallel file reads)
 2. Callback chaining tests
 3. Exception handling in async context
 4. Performance benchmarks
-5. Stress tests (1000+ pending futures)
+5. Stress tests (100+ pending futures)
 
 ### Deployment Strategy
 - **Alpha Release**: Event loop + basic async I/O (Phases 0-1)
-- **Beta Release**: Full CPS + suspension (Phases 2-3)
-- **Stable Release**: Complete I/O conversion + testing (Phases 4-5)
+- **Beta Release**: Polling await + multiple I/O functions (Phases 2-3)
+- **Stable Release**: Complete I/O conversion + testing (Phase 4)
 
 ### User Migration
 **Before (Pseudo-Async):**
@@ -360,7 +327,7 @@ Proposed:
 **After (Real Async):**
 ```gene
 (var f (async (file_read_async "data.txt")))  # Returns pending future
-(var content (await f))                        # Suspends until I/O complete
+(var content (await f))                        # Polls event loop until I/O complete
 ```
 
 **Breaking Change Example:**

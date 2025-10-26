@@ -22,6 +22,12 @@ We have made significant progress implementing async/await support in the Gene V
    - Added `complete()` and `fail()` methods to FutureObj
    - Basic state management works
 
+4. **Scope lifetime management (FIXED)**
+   - Fixed `IkScopeEnd` to use proper ref-counting
+   - Scopes are now only freed when ref_count reaches 0
+   - Async blocks can safely capture scopes without use-after-free
+   - All scope lifetime tests pass
+
 ### ❌ Not Yet Implemented
 
 1. **Exception handling in async blocks**

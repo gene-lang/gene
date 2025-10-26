@@ -970,13 +970,11 @@ proc exec*(self: VirtualMachine): Value =
       of IkScopeEnd:
         var old_scope = self.frame.scope
         self.frame.scope = self.frame.scope.parent
-        # Always decrement ref_count first, then check if we should free
+        # Decrement ref_count and free if no more references
         # This prevents use-after-free bugs with async code that may hold scope references
-        old_scope.ref_count.dec()
-        if old_scope.ref_count == 0:
-          # No more references, safe to free
-          old_scope.free()
-        # else: scope still referenced (e.g., by pending future), don't free
+        # Note: free() will decrement ref_count internally, so we just call it directly
+        old_scope.free()
+        # Scope will only be deallocated if ref_count reaches 0 inside free()
 
       of IkVar:
         {.push checks: off.}
