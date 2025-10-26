@@ -63,11 +63,11 @@ proc toJson*(diag: Diagnostic): JsonNode =
 
 # Helper to get position from Gene node
 proc getPosition*(gene: ptr Gene): tuple[line: int, col: int] =
-  ## Extract line and column from gene props
+  ## Extract line and column from gene props (using internal keys)
   result = (line: 0, col: 0)
 
-  let line_key = "line".to_key()
-  let col_key = "col".to_key()
+  let line_key = "__line__".to_key()
+  let col_key = "__col__".to_key()
 
   if gene.props.hasKey(line_key):
     let line_val = gene.props[line_key]
@@ -103,7 +103,8 @@ proc parseDocument*(uri: string, content: string, version: int): ParsedDocument 
 
   # Try to parse the document
   try:
-    var parser = new_parser()
+    # Enable position tracking for LSP
+    var parser = new_parser(track_positions = true)
     result.ast = parser.read_all(content)
 
     # If parsing succeeded, extract symbols

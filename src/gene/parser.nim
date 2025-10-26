@@ -34,6 +34,7 @@ type
     error*: ParseErrorKind
     # references*: References
     document_props_done*: bool  # flag to tell whether we have read document properties
+    track_positions*: bool  # When true, store line/col info for LSP/compiler
 
   TokenKind* = enum
     TkError
@@ -203,7 +204,7 @@ proc new_parser*(options: ParseOptions): Parser =
     # references: References(),
   )
 
-proc new_parser*(): Parser =
+proc new_parser*(track_positions: bool = false): Parser =
   if parser_config == nil or not parser_config.initialized:
     init()
 
@@ -211,6 +212,7 @@ proc new_parser*(): Parser =
     # document: Document(),
     options: default_options(),
     # references: References(),
+    track_positions: track_positions,
   )
 
 proc non_constituent(c: char): bool =
@@ -842,28 +844,28 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
   result.list = list
 
 proc add_line_col(self: var Parser, gene: ptr Gene) =
-  # Store position information in gene props for LSP
-  if gene != nil:
+  # Only store position info when track_positions is enabled (for LSP/compiler)
+  if self.track_positions and gene != nil:
     let line = self.line_number
     let col = self.get_col_number(self.bufpos)
-    gene.props["line".to_key()] = line.to_value()
-    gene.props["col".to_key()] = col.to_value()
+    # Use special internal keys that won't conflict with user props
+    gene.props["__line__".to_key()] = line.to_value()
+    gene.props["__col__".to_key()] = col.to_value()
 
 proc read_gene(self: var Parser): Value {.gcsafe.} =
   var gene = new_gene()
   #echo "line ", getCurrentLine(p), "lineno: ", p.line_number, " col: ", getColNumber(p, p.bufpos)
   #echo $get_current_line(p) & " LINENO(" & $p.line_number & ")"
 
-  # Add position info before reading content
+  # Add position info first (if tracking enabled)
   self.add_line_col(gene)
 
   gene.type = self.read_gene_type()
   var result_list = self.read_delimited_list(')', true)
 
-  # Merge props from delimited list (don't overwrite position info)
+  # Merge user props from delimited list (don't overwrite position info)
   for k, v in result_list.map:
-    if k != "line".to_key() and k != "col".to_key():
-      gene.props[k] = v
+    gene.props[k] = v
 
   gene.children = result_list.list
   if not gene.type.is_nil() and gene.type.kind == VkSymbol:
