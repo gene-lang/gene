@@ -1,6 +1,6 @@
 ## Gene Language Server Protocol (LSP) Server Implementation
 
-import asyncdispatch, json, strutils, net, asyncnet, tables, os
+import asyncdispatch, json, strutils, net, asyncnet, tables, os, sequtils
 import ../types
 import ./types, ./document
 
@@ -16,11 +16,42 @@ type
     socket*: AsyncSocket
     config*: LspConfig
     state*: LspState
+    clients*: seq[AsyncSocket]  # Connected clients
 
 var lsp_config*: LspConfig
 var lsp_server*: LspServer
 
 # Helper functions for LSP responses
+proc newNotification*(methodName: string, params: JsonNode): string =
+  let notification = %*{
+    "jsonrpc": "2.0",
+    "method": methodName,
+    "params": params
+  }
+  return $notification
+
+# Helper to send notification to all clients
+proc sendNotificationToClients*(notification: string) {.async.} =
+  if lsp_server != nil and lsp_server.clients.len > 0:
+    for client in lsp_server.clients:
+      try:
+        await client.send(notification & "\r\n")
+      except:
+        discard  # Client disconnected
+
+# Helper to send diagnostics for a document
+proc sendDiagnostics*(uri: string, diagnostics: seq[Diagnostic]) {.async.} =
+  var diagArray = newJArray()
+  for diag in diagnostics:
+    diagArray.add(toJson(diag))
+
+  let params = %*{
+    "uri": uri,
+    "diagnostics": diagArray
+  }
+
+  let notification = newNotification("textDocument/publishDiagnostics", params)
+  await sendNotificationToClients(notification)
 proc newResponse*(id: JsonNode, resultData: JsonNode): string =
   let response = %*{
     "jsonrpc": "2.0",
@@ -103,10 +134,8 @@ proc handle_text_document_did_open*(id: JsonNode, params: JsonNode): Future[stri
       if doc.diagnostics.len > 0:
         echo "  Found ", doc.diagnostics.len, " diagnostics"
 
-    # Send diagnostics to client if any
-    if doc.diagnostics.len > 0:
-      # TODO: Send diagnostics as a notification
-      discard
+    # Send diagnostics to client
+    await sendDiagnostics(uri, doc.diagnostics)
 
     return newResponse(id, newJNull())
 
@@ -152,6 +181,9 @@ proc handle_text_document_did_change*(id: JsonNode, params: JsonNode): Future[st
           echo "  Reparsed ", doc.ast.len, " top-level forms"
           if doc.diagnostics.len > 0:
             echo "  Found ", doc.diagnostics.len, " diagnostics"
+
+        # Send updated diagnostics
+        await sendDiagnostics(uri, doc.diagnostics)
 
     return newResponse(id, newJNull())
 
@@ -287,6 +319,7 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
   lsp_server = LspServer(
     socket: newAsyncSocket(),
     config: lsp_config,
+    clients: @[],
     state: LspState(
       workspaceRoot: lsp_config.workspace,
       documents: initTable[string, DocumentState](),
@@ -318,7 +351,10 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
 
   while true:
     let client = await lsp_server.socket.accept()
-    
+
+    # Add client to list
+    lsp_server.clients.add(client)
+
     # Handle client connection in background
     asyncCheck (proc() {.async.} =
       try:
@@ -326,11 +362,15 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
           let line = await client.recvLine()
           if line.len == 0:
             break
-            
+
           let response = await handle_lsp_request(line)
           await client.send(response & "\r\n")
       except:
         discard
       finally:
+        # Remove client from list
+        let idx = lsp_server.clients.find(client)
+        if idx >= 0:
+          lsp_server.clients.delete(idx)
         client.close()
     )()

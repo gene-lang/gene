@@ -1,0 +1,9 @@
+# Test file with syntax error
+(var x 10)
+
+# Missing closing paren
+(fn add [a b
+  (+ a b))
+
+(print "This should not parse")
+

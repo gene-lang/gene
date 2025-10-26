@@ -15,18 +15,6 @@ type
     diagnostics*: seq[Diagnostic]  # Parse errors and warnings
     parseError*: bool  # Whether parsing failed
 
-  Diagnostic* = object
-    range*: Range
-    severity*: DiagnosticSeverity
-    message*: string
-    source*: string
-
-  DiagnosticSeverity* = enum
-    dsError = 1
-    dsWarning = 2
-    dsInformation = 3
-    dsHint = 4
-
 # Document cache
 var document_cache* = initTable[string, ParsedDocument]()
 
@@ -41,7 +29,8 @@ proc newDiagnostic*(range: Range, severity: DiagnosticSeverity, message: string)
     range: range,
     severity: severity,
     message: message,
-    source: "gene-lsp"
+    source: "gene-lsp",
+    code: ""
   )
 
 proc toJson*(pos: Position): JsonNode =
@@ -57,12 +46,14 @@ proc toJson*(rng: Range): JsonNode =
   }
 
 proc toJson*(diag: Diagnostic): JsonNode =
-  %*{
+  result = %*{
     "range": toJson(diag.range),
     "severity": diag.severity.int,
     "message": diag.message,
     "source": diag.source
   }
+  if diag.code.len > 0:
+    result["code"] = %diag.code
 
 # Forward declaration
 proc extractSymbols*(doc: ParsedDocument)
