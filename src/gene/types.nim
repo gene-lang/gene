@@ -3,6 +3,7 @@ import random
 import dynlib
 import times
 import os
+import asyncdispatch  # For async I/O support
 
 # Forward declarations for new types
 type
@@ -30,6 +31,7 @@ type
     value*: Value              # Result value or exception
     success_callbacks*: seq[Value]  # Success callback functions
     failure_callbacks*: seq[Value]  # Failure callback functions
+    nim_future*: Future[Value]  # Underlying Nim async future (nil for sync futures)
 
   GeneratorState* = enum
     GsPending            # Not yet started
@@ -924,6 +926,9 @@ type
     # Instruction profiling
     instruction_profiling*: bool
     instruction_profile*: array[InstructionKind, InstructionProfile]
+    # Async/Event Loop support
+    event_loop_counter*: int  # Counter for periodic event loop polling (poll every N instructions)
+    # Note: pending_futures will be added when we wrap Nim's Future[Value]
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -3081,7 +3086,18 @@ proc new_future*(): FutureObj =
     state: FsPending,
     value: NIL,
     success_callbacks: @[],
-    failure_callbacks: @[]
+    failure_callbacks: @[],
+    nim_future: nil  # Synchronous future by default
+  )
+
+proc new_future*(nim_fut: Future[Value]): FutureObj =
+  ## Create a FutureObj that wraps a Nim async future
+  result = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nim_fut
   )
 
 proc new_future_value*(): Value =
@@ -3108,6 +3124,34 @@ proc fail*(f: FutureObj, error: Value) =
   for callback in f.failure_callbacks:
     # TODO: Execute callback with error
     discard
+
+proc update_from_nim_future*(f: FutureObj) =
+  ## Check if the underlying Nim future has completed and update our state
+  ## This should be called during event loop polling
+  if f.nim_future.isNil or f.state != FsPending:
+    return  # No Nim future to check, or already completed
+
+  if f.nim_future.finished:
+    # Nim future has completed - copy its result
+    if f.nim_future.failed:
+      # Future failed with exception
+      # TODO: Wrap exception properly when exception handling is ready
+      f.state = FsFailure
+      f.value = new_str_value("Async operation failed")
+    else:
+      # Future succeeded
+      f.state = FsSuccess
+      f.value = f.nim_future.read()
+
+    # Execute appropriate callbacks
+    if f.state == FsSuccess:
+      for callback in f.success_callbacks:
+        # TODO: Execute callback with value
+        discard
+    else:
+      for callback in f.failure_callbacks:
+        # TODO: Execute callback with error
+        discard
 
 #################### Enum ########################
 

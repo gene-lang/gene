@@ -11,4 +11,3 @@ proc to_int*(x: string): (bool, int) =
     result = (true, parse_int(x))
   except ValueError:
     result = (false, 0)
-

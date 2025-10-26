@@ -1,5 +1,6 @@
 import tables, strutils, strformat, algorithm
 import times, os
+import asyncdispatch  # For event loop polling in async support
 
 import ./types
 import ./compiler
@@ -837,6 +838,16 @@ proc exec*(self: VirtualMachine): Value =
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
+    # Event loop polling for async support
+    # Poll every 100 instructions to allow async I/O to progress
+    self.event_loop_counter.inc()
+    if self.event_loop_counter >= 100:
+      self.event_loop_counter = 0
+      try:
+        poll(0)  # Non-blocking poll - check for completed async operations
+      except ValueError:
+        discard  # No async operations pending, this is normal
+
     when not defined(release):
       if self.trace:
         if inst.kind == IkStart: # This is part of INDENT_LOGIC

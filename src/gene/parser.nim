@@ -1382,4 +1382,3 @@ proc read*(buffer: string): Value =
 proc read_all*(buffer: string): seq[Value] =
   var parser = new_parser()
   return parser.read_all(buffer)
-
