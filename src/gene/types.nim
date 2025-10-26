@@ -3552,6 +3552,8 @@ proc new_instr*(kind: InstructionKind, arg0: Value): Instruction =
 #################### VM ##########################
 
 proc init_app_and_vm*() =
+  # Reset gene namespace initialization flag since we're creating a new App
+  gene_namespace_initialized = false
 
   VM = VirtualMachine(
     exception_handlers: @[],
