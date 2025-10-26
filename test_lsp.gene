@@ -1,0 +1,15 @@
+# Test file for LSP
+(var x 10)
+(var y 20)
+
+(fn add [a b]
+  (+ a b))
+
+(class Person
+  (fn init [name age]
+    (@name = name)
+    (@age = age)))
+
+(var result (add x y))
+(print "Result: " result)
+

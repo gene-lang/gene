@@ -64,6 +64,9 @@ proc toJson*(diag: Diagnostic): JsonNode =
     "source": diag.source
   }
 
+# Forward declaration
+proc extractSymbols*(doc: ParsedDocument)
+
 proc parseDocument*(uri: string, content: string, version: int): ParsedDocument =
   ## Parse a Gene document and extract symbols
   result = ParsedDocument(
@@ -80,9 +83,9 @@ proc parseDocument*(uri: string, content: string, version: int): ParsedDocument 
   try:
     var parser = new_parser()
     result.ast = parser.read_all(content)
-    
+
     # If parsing succeeded, extract symbols
-    # TODO: Implement symbol extraction
+    extractSymbols(result)
     
   except ParseError as e:
     # Parse error - create diagnostic
@@ -114,10 +117,123 @@ proc parseDocument*(uri: string, content: string, version: int): ParsedDocument 
     )
     result.diagnostics.add(diag)
 
+proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolInfo], depth: int = 0) =
+  ## Recursively extract symbols from a Value
+  if value.is_nil or depth > 10:  # Prevent infinite recursion
+    return
+
+  case value.kind:
+  of VkGene:
+    let gene = value.gene
+    if gene.type.kind == VkSymbol:
+      let type_name = gene.type.str
+
+      case type_name:
+      of "var", "let", "const":
+        # Variable declaration: (var name value)
+        if gene.children.len >= 1:
+          let name_val = gene.children[0]
+          if name_val.kind == VkSymbol:
+            symbols.add(SymbolInfo(
+              name: name_val.str,
+              kind: skVariable,
+              location: Location(
+                uri: uri,
+                range: Range(
+                  start: Position(line: 0, character: 0),  # TODO: Get actual position
+                  finish: Position(line: 0, character: 0)
+                )
+              ),
+              details: "variable"
+            ))
+
+      of "fn", "fnx":
+        # Function declaration: (fn name [args] body...)
+        if gene.children.len >= 2:
+          let name_val = gene.children[0]
+          if name_val.kind == VkSymbol:
+            var signature = name_val.str & " "
+            # Try to get argument list
+            if gene.children.len >= 2 and gene.children[1].kind == VkVector:
+              signature &= "["
+              let args = gene.children[1].ref.arr
+              for i, arg in args:
+                if i > 0:
+                  signature &= " "
+                signature &= $arg
+              signature &= "]"
+
+            symbols.add(SymbolInfo(
+              name: name_val.str,
+              kind: skFunction,
+              location: Location(
+                uri: uri,
+                range: Range(
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
+                )
+              ),
+              details: signature
+            ))
+
+      of "class":
+        # Class declaration: (class Name ...)
+        if gene.children.len >= 1:
+          let name_val = gene.children[0]
+          if name_val.kind == VkSymbol:
+            symbols.add(SymbolInfo(
+              name: name_val.str,
+              kind: skClass,
+              location: Location(
+                uri: uri,
+                range: Range(
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
+                )
+              ),
+              details: "class"
+            ))
+
+            # Extract methods from class body
+            for i in 1..<gene.children.len:
+              extractSymbolsFromValue(gene.children[i], uri, symbols, depth + 1)
+
+      of "module", "ns", "namespace":
+        # Module/namespace declaration
+        if gene.children.len >= 1:
+          let name_val = gene.children[0]
+          if name_val.kind == VkSymbol:
+            symbols.add(SymbolInfo(
+              name: name_val.str,
+              kind: skModule,
+              location: Location(
+                uri: uri,
+                range: Range(
+                  start: Position(line: 0, character: 0),
+                  finish: Position(line: 0, character: 0)
+                )
+              ),
+              details: "module"
+            ))
+      else:
+        # Recursively process children for other gene types
+        for child in gene.children:
+          extractSymbolsFromValue(child, uri, symbols, depth + 1)
+
+  of VkVector:
+    # Process vector elements
+    for elem in value.ref.arr:
+      extractSymbolsFromValue(elem, uri, symbols, depth + 1)
+
+  else:
+    # Other value types don't contain symbols
+    discard
+
 proc extractSymbols*(doc: ParsedDocument) =
   ## Extract symbols from parsed AST
-  ## This will be implemented in the next phase
-  discard
+  doc.symbols = @[]
+  for node in doc.ast:
+    extractSymbolsFromValue(node, doc.uri, doc.symbols)
 
 proc getDocument*(uri: string): ParsedDocument =
   ## Get a document from cache
@@ -167,14 +283,14 @@ proc findSymbolAtPosition*(uri: string, line: int, character: int): SymbolInfo =
 
 proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[CompletionItem] =
   ## Get completion items at a specific position
-  ## This will be implemented when we add scope tracking
   result = @[]
-  
-  # For now, return some basic Gene keywords as completions
-  let keywords = @["var", "fn", "if", "do", "class", "new", "import", "export", 
-                   "try", "catch", "throw", "async", "await", "for", "while", 
-                   "return", "break", "continue"]
-  
+
+  # Add Gene keywords
+  let keywords = @["var", "fn", "if", "do", "class", "new", "import", "export",
+                   "try", "catch", "throw", "async", "await", "for", "while",
+                   "return", "break", "continue", "let", "const", "fnx", "module",
+                   "ns", "namespace"]
+
   for keyword in keywords:
     result.add(CompletionItem(
       label: keyword,
@@ -183,8 +299,37 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
       documentation: "",
       insertText: "",
       insertTextFormat: "",
-      sortText: ""
+      sortText: "0_" & keyword  # Sort keywords first
     ))
+
+  # Add symbols from the current document
+  let doc = getDocument(uri)
+  if doc != nil:
+    for symbol in doc.symbols:
+      var kind: CompletionItemKind
+      case symbol.kind:
+      of skFunction:
+        kind = ckFunction
+      of skVariable:
+        kind = ckVariable
+      of skClass:
+        kind = ckClass
+      of skModule:
+        kind = ckModule
+      of skConstant:
+        kind = ckVariable  # Use variable kind for constants
+      of skProperty:
+        kind = ckProperty
+
+      result.add(CompletionItem(
+        label: symbol.name,
+        kind: kind,
+        detail: symbol.details,
+        documentation: "",
+        insertText: "",
+        insertTextFormat: "",
+        sortText: "1_" & symbol.name  # Sort symbols after keywords
+      ))
 
 proc getHoverInfo*(uri: string, line: int, character: int): string =
   ## Get hover information at a specific position
