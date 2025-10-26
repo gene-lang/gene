@@ -18,12 +18,13 @@ Gene now includes a Language Server Protocol (LSP) implementation that provides 
 
 ### Phase 2: Language Analysis ✅ COMPLETED
 - ✅ **Gene Parser Integration**: Documents parsed using existing Gene parser
-- ✅ **Symbol Extraction**: Functions, variables, classes, modules extracted from AST
+- ✅ **Position Tracking**: Parser stores line/column in Gene node props
+- ✅ **Symbol Extraction**: Functions, variables, classes, modules with accurate positions
 - ✅ **Code Completion**: Keywords + document symbols with proper kinds
 - ✅ **Error Diagnostics**: Parse errors reported to client in real-time
-- ✅ **Hover Information**: Symbol information displayed on hover
-- ⚠️ **Position Tracking**: Basic implementation (needs line/column from parser)
-- ❌ **Incremental Parsing**: Full document reparse on changes
+- ✅ **Hover Information**: Position-aware hover shows symbol at cursor
+- ✅ **Go-to-Definition**: Navigate to symbol definition using positions
+- ⚠️ **Incremental Parsing**: Full document reparse on changes (optimization needed)
 
 ### Phase 3: Advanced Features 📋 PLANNED
 - ❌ **Code Completion**: Context-aware symbol completion with ranking
@@ -146,19 +147,21 @@ src/gene/lsp/types.nim (Protocol data structures)
 - ✅ Server starts and listens on configurable port/host
 - ✅ Handles LSP initialize/shutdown lifecycle
 - ✅ Processes document open/close/change notifications
-- ✅ Parses Gene documents and extracts symbols
+- ✅ Parses Gene documents with position tracking
+- ✅ Extracts symbols with accurate line/column positions
 - ✅ Provides completions (keywords + document symbols)
-- ✅ Reports parse errors as diagnostics
-- ✅ Shows hover information with symbol details
+- ✅ Reports parse errors as diagnostics in real-time
+- ✅ Shows position-aware hover (symbol at cursor)
+- ✅ Go-to-definition navigation
 - ✅ Integrated into main `gene` CLI (no separate binary needed)
 
 **What's Next (Phase 3):**
-- Add position tracking from parser (line/column info)
-- Implement go-to-definition using symbol locations
 - Add find-references functionality
-- Implement scope-aware completion
+- Implement scope-aware completion (local variables, imports)
 - Add incremental parsing for better performance
-- Implement document formatting
+- Implement document formatting (S-expression pretty-printing)
+- Add rename refactoring
+- Implement workspace-wide symbol search
 
 ### Next Steps
 

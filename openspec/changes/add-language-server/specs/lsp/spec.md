@@ -12,13 +12,13 @@
 - ✅ Basic capability negotiation
 
 ### Phase 2: Language Analysis (COMPLETED)
-- ✅ Gene parser integration
-- ✅ Symbol extraction (functions, variables, classes, modules)
+- ✅ Gene parser integration with position tracking
+- ✅ Symbol extraction with accurate line/column positions
 - ✅ Code completion with keywords and symbols
-- ✅ Error diagnostics (parse errors)
-- ✅ Hover information
-- ⚠️ Position tracking (basic implementation)
-- ❌ Incremental parsing
+- ✅ Error diagnostics (parse errors in real-time)
+- ✅ Position-aware hover information
+- ✅ Go-to-definition navigation
+- ⚠️ Incremental parsing (full reparse on changes)
 
 ### Phase 3: Advanced Features (PLANNED)
 - ❌ Code completion with context awareness
