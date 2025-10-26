@@ -55,6 +55,30 @@ proc toJson*(diag: Diagnostic): JsonNode =
   if diag.code.len > 0:
     result["code"] = %diag.code
 
+# Helper to get position from Gene node
+proc getPosition*(gene: ptr Gene): tuple[line: int, col: int] =
+  ## Extract line and column from gene props
+  result = (line: 0, col: 0)
+
+  let line_key = "line".to_key()
+  let col_key = "col".to_key()
+
+  if gene.props.hasKey(line_key):
+    let line_val = gene.props[line_key]
+    if line_val.kind == VkInt:
+      result.line = line_val.to_int()
+
+  if gene.props.hasKey(col_key):
+    let col_val = gene.props[col_key]
+    if col_val.kind == VkInt:
+      result.col = col_val.to_int()
+
+proc getPositionFromValue*(value: Value): tuple[line: int, col: int] =
+  ## Extract position from a Value (if it's a Gene)
+  result = (line: 0, col: 0)
+  if value.kind == VkGene:
+    result = getPosition(value.gene)
+
 # Forward declaration
 proc extractSymbols*(doc: ParsedDocument)
 
@@ -116,6 +140,8 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
   case value.kind:
   of VkGene:
     let gene = value.gene
+    let (line, col) = getPosition(gene)
+
     if gene.type.kind == VkSymbol:
       let type_name = gene.type.str
 
@@ -125,14 +151,19 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
+            # Get position of the name symbol if available
+            let (name_line, name_col) = getPositionFromValue(name_val)
+            let actual_line = if name_line > 0: name_line else: line
+            let actual_col = if name_col > 0: name_col else: col
+
             symbols.add(SymbolInfo(
               name: name_val.str,
               kind: skVariable,
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: 0, character: 0),  # TODO: Get actual position
-                  finish: Position(line: 0, character: 0)
+                  start: Position(line: actual_line, character: actual_col),
+                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
                 )
               ),
               details: "variable"
@@ -143,6 +174,10 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 2:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
+            let (name_line, name_col) = getPositionFromValue(name_val)
+            let actual_line = if name_line > 0: name_line else: line
+            let actual_col = if name_col > 0: name_col else: col
+
             var signature = name_val.str & " "
             # Try to get argument list
             if gene.children.len >= 2 and gene.children[1].kind == VkVector:
@@ -160,8 +195,8 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
+                  start: Position(line: actual_line, character: actual_col),
+                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
                 )
               ),
               details: signature
@@ -172,14 +207,18 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
+            let (name_line, name_col) = getPositionFromValue(name_val)
+            let actual_line = if name_line > 0: name_line else: line
+            let actual_col = if name_col > 0: name_col else: col
+
             symbols.add(SymbolInfo(
               name: name_val.str,
               kind: skClass,
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
+                  start: Position(line: actual_line, character: actual_col),
+                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
                 )
               ),
               details: "class"
@@ -194,14 +233,18 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
+            let (name_line, name_col) = getPositionFromValue(name_val)
+            let actual_line = if name_line > 0: name_line else: line
+            let actual_col = if name_col > 0: name_col else: col
+
             symbols.add(SymbolInfo(
               name: name_val.str,
               kind: skModule,
               location: Location(
                 uri: uri,
                 range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
+                  start: Position(line: actual_line, character: actual_col),
+                  finish: Position(line: actual_line, character: actual_col + name_val.str.len)
                 )
               ),
               details: "module"
