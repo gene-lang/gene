@@ -96,8 +96,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return failure("No code provided to evaluate")
   
   init_app_and_vm()
+  init_stdlib()
   set_cmd_args(@[])
-  register_io_functions()  # Register IO functions after App is created
   
   
   try:

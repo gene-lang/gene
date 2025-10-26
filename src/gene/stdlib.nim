@@ -1,5 +1,10 @@
-import os, base64, asyncdispatch
-import ../types
+import base64, re, json, osproc, os, strutils, times, asyncdispatch
+import ./types
+import ./parser
+import ./compiler
+import ./stdlib/math as stdlib_math
+import ./stdlib/io as stdlib_io
+import ./stdlib/system as stdlib_system
 
 # Core functions for the Gene standard library
 
@@ -168,45 +173,6 @@ proc core_vm_print_instructions*(vm: VirtualMachine, args: ptr UncheckedArray[Va
   echo vm.cu
   return NIL
 
-# Register all core functions in a namespace
-proc init_core_namespace*(global_ns: Namespace) =
-  # Core I/O
-  global_ns["print".to_key()] = core_print.to_value()
-  global_ns["println".to_key()] = core_println.to_value()
-
-  # Assertions and debugging
-  global_ns["assert".to_key()] = core_assert.to_value()
-  global_ns["debug".to_key()] = core_debug.to_value()
-  global_ns["trace_start".to_key()] = core_trace_start.to_value()
-  global_ns["trace_end".to_key()] = core_trace_end.to_value()
-
-  # Timing
-  global_ns["sleep".to_key()] = core_sleep.to_value()
-  global_ns["run_forever".to_key()] = core_run_forever.to_value()
-
-  # Environment
-  global_ns["get_env".to_key()] = core_get_env.to_value()
-  global_ns["set_env".to_key()] = core_set_env.to_value()
-  global_ns["has_env".to_key()] = core_has_env.to_value()
-
-  # Encoding
-  global_ns["base64".to_key()] = core_base64.to_value()
-  global_ns["base64_decode".to_key()] = core_base64_decode.to_value()
-
-  # VM debugging (in vm/ subnamespace)
-  let vm_ns = new_namespace("vm")
-  vm_ns["print_stack".to_key()] = core_vm_print_stack.to_value()
-  vm_ns["print_instructions".to_key()] = core_vm_print_instructions.to_value()
-  global_ns["vm".to_key()] = vm_ns.to_value()
-
-# ===== Content from vm/core.nim merged below =====
-
-import strutils, re, times
-import std/[json, tables, osproc]
-import ../stdlib/math as stdlib_math
-import ../stdlib/io as stdlib_io
-import ../stdlib/system as stdlib_system
-
 const
   REGEX_FLAG_IGNORE_CASE = 0x1'u8
   REGEX_FLAG_MULTILINE = 0x2'u8
@@ -331,6 +297,7 @@ proc println(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
     if i < get_positional_count(arg_count, has_keyword_args) - 1:
       s &= " "
   echo s
+  return NIL
 
 proc print(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
@@ -340,6 +307,7 @@ proc print(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, 
     if i < get_positional_count(arg_count, has_keyword_args) - 1:
       s &= " "
   stdout.write(s)
+  return NIL
 
 proc gene_assert(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count > 0:
@@ -349,6 +317,7 @@ proc gene_assert(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
       if arg_count > 1:
         msg = get_positional_arg(args, 1, has_keyword_args).str
       raise new_exception(types.Exception, msg)
+  return NIL
 
 proc base64_encode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -744,36 +713,6 @@ proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     gene_future.fail(error_msg.to_value())
 
   return gene_future_val
-
-proc register_io_functions*() =
-  # Get the io namespace that was created in init_app_and_vm
-  let io_key = "io".to_key()
-  if not App.app.gene_ns.ns.has_key(io_key):
-    return  # io namespace doesn't exist
-  
-  let io_val = App.app.gene_ns.ns[io_key]
-  if io_val.kind != VkNamespace:
-    return  # io is not a namespace
-  
-  let io_ns = io_val.ns
-  
-  # Add synchronous functions
-  var read_ref = new_ref(VkNativeFn)
-  read_ref.native_fn = file_read
-  io_ns["read".to_key()] = read_ref.to_ref_value()
-
-  var write_ref = new_ref(VkNativeFn)
-  write_ref.native_fn = file_write
-  io_ns["write".to_key()] = write_ref.to_ref_value()
-
-  # Add asynchronous functions
-  var read_async_ref = new_ref(VkNativeFn)
-  read_async_ref.native_fn = file_read_async
-  io_ns["read_async".to_key()] = read_async_ref.to_ref_value()
-
-  var write_async_ref = new_ref(VkNativeFn)
-  write_async_ref.native_fn = file_write_async
-  io_ns["write_async".to_key()] = write_async_ref.to_ref_value()
 
 proc init_gene_namespace*() =
   if types.gene_namespace_initialized:
@@ -2036,7 +1975,6 @@ proc init_gene_namespace*() =
   App.app.gene_ns.ref.ns["os".to_key()] = os_ns.to_value()
 
   # Initialize standard library namespaces
-  init_core_namespace(App.app.global_ns.ref.ns)
   stdlib_math.init_math_namespace(App.app.global_ns.ref.ns)
   stdlib_io.init_io_namespace(App.app.global_ns.ref.ns)
   stdlib_system.init_system_namespace(App.app.global_ns.ref.ns)
@@ -2077,3 +2015,36 @@ proc init_gene_namespace*() =
   vm_ns["compile".to_key()] = vm_compile.to_value()
   vm_ns["PUSH".to_key()] = vm_push.to_value()
   vm_ns["ADD".to_key()] = vm_add.to_value()
+
+proc init_stdlib*() =
+  # Initialize gene namespace first (classes, methods, etc.)
+  init_gene_namespace()
+
+  var global_ns = App.app.global_ns.ns
+  global_ns["print".to_key()] = core_print.to_value()
+  global_ns["println".to_key()] = core_println.to_value()
+
+  # Assertions and debugging
+  global_ns["assert".to_key()] = core_assert.to_value()
+  global_ns["debug".to_key()] = core_debug.to_value()
+  global_ns["trace_start".to_key()] = core_trace_start.to_value()
+  global_ns["trace_end".to_key()] = core_trace_end.to_value()
+
+  # Timing
+  global_ns["sleep".to_key()] = core_sleep.to_value()
+  global_ns["run_forever".to_key()] = core_run_forever.to_value()
+
+  # Environment
+  global_ns["get_env".to_key()] = core_get_env.to_value()
+  global_ns["set_env".to_key()] = core_set_env.to_value()
+  global_ns["has_env".to_key()] = core_has_env.to_value()
+
+  # Encoding
+  global_ns["base64".to_key()] = core_base64.to_value()
+  global_ns["base64_decode".to_key()] = core_base64_decode.to_value()
+
+  # VM debugging (in vm/ subnamespace)
+  let vm_ns = new_namespace("vm")
+  vm_ns["print_stack".to_key()] = core_vm_print_stack.to_value()
+  vm_ns["print_instructions".to_key()] = core_vm_print_instructions.to_value()
+  global_ns["vm".to_key()] = vm_ns.to_value()

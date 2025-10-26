@@ -91,7 +91,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   # let thread_id = get_free_thread()
   # init_thread(thread_id)
   init_app_and_vm()
-  register_io_functions()  # Register IO functions after App is created
+  init_stdlib()
   # VM.thread_id = thread_id
   # VM.repl_on_error = options.repl_on_error
   # VM.app.args = options.args
@@ -126,8 +126,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       
       # Initialize the VM if not already initialized
       init_app_and_vm()
+      init_stdlib()
       set_cmd_args(options.args)
-      register_io_functions()  # Register IO functions after App is created
       
       # Enable tracing/profiling if requested
       if options.trace:
@@ -176,8 +176,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         
         let start = cpu_time()
         init_app_and_vm()
+        init_stdlib()
         set_cmd_args(options.args)
-        register_io_functions()  # Register IO functions after App is created
         
         if options.trace:
           VM.trace = true
@@ -217,8 +217,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   
   # Initialize the VM if not already initialized
   init_app_and_vm()
+  init_stdlib()
   set_cmd_args(options.args)
-  register_io_functions()  # Register IO functions after App is created
   
   # Enable tracing if requested
   if options.trace:

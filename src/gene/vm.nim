@@ -21,8 +21,7 @@ const DEBUG_VM = false
 
 # Forward declarations
 proc exec*(self: VirtualMachine): Value
-proc register_io_functions*()  # From vm/core
-proc init_gene_namespace*()     # From vm/core
+proc init_stdlib*()  # From stdlib
 
 var next_message_id {.threadvar.}: int
 
@@ -30,8 +29,7 @@ var next_message_id {.threadvar.}: int
 proc init_vm_for_thread(thread_id: int) =
   ## Initialize VM for a worker thread
   init_app_and_vm()
-  init_gene_namespace()  # Register println, print, and other core functions
-  register_io_functions()
+  init_stdlib()  # Register println, print, and other core functions
 
   # Add $main_thread variable to global namespace
   let main_thread_ref = types.Thread(
@@ -240,7 +238,6 @@ template get_value_class(val: Value): Class =
     else:
       nil
 
-# Forward declarations from vm/core
 proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
@@ -820,9 +817,6 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
     return false
 
 proc exec*(self: VirtualMachine): Value =
-  # Initialize gene namespace if not already done
-  init_gene_namespace()
-
   # Reset self.pc for new execution (unless we're resuming a generator)
   # Generators set their PC before calling exec and need to preserve it
   if self.frame == nil or not self.frame.is_generator:
@@ -5519,9 +5513,6 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   return result
 
 proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
-  # Initialize gene namespace if not already done
-  init_gene_namespace()
-  
   let compiled = parse_and_compile(code, module_name)
 
   let ns = new_namespace(module_name)
@@ -5662,8 +5653,8 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   
   return result
 
-include "./stdlib/core"
-import "./vm/async"
+include "./stdlib"
+
 # Temporarily import http and sqlite modules until extension loading is fixed
 when not defined(noExtensions):
   import "../genex/http"

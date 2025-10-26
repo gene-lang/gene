@@ -3608,11 +3608,6 @@ proc init_app_and_vm*() =
   # Also add to gene namespace for gene/time/now access
   App.app.gene_ns.ref.ns["time".to_key()] = time_ns.to_value()
 
-  # Initialize IO namespace directly here
-  # Functions will be registered later by register_io_functions
-  let io_ns = new_namespace("io")
-  App.app.gene_ns.ns["io".to_key()] = io_ns.to_value()
-
   refresh_env_map()
   set_cmd_args(@[])
 
