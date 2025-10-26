@@ -322,10 +322,38 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
         sortText: "1_" & symbol.name  # Sort symbols after keywords
       ))
 
-proc getHoverInfo*(uri: string, line: int, character: int): string =
+proc getHoverInfo*(uri: string, line: int, character: int): tuple[found: bool, content: string, kind: string] =
   ## Get hover information at a specific position
-  ## This will be implemented when we add type information
-  return ""
+  result = (found: false, content: "", kind: "markdown")
+
+  let doc = getDocument(uri)
+  if doc == nil:
+    return
+
+  # For now, search through symbols to find one that might match
+  # TODO: Add proper position tracking to symbols
+  # For now, just return info about all symbols in the document
+  if doc.symbols.len > 0:
+    var content = "## Symbols in document\n\n"
+    for symbol in doc.symbols:
+      case symbol.kind:
+      of skFunction:
+        content &= "- **function** `" & symbol.name & "`"
+        if symbol.details.len > 0:
+          content &= " - " & symbol.details
+        content &= "\n"
+      of skVariable:
+        content &= "- **variable** `" & symbol.name & "`\n"
+      of skClass:
+        content &= "- **class** `" & symbol.name & "`\n"
+      of skModule:
+        content &= "- **module** `" & symbol.name & "`\n"
+      of skConstant:
+        content &= "- **constant** `" & symbol.name & "`\n"
+      of skProperty:
+        content &= "- **property** `" & symbol.name & "`\n"
+
+    result = (found: true, content: content, kind: "markdown")
 
 # Helper to convert URI to file path
 proc uriToPath*(uri: string): string =

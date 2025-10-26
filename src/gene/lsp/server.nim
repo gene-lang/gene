@@ -246,12 +246,25 @@ proc handle_text_document_hover*(id: JsonNode, params: JsonNode): Future[string]
     let text_doc = params["textDocument"]
     let position = params["position"]
     let uri = text_doc["uri"].getStr()
+    let line = position["line"].getInt()
+    let character = position["character"].getInt()
 
     if lsp_config.trace:
-      echo "LSP Hover requested for: ", uri, " at position: ", $position
+      echo "LSP Hover requested for: ", uri, " at ", line, ":", character
 
-    # TODO: Implement actual hover information
-    let resultData = newJNull()
+    # Get hover information
+    let (found, content, kind) = getHoverInfo(uri, line, character)
+
+    var resultData: JsonNode
+    if found:
+      resultData = %*{
+        "contents": %*{
+          "kind": kind,
+          "value": content
+        }
+      }
+    else:
+      resultData = newJNull()
 
     return newResponse(id, resultData)
 
