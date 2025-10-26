@@ -10,6 +10,7 @@ import ./vm/module
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
+import ./vm/async
 
 when not defined(noExtensions):
   import ./vm/extension
@@ -845,6 +846,18 @@ proc exec*(self: VirtualMachine): Value =
       self.event_loop_counter = 0
       try:
         poll(0)  # Non-blocking poll - check for completed async operations
+
+        # Update all pending futures from their Nim futures
+        var i = 0
+        while i < self.pending_futures.len:
+          let future_obj = self.pending_futures[i]
+          update_future_from_nim(self, future_obj)
+
+          # If future completed, remove from pending list
+          if future_obj.state != FsPending:
+            self.pending_futures.delete(i)
+          else:
+            i.inc()
       except ValueError:
         discard  # No async operations pending, this is normal
 

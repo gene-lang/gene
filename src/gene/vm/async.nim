@@ -1,7 +1,40 @@
 import ../types
+import asyncdispatch  # For Future procs: finished, failed, read
+
+# NOTE: Callback execution is deferred for now
+# In a full implementation, callbacks would be executed when futures complete
+# For Phase 1, we're just setting up the infrastructure
+
+# Update a future from its underlying Nim future
+proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
+  ## Check if the underlying Nim future has completed and update Gene future state
+  ## This should be called during event loop polling
+  ## NOTE: Callback execution is deferred - will be implemented in Phase 1.3
+  if future_obj.nim_future.isNil or future_obj.state != FsPending:
+    return  # No Nim future to check, or already completed
+
+  if finished(future_obj.nim_future):
+    # Nim future has completed - copy its result
+    if failed(future_obj.nim_future):
+      # Future failed with exception
+      # TODO: Wrap exception properly when exception handling is ready
+      future_obj.state = FsFailure
+      future_obj.value = new_str_value("Async operation failed")
+
+      # TODO: Execute failure callbacks (Phase 1.3)
+      # for callback in future_obj.failure_callbacks:
+      #   execute_callback(vm, callback, future_obj.value)
+    else:
+      # Future succeeded
+      future_obj.state = FsSuccess
+      future_obj.value = read(future_obj.nim_future)
+
+      # TODO: Execute success callbacks (Phase 1.3)
+      # for callback in future_obj.success_callbacks:
+      #   execute_callback(vm, callback, future_obj.value)
 
 # Future methods
-proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
   if arg_count < 2:
     raise new_exception(types.Exception, "Future.on_success requires 2 arguments (self and callback)")
@@ -18,20 +51,20 @@ proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
 
   let future_obj = future_arg.ref.future
 
-  # If future is already completed successfully, execute callback immediately
+  # If future is already completed successfully, store callback (will execute later)
   if future_obj.state == FsSuccess:
-    # TODO: Execute callback with value
+    # TODO: Execute callback immediately with the future's value (Phase 1.3)
     # For now, just store it
     future_obj.success_callbacks.add(callback_arg)
   elif future_obj.state == FsPending:
-    # Store callback for later execution
+    # Store callback for later execution when future completes
     future_obj.success_callbacks.add(callback_arg)
   # If failed, don't add to success callbacks
 
   # Return the future for chaining
   return future_arg
 
-proc future_on_failure(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc future_on_failure(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
   if arg_count < 2:
     raise new_exception(types.Exception, "Future.on_failure requires 2 arguments (self and callback)")
@@ -48,13 +81,13 @@ proc future_on_failure(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
 
   let future_obj = future_arg.ref.future
 
-  # If future is already failed, execute callback immediately
+  # If future is already failed, store callback (will execute later)
   if future_obj.state == FsFailure:
-    # TODO: Execute callback with error
+    # TODO: Execute callback immediately with the future's error value (Phase 1.3)
     # For now, just store it
     future_obj.failure_callbacks.add(callback_arg)
   elif future_obj.state == FsPending:
-    # Store callback for later execution
+    # Store callback for later execution when future fails
     future_obj.failure_callbacks.add(callback_arg)
   # If succeeded, don't add to failure callbacks
 

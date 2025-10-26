@@ -928,7 +928,7 @@ type
     instruction_profile*: array[InstructionKind, InstructionProfile]
     # Async/Event Loop support
     event_loop_counter*: int  # Counter for periodic event loop polling (poll every N instructions)
-    # Note: pending_futures will be added when we wrap Nim's Future[Value]
+    pending_futures*: seq[FutureObj]  # List of futures with pending Nim futures
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -3111,9 +3111,16 @@ proc complete*(f: FutureObj, value: Value) =
   f.state = FsSuccess
   f.value = value
   # Execute success callbacks
+  # Note: Callbacks are executed immediately when future completes
+  # In real async, these would be scheduled on the event loop
   for callback in f.success_callbacks:
-    # TODO: Execute callback with value
-    discard
+    if callback.kind == VkFunction:
+      # Execute Gene function with value as argument
+      # We need a VM instance to execute, but we don't have one here
+      # This will be handled by update_from_nim_future which has VM access
+      discard
+    # For now, callbacks are stored but not executed here
+    # They will be executed by update_from_nim_future or by explicit VM call
 
 proc fail*(f: FutureObj, error: Value) =
   if f.state != FsPending:
@@ -3122,18 +3129,24 @@ proc fail*(f: FutureObj, error: Value) =
   f.value = error
   # Execute failure callbacks
   for callback in f.failure_callbacks:
-    # TODO: Execute callback with error
-    discard
+    if callback.kind == VkFunction:
+      # Execute Gene function with error as argument
+      # We need a VM instance to execute, but we don't have one here
+      # This will be handled by update_from_nim_future which has VM access
+      discard
+    # For now, callbacks are stored but not executed here
+    # They will be executed by update_from_nim_future or by explicit VM call
 
 proc update_from_nim_future*(f: FutureObj) =
   ## Check if the underlying Nim future has completed and update our state
   ## This should be called during event loop polling
+  ## NOTE: This version doesn't execute callbacks - use update_future_from_nim in vm/async.nim for that
   if f.nim_future.isNil or f.state != FsPending:
     return  # No Nim future to check, or already completed
 
-  if f.nim_future.finished:
+  if finished(f.nim_future):
     # Nim future has completed - copy its result
-    if f.nim_future.failed:
+    if failed(f.nim_future):
       # Future failed with exception
       # TODO: Wrap exception properly when exception handling is ready
       f.state = FsFailure
@@ -3141,7 +3154,7 @@ proc update_from_nim_future*(f: FutureObj) =
     else:
       # Future succeeded
       f.state = FsSuccess
-      f.value = f.nim_future.read()
+      f.value = read(f.nim_future)
 
     # Execute appropriate callbacks
     if f.state == FsSuccess:
@@ -3544,6 +3557,7 @@ proc init_app_and_vm*() =
     exception_handlers: @[],
     current_exception: NIL,
     symbols: addr SYMBOLS,
+    pending_futures: @[],  # Initialize empty list of pending futures
   )
 
   # Pre-allocate frame and scope pools
