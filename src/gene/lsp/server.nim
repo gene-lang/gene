@@ -1,6 +1,6 @@
 ## Gene Language Server Protocol (LSP) Server Implementation
 
-import asyncdispatch, json, strutils, net, asyncnet, tables, os, sequtils
+import asyncdispatch, json, strutils, net, asyncnet, tables, os
 import ../types
 import ./types, ./document
 

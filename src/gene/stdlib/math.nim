@@ -1,7 +1,5 @@
+import std/math, random
 import ../types
-import ../vm/args
-import std/math
-import std/random
 
 # Math functions for the Gene standard library
 

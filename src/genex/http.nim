@@ -6,7 +6,6 @@ import nativesockets, net
 import cgi
 
 include ../gene/extension/boilerplate
-import ../gene/compiler
 import ../gene/vm
 
 # Global variables to store classes

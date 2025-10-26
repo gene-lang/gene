@@ -1,6 +1,5 @@
-import tables, strutils, os, osproc
+import tables, os, osproc
 import ../types
-import ../vm/args
 
 # System functions for the Gene standard library
 

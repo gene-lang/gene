@@ -1,8 +1,5 @@
+import os, base64, asyncdispatch
 import ../types
-import ../vm/args
-import std/os
-import std/base64
-import std/asyncdispatch
 
 # Core functions for the Gene standard library
 

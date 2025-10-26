@@ -3504,7 +3504,6 @@ proc exec*(self: VirtualMachine): Value =
         else:
           # Not in a generator context - this is an error
           raise new_exception(types.Exception, "yield used outside of generator function")
-          self.frame.push(NOT_FOUND)
 
       of IkNamespace:
         let name = inst.arg0

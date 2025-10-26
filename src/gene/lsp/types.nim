@@ -1,6 +1,6 @@
 ## LSP Types and Protocol Definitions
 
-import json, tables, strutils
+import json, tables
 
 # LSP Message Types
 type

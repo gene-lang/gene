@@ -1,6 +1,4 @@
-import tables, strutils
-import std/hashes
-import os
+import tables, strutils, hashes, os
 
 import ../types
 import ../parser

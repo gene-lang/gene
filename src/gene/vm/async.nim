@@ -1,4 +1,3 @@
-import std/strformat
 import ../types
 
 # Future methods

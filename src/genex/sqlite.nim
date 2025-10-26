@@ -1,5 +1,5 @@
 import db_connector/db_sqlite
-import tables, strutils
+import tables
 
 # For static linking, don't include boilerplate to avoid duplicate set_globals
 when defined(noExtensions):

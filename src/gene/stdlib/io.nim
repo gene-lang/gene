@@ -1,7 +1,5 @@
+import tables, os
 import ../types
-import ../vm/args
-import std/os
-import std/tables
 
 # I/O functions for the Gene standard library
 
