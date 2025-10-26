@@ -9,7 +9,6 @@ import asyncdispatch  # For Future procs: finished, failed, read
 proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
   ## Check if the underlying Nim future has completed and update Gene future state
   ## This should be called during event loop polling
-  ## NOTE: Callback execution is deferred - will be implemented in Phase 1.3
   if future_obj.nim_future.isNil or future_obj.state != FsPending:
     return  # No Nim future to check, or already completed
 
@@ -20,18 +19,10 @@ proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe
       # TODO: Wrap exception properly when exception handling is ready
       future_obj.state = FsFailure
       future_obj.value = new_str_value("Async operation failed")
-
-      # TODO: Execute failure callbacks (Phase 1.3)
-      # for callback in future_obj.failure_callbacks:
-      #   execute_callback(vm, callback, future_obj.value)
     else:
       # Future succeeded
       future_obj.state = FsSuccess
       future_obj.value = read(future_obj.nim_future)
-
-      # TODO: Execute success callbacks (Phase 1.3)
-      # for callback in future_obj.success_callbacks:
-      #   execute_callback(vm, callback, future_obj.value)
 
 # Future methods
 proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =

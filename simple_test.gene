@@ -1,0 +1,10 @@
+# Simple performance test
+(var i 0)
+(var start (nano-time))
+
+(while (< i 1000000)
+  (set i (+ i 1)))
+
+(var end (nano-time))
+(println "Loop iterations: " i)
+(println "Time taken: " (/ (- end start) 1000000000.0) " seconds")

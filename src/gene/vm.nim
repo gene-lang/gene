@@ -845,7 +845,44 @@ proc exec*(self: VirtualMachine): Value =
         var i = 0
         while i < self.pending_futures.len:
           let future_obj = self.pending_futures[i]
+          let old_state = future_obj.state
           update_future_from_nim(self, future_obj)
+
+          # If future just completed, execute callbacks
+          if old_state == FsPending and future_obj.state != FsPending:
+            if future_obj.state == FsSuccess:
+              # Execute success callbacks
+              for callback in future_obj.success_callbacks:
+                try:
+                  case callback.kind:
+                    of VkFunction:
+                      discard self.exec_function(callback, @[future_obj.value])
+                    of VkNativeFn:
+                      var args_arr = [future_obj.value]
+                      discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                    of VkBlock:
+                      # Blocks don't take arguments, just execute
+                      discard self.exec_function(callback, @[])
+                    else:
+                      discard
+                except:
+                  discard  # Ignore callback errors for now
+            elif future_obj.state == FsFailure:
+              # Execute failure callbacks
+              for callback in future_obj.failure_callbacks:
+                try:
+                  case callback.kind:
+                    of VkFunction:
+                      discard self.exec_function(callback, @[future_obj.value])
+                    of VkNativeFn:
+                      var args_arr = [future_obj.value]
+                      discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                    of VkBlock:
+                      discard self.exec_function(callback, @[])
+                    else:
+                      discard
+                except:
+                  discard  # Ignore callback errors for now
 
           # If future completed, remove from pending list
           if future_obj.state != FsPending:
@@ -901,6 +938,62 @@ proc exec*(self: VirtualMachine): Value =
         # TODO: validate that there is only one value on the stack
         let v = self.frame.current()
         if self.frame.caller_frame == nil:
+          # Before returning, if there are pending futures, poll with timeout to let them complete
+          var max_iterations = 1000  # Prevent infinite loop
+          var iteration = 0
+          while self.pending_futures.len > 0 and iteration < max_iterations:
+            iteration.inc()
+            try:
+              # Try to drain the async event queue
+              while hasPendingOperations():
+                poll(0)  # Process any ready operations
+
+              # Then wait a bit for timers
+              sleep(10)  # Sleep 10ms to let timers fire
+
+              # Update all pending futures
+              var i = 0
+              while i < self.pending_futures.len:
+                let future_obj = self.pending_futures[i]
+                let old_state = future_obj.state
+                update_future_from_nim(self, future_obj)
+
+
+                # If future just completed, execute callbacks
+                if old_state == FsPending and future_obj.state != FsPending:
+                  if future_obj.state == FsSuccess:
+                    # Execute success callbacks
+                    for callback in future_obj.success_callbacks:
+                      case callback.kind:
+                        of VkFunction, VkBlock:
+                          discard self.exec_function(callback, @[future_obj.value])
+                        of VkNativeFn:
+                          var args_arr = [future_obj.value]
+                          discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                        else:
+                          discard
+                  elif future_obj.state == FsFailure:
+                    # Execute failure callbacks
+                    for callback in future_obj.failure_callbacks:
+                      case callback.kind:
+                        of VkFunction, VkBlock:
+                          discard self.exec_function(callback, @[future_obj.value])
+                        of VkNativeFn:
+                          var args_arr = [future_obj.value]
+                          discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                        else:
+                          discard
+
+                # If future completed, remove from pending list
+                if future_obj.state != FsPending:
+                  self.pending_futures.delete(i)
+                else:
+                  i.inc()
+            except ValueError:
+              # No async operations pending, but we still have futures
+              # This shouldn't happen, but if it does, break to avoid infinite loop
+              break
+
           return v
         else:
           if self.cu.kind == CkCompileFn:

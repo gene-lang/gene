@@ -1,0 +1,9 @@
+# Simple Fibonacci - compute fib(24)
+
+(fn fib [n]
+  (if (<= n 1)
+    n
+    (+ (fib (- n 1)) (fib (- n 2)))))
+
+(var result (fib 24))
+(println "fib(24) = " result)

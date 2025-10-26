@@ -6,20 +6,20 @@
 
 #### 1. Add Enhanced Error Types
 - Create `CompilationErrorKind` enum to distinguish parse vs compile errors
-- Create `CompilationError` type with location and context information
+- Create `CompilationError` type with context information
 - Add helper functions for creating different error types
 - **Validation**: Unit tests for error type creation and properties
 
 #### 2. Enhance parse_and_compile Error Handling
 - Modify `parse_and_compile` to catch and distinguish error types
-- Add location information extraction from parser errors
+- Add context information extraction from parser errors
 - Add AST node information for compilation errors
 - **Validation**: Test error handling with malformed input and semantic errors
 
 #### 3. Improve Error Message Formatting
 - Add formatting functions for different error types
 - Include context information in error messages
-- Ensure filename and location are properly displayed
+- Ensure filename is properly displayed
 - **Validation**: Verify error messages are clear and informative
 
 ### Phase 2: Command Integration

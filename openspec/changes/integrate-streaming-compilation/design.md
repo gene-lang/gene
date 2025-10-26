@@ -74,7 +74,7 @@ Initialize Compiler
 ### Key Design Decisions
 
 #### 1. Error Type Distinction
-- **Parse Errors**: Include line/column information, show syntax context
+- **Parse Errors**: Show syntax context
 - **Compile Errors**: Include AST node information, show compilation context
 - **Unified Error Interface**: Single error type that encompasses both phases
 
@@ -97,7 +97,7 @@ Initialize Compiler
 
 #### Phase 1: Enhanced Error Handling
 - Extend `parse_and_compile` to distinguish error types
-- Improve error messages with location information
+- Improve error messages with context information
 - Add proper error propagation
 
 #### Phase 2: Command Integration
@@ -122,8 +122,6 @@ type CompilationError = ref object
   kind*: CompilationErrorKind
   message*: string
   filename*: string
-  line*: int
-  column*: int
   context*: string  # Surrounding code context
   astNode*: Gene   # For compile errors
 ```
