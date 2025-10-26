@@ -301,19 +301,22 @@ proc getDiagnostics*(uri: string): seq[Diagnostic] =
 
 proc findSymbolAtPosition*(uri: string, line: int, character: int): SymbolInfo =
   ## Find symbol at a specific position
-  ## This will be implemented when we add position tracking to symbols
-  result = SymbolInfo(
-    name: "",
-    kind: skVariable,
-    location: Location(
-      uri: uri,
-      range: Range(
-        start: Position(line: 0, character: 0),
-        finish: Position(line: 0, character: 0)
-      )
-    ),
-    details: ""
-  )
+  let doc = getDocument(uri)
+  if doc == nil:
+    return nil
+
+  # Search through symbols to find one at this position
+  for symbol in doc.symbols:
+    let rng = symbol.location.range
+    # Check if position is within symbol range
+    if line == rng.start.line:
+      if character >= rng.start.character and character <= rng.finish.character:
+        return symbol
+    elif line > rng.start.line and line < rng.finish.line:
+      # Multi-line symbol (rare but possible)
+      return symbol
+
+  return nil
 
 proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[CompletionItem] =
   ## Get completion items at a specific position
@@ -369,32 +372,56 @@ proc getHoverInfo*(uri: string, line: int, character: int): tuple[found: bool, c
   ## Get hover information at a specific position
   result = (found: false, content: "", kind: "markdown")
 
-  let doc = getDocument(uri)
-  if doc == nil:
+  # Try to find symbol at cursor position
+  let symbol = findSymbolAtPosition(uri, line, character)
+  if symbol != nil:
+    var content = ""
+    case symbol.kind:
+    of skFunction:
+      content = "### Function: `" & symbol.name & "`\n\n"
+      if symbol.details.len > 0:
+        content &= "**Signature:** `" & symbol.details & "`\n\n"
+      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+    of skVariable:
+      content = "### Variable: `" & symbol.name & "`\n\n"
+      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+    of skClass:
+      content = "### Class: `" & symbol.name & "`\n\n"
+      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+    of skModule:
+      content = "### Module: `" & symbol.name & "`\n\n"
+      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+    of skConstant:
+      content = "### Constant: `" & symbol.name & "`\n\n"
+      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+    of skProperty:
+      content = "### Property: `" & symbol.name & "`\n\n"
+      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+
+    result = (found: true, content: content, kind: "markdown")
     return
 
-  # For now, search through symbols to find one that might match
-  # TODO: Add proper position tracking to symbols
-  # For now, just return info about all symbols in the document
-  if doc.symbols.len > 0:
+  # If no symbol found at position, show all symbols in document as fallback
+  let doc = getDocument(uri)
+  if doc != nil and doc.symbols.len > 0:
     var content = "## Symbols in document\n\n"
-    for symbol in doc.symbols:
-      case symbol.kind:
+    for sym in doc.symbols:
+      case sym.kind:
       of skFunction:
-        content &= "- **function** `" & symbol.name & "`"
-        if symbol.details.len > 0:
-          content &= " - " & symbol.details
+        content &= "- **function** `" & sym.name & "`"
+        if sym.details.len > 0:
+          content &= " - " & sym.details
         content &= "\n"
       of skVariable:
-        content &= "- **variable** `" & symbol.name & "`\n"
+        content &= "- **variable** `" & sym.name & "`\n"
       of skClass:
-        content &= "- **class** `" & symbol.name & "`\n"
+        content &= "- **class** `" & sym.name & "`\n"
       of skModule:
-        content &= "- **module** `" & symbol.name & "`\n"
+        content &= "- **module** `" & sym.name & "`\n"
       of skConstant:
-        content &= "- **constant** `" & symbol.name & "`\n"
+        content &= "- **constant** `" & sym.name & "`\n"
       of skProperty:
-        content &= "- **property** `" & symbol.name & "`\n"
+        content &= "- **property** `" & sym.name & "`\n"
 
     result = (found: true, content: content, kind: "markdown")
 
