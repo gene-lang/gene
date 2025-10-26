@@ -5,7 +5,7 @@
 (println "Main thread started")
 
 # Spawn a child thread that sets its own variables
-(spawn
+(spawn (do
   (var child_thread_var 1)
   (var another_var 2)
   (var sum (+ child_thread_var another_var))
