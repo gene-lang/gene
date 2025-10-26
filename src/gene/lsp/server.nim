@@ -229,12 +229,33 @@ proc handle_text_document_definition*(id: JsonNode, params: JsonNode): Future[st
     let text_doc = params["textDocument"]
     let position = params["position"]
     let uri = text_doc["uri"].getStr()
+    let line = position["line"].getInt()
+    let character = position["character"].getInt()
 
     if lsp_config.trace:
-      echo "LSP Definition requested for: ", uri, " at position: ", $position
+      echo "LSP Definition requested for: ", uri, " at ", line, ":", character
 
-    # TODO: Implement actual definition lookup
-    let resultData = newJNull()
+    # Find symbol at cursor position
+    let symbol = findSymbolAtPosition(uri, line, character)
+
+    var resultData: JsonNode
+    if symbol != nil:
+      # Return the location of the symbol definition
+      resultData = %*{
+        "uri": symbol.location.uri,
+        "range": %*{
+          "start": %*{
+            "line": symbol.location.range.start.line,
+            "character": symbol.location.range.start.character
+          },
+          "end": %*{
+            "line": symbol.location.range.finish.line,
+            "character": symbol.location.range.finish.character
+          }
+        }
+      }
+    else:
+      resultData = newJNull()
 
     return newResponse(id, resultData)
 
