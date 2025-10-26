@@ -1,8 +1,8 @@
 import parseopt, strutils, os, terminal
-import ../types
-import ../parser
-import ../compiler
-import ../gir
+import ../gene/types
+import ../gene/parser
+import ../gene/compiler
+import ../gene/gir
 import ./base
 import ./listing_utils
 

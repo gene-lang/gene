@@ -1,6 +1,6 @@
 import strutils
 
-import ../types
+import ../gene/types
 
 proc formatValue*(value: Value): string =
   case value.kind

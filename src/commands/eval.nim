@@ -1,7 +1,7 @@
 import parseopt, strutils, strformat
-import ../types
-import ../vm
-import ../compiler
+import ../gene/types
+import ../gene/vm
+import ../gene/compiler
 import ./base
 
 const DEFAULT_COMMAND = "eval"

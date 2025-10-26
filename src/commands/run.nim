@@ -1,9 +1,9 @@
 import parseopt, times, strformat, terminal, os, strutils
 
-import ../types
-import ../vm
-import ../compiler
-import ../gir
+import ../gene/types
+import ../gene/vm
+import ../gene/compiler
+import ../gene/gir
 import ./base
 
 const DEFAULT_COMMAND = "run"

@@ -1,6 +1,6 @@
 import parseopt, strutils, os, tables, terminal
-import ../types
-import ../parser
+import ../gene/types
+import ../gene/parser
 import ./base
 
 const DEFAULT_COMMAND = "parse"

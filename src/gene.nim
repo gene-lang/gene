@@ -1,7 +1,7 @@
 import os, tables
-import gene/commands/base
-import gene/commands/[run, eval, repl, help, parse, compile, gir]
-import gene/vm/thread
+import ./commands/base
+import ./commands/[run, eval, repl, help, parse, compile, gir]
+import ./gene/vm/thread
 
 var CommandMgr = CommandManager(data: initTable[string, Command](), help: "")
 

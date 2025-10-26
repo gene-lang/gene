@@ -1,6 +1,6 @@
 import parseopt, strutils
-import ../types
-import ../vm
+import ../gene/types
+import ../gene/vm
 import ./base
 
 const DEFAULT_COMMAND = "repl"

@@ -1,7 +1,7 @@
 import os, strutils, times
 
-import ../gir
-import ../types
+import ../gene/gir
+import ../gene/types
 import ./base
 import ./listing_utils
 
