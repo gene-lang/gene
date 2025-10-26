@@ -1,6 +1,6 @@
 import os, tables
 import ./commands/base
-import ./commands/[run, eval, repl, help, parse, compile, gir]
+import ./commands/[run, eval, repl, help, parse, compile, gir, lsp]
 import ./gene/vm/thread
 
 var CommandMgr = CommandManager(data: initTable[string, Command](), help: "")
@@ -13,6 +13,7 @@ help.init(CommandMgr)
 parse.init(CommandMgr)
 compile.init(CommandMgr)
 gir.init(CommandMgr)
+lsp.init(CommandMgr)
 
 proc main() =
   # Initialize thread pool for multi-threading support
