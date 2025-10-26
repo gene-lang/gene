@@ -1,4 +1,4 @@
-import base64, re, json, osproc, os, strutils, times, asyncdispatch
+import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile
 import ./types
 import ./parser
 import ./compiler
@@ -671,19 +671,31 @@ proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 
   let path = path_arg.str
 
-  # Create a Gene Future
-  let gene_future_val = new_future_value()
-  let gene_future = gene_future_val.ref.future
+  # For now, use a simple async wrapper with sleepAsync to simulate I/O delay
+  # TODO: Replace with real asyncfile operations once we figure out the dispatcher issue
+  proc read_file_wrapper(): Future[Value] {.async.} =
+    # Simulate I/O delay
+    await sleepAsync(1)
+    try:
+      let content = readFile(path)
+      return content.to_value()
+    except IOError as e:
+      let error_msg = "Failed to read file '" & path & "': " & e.msg
+      raise new_exception(types.Exception, error_msg)
 
-  # For now, perform synchronous read and complete immediately
-  try:
-    let content = readFile(path)
-    gene_future.complete(content.to_value())
-  except IOError as e:
-    let error_msg = "Failed to read file '" & path & "': " & e.msg
-    gene_future.fail(error_msg.to_value())
+  # Create Nim future
+  let nim_future = read_file_wrapper()
 
-  return gene_future_val
+  # Wrap in Gene Future
+  let gene_future_obj = new_future(nim_future)
+  let gene_future_val = new_ref(VkFuture)
+  gene_future_val.future = gene_future_obj
+  let result = gene_future_val.to_ref_value()
+
+  # Add to VM's pending futures list
+  vm.pending_futures.add(gene_future_obj)
+
+  return result
 
 proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
@@ -700,19 +712,31 @@ proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   let path = path_arg.str
   let content = content_arg.str
 
-  # Create a Gene Future
-  let gene_future_val = new_future_value()
-  let gene_future = gene_future_val.ref.future
+  # For now, use a simple async wrapper with sleepAsync to simulate I/O delay
+  # TODO: Replace with real asyncfile operations once we figure out the dispatcher issue
+  proc write_file_wrapper(): Future[Value] {.async.} =
+    # Simulate I/O delay
+    await sleepAsync(1)
+    try:
+      writeFile(path, content)
+      return NIL
+    except IOError as e:
+      let error_msg = "Failed to write file '" & path & "': " & e.msg
+      raise new_exception(types.Exception, error_msg)
 
-  # For now, perform synchronous write and complete immediately
-  try:
-    writeFile(path, content)
-    gene_future.complete(NIL)
-  except IOError as e:
-    let error_msg = "Failed to write file '" & path & "': " & e.msg
-    gene_future.fail(error_msg.to_value())
+  # Create Nim future
+  let nim_future = write_file_wrapper()
 
-  return gene_future_val
+  # Wrap in Gene Future
+  let gene_future_obj = new_future(nim_future)
+  let gene_future_val = new_ref(VkFuture)
+  gene_future_val.future = gene_future_obj
+  let result = gene_future_val.to_ref_value()
+
+  # Add to VM's pending futures list
+  vm.pending_futures.add(gene_future_obj)
+
+  return result
 
 proc init_gene_namespace*() =
   if types.gene_namespace_initialized:
@@ -1973,6 +1997,27 @@ proc init_gene_namespace*() =
   os_exec_fn.native_fn = os_exec_native
   os_ns["exec".to_key()] = os_exec_fn.to_ref_value()
   App.app.gene_ns.ref.ns["os".to_key()] = os_ns.to_value()
+
+  # Add io namespace with file I/O functions
+  let io_ns = new_namespace("io")
+
+  var read_fn = new_ref(VkNativeFn)
+  read_fn.native_fn = file_read
+  io_ns["read".to_key()] = read_fn.to_ref_value()
+
+  var write_fn = new_ref(VkNativeFn)
+  write_fn.native_fn = file_write
+  io_ns["write".to_key()] = write_fn.to_ref_value()
+
+  var read_async_fn = new_ref(VkNativeFn)
+  read_async_fn.native_fn = file_read_async
+  io_ns["read_async".to_key()] = read_async_fn.to_ref_value()
+
+  var write_async_fn = new_ref(VkNativeFn)
+  write_async_fn.native_fn = file_write_async
+  io_ns["write_async".to_key()] = write_async_fn.to_ref_value()
+
+  App.app.gene_ns.ref.ns["io".to_key()] = io_ns.to_value()
 
   # Initialize standard library namespaces
   stdlib_math.init_math_namespace(App.app.global_ns.ref.ns)
