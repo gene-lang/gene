@@ -6,6 +6,8 @@ Gene now includes a Language Server Protocol (LSP) implementation that provides 
 
 **Current Status**: Phase 2 (Language Analysis) is complete. The server parses Gene documents, extracts symbols, provides completions, reports diagnostics, and shows hover information.
 
+**Architecture Note**: The LSP implementation prioritizes simplicity over precision. Position tracking is not stored in the parser output to avoid complexity and conflicts with Gene's property system. LSP features work by symbol name matching rather than exact line/column positions.
+
 ## Features
 
 ### Phase 1: Core Infrastructure ✅ COMPLETED
@@ -18,13 +20,14 @@ Gene now includes a Language Server Protocol (LSP) implementation that provides 
 
 ### Phase 2: Language Analysis ✅ COMPLETED
 - ✅ **Gene Parser Integration**: Documents parsed using existing Gene parser
-- ✅ **Position Tracking**: Parser stores line/column in Gene node props
-- ✅ **Symbol Extraction**: Functions, variables, classes, modules with accurate positions
+- ✅ **Symbol Extraction**: Functions, variables, classes, modules by name
 - ✅ **Code Completion**: Keywords + document symbols with proper kinds
 - ✅ **Error Diagnostics**: Parse errors reported to client in real-time
-- ✅ **Hover Information**: Position-aware hover shows symbol at cursor
-- ✅ **Go-to-Definition**: Navigate to symbol definition using positions
-- ⚠️ **Incremental Parsing**: Full document reparse on changes (optimization needed)
+- ✅ **Hover Information**: Shows all symbols in document
+- ✅ **Find References**: Locate symbol usages by name matching
+- ✅ **Workspace Symbols**: Project-wide symbol search
+- ⚠️ **Position Tracking**: Not implemented (simplicity over precision)
+- ⚠️ **Incremental Parsing**: Full document reparse on changes
 
 ### Phase 3: Advanced Features ✅ CORE COMPLETE
 - ✅ **Find References**: Locate all usages of a symbol in document
@@ -149,16 +152,22 @@ src/gene/lsp/types.nim (Protocol data structures)
 - ✅ Server starts and listens on configurable port/host
 - ✅ Handles LSP initialize/shutdown lifecycle
 - ✅ Processes document open/close/change notifications
-- ✅ Parses Gene documents with position tracking
-- ✅ Extracts symbols with accurate line/column positions
+- ✅ Parses Gene documents and extracts symbols
 - ✅ Provides completions (keywords + document symbols)
 - ✅ Reports parse errors as diagnostics in real-time
-- ✅ Shows position-aware hover (symbol at cursor)
-- ✅ Go-to-definition navigation
-- ✅ Find-references (all usages of a symbol)
+- ✅ Shows hover information (all symbols in document)
+- ✅ Find-references (by symbol name matching)
 - ✅ Workspace symbols (project-wide search)
-- ✅ Reference tracking (definitions + usages)
+- ✅ Reference tracking (definitions + usages by name)
 - ✅ Integrated into main `gene` CLI (no separate binary needed)
+
+**What Doesn't Work (By Design):**
+- ❌ Exact position tracking (line/column)
+- ❌ Precise go-to-definition (jumps to exact line)
+- ❌ Position-aware hover (shows symbol at cursor only)
+- ❌ Accurate diagnostics ranges
+
+**Rationale:** Position tracking was removed to keep the parser simple and avoid polluting Gene's property system. LSP features work by symbol name matching, which provides useful functionality without the complexity of exact position tracking.
 
 **What's Next (Phase 4):**
 - Implement scope-aware completion (local variables, imports)
