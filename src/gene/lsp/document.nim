@@ -365,6 +365,24 @@ proc getSymbolsInDocument*(uri: string): seq[SymbolInfo] =
     return doc.symbols
   return @[]
 
+proc getAllSymbols*(): seq[SymbolInfo] =
+  ## Get all symbols from all cached documents
+  result = @[]
+  for uri, doc in document_cache:
+    for symbol in doc.symbols:
+      result.add(symbol)
+
+proc searchSymbols*(query: string): seq[SymbolInfo] =
+  ## Search for symbols matching the query across all documents
+  result = @[]
+  let query_lower = query.toLowerAscii()
+
+  for uri, doc in document_cache:
+    for symbol in doc.symbols:
+      # Simple substring match (case-insensitive)
+      if query_lower.len == 0 or symbol.name.toLowerAscii().contains(query_lower):
+        result.add(symbol)
+
 proc getDiagnostics*(uri: string): seq[Diagnostic] =
   ## Get diagnostics for a document
   let doc = getDocument(uri)

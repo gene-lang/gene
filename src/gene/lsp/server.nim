@@ -336,13 +336,55 @@ proc handle_text_document_references*(id: JsonNode, params: JsonNode): Future[st
 
 proc handle_workspace_symbol*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
+    # Get search query (optional)
+    var query = ""
+    if params != nil and params.hasKey("query"):
+      query = params["query"].getStr()
+
     if lsp_config.trace:
-      echo "LSP Workspace symbols requested"
+      echo "LSP Workspace symbols requested with query: '", query, "'"
 
-    # TODO: Implement workspace symbol listing
-    let resultData = %*(@[])
+    # Search for symbols matching the query
+    let symbols = searchSymbols(query)
 
-    return newResponse(id, resultData)
+    # Convert to LSP SymbolInformation array
+    var resultArray = newJArray()
+    for symbol in symbols:
+      var kind_int = 0
+      case symbol.kind:
+      of skFunction:
+        kind_int = 12  # LSP SymbolKind.Function
+      of skVariable:
+        kind_int = 13  # LSP SymbolKind.Variable
+      of skClass:
+        kind_int = 5   # LSP SymbolKind.Class
+      of skModule:
+        kind_int = 2   # LSP SymbolKind.Module
+      of skConstant:
+        kind_int = 14  # LSP SymbolKind.Constant
+      of skProperty:
+        kind_int = 7   # LSP SymbolKind.Property
+
+      resultArray.add(%*{
+        "name": symbol.name,
+        "kind": kind_int,
+        "location": %*{
+          "uri": symbol.location.uri,
+          "range": %*{
+            "start": %*{
+              "line": symbol.location.range.start.line,
+              "character": symbol.location.range.start.character
+            },
+            "end": %*{
+              "line": symbol.location.range.finish.line,
+              "character": symbol.location.range.finish.character
+            }
+          }
+        },
+        "containerName": ""
+      })
+
+    return newResponse(id, resultArray)
 
   except CatchableError as e:
     return newErrorResponse(id, -32603, "Workspace symbol failed: " & e.msg)
