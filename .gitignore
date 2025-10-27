@@ -25,9 +25,6 @@ cachegrind.*
 scratch*
 .aider*
 
-gene-new/
-gene-rust/
-
 # Test executables
 tests/test_*
 !tests/test_*.nim
@@ -38,6 +35,10 @@ tests/test_*
 # Nim cache
 nimcache/
 *.exe
+
+gene/
+gene-new/
+gene-rust/
 
 ruby/
 lua/
