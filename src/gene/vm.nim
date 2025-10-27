@@ -21,6 +21,7 @@ const DEBUG_VM = false
 
 # Forward declarations
 proc exec*(self: VirtualMachine): Value
+proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
 proc init_stdlib*()  # From stdlib
 
 var next_message_id {.threadvar.}: int
@@ -101,9 +102,27 @@ proc thread_handler(thread_id: int) {.thread.} =
             THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
         of MtSend, MtSendWithReply:
-          # User message - would be handled by callbacks
-          # For now, just send NIL reply if requested
-          if msg.msg_type == MtSendWithReply:
+          # User message - invoke callbacks
+          let msg_value = msg.to_value()
+
+          # Invoke all registered message callbacks
+          for callback in VM.message_callbacks:
+            try:
+              case callback.kind:
+                of VkFunction:
+                  discard VM.exec_function(callback, @[msg_value])
+                of VkNativeFn:
+                  discard call_native_fn(callback.ref.native_fn, VM, @[msg_value])
+                of VkBlock:
+                  # Blocks don't take arguments, just execute
+                  discard VM.exec_function(callback, @[])
+                else:
+                  discard
+            except:
+              discard  # Ignore callback errors for now
+
+          # If message requests reply and wasn't handled, send NIL reply
+          if msg.msg_type == MtSendWithReply and not msg.handled:
             var reply: ThreadMessage
             new(reply)
             reply.id = next_message_id
@@ -277,8 +296,6 @@ template get_value_class(val: Value): Class =
       types.ref(App.app.object_class).class
     else:
       nil
-
-proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:
