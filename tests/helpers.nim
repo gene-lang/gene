@@ -103,6 +103,7 @@ proc test_reentry(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
 proc init_all*() =
   if not initialized:
     init_app_and_vm()
+    init_stdlib()
     # Register test functions in gene namespace
     App.app.gene_ns.ns["test1".to_key()] = test1.to_value()
     App.app.gene_ns.ns["test2".to_key()] = test2.to_value()
