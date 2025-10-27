@@ -931,6 +931,7 @@ type
     pending_futures*: seq[FutureObj]  # List of futures with pending Nim futures
     # Thread support
     thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
+    message_callbacks*: seq[Value]  # List of callbacks for incoming messages
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -3563,6 +3564,7 @@ proc init_app_and_vm*() =
     symbols: addr SYMBOLS,
     pending_futures: @[],  # Initialize empty list of pending futures
     thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
+    message_callbacks: @[],  # Initialize empty list of message callbacks
   )
 
   # Pre-allocate frame and scope pools

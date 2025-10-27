@@ -1,4 +1,4 @@
-import locks, random, options, tables
+import locks, random, options, tables, os
 import ../types
 
 # Simple channel implementation for MVP
@@ -253,6 +253,30 @@ proc init_thread_class*() =
 
   thread_class.def_native_method("send", thread_send)
 
+  # Add .on_message method
+  proc thread_on_message(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # Register callback for incoming messages
+    # Usage: (.on_message $thread callback)
+    if arg_count < 2:
+      raise new_exception(types.Exception, "Thread.on_message requires a thread and a callback")
+
+    let thread_arg = get_positional_arg(args, 0, has_keyword_args)
+    let callback_arg = get_positional_arg(args, 1, has_keyword_args)
+
+    if thread_arg.kind != VkThread:
+      raise new_exception(types.Exception, "on_message can only be called on a Thread")
+
+    # Validate callback is callable
+    if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock}:
+      raise new_exception(types.Exception, "on_message callback must be a function or block")
+
+    # Add callback to VM's message_callbacks list
+    vm.message_callbacks.add(callback_arg)
+
+    return NIL
+
+  thread_class.def_native_method("on_message", thread_on_message)
+
   # Store in Application
   let thread_class_ref = new_ref(VkClass)
   thread_class_ref.class = thread_class
@@ -262,3 +286,80 @@ proc init_thread_class*() =
   if App.app.gene_ns.kind == VkNamespace:
     let thread_key = "Thread".to_key()
     App.app.gene_ns.ref.ns[thread_key] = App.app.thread_class
+
+  # Create ThreadMessage class
+  let thread_message_class = new_class("ThreadMessage")
+
+  # Add .payload method
+  proc thread_message_payload(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 1:
+      raise new_exception(types.Exception, "ThreadMessage.payload requires self argument")
+
+    let msg_arg = get_positional_arg(args, 0, has_keyword_args)
+    if msg_arg.kind != VkThreadMessage:
+      raise new_exception(types.Exception, "payload can only be called on a ThreadMessage")
+
+    return msg_arg.ref.thread_message.payload
+
+  thread_message_class.def_native_method("payload", thread_message_payload)
+
+  # Add .reply method
+  proc thread_message_reply(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if arg_count < 2:
+      raise new_exception(types.Exception, "ThreadMessage.reply requires a message and a value")
+
+    let msg_arg = get_positional_arg(args, 0, has_keyword_args)
+    let value_arg = get_positional_arg(args, 1, has_keyword_args)
+
+    if msg_arg.kind != VkThreadMessage:
+      raise new_exception(types.Exception, "reply can only be called on a ThreadMessage")
+
+    let msg = msg_arg.ref.thread_message
+
+    # Create reply message
+    var reply: ThreadMessage
+    new(reply)
+    reply.id = next_message_id
+    reply.msg_type = MtReply
+    reply.payload = value_arg
+    reply.from_message_id = msg.id
+    reply.from_thread_id = 0  # TODO: Track current thread ID
+    reply.from_thread_secret = THREADS[0].secret
+    next_message_id += 1
+
+    # Send reply to sender
+    THREAD_DATA[msg.from_thread_id].channel.send(reply)
+
+    # Mark message as handled
+    msg.handled = true
+
+    return NIL
+
+  thread_message_class.def_native_method("reply", thread_message_reply)
+
+  # Store ThreadMessage class
+  let thread_message_class_ref = new_ref(VkClass)
+  thread_message_class_ref.class = thread_message_class
+  App.app.thread_message_class = thread_message_class_ref.to_ref_value()
+
+  # Add to gene namespace if it exists
+  if App.app.gene_ns.kind == VkNamespace:
+    let thread_message_key = "ThreadMessage".to_key()
+    App.app.gene_ns.ref.ns[thread_message_key] = App.app.thread_message_class
+
+# keep_alive function - keeps thread running to receive messages
+proc keep_alive_fn*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  ## Keep thread alive to receive messages
+  ## This function blocks forever, processing incoming messages
+  ## Usage: (keep_alive) or (keep_alive timeout_ms)
+
+  # TODO: Implement timeout support
+  # For now, just sleep forever
+  # The thread will continue to receive messages via the thread_handler message loop
+  # This is a placeholder - the actual message loop is in thread_handler
+
+  # Sleep for a very long time (effectively forever)
+  while true:
+    sleep(1000000)  # Sleep for ~11 days
+
+  return NIL

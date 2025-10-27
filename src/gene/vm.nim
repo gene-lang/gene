@@ -38,6 +38,13 @@ proc init_vm_for_thread(thread_id: int) =
   )
   App.app.global_ns.ref.ns["$main_thread".to_key()] = main_thread_ref.to_value()
 
+  # Add $thread variable to refer to current thread
+  let current_thread_ref = types.Thread(
+    id: thread_id,
+    secret: THREADS[thread_id].secret
+  )
+  App.app.global_ns.ref.ns["$thread".to_key()] = current_thread_ref.to_value()
+
 # Thread handler
 proc thread_handler(thread_id: int) {.thread.} =
   ## Main thread execution loop
@@ -94,8 +101,19 @@ proc thread_handler(thread_id: int) {.thread.} =
             THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
         of MtSend, MtSendWithReply:
-          # User message - would be handled by callbacks (MVP: skip)
-          discard
+          # User message - would be handled by callbacks
+          # For now, just send NIL reply if requested
+          if msg.msg_type == MtSendWithReply:
+            var reply: ThreadMessage
+            new(reply)
+            reply.id = next_message_id
+            reply.msg_type = MtReply
+            reply.payload = NIL
+            reply.from_message_id = msg.id
+            reply.from_thread_id = thread_id
+            reply.from_thread_secret = THREADS[thread_id].secret
+            next_message_id += 1
+            THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
         of MtReply:
           # Reply message - would complete futures (MVP: skip)

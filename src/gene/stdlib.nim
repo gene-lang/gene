@@ -2181,6 +2181,9 @@ proc init_stdlib*() =
   global_ns["sleep".to_key()] = core_sleep.to_value()
   global_ns["run_forever".to_key()] = core_run_forever.to_value()
 
+  # Threading
+  global_ns["keep_alive".to_key()] = keep_alive_fn.to_value()
+
   # Environment
   global_ns["get_env".to_key()] = core_get_env.to_value()
   global_ns["set_env".to_key()] = core_set_env.to_value()
