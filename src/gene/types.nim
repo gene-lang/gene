@@ -932,6 +932,7 @@ type
     # Thread support
     thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
     message_callbacks*: seq[Value]  # List of callbacks for incoming messages
+    thread_local_ns*: Namespace  # Thread-local namespace for $thread, $main_thread, etc.
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -959,7 +960,7 @@ type
   CallBaseStack* = object
     data: seq[uint16]
 
-  FrameObj = object
+  FrameObj* = object
     ref_count*: int32
     kind*: FrameKind
     caller_frame*: Frame
@@ -1150,14 +1151,18 @@ proc short_equals_long(short_raw: uint64, long_ptr: ptr String): bool {.inline, 
     payload = payload shr 8
   return payload == 0
 
-var VM* {.threadvar.}: VirtualMachine   # The current virtual machine
-var App* {.threadvar.}: Value
+var VM* {.threadvar.}: VirtualMachine   # The current virtual machine (per-thread)
+
+# Application is shared across all threads (initialized once by main thread)
+# After initialization, it's read-only so no locking needed
+var App*: Value
 
 # Threading support
 const CHANNEL_LIMIT* = 1000  # Maximum messages in channel
 const MAX_THREADS* = 64      # Maximum number of threads in pool
 
-var THREADS* {.threadvar.}: array[0..MAX_THREADS, ThreadMetadata]
+# Thread pool is shared across all threads (protected by thread_pool_lock in vm/thread.nim)
+var THREADS*: array[0..MAX_THREADS, ThreadMetadata]
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 
@@ -1232,8 +1237,8 @@ proc new_id*(): Id =
   cast[Id](rand(BIGGEST_INT))
 
 # Memory pool for reference objects
-var REF_POOL {.threadvar.}: seq[ptr Reference]
-const INITIAL_REF_POOL_SIZE = 2048
+var REF_POOL* {.threadvar.}: seq[ptr Reference]
+const INITIAL_REF_POOL_SIZE* = 2048
 
 # Reference counting is handled by Nim's memory management for ref types
 
@@ -3278,9 +3283,9 @@ proc call_native_fn*(fn: NativeFn, vm: VirtualMachine, args: openArray[Value], h
     return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
 
 #################### Frame #######################
-const INITIAL_FRAME_POOL_SIZE = 1024
+const INITIAL_FRAME_POOL_SIZE* = 1024
 
-var FRAMES {.threadvar.}: seq[Frame]
+var FRAMES* {.threadvar.}: seq[Frame]
 
 proc init*(self: var CallBaseStack) {.inline.} =
   self.data = newSeq[uint16](0)
@@ -3336,7 +3341,7 @@ proc free*(self: var Frame) =
     FRAMES.add(self)
   {.pop.}
 
-var FRAME_ALLOCS* = 0
+var FRAME_ALLOCS* {.threadvar.}: int
 var FRAME_REUSES* = 0
 
 proc new_frame*(): Frame {.inline.} =
@@ -3565,6 +3570,7 @@ proc init_app_and_vm*() =
     pending_futures: @[],  # Initialize empty list of pending futures
     thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
     message_callbacks: @[],  # Initialize empty list of message callbacks
+    thread_local_ns: nil,  # Will be initialized after App is created
   )
 
   # Pre-allocate frame and scope pools
@@ -3617,6 +3623,18 @@ proc init_app_and_vm*() =
 
   refresh_env_map()
   set_cmd_args(@[])
+
+  # Initialize thread-local namespace for main thread
+  # This holds thread-specific variables like $thread and $main_thread
+  VM.thread_local_ns = new_namespace("thread_local")
+
+  # For main thread, $thread and $main_thread are the same
+  let main_thread_ref = types.Thread(
+    id: 0,
+    secret: THREADS[0].secret
+  )
+  VM.thread_local_ns["$thread".to_key()] = main_thread_ref.to_value()
+  VM.thread_local_ns["$main_thread".to_key()] = main_thread_ref.to_value()
 
   for callback in VmCreatedCallbacks:
     callback()

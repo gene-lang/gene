@@ -29,22 +29,54 @@ var next_message_id {.threadvar.}: int
 # VM initialization for worker threads
 proc init_vm_for_thread(thread_id: int) =
   ## Initialize VM for a worker thread
-  init_app_and_vm()
-  init_stdlib()  # Register println, print, and other core functions
+  ## Note: App is shared from main thread, only VM is thread-local
 
-  # Add $main_thread variable to global namespace
+  # Initialize thread-local VM (but NOT App - App is shared)
+  VM = VirtualMachine(
+    exception_handlers: @[],
+    current_exception: NIL,
+    symbols: addr SYMBOLS,
+    pending_futures: @[],
+    thread_futures: initTable[int, FutureObj](),
+    message_callbacks: @[],
+  )
+
+  # Initialize thread-local frame pool
+  if FRAMES.len == 0:
+    FRAMES = newSeqOfCap[Frame](INITIAL_FRAME_POOL_SIZE)
+    for i in 0..<INITIAL_FRAME_POOL_SIZE:
+      FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
+      FRAME_ALLOCS.inc()
+
+  # Initialize thread-local ref pool
+  if REF_POOL.len == 0:
+    REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
+    for i in 0..<INITIAL_REF_POOL_SIZE:
+      REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
+
+  # App is already initialized by main thread - we just reference it
+  # No need to call init_stdlib() since App already has all the functions
+
+  # Create thread-local namespace for thread-specific variables
+  # This avoids race conditions when multiple threads access $thread
+  let thread_ns = new_namespace("thread_local")
+
+  # Add $main_thread variable to thread-local namespace
   let main_thread_ref = types.Thread(
     id: 0,
     secret: THREADS[0].secret
   )
-  App.app.global_ns.ref.ns["$main_thread".to_key()] = main_thread_ref.to_value()
+  thread_ns["$main_thread".to_key()] = main_thread_ref.to_value()
 
   # Add $thread variable to refer to current thread
   let current_thread_ref = types.Thread(
     id: thread_id,
     secret: THREADS[thread_id].secret
   )
-  App.app.global_ns.ref.ns["$thread".to_key()] = current_thread_ref.to_value()
+  thread_ns["$thread".to_key()] = current_thread_ref.to_value()
+
+  # Store thread-local namespace in VM
+  VM.thread_local_ns = thread_ns
 
 # Thread handler
 proc thread_handler(thread_id: int) {.thread.} =
@@ -1450,20 +1482,27 @@ proc exec*(self: VirtualMachine): Value =
               var value = self.frame.ns[name]
               var found_ns = self.frame.ns
               if value == NIL:
-                # Try global namespace
-                value = App.app.global_ns.ref.ns[name]
-                if value != NIL:
-                  found_ns = App.app.global_ns.ref.ns
-                else:
-                  # Try gene namespace
-                  value = App.app.gene_ns.ref.ns[name]
+                # Try thread-local namespace first (for $thread, $main_thread, etc.)
+                if self.thread_local_ns != nil:
+                  value = self.thread_local_ns[name]
                   if value != NIL:
-                    found_ns = App.app.gene_ns.ref.ns
+                    found_ns = self.thread_local_ns
+
+                if value == NIL:
+                  # Try global namespace
+                  value = App.app.global_ns.ref.ns[name]
+                  if value != NIL:
+                    found_ns = App.app.global_ns.ref.ns
                   else:
-                    # Try genex namespace
-                    value = App.app.genex_ns.ref.ns[name]
+                    # Try gene namespace
+                    value = App.app.gene_ns.ref.ns[name]
                     if value != NIL:
-                      found_ns = App.app.genex_ns.ref.ns
+                      found_ns = App.app.gene_ns.ref.ns
+                    else:
+                      # Try genex namespace
+                      value = App.app.genex_ns.ref.ns[name]
+                      if value != NIL:
+                        found_ns = App.app.genex_ns.ref.ns
               
               # Initialize cache if we found the value
               if value != NIL:
