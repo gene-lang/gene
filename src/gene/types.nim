@@ -929,6 +929,8 @@ type
     # Async/Event Loop support
     event_loop_counter*: int  # Counter for periodic event loop polling (poll every N instructions)
     pending_futures*: seq[FutureObj]  # List of futures with pending Nim futures
+    # Thread support
+    thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -3560,6 +3562,7 @@ proc init_app_and_vm*() =
     current_exception: NIL,
     symbols: addr SYMBOLS,
     pending_futures: @[],  # Initialize empty list of pending futures
+    thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
   )
 
   # Pre-allocate frame and scope pools

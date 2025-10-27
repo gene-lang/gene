@@ -2005,6 +2005,14 @@ proc compile_gene(self: Compiler, input: Value) =
       of "spawn":
         self.compile_spawn(gene)
         return
+      of "spawn_return":
+        # spawn_return is an alias for (spawn return: expr)
+        # Transform it by adding return: as first child
+        var modified_gene = new_gene(gene.type)
+        modified_gene.props = gene.props
+        modified_gene.children = @["return:".to_symbol_value()] & gene.children
+        self.compile_spawn(modified_gene)
+        return
       of "yield":
         self.compile_yield(gene)
         return

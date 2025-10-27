@@ -1,4 +1,5 @@
 import std/unittest
+import std/strutils
 
 import gene/types except Exception  # Avoid collision with system.Exception
 import gene/compiler
@@ -16,6 +17,7 @@ suite "Threading Support":
   setup:
     init_thread_pool()
     init_app_and_vm()
+    init_stdlib()  # Initialize stdlib for await support
 
   test "Basic spawn - thread executes code":
     let code = """
@@ -79,18 +81,26 @@ suite "Threading Support":
     let result = VM.exec()
     check result == TRUE
 
-  # TODO: Test spawn_return when implemented
-  # test "spawn_return with await - return value from thread":
-  #   let code = """
-  #     (await
-  #       (spawn_return
-  #         (sleep 100)
-  #         (+ 1 2)
-  #       )
-  #     )
-  #   """
-  #   let result = eval_string(code)
-  #   check result.int == 3
+  test "spawn_return with await - return value from thread":
+    let code = """
+      (await
+        (spawn_return
+          (+ 1 2)
+        )
+      )
+    """
+    let ast = read(code)
+    let cu = compile_init(ast)
+
+    VM.cu = cu
+    VM.pc = 0
+    VM.frame = new_frame()
+    VM.frame.stack_index = 0
+    VM.frame.scope = new_scope(new_scope_tracker())
+    VM.frame.ns = App.app.gene_ns.ref.ns
+
+    let result = VM.exec()
+    check to_int(result) == 3
 
   # TODO: Test spawn_return with args when implemented
   # test "spawn_return with args - pass arguments to thread":

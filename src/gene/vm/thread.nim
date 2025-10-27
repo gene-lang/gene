@@ -1,4 +1,4 @@
-import locks, random
+import locks, random, options
 import ../types
 
 # Simple channel implementation for MVP
@@ -54,6 +54,19 @@ proc recv*[T](ch: Channel[T]): T =
     result = ch.data[0]
     ch.data.delete(0)
     signal(ch.cond)
+
+  release(ch.lock)
+
+proc try_recv*[T](ch: Channel[T]): Option[T] =
+  ## Non-blocking receive - returns Some(value) if data available, None otherwise
+  acquire(ch.lock)
+
+  if ch.data.len > 0:
+    result = some(ch.data[0])
+    ch.data.delete(0)
+    signal(ch.cond)
+  else:
+    result = none(T)
 
   release(ch.lock)
 

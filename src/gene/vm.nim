@@ -1,4 +1,4 @@
-import tables, strutils, strformat, algorithm
+import tables, strutils, strformat, algorithm, options
 import times, os
 import asyncdispatch  # For event loop polling in async support
 
@@ -134,15 +134,35 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
   msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)
   msg.from_thread_id = 0  # TODO: Track current thread ID
   msg.from_thread_secret = THREADS[0].secret
+  let message_id = next_message_id
   next_message_id += 1
 
   # Send message to thread (send the ref directly)
   THREAD_DATA[thread_id].channel.send(msg)
 
   # Return value
-  # WORKAROUND: Cannot create Thread ref object due to threading memory issues
-  # TODO: Fix Thread to not be a ref type, or find thread-safe way to create it
-  return NIL
+  if return_value:
+    # Create a future for the return value
+    let future_obj = FutureObj(
+      state: FsPending,
+      value: NIL,
+      success_callbacks: @[],
+      failure_callbacks: @[],
+      nim_future: nil
+    )
+
+    # Store future in VM's thread_futures table keyed by message ID
+    VM.thread_futures[message_id] = future_obj
+
+    # Return the future
+    let future_val = new_ref(VkFuture)
+    future_val.future = future_obj
+    return future_val.to_ref_value()
+  else:
+    # Return thread reference
+    # WORKAROUND: Cannot create Thread ref object due to threading memory issues
+    # TODO: Fix Thread to not be a ref type, or find thread-safe way to create it
+    return NIL
 
 # ========== End Threading Support ==========
 
@@ -840,6 +860,23 @@ proc exec*(self: VirtualMachine): Value =
       self.event_loop_counter = 0
       try:
         poll(0)  # Non-blocking poll - check for completed async operations
+
+        # Check for thread replies (non-blocking)
+        # Only check if we're the main thread (thread 0)
+        if THREADS[0].in_use:
+          while true:
+            let msg_opt = THREAD_DATA[0].channel.try_recv()
+            if msg_opt.isNone():
+              break
+
+            let msg = msg_opt.get()
+            if msg.msg_type == MtReply:
+              # Complete the future with the reply payload
+              if self.thread_futures.hasKey(msg.from_message_id):
+                let future_obj = self.thread_futures[msg.from_message_id]
+                future_obj.state = FsSuccess
+                future_obj.value = msg.payload
+                self.thread_futures.del(msg.from_message_id)
 
         # Update all pending futures from their Nim futures
         var i = 0
@@ -4402,6 +4439,22 @@ proc exec*(self: VirtualMachine): Value =
             # Poll event loop until future completes
             # Callbacks will update the future state when async operations complete
             while future.state == FsPending:
+              # Check for thread replies (non-blocking)
+              if THREADS[0].in_use:
+                while true:
+                  let msg_opt = THREAD_DATA[0].channel.try_recv()
+                  if msg_opt.isNone():
+                    break
+
+                  let msg = msg_opt.get()
+                  if msg.msg_type == MtReply:
+                    # Complete the future with the reply payload
+                    if self.thread_futures.hasKey(msg.from_message_id):
+                      let future_obj = self.thread_futures[msg.from_message_id]
+                      future_obj.state = FsSuccess
+                      future_obj.value = msg.payload
+                      self.thread_futures.del(msg.from_message_id)
+
               # Poll the event loop to process async operations and fire callbacks
               try:
                 if hasPendingOperations():
