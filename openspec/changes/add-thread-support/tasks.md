@@ -150,7 +150,7 @@
 
 ### 3.5 Testing
 - [x] 3.5.1 Test spawn with simple expression (println) - tests/test_thread.nim passes
-- [ ] 3.5.2 Test spawn_return with computation
+- [x] 3.5.2 Test spawn_return with computation - test passes (1+2=3)
 - [x] 3.5.3 Test multiple spawns (10 threads) - test_thread.nim tests multiple spawns
 - [x] 3.5.4 Test spawn with arguments (variables in scope) - test_thread.nim tests variables
 - [ ] 3.5.5 Test thread exhaustion handling

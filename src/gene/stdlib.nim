@@ -3,6 +3,7 @@ import ./types
 import ./parser
 import ./compiler
 import ./vm/async
+import ./vm/thread
 import ./stdlib/math as stdlib_math
 import ./stdlib/io as stdlib_io
 import ./stdlib/system as stdlib_system
@@ -2158,6 +2159,9 @@ proc init_gene_namespace*() =
   vm_ns["compile".to_key()] = vm_compile.to_value()
   vm_ns["PUSH".to_key()] = vm_push.to_value()
   vm_ns["ADD".to_key()] = vm_add.to_value()
+
+  # Initialize Thread class
+  init_thread_class()
 
 proc init_stdlib*() =
   # Initialize gene namespace first (classes, methods, etc.)

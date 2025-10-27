@@ -1,4 +1,4 @@
-import locks, random, options
+import locks, random, options, tables
 import ../types
 
 # Simple channel implementation for MVP
@@ -165,3 +165,100 @@ proc reset_vm_state*() =
 
 # Thread pool initialization must be called from main thread
 # This will be called from vm.nim
+
+# Thread class initialization
+proc init_thread_class*() =
+  ## Initialize Thread class and methods
+  ## Called during VM initialization
+  if not gene_namespace_initialized:
+    return
+
+  # Create Thread class
+  let thread_class = new_class("Thread")
+  # Don't set parent yet - will be set later when object_class is available
+
+  # Add Thread constructor (not typically called directly - threads created via spawn)
+  proc thread_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    raise new_exception(types.Exception, "Thread cannot be constructed directly - use spawn or spawn_return")
+
+  thread_class.def_native_constructor(thread_constructor)
+
+  # Add .send method
+  proc thread_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    # Send message to thread
+    # Usage: (.send thread message) or (.send thread message ^reply true)
+    if arg_count < 2:
+      raise new_exception(types.Exception, "Thread.send requires a thread and a message")
+
+    let thread_arg = get_positional_arg(args, 0, has_keyword_args)
+    let message_arg = get_positional_arg(args, 1, has_keyword_args)
+
+    if thread_arg.kind != VkThread:
+      raise new_exception(types.Exception, "send can only be called on a Thread")
+
+    # Check if reply is requested
+    var reply_requested = false
+    if has_keyword_args:
+      for i in 0..<arg_count:
+        if args[i].kind == VkSymbol and args[i].str == "reply":
+          if i + 1 < arg_count:
+            reply_requested = args[i + 1].to_bool()
+          break
+
+    # Get thread info
+    let thread_id = thread_arg.ref.thread.id
+    let thread_secret = thread_arg.ref.thread.secret
+
+    # Validate thread
+    if thread_id < 0 or thread_id > MAX_THREADS:
+      raise new_exception(types.Exception, "Invalid thread ID")
+    if not THREADS[thread_id].in_use or THREADS[thread_id].secret != thread_secret:
+      raise new_exception(types.Exception, "Thread is no longer valid")
+
+    # Create message
+    var msg: ThreadMessage
+    new(msg)
+    msg.id = next_message_id
+    msg.msg_type = if reply_requested: MtSendWithReply else: MtSend
+    msg.payload = message_arg
+    msg.code = NIL
+    msg.from_thread_id = 0  # TODO: Track current thread ID
+    msg.from_thread_secret = THREADS[0].secret
+    let message_id = next_message_id
+    next_message_id += 1
+
+    # Send message to thread
+    THREAD_DATA[thread_id].channel.send(msg)
+
+    # Return value
+    if reply_requested:
+      # Create a future for the reply
+      let future_obj = FutureObj(
+        state: FsPending,
+        value: NIL,
+        success_callbacks: @[],
+        failure_callbacks: @[],
+        nim_future: nil
+      )
+
+      # Store future in vm's thread_futures table keyed by message ID
+      vm.thread_futures[message_id] = future_obj
+
+      # Return the future
+      let future_val = new_ref(VkFuture)
+      future_val.future = future_obj
+      return future_val.to_ref_value()
+    else:
+      return NIL
+
+  thread_class.def_native_method("send", thread_send)
+
+  # Store in Application
+  let thread_class_ref = new_ref(VkClass)
+  thread_class_ref.class = thread_class
+  App.app.thread_class = thread_class_ref.to_ref_value()
+
+  # Add to gene namespace if it exists
+  if App.app.gene_ns.kind == VkNamespace:
+    let thread_key = "Thread".to_key()
+    App.app.gene_ns.ref.ns[thread_key] = App.app.thread_class

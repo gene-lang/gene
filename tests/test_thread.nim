@@ -102,6 +102,28 @@ suite "Threading Support":
     let result = VM.exec()
     check to_int(result) == 3
 
+  # TODO: Test Thread.send when message handling is implemented
+  # test "Thread.send - send message to thread":
+  #   let code = """
+  #     (var thread (spawn (sleep 1000)))
+  #     (sleep 50)
+  #     (.send thread "Hello from main!")
+  #     true
+  #   """
+  #   let ast = read(code)
+  #   let cu = compile_init(ast)
+  #
+  #   VM.cu = cu
+  #   VM.pc = 0
+  #   VM.frame = new_frame()
+  #   VM.frame.stack_index = 0
+  #   VM.frame.scope = new_scope(new_scope_tracker())
+  #   VM.frame.ns = App.app.gene_ns.ref.ns
+  #
+  #   let result = VM.exec()
+  #   # For now, just check it doesn't crash
+  #   check result == TRUE
+
   # TODO: Test spawn_return with args when implemented
   # test "spawn_return with args - pass arguments to thread":
   #   let code = """

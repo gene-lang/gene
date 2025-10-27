@@ -160,9 +160,11 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
     return future_val.to_ref_value()
   else:
     # Return thread reference
-    # WORKAROUND: Cannot create Thread ref object due to threading memory issues
-    # TODO: Fix Thread to not be a ref type, or find thread-safe way to create it
-    return NIL
+    let thread_ref = types.Thread(
+      id: thread_id,
+      secret: THREADS[thread_id].secret
+    )
+    return thread_ref.to_value()
 
 # ========== End Threading Support ==========
 
