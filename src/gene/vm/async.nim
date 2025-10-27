@@ -9,8 +9,12 @@ import asyncdispatch  # For Future procs: finished, failed, read
 proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
   ## Check if the underlying Nim future has completed and update Gene future state
   ## This should be called during event loop polling
-  if future_obj.nim_future.isNil or future_obj.state != FsPending:
-    return  # No Nim future to check, or already completed
+  if future_obj.state != FsPending:
+    return  # Already completed
+
+  # Check Nim futures
+  if future_obj.nim_future.isNil:
+    return  # No Nim future to check
 
   if finished(future_obj.nim_future):
     # Nim future has completed - copy its result

@@ -2,8 +2,8 @@
 
 (println "=== Test 004: Concurrent Operations ===")
 
-(var test_file "../tests/fixtures/test.txt")
-(var gene_file "../tests/fixtures/file.gene")
+(var test_file "../fixtures/test.txt")
+(var gene_file "../fixtures/file.gene")
 (var output_file "/tmp/gene_concurrent_test.txt")
 
 (println "Test 1: Multiple concurrent reads")

@@ -2,7 +2,7 @@
 
 (println "=== Test 001: Basic Async/Await ===")
 
-(var test_file "../tests/fixtures/test.txt")
+(var test_file "../fixtures/test.txt")
 
 (println "Test 1: Basic async file reading")
 (var future1 (gene/io/read_async test_file))

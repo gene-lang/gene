@@ -4,28 +4,28 @@
   (var future
     (gene/sleep_async 2500)
   )
-  (future .on_success (->
+  (future .on_success (fnx []
     (println a)
   ))
   future
 )
 
-(await (f "first"))
+(f "ASYNC")
 
-(f "second")
-
+(gene/sleep 1000)
 (println 1)
-(gene/sleep 1000)
+(repeat 100 nil)
 
+(gene/sleep 1000)
 (println 2)
-(gene/sleep 1000)
+(repeat 100 nil)
 
+(gene/sleep 1000)
 (println 3)
 
-#< Output should look like below (futures are checked at least once every 10 evaluations)
-first
+#< Output should look like below (futures are checked at least once every N evaluations)
 1
 2
-second
+ASYNC
 3
 #>#

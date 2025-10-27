@@ -2,7 +2,7 @@
 
 (println "=== Test 006: Simple Concurrent ===")
 
-(var test_file "../tests/fixtures/test.txt")
+(var test_file "../fixtures/test.txt")
 
 (println "Starting concurrent reads...")
 (var future1 (gene/io/read_async test_file))

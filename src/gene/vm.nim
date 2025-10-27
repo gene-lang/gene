@@ -3617,17 +3617,11 @@ proc exec*(self: VirtualMachine): Value =
         if import_gene.kind != VkGene:
           not_allowed("Import expects a gene")
         
-        # echo "DEBUG: Processing import ", import_gene
-        
         let (module_path, imports, module_ns, is_native, handled) = self.handle_import(import_gene.gene)
         
         if handled:
           self.frame.push(NIL)
           continue
-        
-        # echo "DEBUG: Module path: ", module_path
-        # echo "DEBUG: Imports: ", imports  
-        # echo "DEBUG: Module namespace members: ", module_ns.members
         
         # If module is not cached, we need to execute it
         if not ModuleCache.hasKey(module_path):
@@ -4406,25 +4400,22 @@ proc exec*(self: VirtualMachine): Value =
               raise new_exception(types.Exception, "Gene exception: " & $future.value)
           of FsPending:
             # Poll event loop until future completes
-            # This is the polling-based await implementation (Phase 2)
+            # Callbacks will update the future state when async operations complete
             while future.state == FsPending:
-              # Poll the event loop to process async operations
+              # Poll the event loop to process async operations and fire callbacks
               try:
-                poll(0)  # Non-blocking poll
-
-                # Update all pending futures
-                var i = 0
-                while i < self.pending_futures.len:
-                  let pending_future = self.pending_futures[i]
-                  update_future_from_nim(self, pending_future)
-
-                  # If future completed, remove from pending list
-                  if pending_future.state != FsPending:
-                    self.pending_futures.delete(i)
-                  else:
-                    i.inc()
+                if hasPendingOperations():
+                  poll(0)  # Process ready operations
               except ValueError:
                 discard  # No async operations pending
+
+              # Remove completed futures from pending list
+              var i = 0
+              while i < self.pending_futures.len:
+                if self.pending_futures[i].state != FsPending:
+                  self.pending_futures.delete(i)
+                else:
+                  i.inc()
 
             # Future has completed, handle the result
             case future.state:

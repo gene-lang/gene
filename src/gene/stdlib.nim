@@ -2,6 +2,7 @@ import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile
 import ./types
 import ./parser
 import ./compiler
+import ./vm/async
 import ./stdlib/math as stdlib_math
 import ./stdlib/io as stdlib_io
 import ./stdlib/system as stdlib_system
@@ -571,7 +572,7 @@ proc vm_eval(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
 
 
 # Sleep functions
-proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 1:
     raise new_exception(types.Exception, "sleep requires 1 argument")
 
@@ -586,8 +587,68 @@ proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     else:
       raise new_exception(types.Exception, "sleep requires a number (milliseconds)")
 
-  # Use Nim's sleep function (takes milliseconds)
-  sleep(duration_ms)
+  # If there are no pending futures, just sleep normally
+  if vm.pending_futures.len == 0:
+    sleep(duration_ms)
+    return NIL
+
+  # Sleep in small chunks and poll event loop to allow async operations to progress
+  let chunk_size = 50  # Poll every 50ms when there are pending futures
+  var remaining = duration_ms
+  while remaining > 0:
+    let sleep_time = min(remaining, chunk_size)
+    sleep(sleep_time)
+    remaining -= sleep_time
+
+    # Poll event loop - callbacks will update future states
+    {.cast(gcsafe).}:
+      try:
+        # Save old states before polling
+        var old_states = newSeq[FutureState](vm.pending_futures.len)
+        for i in 0..<vm.pending_futures.len:
+          old_states[i] = vm.pending_futures[i].state
+
+        # Poll to allow async operations to progress and fire callbacks
+        if hasPendingOperations():
+          poll(0)
+
+        # Check for completed futures and execute their user callbacks
+        var i = 0
+        while i < vm.pending_futures.len:
+          let future_obj = vm.pending_futures[i]
+          let old_state = old_states[i]
+
+          # If future just completed (Nim callback fired), execute user callbacks
+          if old_state == FsPending and future_obj.state != FsPending:
+            if future_obj.state == FsSuccess:
+              for callback in future_obj.success_callbacks:
+                case callback.kind:
+                  of VkFunction, VkBlock:
+                    discard vm.exec_function(callback, @[future_obj.value])
+                  of VkNativeFn:
+                    var args_arr = [future_obj.value]
+                    discard call_native_fn(callback.ref.native_fn, vm, args_arr)
+                  else:
+                    discard
+            elif future_obj.state == FsFailure:
+              for callback in future_obj.failure_callbacks:
+                case callback.kind:
+                  of VkFunction, VkBlock:
+                    discard vm.exec_function(callback, @[future_obj.value])
+                  of VkNativeFn:
+                    var args_arr = [future_obj.value]
+                    discard call_native_fn(callback.ref.native_fn, vm, args_arr)
+                  else:
+                    discard
+
+          # If future completed, remove from pending list
+          if future_obj.state != FsPending:
+            vm.pending_futures.delete(i)
+          else:
+            i.inc()
+      except ValueError:
+        discard
+
   return NIL
 
 proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -605,16 +666,21 @@ proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     else:
       raise new_exception(types.Exception, "sleep_async requires a number (milliseconds)")
 
-  # Create a Nim async future using sleepAsync
-  # sleepAsync returns Future[void], we need to convert it to Future[Value]
-  proc sleep_wrapper(): Future[Value] {.async.} =
-    await sleepAsync(duration_ms)
-    return NIL  # Return NIL as the value
+  # Create Gene future first
+  let gene_future_obj = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nil
+  )
 
-  let nim_future = sleep_wrapper()
+  # Create Nim future and add callback to complete Gene future
+  let nim_sleep_future = sleepAsync(duration_ms)
+  nim_sleep_future.addCallback proc() {.gcsafe.} =
+    gene_future_obj.state = FsSuccess
+    gene_future_obj.value = NIL
 
-  # Wrap it in a Gene Future
-  let gene_future_obj = new_future(nim_future)
   let gene_future_val = new_ref(VkFuture)
   gene_future_val.future = gene_future_obj
   let result = gene_future_val.to_ref_value()
@@ -671,28 +737,46 @@ proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 
   let path = path_arg.str
 
-  # For now, use a simple async wrapper with sleepAsync to simulate I/O delay
-  # TODO: Replace with real asyncfile operations once we figure out the dispatcher issue
-  proc read_file_wrapper(): Future[Value] {.async.} =
-    # Simulate I/O delay
-    await sleepAsync(1)
-    try:
-      let content = readFile(path)
-      return content.to_value()
-    except IOError as e:
-      let error_msg = "Failed to read file '" & path & "': " & e.msg
-      raise new_exception(types.Exception, error_msg)
+  # Create Gene future first
+  let gene_future_obj = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nil
+  )
 
-  # Create Nim future
-  let nim_future = read_file_wrapper()
+  # Try to open file and create async read operation
+  try:
+    let file = openAsync(path, fmRead)
+    let nim_read_future = file.readAll()
 
-  # Wrap in Gene Future
-  let gene_future_obj = new_future(nim_future)
+    # Add callback to complete Gene future when Nim future completes
+    nim_read_future.addCallback proc() {.gcsafe.} =
+      try:
+        let content = nim_read_future.read()
+        file.close()
+        gene_future_obj.state = FsSuccess
+        gene_future_obj.value = content.to_value()
+      except IOError as e:
+        gene_future_obj.state = FsFailure
+        gene_future_obj.value = new_str_value("Failed to read file '" & path & "': " & e.msg)
+      except CatchableError as e:
+        gene_future_obj.state = FsFailure
+        gene_future_obj.value = new_str_value("Error reading file: " & e.msg)
+  except IOError as e:
+    # File open failed - create a failed future immediately
+    gene_future_obj.state = FsFailure
+    gene_future_obj.value = new_str_value("Failed to open file '" & path & "': " & e.msg)
+  except CatchableError as e:
+    gene_future_obj.state = FsFailure
+    gene_future_obj.value = new_str_value("Error opening file: " & e.msg)
+
   let gene_future_val = new_ref(VkFuture)
   gene_future_val.future = gene_future_obj
   let result = gene_future_val.to_ref_value()
 
-  # Add to VM's pending futures list
+  # Add to VM's pending futures list (even if already failed)
   vm.pending_futures.add(gene_future_obj)
 
   return result
@@ -712,23 +796,37 @@ proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   let path = path_arg.str
   let content = content_arg.str
 
-  # For now, use a simple async wrapper with sleepAsync to simulate I/O delay
-  # TODO: Replace with real asyncfile operations once we figure out the dispatcher issue
-  proc write_file_wrapper(): Future[Value] {.async.} =
-    # Simulate I/O delay
-    await sleepAsync(1)
+  # Create Gene future first
+  let gene_future_obj = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nil
+  )
+
+  # Create Nim future for async file writing
+  let file = openAsync(path, fmWrite)
+  let nim_write_future = file.write(content)
+
+  # Add callback to complete Gene future when Nim future completes
+  nim_write_future.addCallback proc() {.gcsafe.} =
     try:
-      writeFile(path, content)
-      return NIL
+      # Write future is Future[void], just check if it failed
+      if nim_write_future.failed:
+        gene_future_obj.state = FsFailure
+        gene_future_obj.value = new_str_value("Failed to write file '" & path & "'")
+      else:
+        file.close()
+        gene_future_obj.state = FsSuccess
+        gene_future_obj.value = NIL
     except IOError as e:
-      let error_msg = "Failed to write file '" & path & "': " & e.msg
-      raise new_exception(types.Exception, error_msg)
+      gene_future_obj.state = FsFailure
+      gene_future_obj.value = new_str_value("Failed to write file '" & path & "': " & e.msg)
+    except CatchableError as e:
+      gene_future_obj.state = FsFailure
+      gene_future_obj.value = new_str_value("Error writing file: " & e.msg)
 
-  # Create Nim future
-  let nim_future = write_file_wrapper()
-
-  # Wrap in Gene Future
-  let gene_future_obj = new_future(nim_future)
   let gene_future_val = new_ref(VkFuture)
   gene_future_val.future = gene_future_obj
   let result = gene_future_val.to_ref_value()

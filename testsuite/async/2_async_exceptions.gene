@@ -3,7 +3,7 @@
 (println "=== Test 002: Async Exception Handling ===")
 
 (println "Test 1: Exception in async operation")
-(var nonexistent_file "../tests/fixtures/nonexistent.txt")
+(var nonexistent_file "../fixtures/nonexistent.txt")
 
 (try
   (var future1 (gene/io/read_async nonexistent_file))
