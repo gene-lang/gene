@@ -85,6 +85,9 @@ Vagrant.configure(2) do |config|
     # Build Nim 2.2.4 from source (choosenim has SSL issues with corporate proxy)
     echo "Building Nim 2.2.4 from source..."
 
+    # Configure git to skip SSL verification (needed for corporate proxy)
+    git config --global http.sslVerify false
+
     # Download Nim 2.2.4 source
     cd /tmp
     wget --no-check-certificate https://github.com/nim-lang/Nim/archive/refs/tags/v2.2.4.tar.gz
