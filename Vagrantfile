@@ -82,26 +82,37 @@ Vagrant.configure(2) do |config|
     sudo python3 -m pip install --upgrade pip
     sudo python3 -m pip install requests
 
-    # Install Nim 2.2.4 via choosenim
-    # Configure curl to ignore SSL certificate verification (needed due to corporate proxy)
-    echo "insecure" >> $HOME/.curlrc
+    # Build Nim 2.2.4 from source (choosenim has SSL issues with corporate proxy)
+    echo "Building Nim 2.2.4 from source..."
 
-    # Download and run choosenim installer
-    wget --no-check-certificate https://nim-lang.org/choosenim/init.sh -O /tmp/choosenim_init.sh
-    sh /tmp/choosenim_init.sh -y
+    # Download Nim 2.2.4 source
+    cd /tmp
+    wget --no-check-certificate https://github.com/nim-lang/Nim/archive/refs/tags/v2.2.4.tar.gz
+    tar xzf v2.2.4.tar.gz
+    cd Nim-2.2.4
 
-    # Switch to Nim 2.2.4
-    export PATH="$HOME/.nimble/bin:$PATH"
-    choosenim 2.2.4
+    # Build Nim compiler
+    sh build_all.sh
 
-    # Install nim-gdb for debugging
-    mkdir -p $HOME/.nimble/tools
-    wget --no-check-certificate https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/bin/nim-gdb -O $HOME/.nimble/tools/nim-gdb
-    wget --no-check-certificate https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/tools/nim-gdb.py -O $HOME/.nimble/tools/nim-gdb.py
-    chmod a+x $HOME/.nimble/tools/nim-gdb
+    # Install to /usr/local
+    sudo cp -r bin /usr/local/nim-2.2.4
+    sudo ln -sf /usr/local/nim-2.2.4/nim /usr/local/bin/nim
+    sudo ln -sf /usr/local/nim-2.2.4/nimble /usr/local/bin/nimble
+    sudo ln -sf /usr/local/nim-2.2.4/nimsuggest /usr/local/bin/nimsuggest
+
+    # Copy nim-gdb for debugging
+    sudo mkdir -p /usr/local/share/nim
+    sudo cp bin/nim-gdb /usr/local/share/nim/
+    sudo cp tools/nim-gdb.py /usr/local/share/nim/
+    sudo chmod a+x /usr/local/share/nim/nim-gdb
+    sudo ln -sf /usr/local/share/nim/nim-gdb /usr/local/bin/nim-gdb
+
+    # Clean up
+    cd /tmp
+    rm -rf Nim-2.2.4 v2.2.4.tar.gz
 
     # Update bashrc
-    echo 'export PATH="$HOME/bin:$HOME/.nimble/bin:$HOME/.nimble/tools:$PATH"' >> $HOME/.bashrc
+    echo 'export PATH="/usr/local/bin:$HOME/.nimble/bin:$PATH"' >> $HOME/.bashrc
     echo "cd #{APP_DIR}" >> $HOME/.bashrc
 
     echo "==========================================="
