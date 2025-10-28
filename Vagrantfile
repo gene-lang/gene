@@ -103,12 +103,16 @@ Vagrant.configure(2) do |config|
     sudo ln -sf /usr/local/nim-2.2.4/nimble /usr/local/bin/nimble
     sudo ln -sf /usr/local/nim-2.2.4/nimsuggest /usr/local/bin/nimsuggest
 
-    # Copy nim-gdb for debugging
+    # Copy nim-gdb for debugging (if it exists)
     sudo mkdir -p /usr/local/share/nim
-    sudo cp bin/nim-gdb /usr/local/share/nim/
-    sudo cp tools/nim-gdb.py /usr/local/share/nim/
-    sudo chmod a+x /usr/local/share/nim/nim-gdb
-    sudo ln -sf /usr/local/share/nim/nim-gdb /usr/local/bin/nim-gdb
+    if [ -f bin/nim-gdb ]; then
+      sudo cp bin/nim-gdb /usr/local/share/nim/
+      sudo chmod a+x /usr/local/share/nim/nim-gdb
+      sudo ln -sf /usr/local/share/nim/nim-gdb /usr/local/bin/nim-gdb
+    fi
+    if [ -f tools/nim-gdb.py ]; then
+      sudo cp tools/nim-gdb.py /usr/local/share/nim/
+    fi
 
     # Clean up
     cd /tmp
