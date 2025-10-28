@@ -14,7 +14,7 @@ Vagrant.configure(2) do |config|
 
   # Every Vagrant development environment requires a box. You can search for
   # boxes at https://atlas.hashicorp.com/search.
-  config.vm.box = "bento/ubuntu-22.04"  # ARM64 version for Apple Silicon
+  config.vm.box = "bento/ubuntu-24.04"  # ARM64 version for Apple Silicon
   
   # Disable vbguest plugin which causes issues
   if Vagrant.has_plugin?("vagrant-vbguest")
@@ -76,23 +76,31 @@ Vagrant.configure(2) do |config|
     # GUI packages moved to optional provisioner below
     sudo apt-get install -y kcachegrind
 
-    sudo python3 -m pip install --upgrade pip
-    sudo python3 -m pip install requests
+    sudo python3 -m pip install --upgrade pip --break-system-packages
+    sudo python3 -m pip install requests --break-system-packages
 
-    # curl -k https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
+    # Install Nim 2.2.4 via choosenim
+    curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
 
-    # mkdir -p $HOME/.nimble/tools
-    # curl -k https://raw.githubusercontent.com/nim-lang/Nim/devel/bin/nim-gdb --output $HOME/.nimble/tools/nim-gdb
-    # curl -k https://raw.githubusercontent.com/nim-lang/Nim/devel/tools/nim-gdb.py --output $HOME/.nimble/tools/nim-gdb.py
-    # chmod a+x $HOME/.nimble/tools/nim-gdb
+    # Switch to Nim 2.2.4
+    export PATH="$HOME/.nimble/bin:$PATH"
+    choosenim 2.2.4
 
-    # echo 'export PATH="$HOME/bin:$HOME/.nimble/bin:$HOME/.nimble/tools:$PATH"' >> $HOME/.bashrc
-    # echo "cd #{APP_DIR}" >> $HOME/.bashrc
-    
+    # Install nim-gdb for debugging
+    mkdir -p $HOME/.nimble/tools
+    curl https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/bin/nim-gdb --output $HOME/.nimble/tools/nim-gdb
+    curl https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/tools/nim-gdb.py --output $HOME/.nimble/tools/nim-gdb.py
+    chmod a+x $HOME/.nimble/tools/nim-gdb
+
+    # Update bashrc
+    echo 'export PATH="$HOME/bin:$HOME/.nimble/bin:$HOME/.nimble/tools:$PATH"' >> $HOME/.bashrc
+    echo "cd #{APP_DIR}" >> $HOME/.bashrc
+
     echo "==========================================="
     echo "Vagrant setup complete!"
-    echo "Nim installed via choosenim"
+    echo "Ubuntu 24.04 with Nim 2.2.4 installed"
     echo "Working directory: #{APP_DIR}"
+    echo "Run 'vagrant ssh' to connect"
     echo "==========================================="
   SHELL
   
