@@ -1,6 +1,34 @@
 import dynlib, strutils
 import ../types
 
+when defined(posix):
+  # Use dlopen with RTLD_GLOBAL on POSIX systems
+  # This makes symbols from the main executable available to the loaded library
+  const RTLD_NOW = 2
+  const RTLD_GLOBAL = 256  # 0x100
+
+  when defined(macosx):
+    # On macOS, dlopen is in libSystem
+    proc dlopen(filename: cstring, flag: cint): pointer {.importc.}
+    proc dlsym(handle: pointer, symbol: cstring): pointer {.importc.}
+    proc dlclose(handle: pointer): cint {.importc.}
+    proc dlerror(): cstring {.importc.}
+  else:
+    # On Linux, dlopen is in libdl
+    proc dlopen(filename: cstring, flag: cint): pointer {.importc, dynlib: "libdl.so(|.2|.1)".}
+    proc dlsym(handle: pointer, symbol: cstring): pointer {.importc, dynlib: "libdl.so(|.2|.1)".}
+    proc dlclose(handle: pointer): cint {.importc, dynlib: "libdl.so(|.2|.1)".}
+    proc dlerror(): cstring {.importc, dynlib: "libdl.so(|.2|.1)".}
+
+  proc loadLibGlobal(path: cstring): LibHandle =
+    ## Load library with RTLD_GLOBAL so it can see symbols from main executable
+    let handle = dlopen(path, RTLD_NOW or RTLD_GLOBAL)
+    if handle == nil:
+      let err = dlerror()
+      echo "DEBUG: dlopen error: ", if err != nil: $err else: "unknown"
+      return nil
+    return cast[LibHandle](handle)
+
 type
   # Function type for extension initialization
   Init* = proc(vm: ptr VirtualMachine): Namespace {.gcsafe, nimcall.}
@@ -21,7 +49,12 @@ proc load_extension*(vm: VirtualMachine, path: string): Namespace =
     else:
       lib_path = path & ".so"
   
-  let handle = loadLib(lib_path)
+  when defined(posix):
+    # Use RTLD_GLOBAL on POSIX to make main executable symbols available
+    let handle = loadLibGlobal(lib_path)
+  else:
+    let handle = loadLib(lib_path)
+
   if handle.isNil:
     raise new_exception(types.Exception, "Failed to load extension: " & lib_path)
   

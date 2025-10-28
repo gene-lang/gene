@@ -2,6 +2,7 @@ import os, tables
 import ./commands/base
 import ./commands/[run, eval, repl, help, parse, compile, gir]
 import ./gene/vm/thread
+import ./gene/extension/c_api  # Link C API for extensions
 
 var CommandMgr = CommandManager(data: initTable[string, Command](), help: "")
 

@@ -24,6 +24,11 @@ task buildext, "Build extension modules":
   exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp.dylib src/genex/http.nim"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libsqlite.dylib src/genex/sqlite.nim"
 
+task buildcext, "Build C extension example":
+  exec "mkdir -p build/extensions"
+  exec "cd tests && make -f Makefile.c_extension"
+  exec "cp tests/c_extension.* build/extensions/ 2>/dev/null || true"
+
 task testcore, "Runs the test suite":
   exec "nim c -r tests/test_types.nim"
   exec "nim c -r tests/test_parser.nim"
