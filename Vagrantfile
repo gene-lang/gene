@@ -14,7 +14,9 @@ Vagrant.configure(2) do |config|
 
   # Every Vagrant development environment requires a box. You can search for
   # boxes at https://atlas.hashicorp.com/search.
-  config.vm.box = "bento/ubuntu-24.04"  # ARM64 version for Apple Silicon
+  # Note: Ubuntu 24.04 ARM64 boxes are not yet widely available for VirtualBox
+  # Using Ubuntu 22.04 which has good ARM64 support
+  config.vm.box = "bento/ubuntu-22.04"  # ARM64 version for Apple Silicon
   
   # Disable vbguest plugin which causes issues
   if Vagrant.has_plugin?("vagrant-vbguest")
@@ -76,11 +78,17 @@ Vagrant.configure(2) do |config|
     # GUI packages moved to optional provisioner below
     sudo apt-get install -y kcachegrind
 
-    sudo python3 -m pip install --upgrade pip --break-system-packages
-    sudo python3 -m pip install requests --break-system-packages
+    # Install pip packages (Ubuntu 22.04 doesn't need --break-system-packages)
+    sudo python3 -m pip install --upgrade pip
+    sudo python3 -m pip install requests
 
     # Install Nim 2.2.4 via choosenim
-    curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
+    # Configure curl to ignore SSL certificate verification (needed due to corporate proxy)
+    echo "insecure" >> $HOME/.curlrc
+
+    # Download and run choosenim installer
+    wget --no-check-certificate https://nim-lang.org/choosenim/init.sh -O /tmp/choosenim_init.sh
+    sh /tmp/choosenim_init.sh -y
 
     # Switch to Nim 2.2.4
     export PATH="$HOME/.nimble/bin:$PATH"
@@ -88,8 +96,8 @@ Vagrant.configure(2) do |config|
 
     # Install nim-gdb for debugging
     mkdir -p $HOME/.nimble/tools
-    curl https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/bin/nim-gdb --output $HOME/.nimble/tools/nim-gdb
-    curl https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/tools/nim-gdb.py --output $HOME/.nimble/tools/nim-gdb.py
+    wget --no-check-certificate https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/bin/nim-gdb -O $HOME/.nimble/tools/nim-gdb
+    wget --no-check-certificate https://raw.githubusercontent.com/nim-lang/Nim/v2.2.4/tools/nim-gdb.py -O $HOME/.nimble/tools/nim-gdb.py
     chmod a+x $HOME/.nimble/tools/nim-gdb
 
     # Update bashrc
@@ -98,7 +106,7 @@ Vagrant.configure(2) do |config|
 
     echo "==========================================="
     echo "Vagrant setup complete!"
-    echo "Ubuntu 24.04 with Nim 2.2.4 installed"
+    echo "Ubuntu 22.04 with Nim 2.2.4 installed"
     echo "Working directory: #{APP_DIR}"
     echo "Run 'vagrant ssh' to connect"
     echo "==========================================="
