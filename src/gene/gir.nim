@@ -1,5 +1,5 @@
 # Gene Intermediate Representation (GIR) serialization/deserialization
-import streams, hashes, os, times, json, strutils
+import streams, hashes, os, times, json, strutils, tables
 import ./types
 
 const 
@@ -17,12 +17,20 @@ type
     debug*: bool
     published*: bool
     source_hash*: Hash
+
+  SerializedTraceNode = object
+    parent_index*: int32
+    filename*: string
+    line*: int32
+    column*: int32
     
   GirFile* = object
     header*: GirHeader
     constants*: seq[Value]
     symbols*: seq[string]
     instructions*: seq[Instruction]
+    trace_nodes*: seq[SerializedTraceNode]
+    instruction_trace_indices*: seq[int32]
     metadata*: JsonNode
     kind*: string
     unit_id*: Id
@@ -161,6 +169,9 @@ proc read_value(stream: Stream): Value =
     # Complex types - read raw value for now
     result = cast[Value](stream.readUint64())
 
+proc collect_trace_nodes(node: SourceTrace, buffer: var seq[SourceTrace])
+proc build_trace_index(nodes: seq[SourceTrace]): Table[pointer, int]
+
 proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit) =
   stream.write(cu.kind.int8)
   stream.write(if cu.skip_return: 1'u8 else: 0'u8)
@@ -170,6 +181,26 @@ proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit) =
     stream.write(inst.label.uint32)
     write_value(stream, inst.arg0)
     stream.write(inst.arg1)
+
+  cu.ensure_trace_capacity()
+  var flattened_trace: seq[SourceTrace] = @[]
+  if not cu.trace_root.is_nil:
+    collect_trace_nodes(cu.trace_root, flattened_trace)
+  stream.write(flattened_trace.len.uint32)
+  let trace_index = build_trace_index(flattened_trace)
+  for node in flattened_trace:
+    let parent_idx = if node.parent.is_nil: -1 else: trace_index.getOrDefault(cast[pointer](node.parent), -1)
+    stream.write(parent_idx.int32)
+    stream.write_string(node.filename)
+    stream.write(node.line.int32)
+    stream.write(node.column.int32)
+
+  stream.write(cu.instruction_traces.len.uint32)
+  for trace in cu.instruction_traces:
+    var idx = -1
+    if not trace.is_nil:
+      idx = trace_index.getOrDefault(cast[pointer](trace), -1)
+    stream.write(idx.int32)
 
 proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
   let kind = cast[CompilationUnitKind](stream.readInt8())
@@ -184,7 +215,48 @@ proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
     inst.label = stream.readUint32().Label
     inst.arg0 = read_value(stream)
     inst.arg1 = stream.readInt32()
-    result.instructions.add(inst)
+    result.add_instruction(inst)
+
+  let trace_node_count = stream.readUint32()
+  var serialized_nodes: seq[SerializedTraceNode] = @[]
+  for _ in 0..<trace_node_count:
+    serialized_nodes.add(SerializedTraceNode(
+      parent_index: stream.readInt32(),
+      filename: stream.read_string(),
+      line: stream.readInt32(),
+      column: stream.readInt32(),
+    ))
+
+  if serialized_nodes.len > 0:
+    var node_refs: seq[SourceTrace] = @[]
+    for node_info in serialized_nodes:
+      node_refs.add(new_source_trace(node_info.filename, node_info.line.int, node_info.column.int))
+    for idx, node_info in serialized_nodes:
+      let parent_idx = node_info.parent_index.int
+      if parent_idx >= 0 and parent_idx < node_refs.len:
+        attach_child(node_refs[parent_idx], node_refs[idx])
+    result.trace_root = node_refs[0]
+  else:
+    result.trace_root = nil
+
+  let trace_indices_count = stream.readUint32()
+  var trace_indices: seq[int32] = @[]
+  for _ in 0..<trace_indices_count:
+    trace_indices.add(stream.readInt32())
+
+  if trace_indices.len > 0:
+    var node_refs: seq[SourceTrace] = @[]
+    if result.trace_root != nil:
+      collect_trace_nodes(result.trace_root, node_refs)
+    for idx in 0..<result.instructions.len:
+      if idx < trace_indices.len:
+        let node_index = trace_indices[idx]
+        if node_index >= 0 and node_index < node_refs.len:
+          result.instruction_traces[idx] = node_refs[node_index]
+        else:
+          result.instruction_traces[idx] = nil
+      else:
+        result.instruction_traces[idx] = nil
 
 proc write_instruction(stream: Stream, inst: Instruction) =
   stream.write(inst.kind.uint16)
@@ -197,6 +269,18 @@ proc read_instruction(stream: Stream): Instruction =
   result.label = stream.readUint32().Label
   result.arg0 = stream.read_value()
   result.arg1 = stream.readInt32()
+
+proc collect_trace_nodes(node: SourceTrace, buffer: var seq[SourceTrace]) =
+  if node.is_nil:
+    return
+  buffer.add(node)
+  for child in node.children:
+    collect_trace_nodes(child, buffer)
+
+proc build_trace_index(nodes: seq[SourceTrace]): Table[pointer, int] =
+  result = initTable[pointer, int]()
+  for idx, node in nodes:
+    result[cast[pointer](node)] = idx
 
 # Main serialization functions
 proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debug: bool = false) =
@@ -259,6 +343,26 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   stream.write(cu.instructions.len.uint32)
   for inst in cu.instructions:
     stream.writeInstruction(inst)
+
+  cu.ensure_trace_capacity()
+  var flattened_trace: seq[SourceTrace] = @[]
+  if not cu.trace_root.is_nil:
+    collect_trace_nodes(cu.trace_root, flattened_trace)
+  stream.write(flattened_trace.len.uint32)
+  let trace_index = build_trace_index(flattened_trace)
+  for node in flattened_trace:
+    let parent_idx = if node.parent.is_nil: -1 else: trace_index.getOrDefault(cast[pointer](node.parent), -1)
+    stream.write(parent_idx.int32)
+    stream.write_string(node.filename)
+    stream.write(node.line.int32)
+    stream.write(node.column.int32)
+
+  stream.write(cu.instruction_traces.len.uint32)
+  for trace in cu.instruction_traces:
+    var idx = -1
+    if not trace.is_nil:
+      idx = trace_index.getOrDefault(cast[pointer](trace), -1)
+    stream.write(idx.int32)
   
   # Write metadata as simple values for now
   stream.write_string($cu.kind)
@@ -306,6 +410,25 @@ proc load_gir_file*(path: string): GirFile =
   for _ in 0..<instruction_count:
     instructions.add(stream.readInstruction())
 
+  let trace_node_count = stream.readUint32()
+  var trace_nodes: seq[SerializedTraceNode] = @[]
+  for _ in 0..<trace_node_count:
+    let parent_index = stream.readInt32()
+    let filename = stream.read_string()
+    let line = stream.readInt32()
+    let column = stream.readInt32()
+    trace_nodes.add(SerializedTraceNode(
+      parent_index: parent_index,
+      filename: filename,
+      line: line,
+      column: column,
+    ))
+
+  let trace_index_count = stream.readUint32()
+  var trace_indices: seq[int32] = @[]
+  for _ in 0..<trace_index_count:
+    trace_indices.add(stream.readInt32())
+
   let kind_str = stream.read_string()
   let unit_id = stream.readInt64()
   let skip_return = stream.readBool()
@@ -314,6 +437,8 @@ proc load_gir_file*(path: string): GirFile =
   result.constants = constants
   result.symbols = symbols
   result.instructions = instructions
+  result.trace_nodes = trace_nodes
+  result.instruction_trace_indices = trace_indices
   result.metadata = newJObject()
   result.metadata["kind"] = newJString(kind_str)
   result.metadata["id"] = newJInt(unit_id)
@@ -328,11 +453,39 @@ proc load_gir*(path: string): CompilationUnit =
   let gir_file = load_gir_file(path)
   result = new_compilation_unit()
   result.instructions = gir_file.instructions
+  result.ensure_trace_capacity()
 
   if gir_file.kind.len > 0:
     result.kind = parseEnum[CompilationUnitKind](gir_file.kind)
   result.id = gir_file.unit_id
   result.skip_return = gir_file.skip_return
+
+  if gir_file.trace_nodes.len > 0:
+    var node_refs: seq[SourceTrace] = @[]
+    for node_info in gir_file.trace_nodes:
+      node_refs.add(new_source_trace(node_info.filename, node_info.line.int, node_info.column.int))
+    for idx, node_info in gir_file.trace_nodes:
+      let parent_idx = node_info.parent_index.int
+      if parent_idx >= 0 and parent_idx < node_refs.len:
+        attach_child(node_refs[parent_idx], node_refs[idx])
+    result.trace_root = node_refs[0]
+  else:
+    result.trace_root = nil
+
+  if gir_file.instruction_trace_indices.len > 0:
+    result.instruction_traces.setLen(result.instructions.len)
+    var node_refs: seq[SourceTrace] = @[]
+    if result.trace_root != nil:
+      collect_trace_nodes(result.trace_root, node_refs)
+    for idx in 0..<result.instructions.len:
+      if idx < gir_file.instruction_trace_indices.len:
+        let node_index = gir_file.instruction_trace_indices[idx]
+        if node_index >= 0 and node_index < node_refs.len:
+          result.instruction_traces[idx] = node_refs[node_index]
+        else:
+          result.instruction_traces[idx] = nil
+      else:
+        result.instruction_traces[idx] = nil
 
 proc is_gir_up_to_date*(gir_path: string, source_path: string): bool =
   ## Check if a GIR file is up-to-date with its source

@@ -376,9 +376,18 @@ type
         discard
     ref_count*: int32
 
+  SourceTrace* = ref object
+    parent*: SourceTrace
+    children*: seq[SourceTrace]
+    filename*: string
+    line*: int
+    column*: int
+    child_index*: int
+
   Gene* = object
     ref_count*: int32
     `type`*: Value
+    trace*: SourceTrace
     props*: Table[Key, Value]
     children*: seq[Value]
 
@@ -624,6 +633,8 @@ type
     loop_stack*: seq[LoopInfo]
     tail_position*: bool  # Track if we're in tail position for tail call optimization
     eager_functions*: bool
+    trace_stack*: seq[SourceTrace]
+    last_error_trace*: SourceTrace
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop
@@ -845,6 +856,8 @@ type
     skip_return*: bool
     matcher*: RootMatcher
     instructions*: seq[Instruction]
+    trace_root*: SourceTrace
+    instruction_traces*: seq[SourceTrace]
     labels*: Table[Label, int]
     inline_caches*: seq[InlineCache]  # Inline caches indexed by PC
 
@@ -2147,6 +2160,32 @@ proc new_selector_value*(segments: openArray[Value]): Value =
   r.selector_pattern = pattern_parts.join("/")
   result = r.to_ref_value()
 
+#################### SourceTrace ##################
+
+proc new_source_trace*(filename: string, line, column: int): SourceTrace =
+  SourceTrace(
+    filename: filename,
+    line: line,
+    column: column,
+    children: @[],
+    child_index: -1,
+  )
+
+proc attach_child*(parent: SourceTrace, child: SourceTrace) =
+  if parent.is_nil or child.is_nil:
+    return
+  child.parent = parent
+  child.child_index = parent.children.len
+  parent.children.add(child)
+
+proc trace_location*(trace: SourceTrace): string =
+  if trace.is_nil:
+    return ""
+  if trace.filename.len > 0:
+    result = trace.filename & ":" & $trace.line & ":" & $trace.column
+  else:
+    result = $trace.line & ":" & $trace.column
+
 #################### Gene ########################
 
 proc to_gene_value*(v: ptr Gene): Value {.inline.} =
@@ -2168,6 +2207,7 @@ proc new_gene*(): ptr Gene =
   result = cast[ptr Gene](alloc0(sizeof(Gene)))
   result.ref_count = 1
   result.type = NIL
+  result.trace = nil
   result.props = Table[Key, Value]()
   result.children = @[]
 
@@ -2175,6 +2215,7 @@ proc new_gene*(`type`: Value): ptr Gene =
   result = cast[ptr Gene](alloc0(sizeof(Gene)))
   result.ref_count = 1
   result.type = `type`
+  result.trace = nil
   result.props = Table[Key, Value]()
   result.children = @[]
 
@@ -3441,8 +3482,37 @@ proc to_value*(self: ScopeTracker): Value =
 proc new_compilation_unit*(): CompilationUnit =
   CompilationUnit(
     id: new_id(),
+    trace_root: nil,
+    instruction_traces: @[],
     inline_caches: @[],
   )
+
+proc add_instruction*(self: CompilationUnit, instr: Instruction, trace: SourceTrace = nil) =
+  if self.instruction_traces.len < self.instructions.len:
+    self.instruction_traces.setLen(self.instructions.len)
+  self.instructions.add(instr)
+  self.instruction_traces.add(trace)
+
+proc ensure_trace_capacity*(self: CompilationUnit) =
+  if self.instruction_traces.len < self.instructions.len:
+    self.instruction_traces.setLen(self.instructions.len)
+
+proc replace_traces_range*(self: CompilationUnit, start_pos, end_pos: int, replacement_count: int) =
+  if self.instruction_traces.len < self.instructions.len:
+    self.instruction_traces.setLen(self.instructions.len)
+  let clamped_start = max(0, min(start_pos, self.instruction_traces.len))
+  let clamped_end = max(clamped_start, min(end_pos, self.instruction_traces.len - 1))
+  if clamped_start <= clamped_end:
+    let remove_count = clamped_end - clamped_start + 1
+    for _ in 0..<remove_count:
+      self.instruction_traces.delete(clamped_start)
+  if replacement_count > 0:
+    let insert_pos = min(clamped_start, self.instruction_traces.len)
+    for _ in 0..<replacement_count:
+      if insert_pos >= self.instruction_traces.len:
+        self.instruction_traces.add(nil)
+      else:
+        self.instruction_traces.insert(nil, insert_pos)
 
 proc `$`*(self: Instruction): string =
   case self.kind

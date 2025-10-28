@@ -26,6 +26,26 @@ proc init_stdlib*()  # From stdlib
 
 var next_message_id {.threadvar.}: int
 
+proc current_trace(self: VirtualMachine): SourceTrace =
+  if self.cu.is_nil:
+    return nil
+  if self.pc >= 0 and self.pc < self.cu.instruction_traces.len:
+    let trace = self.cu.instruction_traces[self.pc]
+    if trace.is_nil and not self.cu.trace_root.is_nil:
+      return self.cu.trace_root
+    return trace
+  if not self.cu.trace_root.is_nil:
+    return self.cu.trace_root
+  nil
+
+proc format_runtime_exception(self: VirtualMachine, value: Value): string =
+  let trace = self.current_trace()
+  let location = trace_location(trace)
+  if location.len > 0:
+    "Gene exception at " & location & ": " & $value
+  else:
+    "Gene exception: " & $value
+
 # VM initialization for worker threads
 proc init_vm_for_thread(thread_id: int) =
   ## Initialize VM for a worker thread
@@ -4115,7 +4135,7 @@ proc exec*(self: VirtualMachine): Value =
             continue
         else:
           # No handler, raise Nim exception
-          raise new_exception(types.Exception, "Gene exception: " & $value)
+          raise new_exception(types.Exception, self.format_runtime_exception(value))
         {.pop.}
         
       of IkTryStart:
@@ -4218,7 +4238,7 @@ proc exec*(self: VirtualMachine): Value =
               raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
             continue
           else:
-            raise new_exception(types.Exception, "Gene exception: " & $value)
+            raise new_exception(types.Exception, self.format_runtime_exception(value))
 
       of IkGetClass:
         # Get the class of a value
@@ -4510,7 +4530,7 @@ proc exec*(self: VirtualMachine): Value =
               continue
             else:
               # No handler, raise Nim exception
-              raise new_exception(types.Exception, "Gene exception: " & $future.value)
+              raise new_exception(types.Exception, self.format_runtime_exception(future.value))
           of FsPending:
             # Poll event loop until future completes
             # Callbacks will update the future state when async operations complete
@@ -4563,7 +4583,7 @@ proc exec*(self: VirtualMachine): Value =
                     raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
                   continue
                 else:
-                  raise new_exception(types.Exception, "Gene exception: " & $future.value)
+                  raise new_exception(types.Exception, self.format_runtime_exception(future.value))
               of FsPending:
                 # Should not happen
                 not_allowed("Future still pending after polling")
