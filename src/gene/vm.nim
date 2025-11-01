@@ -3747,7 +3747,14 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkImport:
         let import_gene = self.frame.pop()
+        when not defined(release):
+          echo "IkImport: popped value kind = ", import_gene.kind
+          if import_gene.kind == VkGene:
+            echo "  Gene type = ", import_gene.gene.type
+            echo "  Gene children.len = ", import_gene.gene.children.len
         if import_gene.kind != VkGene:
+          echo "ERROR: Import got ", import_gene.kind, " instead of VkGene"
+          echo "  Value = ", import_gene
           not_allowed("Import expects a gene")
         
         let (module_path, imports, module_ns, is_native, handled) = self.handle_import(import_gene.gene)
@@ -3818,7 +3825,23 @@ proc exec*(self: VirtualMachine): Value =
               
               # Add to current namespace
               self.frame.ns.members[import_name.to_key()] = value
-        
+        else:
+          # Module already cached - import requested symbols
+          let cached_ns = ModuleCache[module_path]
+          for item in imports:
+            let value = resolve_import_value(cached_ns, item.name)
+
+            # Determine the name to import as
+            let import_name = if item.alias != "":
+              item.alias
+            else:
+              # Use the last part of the path
+              let parts = item.name.split("/")
+              parts[^1]
+
+            # Add to current namespace
+            self.frame.ns.members[import_name.to_key()] = value
+
         self.frame.push(NIL)
 
       of IkNamespaceStore:
@@ -5892,3 +5915,4 @@ include "./stdlib"
 when not defined(noExtensions):
   import "../genex/http"
   import "../genex/sqlite"
+  import "../genex/html"

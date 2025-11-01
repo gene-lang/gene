@@ -488,51 +488,44 @@ proc skip_comment(self: var Parser) =
 
 proc read_token(self: var Parser, lead_constituent: bool, chars_allowed: openarray[char]): string =
   var pos = self.bufpos
-  var ch = self.buf[pos]
+  var ch: char
+
+  # Check buffer bounds
+  if pos >= self.buf.len:
+    return ""
+
+  ch = self.buf[pos]
   if lead_constituent and non_constituent(ch):
     raise new_exception(ParseError, "Invalid leading character " & ch)
-  
-  # Optimized: Pre-scan to find token end, then allocate exactly the right size
-  let start_pos = pos
-  var end_pos = pos
-  
-  # First pass: find the end position
-  while true:
-    ch = self.buf[end_pos]
+
+  # Build token incrementally to handle tokens of any length
+  result = ""
+
+  while pos < self.buf.len:
+    ch = self.buf[pos]
+
     if ch == '\\':
-      inc(end_pos)  # Skip backslash
-      if self.buf[end_pos] != EndOfFile:
-        inc(end_pos)  # Skip escaped character
+      # Handle escape sequence
+      inc(pos)
+      if pos < self.buf.len:
+        ch = self.buf[pos]
+        if ch != EndOfFile:
+          result.add(ch)  # Add escaped character (without backslash)
+          inc(pos)
+        else:
+          break
+      else:
+        break
     elif ch == EndOfFile or is_space_ascii(ch) or ch == ',' or (is_terminating_macro(ch) and ch notin chars_allowed):
+      # Token ends
       break
     elif non_constituent(ch):
       raise new_exception(ParseError, "Invalid constituent character: " & ch)
     else:
-      inc(end_pos)
-  
-  # Optimized: Allocate string with exact capacity
-  let token_len = end_pos - start_pos
-  if token_len == 0:
-    result = ""
-    self.bufpos = end_pos
-    return
-    
-  result = newStringOfCap(token_len)
-  
-  # Second pass: build the string efficiently, handling escape sequences
-  pos = start_pos
-  while pos < end_pos:
-    ch = self.buf[pos]
-    if ch == '\\':
-      inc(pos)  # Skip backslash
-      if pos < end_pos:
-        result.add(self.buf[pos])  # Add escaped character (without backslash)
-        inc(pos)
-    else:
       result.add(ch)
       inc(pos)
-  
-  self.bufpos = end_pos
+
+  self.bufpos = pos
 
 proc read_token(self: var Parser, lead_constituent: bool): string =
   return self.read_token(lead_constituent, [':'])
@@ -593,16 +586,16 @@ proc read_character(self: var Parser): Value =
 proc skip_ws(self: var Parser) {.gcsafe.} =
   # Optimized: fast path for common whitespace characters
   var pos = self.bufpos
-  
+
   # Fast batch processing of simple whitespace
-  while true:
+  while pos < self.buf.len:
     let ch = self.buf[pos]
     case ch
     of ' ', '\t', ',':
       inc(pos)
     of '\c':
       # Handle CR
-      if self.buf[pos + 1] == '\L':
+      if pos + 1 < self.buf.len and self.buf[pos + 1] == '\L':
         inc(pos, 2)
       else:
         inc(pos)
@@ -614,18 +607,21 @@ proc skip_ws(self: var Parser) {.gcsafe.} =
     of '#':
       # Comments need special handling
       self.bufpos = pos
-      case self.buf[pos + 1]:
-      of ' ', '!', '#', '\r', '\n':
-        self.skip_comment()
-        pos = self.bufpos
-      of '<':
-        self.skip_block_comment()
-        pos = self.bufpos
+      if pos + 1 < self.buf.len:
+        case self.buf[pos + 1]:
+        of ' ', '!', '#', '\r', '\n':
+          self.skip_comment()
+          pos = self.bufpos
+        of '<':
+          self.skip_block_comment()
+          pos = self.bufpos
+        else:
+          break
       else:
         break
     else:
       break
-  
+
   self.bufpos = pos
 
 proc match_symbol(s: string): Value =
@@ -826,6 +822,12 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
   while true:
     self.skip_ws()
     var pos = self.bufpos
+
+    # Check buffer bounds
+    if pos >= self.buf.len:
+      let msg = "EOF while reading list $# $# $#"
+      raise new_exception(ParseError, format(msg, delimiter, self.filename, self.line_number))
+
     let ch = self.buf[pos]
     if ch == EndOfFile:
       let msg = "EOF while reading list $# $# $#"
@@ -1074,7 +1076,9 @@ proc init*() =
   init_handlers()
 
 proc open*(self: var Parser, input: Stream, filename: string) =
-  lexbase.open(self, input)
+  # Use a larger buffer size (1MB) to handle long tokens without buffer overflow
+  # The buffer will grow automatically if needed
+  lexbase.open(self, input, bufLen = 1024 * 1024)
   self.filename = filename
   self.str = ""
   self.trace_root = new_source_trace(filename, 1, 1)

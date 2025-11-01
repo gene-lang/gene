@@ -1,33 +1,46 @@
 #!/usr/bin/env gene run
 
-(import genex/mysql:DB)
-(import genex/http/*)
-(import genex/html/tags/*)
+# (import genex/mysql:DB)
+# (import genex/sqlite:DB)
+# (import genex/http)
+# (import genex/html/tags/*)
+
+# Note: sqlite and http are already loaded in the VM
+# TODO: Fix wildcard imports - they cause VM issues currently
 
 # Prerequisites:
 # A running database server
 # A database ready to be used
 # A user with proper access
-(var $ns/DB_HOST ($env "DB_HOST" "localhost"))
-(var $ns/DB_USER ($env "DB_USER"))
-(var $ns/DB_PASS ($env "DB_PASS"))
-(var $ns/DB_NAME ($env "DB_NAME" "todos"))
+# (var $ns/DB_HOST ($env "DB_HOST" "localhost"))
+# (var $ns/DB_USER ($env "DB_USER"))
+# (var $ns/DB_PASS ($env "DB_PASS"))
+# (var $ns/DB_NAME ($env "DB_NAME" "todos"))
 
 (fn init_db _
-  (var conn (DB/open DB_HOST DB_USER DB_PASS DB_NAME))
+  # (var conn (genex/sqlite/DB/open DB_HOST DB_USER DB_PASS DB_NAME))
+  # (conn .exec """
+  #   CREATE TABLE IF NOT EXISTS `todos`.`todos` (
+  #     `id` INT NOT NULL AUTO_INCREMENT,
+  #     `description` VARCHAR(255) NOT NULL,
+  #     `status` INT NULL,
+  #     PRIMARY KEY (`id`),
+  #     UNIQUE INDEX `id_UNIQUE` (`id` ASC) VISIBLE
+  #   )
+  # """)
+  (var conn (genex/sqlite/DB/open "/tmp/todo.db"))
   (conn .exec """
-    CREATE TABLE IF NOT EXISTS `todos`.`todos` (
-      `id` INT NOT NULL AUTO_INCREMENT,
-      `description` VARCHAR(255) NOT NULL,
-      `status` INT NULL,
-      PRIMARY KEY (`id`),
-      UNIQUE INDEX `id_UNIQUE` (`id` ASC) VISIBLE
+    CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      description TEXT NOT NULL,
+      status INTEGER DEFAULT 0
     )
   """)
 )
 
 (class Orm
-  (.ctor /conn
+  (.ctor [conn]
+    (/conn = conn)  # Store connection as instance variable
   )
 
   (.fn exec [query params...]
@@ -36,14 +49,15 @@
 )
 
 (class Query
-  (.ctor /table
+  (.ctor [table]
+    (/table = table)  # Store table name as instance variable
   )
 
   (.fn select /select...
   )
 
   (.fn join join
-    (/joins ||= [])
+    (/joins = (/joins || []))
     (/joins .add join)
   )
 
@@ -169,7 +183,7 @@
   (var /table "todos")
   (var /columns ["id" "description" "status"])
 
-  (.ctor props
+  (.ctor [props]
     (/id = props/id)
     (/description = props/description)
     (/status = (props/status || 0))
@@ -209,11 +223,12 @@
 
 (class App
 
-  (.ctor /port
+  (.ctor [port]
+    (/port = port)
     (/middlewares = [])
 
     # Open connection to the database
-    (var conn (DB/open DB_HOST DB_USER DB_PASS DB_NAME))
+    (var conn (genex/sqlite/DB/open "/tmp/todo.db"))
     # Create a instance of Orm with DB connection
     (var orm (new Orm conn))
     # Set orm member on Record class which gets inherited by child classes of Record
@@ -234,8 +249,8 @@
     (println "Starting HTTP server at port" /port "...")
 
     (var root_handler (.construct_handler 0))
-    (start_server /port root_handler)
-    (gene/run_forever)
+    (genex/http/start_server /port root_handler)
+    (genex/http/run_forever)
   )
 )
 
@@ -475,66 +490,66 @@
           "This is a replication of Minimal TODO created by Dronca Raul"
         )
         (SCRIPT ^src "https://code.jquery.com/jquery-3.6.0.min.js" ^integrity "sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" ^crossorigin "anonymous")
-        # (SCRIPT """
-        #   $("li label.cbx__child").click(function(e) {
-        #     var id = $(this).attr("for");
-        #     var oldStatus = $("input#" + id).is(":checked") ? 1 : 0;
-        #     var newStatus = oldStatus == 1 ? 0 : 1;
-        #     $.ajax({url: "/todos",
-        #       type: "PATCH",
-        #       data: "id=" + id + "&status=" + newStatus,
-        #       success: function(result, status) {
-        #         window.location.reload();
-        #       },
-        #       error: function(xhr, status, error) {
-        #         alert("Operation failed: " + error);
-        #       }
-        #     });
-        #   });
-        #   $("li button.delete-button").click(function(e) {
-        #     var id = $(this).data("id");
-        #     $.ajax({url: "/todos",
-        #       type: "DELETE",
-        #       data: "id=" + id,
-        #       success: function(result, status) {
-        #         window.location.reload();
-        #       },
-        #       error: function(xhr, status, error) {
-        #         alert("Operation failed: " + error);
-        #       }
-        #     });
-        #   });
-        # """)
-        (SCRIPT (genex/js/js
-          ((($ "li label.cbx__child").click) (fnx* e
-            (var id ((($ this).attr) "for"))
-            (var oldStatus (? ((($ #"input##{id}").is) ":checked") 1 0))
-            (var newStatus (? (oldStatus == 1) 0 1))
-            ($.ajax {^url "/todos"
-              ^type "PATCH"
-              ^data #"id=#{id}&status=#{newStatus}"
-              ^success (fnx* [result status]
-                (window.location.reload)
-              )
-              ^error (fnx* [xhr status error]
-                (alert #"Operation failed: #{error}")
-              )
-            })
-          ))
-          ((($ "li button.delete-button").click) (fnx* e
-            (var id ((($ this).data) "id"))
-            ($.ajax {^url "/todos"
-              ^type "DELETE"
-              ^data #"id=#{id}"
-              ^success (fnx* [result status]
-                (window.location.reload)
-              )
-              ^error (fnx* [xhr status error]
-                (alert #"Operation failed: #{error}")
-              )
-            })
-          ))
-        ))
+          (SCRIPT """
+            $("li label.cbx__child").click(function(e) {
+              var id = $(this).attr("for");
+              var oldStatus = $("input#" + id).is(":checked") ? 1 : 0;
+              var newStatus = oldStatus == 1 ? 0 : 1;
+              $.ajax({url: "/todos",
+                type: "PATCH",
+                data: "id=" + id + "&status=" + newStatus,
+                success: function(result, status) {
+                  window.location.reload();
+                },
+                error: function(xhr, status, error) {
+                  alert("Operation failed: " + error);
+                }
+              });
+            });
+            $("li button.delete-button").click(function(e) {
+              var id = $(this).data("id");
+              $.ajax({url: "/todos",
+                type: "DELETE",
+                data: "id=" + id,
+                success: function(result, status) {
+                  window.location.reload();
+                },
+                error: function(xhr, status, error) {
+                  alert("Operation failed: " + error);
+                }
+              });
+            });
+          """)
+        # (SCRIPT (genex/js/js
+        #   ((($ "li label.cbx__child").click) (fnx* e
+        #     (var id ((($ this).attr) "for"))
+        #     (var oldStatus (? ((($ #"input##{id}").is) ":checked") 1 0))
+        #     (var newStatus (? (oldStatus == 1) 0 1))
+        #     ($.ajax {^url "/todos"
+        #       ^type "PATCH"
+        #       ^data #"id=#{id}&status=#{newStatus}"
+        #       ^success (fnx* [result status]
+        #         (window.location.reload)
+        #       )
+        #       ^error (fnx* [xhr status error]
+        #         (alert #"Operation failed: #{error}")
+        #       )
+        #     })
+        #   ))
+        #   ((($ "li button.delete-button").click) (fnx* e
+        #     (var id ((($ this).data) "id"))
+        #     ($.ajax {^url "/todos"
+        #       ^type "DELETE"
+        #       ^data #"id=#{id}"
+        #       ^success (fnx* [result status]
+        #         (window.location.reload)
+        #       )
+        #       ^error (fnx* [xhr status error]
+        #         (alert #"Operation failed: #{error}")
+        #       )
+        #     })
+        #   ))
+        # ))
       )
     )
   )
@@ -589,7 +604,11 @@
 )
 
 (class Mapping
-  (.ctor [/path /controller /action /http_methods]
+  (.ctor [path controller action http_methods]
+    (/path = path)
+    (/controller = controller)
+    (/action = action)
+    (/http_methods = http_methods)
   )
 
   # Return bool: whether the path/method/... of the request matches
