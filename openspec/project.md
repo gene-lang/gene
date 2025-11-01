@@ -51,7 +51,7 @@ Gene is a Lisp-like programming language with S-expression syntax, implemented i
 (async expr)                   # Create future
 (await future)                 # Wait for future
 [1 2 3]                        # Array literal
-{:a 1 :b 2}                    # Map literal
+{^a 1 ^b 2}                    # Map literal
 ```
 
 ### Critical Implementation Details
@@ -70,3 +70,75 @@ Gene is a Lisp-like programming language with S-expression syntax, implemented i
 - **Nim Standard Library**: core, os, strutils, tables, etc.
 - **Optional Extensions**: HTTP client, SQLite (built separately via `nimble buildext`)
 - **Build Requirements**: Nim compiler, Nimble package manager
+
+## CLI & Tooling
+
+- **Primary binary**: `bin/gene`
+- **Common commands**:
+  - `nimble build` (debug build in `bin/`)
+  - `nimble speedy` (release, native flags)
+  - `bin/gene run <file.gene>` (exec with GIR cache)
+  - `bin/gene eval "(println \"hi\")"` (inline eval)
+  - `bin/gene repl` (interactive shell)
+  - `bin/gene compile --emit-debug <file.gene>` (inspect bytecode/GIR)
+- **Caching**: Compiled GIR artifacts under `build/` are reused unless `--no-gir-cache` is passed
+
+## Repository Layout
+
+```
+src/gene/
+  compiler.nim          # AST → bytecode
+  parser.nim            # S-expression reader
+  vm.nim                # Main dispatch loop
+  types.nim             # Value + InstructionKind
+  gir.nim               # Bytecode serializer
+  vm/                   # Native fns, async, core types
+  stdlib/               # Standard library impls
+docs/                   # Architecture and design notes
+tests/                  # Nim tests
+testsuite/              # Gene language tests
+openspec/               # Specs and change proposals
+```
+
+## Additional Coding Conventions
+
+- Prefer early returns over deep nesting in Nim procs
+- Avoid broad try/except; handle only expected exceptions
+- Keep hot-path procs small; avoid allocations in instruction dispatch
+- Name instructions with `Ik*` prefix and values with `Vk*`
+- Exported procs/types use `*` and clear doc comments when non-obvious
+
+## Versioning & Releases
+
+- **Version file**: `gene.nimble`
+- **Channel**: Cut releases from `master` after green tests
+- **Artifacts**: `bin/gene` (macOS primary); extensions in `build/`
+
+## Commit & PR Workflow
+
+- Small, focused commits aligned with a single behavior change
+- Include/adjust tests in the same commit when behavior changes
+- Reference OpenSpec change IDs in commit messages when applicable (e.g., `add-module-system:` prefix)
+
+## Continuous Validation
+
+- Run `nimble test` locally before PRs
+- Run `./testsuite/run_tests.sh` for language-level validation
+- For spec-driven work, run `openspec validate <change-id> --strict`
+
+## Performance Targets
+
+- Dispatch loop is a hotspot; track regressions via `nimble bench`
+- Target: maintain or improve current fib(24) baseline referenced in `docs/performance.md`
+
+## Known Hazards & Caveats
+
+- Exception handling: prefer `catch *` with `$ex`; `catch ex` may crash on macOS
+- Scope lifetime: ensure `IkScopeEnd` retains scopes captured by async blocks
+- String methods: ensure `IkCallMethod1` routes through `App.app.string_class`
+- Manual memory: initialize all `ScopeObj` members and manage ref counts carefully
+
+## Development Environment
+
+- Recommended: macOS with Nim `>= 2.0.0`
+- Optional extensions: build via `nimble buildext` (HTTP, SQLite)
