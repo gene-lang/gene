@@ -1190,6 +1190,9 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
   # Check if this is a macro constructor call (new!)
   let is_macro_new = gene.type.kind == VkSymbol and gene.type.str == "new!"
 
+  when not defined(release):
+    echo "DEBUG compile_new: class = ", gene.children[0]
+
   # Compile the class (first argument)
   self.compile(gene.children[0])
 
@@ -2552,9 +2555,11 @@ proc compile_with(self: Compiler, gene: ptr Gene) =
 
 proc compile_tap(self: Compiler, gene: ptr Gene) =
   # ($tap value body...) or ($tap value :name body...)
+  when not defined(release):
+    echo "DEBUG compile_tap: gene.children.len = ", gene.children.len
   if gene.children.len < 1:
     not_allowed("$tap expects at least 1 argument")
-  
+
   # Compile the value
   self.compile(gene.children[0])
   

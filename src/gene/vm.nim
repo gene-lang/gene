@@ -1540,8 +1540,17 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.push(NIL)
       
       of IkSetSelf:
-        # SetSelf is no longer needed - self is the first argument
-        discard self.frame.pop()
+        # Set the value as self by modifying frame.args
+        let value = self.frame.pop()
+        # Ensure frame.args is a Gene with at least one child
+        if self.frame.args.kind != VkGene:
+          let args_gene = new_gene(NIL)
+          args_gene.children.add(value)
+          self.frame.args = args_gene.to_gene_value()
+        elif self.frame.args.gene.children.len == 0:
+          self.frame.args.gene.children.add(value)
+        else:
+          self.frame.args.gene.children[0] = value
       
       of IkRotate:
         # Rotate top 3 stack elements: [a, b, c] -> [c, a, b]
@@ -3866,6 +3875,9 @@ proc exec*(self: VirtualMachine): Value =
       of IkClass:
         let name = inst.arg0
         let class = new_class(name.str)
+        # Set the class namespace's parent to the current frame's namespace
+        # This allows class bodies to access global symbols like other classes
+        class.ns.parent = self.frame.ns
         class.add_standard_instance_methods()
         let r = new_ref(VkClass)
         r.class = class
@@ -5584,6 +5596,8 @@ proc exec*(self: VirtualMachine): Value =
           else:
             not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
+          when not defined(release):
+            echo "DEBUG IkUnifiedMethodCall2: obj.kind = ", obj.kind, ", method = ", method_name
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
 
