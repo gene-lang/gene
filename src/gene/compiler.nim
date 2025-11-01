@@ -368,7 +368,7 @@ proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
 
 proc compile_var(self: Compiler, gene: ptr Gene) =
   let name = gene.children[0]
-  
+
   # Handle namespace variables like $ns/a
   if name.kind == VkComplexSymbol:
     let parts = name.ref.csymbol
@@ -380,14 +380,60 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
       else:
         # No value, use NIL
         self.emit(Instruction(kind: IkPushValue, arg0: NIL))
-      
+
       # Store in namespace
       let var_name = parts[1..^1].join("/")
       self.emit(Instruction(kind: IkNamespaceStore, arg0: var_name.to_symbol_value()))
       return
-  
+
+    # Handle class/instance variables like /table (which becomes ["", "table"])
+    if parts.len >= 2 and parts[0] == "":
+      # This is a class or instance variable, store it in namespace
+      if gene.children.len > 1:
+        # Compile the value
+        self.compile(gene.children[1])
+      else:
+        # No value, use NIL
+        self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+
+      # Store in namespace with the full name (e.g., "/table")
+      let var_name = "/" & parts[1..^1].join("/")
+      self.emit(Instruction(kind: IkNamespaceStore, arg0: var_name.to_symbol_value()))
+      return
+
+    # Handle namespace/class member variables like Record/orm
+    # This stores a value in a namespace or class member
+    if parts.len >= 2:
+      # Resolve the first part (e.g., "Record")
+      let key = parts[0].to_key()
+      if self.scope_tracker.mappings.has_key(key):
+        self.emit(Instruction(kind: IkVarResolve, arg0: self.scope_tracker.mappings[key].to_value()))
+      else:
+        self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
+
+      # Navigate through intermediate parts if more than 2 parts
+      for i in 1..<parts.len-1:
+        let part_key = parts[i].to_key()
+        self.emit(Instruction(kind: IkGetMember, arg0: cast[Value](part_key)))
+
+      # Compile the value
+      if gene.children.len > 1:
+        self.compile(gene.children[1])
+      else:
+        self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+
+      # Set the final member (e.g., "orm")
+      let last_key = parts[^1].to_key()
+      self.emit(Instruction(kind: IkSetMember, arg0: last_key))
+      return
+
   # Regular variable handling
   if name.kind != VkSymbol:
+    when not defined(release):
+      echo "ERROR: Variable name is not a symbol"
+      echo "  name.kind = ", name.kind
+      if name.kind == VkComplexSymbol:
+        echo "  complex symbol parts = ", name.ref.csymbol
     not_allowed("Variable name must be a symbol")
     
   let index = self.scope_tracker.next_index

@@ -3512,16 +3512,29 @@ proc exec*(self: VirtualMachine): Value =
           case first.kind:
             of VkComplexSymbol:
               # n/m/f - function should belong to the target namespace
-              for i in 0..<first.ref.csymbol.len - 1:
-                let key = first.ref.csymbol[i].to_key()
-                if target_ns.has_key(key):
-                  let nsval = target_ns[key]
-                  if nsval.kind == VkNamespace:
-                    target_ns = nsval.ref.ns
+              # Skip if first part is empty (e.g., /method_name becomes ["", "method_name"])
+              if first.ref.csymbol.len > 0 and first.ref.csymbol[0] != "":
+                when not defined(release):
+                  echo "DEBUG IkFunction: complex symbol with ", first.ref.csymbol.len, " parts: ", first.ref.csymbol
+                for i in 0..<first.ref.csymbol.len - 1:
+                  let part = first.ref.csymbol[i]
+                  if part == "":
+                    continue  # Skip empty parts
+                  let key = part.to_key()
+                  when not defined(release):
+                    echo "  Looking for part ", i, ": '", part, "' in namespace"
+                  if target_ns.has_key(key):
+                    let nsval = target_ns[key]
+                    if nsval.kind == VkNamespace:
+                      target_ns = nsval.ref.ns
+                    else:
+                      raise new_exception(types.Exception, fmt"{part} is not a namespace")
                   else:
-                    raise new_exception(types.Exception, fmt"{first.ref.csymbol[i]} is not a namespace")
-                else:
-                  raise new_exception(types.Exception, fmt"Namespace {first.ref.csymbol[i]} not found")
+                    when not defined(release):
+                      echo "  Available keys in namespace: "
+                      for k in target_ns.members.keys:
+                        echo "    - ", cast[Value](k).str
+                    raise new_exception(types.Exception, fmt"Namespace {part} not found")
             else:
               discard
         
@@ -3882,6 +3895,10 @@ proc exec*(self: VirtualMachine): Value =
           # Legacy path for Gene with type set to class
           class_val.gene.type.ref.class
         else:
+          when not defined(release):
+            echo "DEBUG IkNew: class_val.kind = ", class_val.kind
+            if class_val.kind == VkGene:
+              echo "  Gene type = ", class_val.gene.type
           raise new_exception(types.Exception, "new requires a class, got " & $class_val.kind)
         
         # Check constructor type

@@ -28,7 +28,7 @@
   #     UNIQUE INDEX `id_UNIQUE` (`id` ASC) VISIBLE
   #   )
   # """)
-  (var conn (genex/sqlite/DB/open "/tmp/todo.db"))
+  (var conn (genex/sqlite/open "/tmp/todo.db"))
   (conn .exec """
     CREATE TABLE IF NOT EXISTS todos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,15 +95,16 @@
 )
 
 (class Record
-  (.on_extended (fnx child
-    (child .on_member_missing (fnx name
-      (if (Record/.members .contains name)
-        (/.parent ./ name)
-      )
-    ))
-  ))
+  # TODO: .on_extended is not yet supported in the VM
+  # (.on_extended (fnx child
+  #   (child .on_member_missing (fnx name
+  #     (if (Record/.members .contains name)
+  #       (/.parent ./ name)
+  #     )
+  #   ))
+  # ))
 
-  (fn /from_row row
+  (fn /from_row [self row]
     (var props {})
     (for [i v] in row
       ($set props (@ (/columns ./ i)) v)
@@ -111,19 +112,19 @@
     (new self props)
   )
 
-  (fn /find id
+  (fn /find [self id]
     (var query (new Query /table))
     (query .where "id = ?")
     (var data (/orm .exec query id))
-    (if (data/.size == 0)
+    (if ((data .size) == 0)
       (throw #"Not found: #{id}")
     else
-      (. /from_row data/0)
+      (/from_row self data/0)
     )
   )
 
   # Query all and convert each row to an instance of the model class
-  (fn /all _
+  (fn /all [self]
     (var query (new Query /table))
     (var data (/orm .exec query))
     (data .map (row ->
@@ -135,7 +136,7 @@
     ))
   )
 
-  (fn /columns_except_id _
+  (fn /columns_except_id [self]
     (var columns [])
     (for col in /columns
       (if (col != "id")
@@ -146,7 +147,7 @@
   )
 
   (.fn insert _
-    (var columns (/.class . /.class/columns_except_id))
+    (var columns (/.class/columns_except_id /.class))
     (var sql #"
       INSERT INTO #{/.class/table} (#(columns .join ", "))
       VALUES(#((columns .map (col -> "?")) .join ", "))"
@@ -228,7 +229,7 @@
     (/middlewares = [])
 
     # Open connection to the database
-    (var conn (genex/sqlite/DB/open "/tmp/todo.db"))
+    (var conn (genex/sqlite/open "/tmp/todo.db"))
     # Create a instance of Orm with DB connection
     (var orm (new Orm conn))
     # Set orm member on Record class which gets inherited by child classes of Record
@@ -236,7 +237,7 @@
   )
 
   (.fn construct_handler middleware_index
-    (if (middleware_index < /middlewares/.size)
+    (if (middleware_index < ((/middlewares) .size))
       (var middleware (/middlewares ./ middleware_index))
       (var handler    (.construct_handler (middleware_index + 1)))
       (middleware handler)
@@ -567,7 +568,7 @@
 
 (class TodosController < Controller
   (.fn index req
-    (var todos (Todo . Todo/all))
+    (var todos (Todo/all Todo))
     (.render
       (UL ^class "list-reset"
         (... (todos .map (todo ->
@@ -585,7 +586,7 @@
 
   (.fn update req
     (match [^id ^status] req/.body_params)
-    (var todo (Todo . Todo/find id))
+    (var todo (Todo/find Todo id))
     ($set todo @status status)
     todo/.save
     # (redirect "/todos")
@@ -594,7 +595,7 @@
 
   (.fn delete req
     (var id req/.body_params/id)
-    (var todo (Todo . Todo/find id))
+    (var todo (Todo/find Todo id))
     (if not todo
       (throw #"Not found: #{id}")
     )
@@ -661,7 +662,7 @@
   (init_db)
 
   (var port
-    (if ($cmd_args/.size > 1)
+    (if (($cmd_args .size) > 1)
       $cmd_args/1/.to_i
     else
       2080
