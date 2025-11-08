@@ -6,7 +6,6 @@ import nativesockets, net
 import cgi
 
 include ../gene/extension/boilerplate
-import ../gene/compiler
 import ../gene/vm
 
 # Global variables to store classes
@@ -22,13 +21,13 @@ var stored_gene_handler: Value  # Store the Gene function/instance
 var stored_vm: VirtualMachine   # Store VM reference for execution
 
 # Forward declarations
-proc request_constructor(self: VirtualMachine, args: Value): Value {.gcsafe.}
-proc request_send(self: VirtualMachine, args: Value): Value {.gcsafe.}
-proc response_constructor(self: VirtualMachine, args: Value): Value {.gcsafe.}
-proc response_json(self: VirtualMachine, args: Value): Value {.gcsafe.}
-proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.}
-proc vm_respond(vm: VirtualMachine, args: Value): Value {.gcsafe.}
-proc vm_run_forever(vm: VirtualMachine, args: Value): Value {.gcsafe.}
+proc request_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_start_server(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 
 proc parse_json_internal(node: json.JsonNode): Value {.gcsafe.}
@@ -134,216 +133,182 @@ proc http_delete*(url: string, headers: Table[string, string] = initTable[string
   client.close()
 
 # Helper function that uses Request class for consistency
-proc vm_http_get_helper(self: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc vm_http_get_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # http_get(url, [headers]) -> Future[Response]
-  if args.kind != VkGene or args.gene.children.len < 1:
+  if arg_count < 1:
     raise new_exception(types.Exception, "http_get requires at least a URL")
-  
-  let url = args.gene.children[0]
-  var headers = if args.gene.children.len > 1: args.gene.children[1] else: NIL
-  
-  # Create Request
-  let req_args = new_gene(NIL)
-  req_args.children.add(url)
-  req_args.children.add("GET".to_value())
-  if headers != NIL:
-    req_args.children.add(headers)
-  
-  let request = request_constructor(self, req_args.to_gene_value())
-  
-  # Send request
-  let send_args = new_gene(NIL)
-  send_args.children.add(request)
-  return request_send(self, send_args.to_gene_value())
 
-proc vm_http_post_helper(self: VirtualMachine, args: Value): Value {.gcsafe.} =
-  # http_post(url, body, [headers]) -> Future[Response]
-  if args.kind != VkGene or args.gene.children.len < 2:
-    raise new_exception(types.Exception, "http_post requires URL and body")
-  
-  let url = args.gene.children[0]
-  let body = args.gene.children[1]
-  var headers = if args.gene.children.len > 2: args.gene.children[2] else: NIL
-  
+  let url = get_positional_arg(args, 0, has_keyword_args)
+  var headers = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
+
   # Create Request
-  let req_args = new_gene(NIL)
-  req_args.children.add(url)
-  req_args.children.add("POST".to_value())
+  var req_args = @[url, "GET".to_value()]
   if headers != NIL:
-    req_args.children.add(headers)
+    req_args.add(headers)
+
+  let request = call_native_fn(request_constructor, vm, req_args)
+
+  # Send request
+  return call_native_fn(request_send, vm, @[request])
+
+proc vm_http_post_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  # http_post(url, body, [headers]) -> Future[Response]
+  if arg_count < 2:
+    raise new_exception(types.Exception, "http_post requires URL and body")
+
+  let url = get_positional_arg(args, 0, has_keyword_args)
+  let body = get_positional_arg(args, 1, has_keyword_args)
+  var headers = if arg_count > 2: get_positional_arg(args, 2, has_keyword_args) else: NIL
+
+  # Create Request
+  var req_args = @[url, "POST".to_value()]
+  if headers != NIL:
+    req_args.add(headers)
   else:
     let empty_map = new_ref(VkMap)
     empty_map.map = Table[Key, Value]()
-    req_args.children.add(empty_map.to_ref_value())
-  req_args.children.add(body)
-  
-  let request = request_constructor(self, req_args.to_gene_value())
-  
+    req_args.add(empty_map.to_ref_value())
+  req_args.add(body)
+
+  let request = call_native_fn(request_constructor, vm, req_args)
+
   # Send request
-  let send_args = new_gene(NIL)
-  send_args.children.add(request)
-  return request_send(self, send_args.to_gene_value())
+  return call_native_fn(request_send, vm, @[request])
 
 # Native function wrappers for VM (backward compatibility)
-proc vm_http_get(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_http_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    # Args is a Gene with children as the arguments
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "http_get: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "http_get requires at least 1 argument (url)")
-    
-    let url = args.gene.children[0].str
+
+    let url = get_positional_arg(args, 0, has_keyword_args).str
     var headers = initTable[string, string]()
-    
-    if args.gene.children.len > 1 and args.gene.children[1].kind == VkMap:
-      let r = args.gene.children[1].ref
+
+    if arg_count > 1 and get_positional_arg(args, 1, has_keyword_args).kind == VkMap:
+      let r = get_positional_arg(args, 1, has_keyword_args).ref
       for k, v in r.map:
         if v.kind == VkString:
           headers[get_symbol(cast[int](k))] = v.str
-    
+
     let content = http_get(url, headers)
     return new_str_value(content)
 
-proc vm_http_get_json(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_http_get_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "http_get_json: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "http_get_json requires at least 1 argument (url)")
-    
-    let url = args.gene.children[0].str
+
+    let url = get_positional_arg(args, 0, has_keyword_args).str
     var headers = initTable[string, string]()
-    
-    if args.gene.children.len > 1 and args.gene.children[1].kind == VkMap:
-      let r = args.gene.children[1].ref
+
+    if arg_count > 1 and get_positional_arg(args, 1, has_keyword_args).kind == VkMap:
+      let r = get_positional_arg(args, 1, has_keyword_args).ref
       for k, v in r.map:
         if v.kind == VkString:
           headers[get_symbol(cast[int](k))] = v.str
-    
+
     return http_get_json(url, headers)
 
-proc vm_http_post(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_http_post(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "http_post: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "http_post requires at least 1 argument (url)")
-    
-    let url = args.gene.children[0].str
+
+    let url = get_positional_arg(args, 0, has_keyword_args).str
     var body = ""
     var headers = initTable[string, string]()
-    
-    if args.gene.children.len > 1:
-      if args.gene.children[1].kind == VkString:
-        body = args.gene.children[1].str
-      elif args.gene.children[1].kind in {VkMap, VkVector, VkArray}:
-        body = to_json(args.gene.children[1])
+
+    if arg_count > 1:
+      let body_arg = get_positional_arg(args, 1, has_keyword_args)
+      if body_arg.kind == VkString:
+        body = body_arg.str
+      elif body_arg.kind in {VkMap, VkVector, VkArray}:
+        body = to_json(body_arg)
         headers["Content-Type"] = "application/json"
-    
-    if args.gene.children.len > 2 and args.gene.children[2].kind == VkMap:
-      let r = args.gene.children[2].ref
+
+    if arg_count > 2 and get_positional_arg(args, 2, has_keyword_args).kind == VkMap:
+      let r = get_positional_arg(args, 2, has_keyword_args).ref
       for k, v in r.map:
         if v.kind == VkString:
           headers[get_symbol(cast[int](k))] = v.str
-    
+
     let content = http_post(url, body, headers)
     return new_str_value(content)
 
-proc vm_http_post_json(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_http_post_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "http_post_json: args is not a Gene")
-    
-    if args.gene.children.len < 2:
+    if arg_count < 2:
       raise new_exception(types.Exception, "http_post_json requires at least 2 arguments (url, body)")
-    
-    let url = args.gene.children[0].str
-    let body = args.gene.children[1]
+
+    let url = get_positional_arg(args, 0, has_keyword_args).str
+    let body = get_positional_arg(args, 1, has_keyword_args)
     var headers = initTable[string, string]()
-    
-    if args.gene.children.len > 2 and args.gene.children[2].kind == VkMap:
-      let r = args.gene.children[2].ref
+
+    if arg_count > 2 and get_positional_arg(args, 2, has_keyword_args).kind == VkMap:
+      let r = get_positional_arg(args, 2, has_keyword_args).ref
       for k, v in r.map:
         if v.kind == VkString:
           headers[get_symbol(cast[int](k))] = v.str
-    
+
     return http_post_json(url, body, headers)
 
-proc vm_http_put(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_http_put(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "http_put: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "http_put requires at least 1 argument (url)")
-    
-    let url = args.gene.children[0].str
+
+    let url = get_positional_arg(args, 0, has_keyword_args).str
     var body = ""
     var headers = initTable[string, string]()
-    
-    if args.gene.children.len > 1 and args.gene.children[1].kind == VkString:
-      body = args.gene.children[1].str
-    
-    if args.gene.children.len > 2 and args.gene.children[2].kind == VkMap:
-      let r = args.gene.children[2].ref
+
+    if arg_count > 1 and get_positional_arg(args, 1, has_keyword_args).kind == VkString:
+      body = get_positional_arg(args, 1, has_keyword_args).str
+
+    if arg_count > 2 and get_positional_arg(args, 2, has_keyword_args).kind == VkMap:
+      let r = get_positional_arg(args, 2, has_keyword_args).ref
       for k, v in r.map:
         if v.kind == VkString:
           headers[get_symbol(cast[int](k))] = v.str
-    
+
     let content = http_put(url, body, headers)
     return new_str_value(content)
 
-proc vm_http_delete(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_http_delete(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "http_delete: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "http_delete requires at least 1 argument (url)")
-    
-    let url = args.gene.children[0].str
+
+    let url = get_positional_arg(args, 0, has_keyword_args).str
     var headers = initTable[string, string]()
-    
-    if args.gene.children.len > 1 and args.gene.children[1].kind == VkMap:
-      let r = args.gene.children[1].ref
+
+    if arg_count > 1 and get_positional_arg(args, 1, has_keyword_args).kind == VkMap:
+      let r = get_positional_arg(args, 1, has_keyword_args).ref
       for k, v in r.map:
         if v.kind == VkString:
           headers[get_symbol(cast[int](k))] = v.str
-    
+
     let content = http_delete(url, headers)
     return new_str_value(content)
 
-proc vm_json_parse(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+proc vm_json_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "json_parse: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "json_parse requires 1 argument (json_string)")
-    
-    if args.gene.children[0].kind != VkString:
-      raise new_exception(types.Exception, "json_parse requires a string argument")
-    
-    return parse_json(args.gene.children[0].str)
 
-proc vm_json_stringify(vm: VirtualMachine, args: Value): Value {.gcsafe, nimcall.} =
+    let json_arg = get_positional_arg(args, 0, has_keyword_args)
+    if json_arg.kind != VkString:
+      raise new_exception(types.Exception, "json_parse requires a string argument")
+
+    return parse_json(json_arg.str)
+
+proc vm_json_stringify(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
-    if args.kind != VkGene:
-      raise new_exception(types.Exception, "json_stringify: args is not a Gene")
-    
-    if args.gene.children.len < 1:
+    if arg_count < 1:
       raise new_exception(types.Exception, "json_stringify requires 1 argument")
-    
-    let json_str = to_json(args.gene.children[0])
+
+    let json_str = to_json(get_positional_arg(args, 0, has_keyword_args))
     return new_str_value(json_str)
 
-proc http_get_wrapper(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
-  # Wrapper that can be called directly
-  vm_http_get(vm, args)
 
 proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   result = new_namespace("http")
@@ -352,82 +317,82 @@ proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   var fn = new_ref(VkNativeFn)
   fn.native_fn = vm_http_get
   result["get".to_key()] = fn.to_ref_value()
-  
+
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_http_get_json
   result["get_json".to_key()] = fn.to_ref_value()
-  
+
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_http_post
   result["post".to_key()] = fn.to_ref_value()
-  
+
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_http_post_json
   result["post_json".to_key()] = fn.to_ref_value()
-  
+
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_http_put
   result["put".to_key()] = fn.to_ref_value()
-  
+
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_http_delete
   result["delete".to_key()] = fn.to_ref_value()
-  
+
   # JSON functions
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_json_parse
   result["json_parse".to_key()] = fn.to_ref_value()
-  
+
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_json_stringify
   result["json_stringify".to_key()] = fn.to_ref_value()
 
 # Request constructor implementation
-proc request_constructor(self: VirtualMachine, args: Value): Value =
+proc request_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # new Request(url, [method], [headers], [body])
-  if args.kind != VkGene or args.gene.children.len < 1:
+  if arg_count < 1:
     raise new_exception(types.Exception, "Request requires at least a URL")
-  
-  let url = args.gene.children[0]
+
+  let url = get_positional_arg(args, 0, has_keyword_args)
   if url.kind != VkString:
     raise new_exception(types.Exception, "URL must be a string")
-  
+
   # Create Request instance
   let instance = new_ref(VkInstance)
   {.cast(gcsafe).}:
     instance.instance_class = request_class_global
-  
+
   # Set properties
   instance.instance_props["url".to_key()] = url
-  
+
   # Set method (default to GET)
-  if args.gene.children.len > 1:
-    instance.instance_props["method".to_key()] = args.gene.children[1]
+  if arg_count > 1:
+    instance.instance_props["method".to_key()] = get_positional_arg(args, 1, has_keyword_args)
   else:
     instance.instance_props["method".to_key()] = "GET".to_value()
-  
+
   # Set headers (default to empty map)
-  if args.gene.children.len > 2:
-    instance.instance_props["headers".to_key()] = args.gene.children[2]
+  if arg_count > 2:
+    instance.instance_props["headers".to_key()] = get_positional_arg(args, 2, has_keyword_args)
   else:
     let empty_map = new_ref(VkMap)
     empty_map.map = Table[Key, Value]()
     instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
   
   # Set body (default to nil)
-  if args.gene.children.len > 3:
-    instance.instance_props["body".to_key()] = args.gene.children[3]
+  if arg_count > 3:
+    instance.instance_props["body".to_key()] = get_positional_arg(args, 3, has_keyword_args)
   else:
     instance.instance_props["body".to_key()] = NIL
   
   return instance.to_ref_value()
 
 # Request.send method - sends the request and returns a Future[Response]
-proc request_send(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "Request.send requires self")
-  
-  let request_obj = args.gene.children[0]
+
+  let request_obj = get_positional_arg(args, 0, has_keyword_args)
   if request_obj.kind != VkInstance:
     raise new_exception(types.Exception, "send can only be called on a Request instance")
   
@@ -512,47 +477,47 @@ proc request_send(self: VirtualMachine, args: Value): Value =
   return future
 
 # Response constructor implementation
-proc response_constructor(self: VirtualMachine, args: Value): Value =
+proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # new Response(status, body, [headers])
-  if args.kind != VkGene or args.gene.children.len < 2:
+  if arg_count < 2:
     raise new_exception(types.Exception, "Response requires status and body")
-  
-  let status = args.gene.children[0]
-  let body = args.gene.children[1]
-  
+
+  let status = get_positional_arg(args, 0, has_keyword_args)
+  let body = get_positional_arg(args, 1, has_keyword_args)
+
   # Create Response instance
   let instance = new_ref(VkInstance)
   {.cast(gcsafe).}:
     instance.instance_class = response_class_global
-  
+
   # Set properties
   instance.instance_props["status".to_key()] = status
   instance.instance_props["body".to_key()] = body
-  
+
   # Set headers (default to empty map)
-  if args.gene.children.len > 2:
-    instance.instance_props["headers".to_key()] = args.gene.children[2]
+  if arg_count > 2:
+    instance.instance_props["headers".to_key()] = get_positional_arg(args, 2, has_keyword_args)
   else:
     let empty_map = new_ref(VkMap)
     empty_map.map = Table[Key, Value]()
     instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
-  
+
   return instance.to_ref_value()
 
 # Response.json method - parses body as JSON
-proc response_json(self: VirtualMachine, args: Value): Value =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
     raise new_exception(types.Exception, "Response.json requires self")
-  
-  let response_obj = args.gene.children[0]
+
+  let response_obj = get_positional_arg(args, 0, has_keyword_args)
   if response_obj.kind != VkInstance:
     raise new_exception(types.Exception, "json can only be called on a Response instance")
-  
+
   let body = response_obj.ref.instance_props["body".to_key()]
-  
+
   if body.kind != VkString:
     raise new_exception(types.Exception, "Response body must be a string to parse as JSON")
-  
+
   # Parse JSON string into Gene map
   try:
     return parse_json(body.str)
@@ -570,7 +535,7 @@ proc init_http_classes*() =
       request_class_global = new_class("Request")
       request_class_global.def_native_constructor(request_constructor)
       request_class_global.def_native_method("send", request_send)
-    
+
     # Create Response class
     {.cast(gcsafe).}:
       response_class_global = new_class("Response")
@@ -593,16 +558,16 @@ proc init_http_classes*() =
     let get_fn = new_ref(VkNativeFn)
     get_fn.native_fn = vm_http_get_helper
     App.app.global_ns.ref.ns["http_get".to_key()] = get_fn.to_ref_value()
-    
+
     let post_fn = new_ref(VkNativeFn)
     post_fn.native_fn = vm_http_post_helper
     App.app.global_ns.ref.ns["http_post".to_key()] = post_fn.to_ref_value()
-    
+
     # Add server functions to global namespace
     let start_server_fn = new_ref(VkNativeFn)
     start_server_fn.native_fn = vm_start_server
     App.app.global_ns.ref.ns["start_server".to_key()] = start_server_fn.to_ref_value()
-    
+
     let respond_fn = new_ref(VkNativeFn)
     respond_fn.native_fn = vm_respond
     App.app.global_ns.ref.ns["respond".to_key()] = respond_fn.to_ref_value()
@@ -654,10 +619,7 @@ proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Val
   {.cast(gcsafe).}:
     case fn.kind:
     of VkNativeFn:
-      let gene_args = new_gene(NIL)
-      for arg in args:
-        gene_args.children.add(arg)
-      return fn.ref.native_fn(vm, gene_args.to_gene_value())
+      return call_native_fn(fn.ref.native_fn, vm, args)
     of VkFunction:
       # Execute Gene function using the VM's exec_function method
       return vm.exec_function(fn, args)
@@ -794,12 +756,12 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       await req.respond(Http500, "Invalid response type")
 
 # Start HTTP server
-proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc vm_start_server(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if arg_count < 1:
     raise new_exception(types.Exception, "start_server requires at least a port")
-  
-  let port_val = args.gene.children[0]
-  let handler = if args.gene.children.len > 1: args.gene.children[1] else: NIL
+
+  let port_val = get_positional_arg(args, 0, has_keyword_args)
+  let handler = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
   
   let port = if port_val.kind == VkInt: port_val.int64.int else: 8080
   
@@ -817,9 +779,7 @@ proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
       let stored_handler = handler
       
       server_handler = proc(req: Value): Value {.gcsafe.} =
-        let handler_args = new_gene(NIL)
-        handler_args.children.add(req)
-        return stored_handler.ref.native_fn(stored_vm, handler_args.to_gene_value())
+        return call_native_fn(stored_handler.ref.native_fn, stored_vm, [req])
     of VkFunction, VkClass, VkInstance:
       # Gene function/class/instance - use queue system
       server_handler = nil  # Don't use native handler, will use queue
@@ -839,18 +799,18 @@ proc vm_start_server(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
   return NIL
 
 # Create a response
-proc vm_respond(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
-  if args.kind != VkGene or args.gene.children.len < 1:
+proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if arg_count < 1:
     raise new_exception(types.Exception, "respond requires at least status or body")
-  
+
   var status = 200
   var body = ""
   var headers = new_ref(VkMap)
   headers.map = Table[Key, Value]()
-  
+
   # Parse arguments
-  if args.gene.children.len == 1:
-    let arg = args.gene.children[0]
+  if arg_count == 1:
+    let arg = get_positional_arg(args, 0, has_keyword_args)
     if arg.kind == VkInt:
       # Just status code
       status = arg.int64.int
@@ -860,18 +820,22 @@ proc vm_respond(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
       status = 200
     else:
       body = $arg
-  elif args.gene.children.len >= 2:
+  elif arg_count >= 2:
     # Status and body
-    if args.gene.children[0].kind == VkInt:
-      status = args.gene.children[0].int64.int
-    if args.gene.children[1].kind == VkString:
-      body = args.gene.children[1].str
+    let status_arg = get_positional_arg(args, 0, has_keyword_args)
+    if status_arg.kind == VkInt:
+      status = status_arg.int64.int
+    let body_arg = get_positional_arg(args, 1, has_keyword_args)
+    if body_arg.kind == VkString:
+      body = body_arg.str
     else:
-      body = $args.gene.children[1]
-    
+      body = $body_arg
+
     # Optional headers
-    if args.gene.children.len > 2 and args.gene.children[2].kind == VkMap:
-      headers = args.gene.children[2].ref
+    if arg_count > 2:
+      let headers_arg = get_positional_arg(args, 2, has_keyword_args)
+      if headers_arg.kind == VkMap:
+        headers = headers_arg.ref
   
   # Create ServerResponse instance
   let instance = new_ref(VkInstance)
@@ -889,9 +853,9 @@ proc vm_respond(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
   return instance.to_ref_value()
 
 # Run event loop forever
-proc vm_run_forever(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   echo "Running event loop..."
-  
+
   # Start a timer to periodically process the handler queue
   proc process_queue() {.async, gcsafe.} =
     while true:
@@ -900,7 +864,7 @@ proc vm_run_forever(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
         if gene_vm_global != nil:
           process_handler_queue(gene_vm_global)
       await sleepAsync(10)  # Check every 10ms
-  
+
   asyncCheck process_queue()
   runForever()
   return NIL

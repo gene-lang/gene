@@ -1,0 +1,4 @@
+# Test core print and println functions
+# Expected: Hello World
+
+(println "Hello World")

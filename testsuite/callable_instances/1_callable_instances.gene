@@ -1,0 +1,45 @@
+# Test (instance ...) forwarding to call method
+
+# 0-arg callable
+(class ZeroArgCallable
+  (.fn call []
+    "zero"
+  )
+)
+
+(var z (new ZeroArgCallable))
+(println (z))
+# Expected: zero
+
+# 1-arg callable
+(class OneArgCallable
+  (.fn call [x]
+    (* x 2)
+  )
+)
+
+(var o (new OneArgCallable))
+(println (o 21))
+# Expected: 42
+
+# 2-arg callable
+(class TwoArgCallable
+  (.fn call [x y]
+    (+ x y)
+  )
+)
+
+(var t (new TwoArgCallable))
+(println (t 10 32))
+# Expected: 42
+
+# 3-arg callable
+(class ThreeArgCallable
+  (.fn call [a b c]
+    (+ a (+ b c))
+  )
+)
+
+(var th (new ThreeArgCallable))
+(println (th 10 20 12))
+# Expected: 42

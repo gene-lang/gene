@@ -1,0 +1,4 @@
+ (var $ns/value 0)
+
+ ($if_main
+   ($ns/value = 1))

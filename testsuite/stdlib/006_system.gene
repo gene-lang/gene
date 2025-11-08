@@ -1,0 +1,5 @@
+# Test system functions
+# Expected: macos
+
+(var os_name (system/os))
+(println os_name)

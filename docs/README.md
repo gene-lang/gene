@@ -1,35 +1,39 @@
-# Gene Documentation
+# Gene Documentation Index
 
-Welcome to the Gene programming language documentation.
+The documents below describe the current VM implementation, design decisions, and performance work.  
+Files live in `docs/` unless stated otherwise.
 
-## Getting Started
+## Architecture & Design Notes
 
-- [Getting Started Guide](getting-started.md) - New to Gene? Start here!
-- [Language Tutorial](tutorial.md) - Step-by-step introduction to Gene
+- [architecture.md](architecture.md) — bird’s-eye view of the VM and compiler pipeline
+- [selector_design.md](selector_design.md) — method/selector dispatch strategy
+- [spread_design.md](spread_design.md) — plans for the spread operator and collection literals
+- [simd_support.md](simd_support.md) — exploratory notes on SIMD integration
+- [gene_principles.md](gene_principles.md) — guiding principles behind language features
 
-## Language Reference
+## Language & Runtime Topics
 
-- [Language Reference](language-reference.md) - Complete language specification
-- [Standard Library](stdlib.md) - Built-in functions and modules
+- [gir.md](gir.md) — Gene Intermediate Representation file format
+- [generator-functions.md](generator-functions.md) — generator semantics and VM support
+- [arg_counter.md](arg_counter.md) — argument counting logic used by function matchers
+- [http_server_and_client.md](http_server_and_client.md) — HTTP extensions and runtime hooks
+- [lsp.md](lsp.md) — Language Server Protocol implementation and editor integration
 
-## Architecture & Performance
+## Implementation Diaries
 
-- [VM Architecture](architecture.md) - Complete VM architecture and design
-- [Performance Guide](performance.md) - Performance analysis, optimization, and benchmarking
+- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — parity snapshot between VM and reference interpreter
+- [implementation/async_design.md](implementation/async_design.md) — architecture for pseudo-async futures
+- [implementation/async_progress.md](implementation/async_progress.md) — task-level todo list for async work
+- [implementation/caller_eval.md](implementation/caller_eval.md) — `$caller_eval` design trade-offs
+- [implementation/development_notes.md](implementation/development_notes.md) — open questions and troubleshooting log
 
-## Development
+## Performance & Benchmarking
 
-- [Contributing](contributing.md) - How to contribute to Gene
-- [Building from Source](building.md) - Build instructions
-- [Testing](testing.md) - Running and writing tests
+- [performance.md](performance.md) — current benchmarks (~3.8M calls/sec fib(24)) and optimisation roadmap
+- [performance-improvements-summary.md](performance-improvements-summary.md) — changelog of recent speedups
+- [gir-benchmarks.md](gir-benchmarks.md) — GIR-specific profiling data and insights
 
-## Implementation Details
+## Reference Implementation
 
-- [Async Progress](implementation/async_progress.md) - Async/await implementation status
-- [Async Design](implementation/async_design.md) - Async VM design details
-- [Caller Eval](implementation/caller_eval.md) - Caller evaluation feature design
-- [Development Notes](implementation/development_notes.md) - Technical notes and decisions
-
-## Status
-
-This documentation covers the VM-based implementation of Gene. For the reference implementation documentation, see `gene-new/docs/`.
+Documentation for the feature-complete interpreter remains under `gene-new/docs/`.  
+Use it as the behavioural oracle when aligning VM semantics with the reference implementation.

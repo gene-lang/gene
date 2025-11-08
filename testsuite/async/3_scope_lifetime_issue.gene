@@ -3,7 +3,7 @@
 (println "=== Test 003: Scope Lifetime Issue (Known Bug) ===")
 (println "This test demonstrates the scope lifetime bug with futures")
 
-(var test_file "../tests/fixtures/test.txt")
+(var test_file "../fixtures/test.txt")
 (var output_file "/tmp/gene_scope_test.txt")
 
 (fn create_future_in_scope _

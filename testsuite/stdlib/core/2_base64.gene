@@ -1,0 +1,13 @@
+# Gene core base64 encode/decode tests
+# Expected: SGVsbG8=
+# Expected: Hello
+# Expected: U2Vzc2lvbg==
+# Expected: Session
+# Expected: Base64 encode/decode tests done
+
+(var encoded (gene/base64_encode "Hello"))
+(println encoded)
+(println (gene/base64_decode encoded))
+(println (gene/base64_encode "Session"))
+(println (gene/base64_decode "U2Vzc2lvbg=="))
+(println "Base64 encode/decode tests done")

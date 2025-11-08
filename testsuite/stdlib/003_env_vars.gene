@@ -1,0 +1,5 @@
+# Test environment variables
+# Expected: true
+
+(set_env "TEST_VAR" "test_value")
+(println (has_env "TEST_VAR"))

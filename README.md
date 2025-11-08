@@ -1,60 +1,66 @@
 # Gene Programming Language
 
-Gene is a general-purpose programming language with a Lisp-like syntax, implemented in Nim. This repository contains the VM-based implementation that compiles Gene code to bytecode for execution.
+Gene is a general-purpose, homoiconic language with a Lisp-like surface syntax.  
+This repository hosts the bytecode virtual machine (VM) implementation written in Nim.  
+The original tree-walking interpreter lives in `gene-new/` and serves as the language reference.
 
-## Project Status
+## Repository Layout
 
-This is the **active development branch** implementing a bytecode VM for improved performance. For the reference tree-walking interpreter implementation, see the `gene-new/` directory.
+- `src/gene.nim` — entry point for the VM executable  
+- `src/gene/` — core compiler, VM, GIR, and command modules  
+- `bin/` — build output from `nimble build` (`bin/gene`)  
+- `build/` — cached Gene IR (`*.gir`) emitted by the compiler  
+- `tests/` — Nim-based unit and integration tests for the VM  
+- `testsuite/` — black-box Gene programs with an expectation harness  
+- `examples/` — sample Gene source files  
+- `gene-new/` — reference interpreter implementation (feature-complete)
 
-## Features
+## VM Status
 
-- **Homoiconic** - Code is data (like Lisp)
-- **Functional Programming** - First-class functions, closures
-- **Object-Oriented Programming** - Classes and methods  
-- **Pattern Matching** - Destructuring and matching
-- **Macros** - Code generation at compile time
-- **Dynamic Typing** - With optional type annotations
-- **Bytecode VM** - Compiles to bytecode for execution
+- **Available today**
+  - Bytecode compiler + stack-based VM with computed-goto dispatch
+  - S-expression parser compatible with the reference interpreter
+  - Macro system (`fn!`, `$caller_eval`) with unevaluated argument support
+  - Basic class system (`class`, `new`, nested classes) and namespaces
+  - Pseudo-async primitives (`async`, `await`) backed by futures
+  - Command-line toolchain (`run`, `eval`, `repl`, `parse`, `compile`)
+  - File I/O helpers via the `io` namespace (`io/read`, `io/write`, async variants)
+- **In progress / known limitations**
+  - Pattern matching beyond argument binders is still experimental
+  - Many class features (constructors, method dispatch, inheritance) need more coverage
+  - Module/import system and package management are not yet available
+  - Async primitives execute synchronously; scope lifetime bugs still surface in nested async code (see `IkScopeEnd` in `src/gene/vm.nim`)
 
-## Quick Start
-
-### Prerequisites
-
-- [Nim](https://nim-lang.org/) 1.6+ 
-- C compiler (gcc, clang, or Visual Studio)
-
-### Building
+## Building
 
 ```bash
 # Clone the repository
 git clone https://github.com/gcao/gene
 cd gene
 
-# Build the Gene executable
+# Build the VM (produces bin/gene)
 nimble build
 
-# Or build directly with Nim
-nim c -o:gene src/gene.nim
+# Optimised build (native flags, release mode)
+nimble speedy
+
+# Direct Nim invocation (places the binary in ./bin/gene by default)
+nim c -o:bin/gene src/gene.nim
 ```
 
-### Running Gene
+## Command-Line Tool
 
-```bash
-# Run a Gene file
-./gene run examples/hello_world.gene
+All commands are dispatched through `bin/gene <command> [options]`:
 
-# Start interactive REPL
-./gene repl
+- `run <file>` — parse, compile (with GIR caching), and execute a `.gene` program  
+  - respects cached IR in `build/` unless `--no-gir-cache` is supplied  
+- `eval <code>` — evaluate inline Gene code or read from `stdin`  
+  - supports debug output (`--debug`), instruction tracing, CSV/Gene formatting  
+- `repl` — interactive REPL with multi-line input and helpful prompts  
+- `parse <file | code>` — parse Gene source and print the AST representation  
+- `compile` — compile to bytecode or `.gir` on disk (`-f pretty|compact|bytecode|gir`, `-o`, `--emit-debug`)
 
-# Evaluate an expression
-./gene eval '(+ 1 2)'
-
-# Parse and show AST
-./gene parse examples/simple.gene
-
-# Compile and show bytecode
-./gene compile examples/simple.gene
-```
+Run `bin/gene help` for the complete command list and examples.
 
 ## Examples
 
@@ -75,69 +81,34 @@ nim c -o:gene src/gene.nim
 (print "fib(10) =" (fib 10))
 ```
 
-See the `examples/` directory for more examples.
+See `examples/` for additional programs and CLI demonstrations.
 
-## Project Structure
-
-```
-gene/
-├── src/               # Source code
-│   ├── gene.nim      # Main entry point
-│   ├── gene/
-│   │   ├── types.nim     # Core type definitions
-│   │   ├── parser.nim    # Parser implementation  
-│   │   ├── compiler.nim  # Bytecode compiler
-│   │   ├── vm.nim        # Virtual machine
-│   │   └── commands/     # CLI commands
-├── tests/            # Unit tests
-├── testsuite/        # Integration tests
-├── examples/         # Example Gene programs
-├── docs/            # Documentation
-├── scripts/         # Utility scripts
-└── gene-new/        # Reference implementation
-
-```
-
-## Development
-
-### Running Tests
+## Testing
 
 ```bash
-# Run all unit tests
+# Run the curated Nim test suite (see gene.nimble)
 nimble test
 
-# Run specific test file
+# Execute an individual Nim test
 nim c -r tests/test_parser.nim
 
-# Run integration test suite
+# Run the Gene program suite (requires bin/gene)
 ./testsuite/run_tests.sh
 ```
 
-### Benchmarking
-
-```bash
-# Run performance benchmarks
-./scripts/benchme
-
-# Compare with other languages
-./scripts/fib_compare
-```
+The Nim tests exercise compiler/VM internals, while the shell suite runs real Gene code end-to-end.
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) - Tutorial for new users
-- [Language Reference](docs/language-reference.md) - Complete language guide
-- [Architecture](docs/architecture.md) - VM design and implementation
-- [Contributing](docs/contributing.md) - How to contribute
+The documentation index in `docs/README.md` lists the current architecture notes, design discussions, and implementation diaries. Highlights include:
+- `docs/architecture.md` — VM and compiler design overview
+- `docs/gir.md` — Gene Intermediate Representation format
+- `docs/performance.md` — benchmark data and optimisation roadmap
+- `docs/IMPLEMENTATION_STATUS.md` — snapshot of feature parity vs. the reference interpreter
 
 ## Performance
 
-Current VM performance (fib(24) benchmark):
-- Gene VM: ~600K function calls/sec
-- Python: ~25M calls/sec (41x faster)
-- Ruby: ~35M calls/sec (57x faster)
-
-See [Performance Analysis](docs/performance_analysis.md) for optimization roadmap.
+Latest fib(24) benchmarks (2025 measurements) place the optimised VM around **3.8M function calls/sec** on macOS ARM64. See `docs/performance.md` for methodology, historical comparisons, and profiling insights.
 
 ## License
 
@@ -145,4 +116,4 @@ See [Performance Analysis](docs/performance_analysis.md) for optimization roadma
 
 ## Credits
 
-Created by Yanfeng Liu (@gcao)
+Created by Yanfeng Liu (@gcao) with contributions from the Gene community.

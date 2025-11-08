@@ -1,0 +1,27 @@
+# Gene time and sleep tests
+# Expected: Sync sleep ok
+# Expected: Async sleep ok
+# Expected: Sleep tests done
+
+(var start_sync (gene/time/now))
+(gene/sleep 50)
+(var end_sync (gene/time/now))
+(var delta_sync (- end_sync start_sync))
+(if (> delta_sync 0.0)
+  (println "Sync sleep ok")
+else
+  (println "Sync sleep too short")
+)
+
+(var start_async (gene/time/now))
+(var sleep_future (gene/sleep_async 50))
+(await sleep_future)
+(var end_async (gene/time/now))
+(var delta_async (- end_async start_async))
+(if (> delta_async 0.0)
+  (println "Async sleep ok")
+else
+  (println "Async sleep too short")
+)
+
+(println "Sleep tests done")

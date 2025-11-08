@@ -1,4 +1,7 @@
-import gene/types
+import unittest
+import tables
+
+import gene/types except Exception
 
 import ./helpers
 
@@ -7,95 +10,93 @@ import ./helpers
 # * A macro will generate an AST tree and pass back to the VM to execute.
 #
 
-# Basic macro that returns its argument
+# Basic macro-like function that returns its argument
 test_vm """
-  (macro m a
+  (fn m! [a]
     a
   )
-  (m b)
+  (m! b)
 """, "b".to_symbol_value()
 
-# Test that macro arguments are not evaluated
+# Test that macro-like function arguments are not evaluated
 test_vm """
-  (macro m a
-# Migrated from test_vm_macro: keep only smoke test there, main behavior here already covers identity and add
-
+  (fn m! [a]
     :macro_result
   )
-  (m (this_would_fail_if_evaluated))
+  (m! (this_would_fail_if_evaluated))
 """, "macro_result".to_symbol_value()
 
 test_vm """
-  (macro m [a b]
-    (a + b)
+  (fn m! [a b]
+    (+ ($caller_eval a) ($caller_eval b))
   )
-  (m 1 2)
+  (m! 1 2)
 """, 3
 
 test_vm """
-  (macro m [a = 1]
-    (a + 2)
+  (fn m! [a = 1]
+    (+ ($caller_eval a) 2)
   )
-  (m)
+  (m!)
 """, 3
 
 # Simple test without function wrapper
 test_vm """
   (var a 1)
-  (macro m []
+  (fn m! []
     ($caller_eval :a)
   )
-  (m)
+  (m!)
 """, 1
 
 test_vm """
-  (macro m []
+  (fn m! []
     ($caller_eval :a)
   )
-  (fn f _
+  (fn f [_]
     (var a 1)
-    (m)
+    (m!)
   )
-  (f)
+  (f nil)
 """, 1
 
 test_vm """
   (var a 1)
-  (macro m b
+  (fn m! [b]
     ($caller_eval b)
   )
-  (m a)
+  (m! a)
 """, 1
 
 # test_core """
-#   (macro m _
+#   (fn m! [_]
 #     (class A
-#       (.fn test _ "A.test")
+#       (.fn test [_] "A.test")
 #     )
 #     ($caller_eval
 #       (:$def_ns_member "B" A)
 #     )
 #   )
-#   (m)
+#   (m! nil)
 #   ((new B) .test)
 # """, "A.test"
 
 # test_core """
-#   (macro m name
+#   (fn m! [name]
 #     (class A
-#       (.fn test _ "A.test")
+#       (.fn test [_] "A.test")
 #     )
 #     ($caller_eval
 #       (:$def_ns_member name A)
 #     )
 #   )
-#   (m "B")
+#   (m! "B")
 #   ((new B) .test)
 # """, "A.test"
 
 # # TODO: this should be possible with macro/caller_eval etc
 # test_vm """
-#   (macro with [name value body...]
+#   (fn with! [name value body...]
 #     (var expr
 #       :(do
 #         (var %name %value)
@@ -104,7 +105,7 @@ test_vm """
 #     ($caller_eval expr)
 #   )
 #   (var b "b")
-#   (with a "a"
+#   (with! a "a"
 #     (a = (a b))
 #   )
 # """, "ab"

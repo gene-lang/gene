@@ -1,0 +1,57 @@
+# Makefile for building C extensions for Gene VM
+#
+# Usage:
+#   make -f Makefile.c_extension        # Build c_extension.so/dylib/dll
+#   make -f Makefile.c_extension clean  # Clean build artifacts
+
+# Detect OS
+UNAME_S := $(shell uname -s)
+
+# Extension name
+EXT_NAME = c_extension
+
+# Source files
+SRC = c_extension.c
+
+# Output file
+ifeq ($(UNAME_S),Darwin)
+    # macOS
+    EXT_FILE = $(EXT_NAME).dylib
+    LDFLAGS = -dynamiclib -undefined dynamic_lookup
+    CFLAGS = -fPIC -O2 -Wall
+else ifeq ($(UNAME_S),Linux)
+    # Linux
+    EXT_FILE = $(EXT_NAME).so
+    LDFLAGS = -shared -fPIC
+    CFLAGS = -fPIC -O2 -Wall
+else
+    # Windows (MinGW)
+    EXT_FILE = $(EXT_NAME).dll
+    LDFLAGS = -shared
+    CFLAGS = -O2 -Wall
+endif
+
+# Compiler
+CC = gcc
+
+# Default target
+all: $(EXT_FILE)
+
+# Build extension
+$(EXT_FILE): $(SRC)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	@echo "Built $@"
+
+# Clean
+clean:
+	rm -f $(EXT_FILE)
+	@echo "Cleaned build artifacts"
+
+# Install (copy to a standard location)
+install: $(EXT_FILE)
+	mkdir -p ../build/extensions
+	cp $(EXT_FILE) ../build/extensions/
+	@echo "Installed to ../build/extensions/"
+
+.PHONY: all clean install
+

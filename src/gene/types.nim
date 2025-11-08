@@ -3,6 +3,7 @@ import random
 import dynlib
 import times
 import os
+import asyncdispatch  # For async I/O support
 
 # Forward declarations for new types
 type
@@ -30,6 +31,7 @@ type
     value*: Value              # Result value or exception
     success_callbacks*: seq[Value]  # Success callback functions
     failure_callbacks*: seq[Value]  # Failure callback functions
+    nim_future*: Future[Value]  # Underlying Nim async future (nil for sync futures)
 
   GeneratorState* = enum
     GsPending            # Not yet started
@@ -39,11 +41,35 @@ type
 
   ExceptionData* = ref object
   Interception* = ref object
-  Expression* = ref object
-  GeneProcessor* = ref object
-  Future* = ref object
+
+  # Threading support types
+  ThreadMessageType* = enum
+    MtSend          # Send data, no reply expected
+    MtSendWithReply # Send data, expect reply
+    MtRun           # Run code, no reply expected
+    MtRunWithReply  # Run code, expect reply
+    MtReply         # Reply to previous message
+    MtTerminate     # Terminate thread
+
+  ThreadState* = enum
+    TsUninitialized  # Thread slot not initialized
+    TsFree           # Thread slot available
+    TsBusy           # Thread is running
+
   Thread* = ref object
+    id*: int              # Thread ID (index in THREADS array)
+    secret*: int          # Secret for validation
+
   ThreadMessage* = ref object
+    id*: int                    # Unique message ID
+    msg_type*: ThreadMessageType    # Type of message (renamed to avoid 'type' keyword)
+    payload*: Value             # Data payload
+    code*: Value                # Gene AST to compile and execute (not bytecode!)
+    from_message_id*: int       # For MtReply
+    from_thread_id*: int        # Sender thread ID
+    from_thread_secret*: int    # Sender thread secret
+    handled*: bool              # For user callbacks
+
   NativeFn2* = proc(vm_data: pointer, args: Value): Value {.gcsafe.}
 
 type
@@ -81,6 +107,8 @@ type
     # Async types
     VkFuture             # Async future/promise
     VkGenerator          # Generator instance
+    VkThread             # Thread reference
+    VkThreadMessage      # Thread message
 
     # Date and time types
     VkDate               # Date only
@@ -94,7 +122,6 @@ type
     VkSet
     VkMap
     VkGene
-    VkArguments          # Function argument container
     VkStream
     VkDocument
 
@@ -108,7 +135,6 @@ type
     VkUnquote
     VkReference
     VkRefTarget
-    VkExplode            # For unpacking operations
 
     # Language construct types
     VkApplication
@@ -116,9 +142,7 @@ type
     VkModule
     VkNamespace
     VkFunction
-    VkBoundFunction      # Function bound to specific scope
     VkCompileFn
-    VkMacro
     VkBlock
     VkClass
     VkMixin              # For mixin support
@@ -137,10 +161,6 @@ type
     VkException = 128    # Start exceptions at 128
     VkInterception       # AOP interception
 
-    # Expression and evaluation
-    VkExpr               # Abstract syntax tree expressions
-    VkGeneProcessor      # Gene processing context
-
     # Concurrency types
 
     # JSON integration
@@ -151,11 +171,23 @@ type
     VkCompiledUnit
     VkInstruction
     VkScopeTracker
+    VkFunctionDef
     VkScope
     VkFrame
     VkNativeFrame
 
   Key* = distinct int64
+
+  ScopeTrackerSnapshot* = ref object
+    next_index*: int16
+    parent_index_max*: int16
+    scope_started*: bool
+    mappings*: seq[(Key, int16)]
+    parent*: ScopeTrackerSnapshot
+
+  FunctionDefInfo* = ref object
+    scope_tracker*: ScopeTracker
+    compiled_body*: Value
 
   # Extended Reference type supporting all ValueKind variants
   Reference* = object
@@ -194,6 +226,7 @@ type
         range_step*: Value
       of VkSelector:
         selector_pattern*: string
+        selector_path*: seq[Value]
 
       # Date and time types
       of VkDate:
@@ -224,9 +257,6 @@ type
         set*: HashSet[Value]
       of VkMap:
         map*: Table[Key, Value]
-      of VkArguments:
-        arg_props*: Table[Key, Value]
-        arg_children*: seq[Value]
       of VkStream:
         stream*: seq[Value]
         stream_index*: int64
@@ -256,12 +286,14 @@ type
         ref_target*: Value
       of VkRefTarget:
         target_id*: int64
-      of VkExplode:
-        explode_value*: Value
       of VkFuture:
         future*: FutureObj
       of VkGenerator:
         generator*: GeneratorObj  # Store the generator ref object directly
+      of VkThread:
+        thread*: Thread
+      of VkThreadMessage:
+        thread_message*: ThreadMessage
 
       # Language constructs
       of VkApplication:
@@ -272,12 +304,10 @@ type
         module*: Module
       of VkNamespace:
         ns*: Namespace
-      of VkFunction, VkBoundFunction:
+      of VkFunction:
         fn*: Function
       of VkCompileFn:
         `compile_fn`*: CompileFn
-      of VkMacro:
-        `macro`*: Macro
       of VkBlock:
         `block`*: Block
       of VkClass:
@@ -305,17 +335,10 @@ type
       of VkNativeMethod, VkNativeMethod2:
         native_method*: NativeFn
 
-      # Exception and interception
       of VkException:
         exception_data*: ExceptionData
       of VkInterception:
         interception*: Interception
-
-      # Expression types
-      of VkExpr:
-        expr*: Expression
-      of VkGeneProcessor:
-        processor*: GeneProcessor
 
       # Concurrency types
 
@@ -332,6 +355,8 @@ type
         instr*: Instruction
       of VkScopeTracker:
         scope_tracker*: ScopeTracker
+      of VkFunctionDef:
+        function_def*: FunctionDefInfo
       of VkScope:
         scope*: Scope
       of VkFrame:
@@ -351,9 +376,18 @@ type
         discard
     ref_count*: int32
 
+  SourceTrace* = ref object
+    parent*: SourceTrace
+    children*: seq[SourceTrace]
+    filename*: string
+    line*: int
+    column*: int
+    child_index*: int
+
   Gene* = object
     ref_count*: int32
     `type`*: Value
+    trace*: SourceTrace
     props*: Table[Key, Value]
     children*: seq[Value]
 
@@ -422,6 +456,8 @@ type
     mixin_class*    : Value
     application_class*: Value
     package_class*  : Value
+    file_class*     : Value
+    dir_class*      : Value
     module_class*   : Value
     namespace_class*: Value
     function_class* : Value
@@ -432,7 +468,6 @@ type
     thread_class*   : Value
     thread_message_class* : Value
     thread_message_type_class* : Value
-    file_class*     : Value
 
   Package* = ref object
     dir*: string          # Where the package assets are installed
@@ -483,10 +518,12 @@ type
     name*: string
     constructor*: Value
     methods*: Table[Key, Method]
+    members*: Table[Key, Value]  # Static members - class acts as namespace
     on_extended*: Value
     # method_missing*: Value
     ns*: Namespace # Class can act like a namespace
     for_singleton*: bool # if it's the class associated with a single object, can not be extended
+    version*: uint64  # Incremented when methods are mutated
 
   Method* = ref object
     class*: Class
@@ -503,6 +540,7 @@ type
   Function* = ref object
     async*: bool
     is_generator*: bool  # True for generator functions
+    is_macro_like*: bool  # True for macro-like functions (defined with fn!)
     name*: string
     ns*: Namespace  # the namespace of the module wherein this is defined.
     scope_tracker*: ScopeTracker  # the root scope tracker of the function
@@ -514,16 +552,6 @@ type
     # ret*: Expr
 
   CompileFn* = ref object
-    ns*: Namespace
-    name*: string
-    scope_tracker*: ScopeTracker
-    parent_scope*: Scope
-    matcher*: RootMatcher
-    # matching_hint*: MatchingHint
-    body*: seq[Value]
-    body_compiled*: CompilationUnit
-
-  Macro* = ref object
     ns*: Namespace
     name*: string
     scope_tracker*: ScopeTracker
@@ -604,6 +632,9 @@ type
     scope_trackers*: seq[ScopeTracker]
     loop_stack*: seq[LoopInfo]
     tail_position*: bool  # Track if we're in tail position for tail call optimization
+    eager_functions*: bool
+    trace_stack*: seq[SourceTrace]
+    last_error_trace*: SourceTrace
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop
@@ -673,7 +704,6 @@ type
     IkOr
     IkNot
 
-    IkSpread      # Spread operator (...)
     IkCreateRange
     IkCreateEnum
     IkEnumAddMember
@@ -713,8 +743,7 @@ type
     IkSubClass
     IkNew
     IkResolveMethod
-    IkCallMethod
-    IkCallMethodNoArgs
+
     IkCallInit
     IkDefineMethod      # Define a method on a class
     IkDefineConstructor # Define a constructor on a class
@@ -723,11 +752,11 @@ type
     IkMapStart
     IkMapSetProp        # args: key
     IkMapSetPropValue   # args: key, literal value
+    IkMapSpread         # Spread map key-value pairs into current map
     IkMapEnd
 
     IkArrayStart
-    IkArrayAddChild
-    IkArrayAddChildValue # args: literal value
+    IkArrayAddSpread    # Spread add - pop array and push all elements onto stack
     IkArrayEnd
 
     IkGeneStart
@@ -735,13 +764,30 @@ type
     IkGeneSetType
     IkGeneSetProp
     IkGeneSetPropValue        # args: key, literal value
-    IkGeneAddChild
+    IkGenePropsSpread         # Spread map key-value pairs into gene properties
+    IkGeneAddChild            # Normal add (legacy name, same as IkGeneAdd)
+    IkGeneAdd                 # Normal add - add single child to gene
     IkGeneAddChildValue       # args: literal value
+    IkGeneAddSpread           # Spread add - unpack array and add all elements as children
     IkGeneEnd
 
-    # Fast function call instructions
-    IkCallDirect      # Direct function call with known target
+    IkRepeatInit
+    IkRepeatDecCheck
+
+    # Legacy tail call instruction (kept for compatibility)
     IkTailCall        # Tail call optimization
+
+    # Unified call instructions
+    IkUnifiedCall0      # Zero-argument unified call
+    IkUnifiedCall1      # Single-argument unified call
+    IkUnifiedCall       # Multi-argument unified call
+    IkUnifiedMethodCall0 # Zero-argument method call
+    IkUnifiedMethodCall1 # Single-argument method call
+    IkUnifiedMethodCall2 # Two-argument method call
+    IkUnifiedMethodCall  # Multi-argument method call
+
+    # Macro-specific instructions
+    IkNewMacro        # Macro constructor call
 
     IkResolveSymbol
     IkSetMember
@@ -764,6 +810,9 @@ type
     IkAsyncEnd     # End async block and create future
     IkAwait        # Wait for Future to complete
 
+    # Threading
+    IkSpawnThread  # Spawn a new thread (pops: return_value flag, CompilationUnit; pushes: thread ref or future)
+
     # Superinstructions for common patterns
     IkPushCallPop      # PUSH; CALL; POP (common for void function calls)
     IkLoadCallPop      # LOADK; CALL1; POP
@@ -776,6 +825,10 @@ type
     IkReturnTrue       # Common pattern: return true
     IkReturnFalse      # Common pattern: return false
     IkResume
+    IkVarLeValue
+    IkVarGtValue
+    IkVarGeValue
+    IkVarEqValue
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object
@@ -792,7 +845,6 @@ type
     CkDefault
     CkFunction
     CkCompileFn
-    CkMacro
     CkBlock
     CkModule
     CkInit      # namespace / class / object initialization
@@ -804,6 +856,8 @@ type
     skip_return*: bool
     matcher*: RootMatcher
     instructions*: seq[Instruction]
+    trace_root*: SourceTrace
+    instruction_traces*: seq[SourceTrace]
     labels*: Table[Label, int]
     inline_caches*: seq[InlineCache]  # Inline caches indexed by PC
 
@@ -855,6 +909,19 @@ type
     version*: uint64      # Namespace version when cached
     value*: Value         # Cached value
     ns*: Namespace        # Namespace where value was found
+    class*: Class         # Cached class for method lookup
+    class_version*: uint64
+    cached_method*: Method       # Cached method reference
+
+  ThreadMetadata* = object
+    id*: int
+    secret*: int              # Random token for validation
+    state*: ThreadState
+    in_use*: bool
+    parent_id*: int           # Parent thread ID
+    parent_secret*: int       # Parent thread secret
+    # Note: thread and channel fields will be added in vm/thread.nim module
+    # which will properly import std/channels and std/locks with --threads:on
 
   VirtualMachine* = ref object
     cu*: CompilationUnit
@@ -872,6 +939,13 @@ type
     # Instruction profiling
     instruction_profiling*: bool
     instruction_profile*: array[InstructionKind, InstructionProfile]
+    # Async/Event Loop support
+    event_loop_counter*: int  # Counter for periodic event loop polling (poll every N instructions)
+    pending_futures*: seq[FutureObj]  # List of futures with pending Nim futures
+    # Thread support
+    thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
+    message_callbacks*: seq[Value]  # List of callbacks for incoming messages
+    thread_local_ns*: Namespace  # Thread-local namespace for $thread, $main_thread, etc.
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -896,7 +970,10 @@ type
     # FkBoundMethod
     # FkBoundNativeMethod
 
-  FrameObj = object
+  CallBaseStack* = object
+    data: seq[uint16]
+
+  FrameObj* = object
     ref_count*: int32
     kind*: FrameKind
     caller_frame*: Frame
@@ -909,6 +986,7 @@ type
     stack*: array[256, Value]
     current_method*: Method  # Currently executing method (for super calls)
     stack_index*: uint16
+    call_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function
     is_generator*: bool  # Set when executing in generator context
 
@@ -984,8 +1062,37 @@ type
   # Types related to command line argument parsing
   ArgumentError* = object of Exception
 
-  NativeFn* = proc(vm_data: VirtualMachine, args: Value): Value {.gcsafe, nimcall.}
-  # NativeFn2* = proc(vm_data: VirtualMachine, args: Value): Value {.gcsafe.}
+  NativeFn* = proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.}
+
+  # Unified Callable System
+  CallableKind* = enum
+    CkFunction          # Regular Gene function
+    CkNativeFunction    # Nim function
+    CkMethod            # Gene method
+    CkNativeMethod      # Nim method
+    CkBlock             # Lambda/block
+
+  CallableFlags* = enum
+    CfEvaluateArgs      # Should arguments be evaluated?
+    CfNeedsSelf         # Does this callable need a self parameter?
+    CfIsNative          # Is this implemented in Nim?
+    CfIsMacro           # Is this a macro (unevaluated args)?
+    CfIsMethod          # Is this a method (needs receiver)?
+    CfCanInline         # Can this be inlined?
+    CfIsPure            # Is this a pure function (no side effects)?
+
+  Callable* = ref object
+    case kind*: CallableKind
+    of CkFunction, CkMethod:
+      fn*: Function
+    of CkNativeFunction, CkNativeMethod:
+      native_fn*: NativeFn
+    of CkBlock:
+      block_fn*: Block
+
+    flags*: set[CallableFlags]
+    arity*: int                    # Number of required arguments
+    name*: string                  # For debugging and profiling
 
 const INST_SIZE* = sizeof(Instruction)
 
@@ -1042,13 +1149,38 @@ const EMPTY_STRING = SHORT_STR_TAG
 
 const BIGGEST_INT = 2^61 - 1
 
-var VM* {.threadvar.}: VirtualMachine   # The current virtual machine
-var App* {.threadvar.}: Value
+proc short_equals_long(short_raw: uint64, long_ptr: ptr String): bool {.inline, noSideEffect.} =
+  ## Compare a NaN-boxed short string payload with a long string reference
+  if long_ptr == nil:
+    return false
+  let text = long_ptr.str
+  if text.len > 6:
+    return false
+  var payload = short_raw and PAYLOAD_MASK
+  for i in 0..<text.len:
+    let byte = char((payload and 0xFF'u64).int)
+    if byte != text[i]:
+      return false
+    payload = payload shr 8
+  return payload == 0
+
+var VM* {.threadvar.}: VirtualMachine   # The current virtual machine (per-thread)
+
+# Application is shared across all threads (initialized once by main thread)
+# After initialization, it's read-only so no locking needed
+var App*: Value
+
+# Threading support
+const CHANNEL_LIMIT* = 1000  # Maximum messages in channel
+const MAX_THREADS* = 64      # Maximum number of threads in pool
+
+# Thread pool is shared across all threads (protected by thread_pool_lock in vm/thread.nim)
+var THREADS*: array[0..MAX_THREADS, ThreadMetadata]
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 
-# Flag to track if gene namespace has been initialized
-var gene_namespace_initialized* = false
+# Flag to track if gene namespace has been initialized (thread-local for worker threads)
+var gene_namespace_initialized* {.threadvar.}: bool
 
 randomize()
 
@@ -1118,8 +1250,8 @@ proc new_id*(): Id =
   cast[Id](rand(BIGGEST_INT))
 
 # Memory pool for reference objects
-var REF_POOL {.threadvar.}: seq[ptr Reference]
-const INITIAL_REF_POOL_SIZE = 2048
+var REF_POOL* {.threadvar.}: seq[ptr Reference]
+const INITIAL_REF_POOL_SIZE* = 2048
 
 # Reference counting is handled by Nim's memory management for ref types
 
@@ -1245,7 +1377,14 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
     let tag1 = u1 and 0xFFFF_0000_0000_0000u64
     let tag2 = u2 and 0xFFFF_0000_0000_0000u64
     if tag1 != tag2:
-      return false
+      if tag1 == SHORT_STR_TAG and tag2 == LONG_STR_TAG:
+        let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+        return short_equals_long(u1, str2)
+      elif tag1 == LONG_STR_TAG and tag2 == SHORT_STR_TAG:
+        let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
+        return short_equals_long(u2, str1)
+      else:
+        return false
 
     # Both short strings
     if tag1 == SHORT_STR_TAG:
@@ -1367,6 +1506,8 @@ proc is_literal*(self: Value): bool =
               if not is_literal(v):
                 return false
             return true
+          of VkSelector:
+            return true
           else:
             result = false
       of GENE_TAG:
@@ -1431,6 +1572,8 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
           result &= "^" & get_symbol(symbol_index.int) & " " & v.str_no_quotes()
           first = false
         result &= "}"
+      of VkSelector:
+        result = "@(" & self.ref.selector_pattern & ")"
       of VkGene:
         result = $self.gene
       of VkRange:
@@ -1508,6 +1651,8 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result &= "^" & get_symbol(symbol_index.int) & " " & $v
           first = false
         result &= "}"
+      of VkSelector:
+        result = "@(" & self.ref.selector_pattern & ")"
       of VkGene:
         result = $self.gene
       of VkRange:
@@ -1870,6 +2015,10 @@ var SYMBOLS*: ManagedSymbols
 proc get_symbol*(i: int): string {.inline.} =
   SYMBOLS.store[i]
 
+proc get_symbol_gcsafe*(i: int): string {.inline, gcsafe.} =
+  {.cast(gcsafe).}:
+    result = SYMBOLS.store[i]
+
 proc to_symbol_value*(s: string): Value =
   {.cast(gcsafe).}:
     let found = SYMBOLS.map.get_or_default(s, -1)
@@ -1957,6 +2106,86 @@ proc new_range_value*(start: Value, `end`: Value, step: Value): Value =
   r.range_step = step
   result = r.to_ref_value()
 
+proc new_regex_value*(pattern: string, flags: uint8 = 0'u8): Value =
+  let r = new_ref(VkRegex)
+  r.regex_pattern = pattern
+  r.regex_flags = flags
+  result = r.to_ref_value()
+
+proc new_date_value*(year: int, month: int, day: int): Value =
+  let r = new_ref(VkDate)
+  r.date_year = year.int16
+  r.date_month = month.int8
+  r.date_day = day.int8
+  result = r.to_ref_value()
+
+proc new_datetime_value*(dt: DateTime): Value =
+  let r = new_ref(VkDateTime)
+  r.dt_year = dt.year.int16
+  r.dt_month = ord(dt.month).int8
+  r.dt_day = dt.monthday.int8
+  r.dt_hour = dt.hour.int8
+  r.dt_minute = dt.minute.int8
+  r.dt_second = dt.second.int8
+  r.dt_timezone = (dt.utcOffset div 60).int16
+  result = r.to_ref_value()
+
+proc new_time_value*(hour: int, minute: int, second: int, microsecond: int = 0): Value =
+  let r = new_ref(VkTime)
+  r.time_hour = hour.int8
+  r.time_minute = minute.int8
+  r.time_second = second.int8
+  r.time_microsecond = microsecond.int32
+  result = r.to_ref_value()
+
+proc new_selector_value*(segments: openArray[Value]): Value =
+  if segments.len == 0:
+    not_allowed("Selector requires at least one segment")
+
+  let r = new_ref(VkSelector)
+  r.selector_path = @[]
+
+  var pattern_parts: seq[string] = @[]
+  for seg in segments:
+    case seg.kind:
+      of VkString, VkSymbol:
+        pattern_parts.add(seg.str)
+        r.selector_path.add(seg)
+      of VkInt:
+        pattern_parts.add($seg.int64)
+        r.selector_path.add(seg)
+      else:
+        not_allowed("Invalid selector segment: " & $seg.kind)
+
+  r.selector_pattern = pattern_parts.join("/")
+  result = r.to_ref_value()
+
+#################### SourceTrace ##################
+
+proc new_source_trace*(filename: string, line, column: int): SourceTrace =
+  SourceTrace(
+    filename: filename,
+    line: line,
+    column: column,
+    children: @[],
+    child_index: -1,
+  )
+
+proc attach_child*(parent: SourceTrace, child: SourceTrace) =
+  if parent.is_nil or child.is_nil:
+    return
+  child.parent = parent
+  child.child_index = parent.children.len
+  parent.children.add(child)
+
+proc trace_location*(trace: SourceTrace): string =
+  if trace.is_nil:
+    return ""
+  if trace.filename.len > 0:
+    result = trace.filename & ":" & $trace.line & ":" & $trace.column
+  else:
+    result = $trace.line & ":" & $trace.column
+
 #################### Gene ########################
 
 proc to_gene_value*(v: ptr Gene): Value {.inline.} =
@@ -1978,6 +2207,7 @@ proc new_gene*(): ptr Gene =
   result = cast[ptr Gene](alloc0(sizeof(Gene)))
   result.ref_count = 1
   result.type = NIL
+  result.trace = nil
   result.props = Table[Key, Value]()
   result.children = @[]
 
@@ -1985,6 +2215,7 @@ proc new_gene*(`type`: Value): ptr Gene =
   result = cast[ptr Gene](alloc0(sizeof(Gene)))
   result.ref_count = 1
   result.type = `type`
+  result.trace = nil
   result.props = Table[Key, Value]()
   result.children = @[]
 
@@ -2004,6 +2235,9 @@ proc new_gene_value*(`type`: Value): Value {.inline.} =
 #   true
 
 #################### Application #################
+
+proc refresh_env_map*()
+proc set_cmd_args*(args: seq[string])
 
 proc app*(self: Value): Application {.inline.} =
   self.ref.app
@@ -2214,6 +2448,57 @@ proc add*(self: var ScopeTracker, name: Key) =
   self.mappings[name] = self.next_index
   self.next_index.inc()
 
+proc snapshot_scope_tracker*(tracker: ScopeTracker): ScopeTrackerSnapshot =
+  if tracker == nil:
+    return nil
+
+  result = ScopeTrackerSnapshot(
+    next_index: tracker.next_index,
+    parent_index_max: tracker.parent_index_max,
+    scope_started: tracker.scope_started,
+    mappings: @[],
+    parent: snapshot_scope_tracker(tracker.parent)
+  )
+
+  for key, value in tracker.mappings:
+    result.mappings.add((key, value))
+
+proc materialize_scope_tracker*(snapshot: ScopeTrackerSnapshot): ScopeTracker =
+  if snapshot == nil:
+    return nil
+
+  result = ScopeTracker(
+    next_index: snapshot.next_index,
+    parent_index_max: snapshot.parent_index_max,
+    scope_started: snapshot.scope_started,
+    parent: materialize_scope_tracker(snapshot.parent)
+  )
+
+  for pair in snapshot.mappings:
+    result.mappings[pair[0]] = pair[1]
+
+proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil): FunctionDefInfo =
+  var body_value = NIL
+  if body != nil:
+    let cu_ref = new_ref(VkCompiledUnit)
+    cu_ref.cu = body
+    body_value = cu_ref.to_ref_value()
+
+  result = FunctionDefInfo(
+    scope_tracker: tracker,
+    compiled_body: body_value
+  )
+
+proc to_value*(info: FunctionDefInfo): Value =
+  let r = new_ref(VkFunctionDef)
+  r.function_def = info
+  result = r.to_ref_value()
+
+proc to_function_def_info*(value: Value): FunctionDefInfo =
+  if value.kind != VkFunctionDef:
+    not_allowed("Expected FunctionDef info value")
+  result = value.ref.function_def
+
 #################### Pattern Matching ############
 
 proc new_match_matcher*(): RootMatcher =
@@ -2423,30 +2708,49 @@ proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Functio
   )
 
 proc to_function*(node: Value): Function {.gcsafe.} =
+  if node.kind != VkGene:
+    raise new_exception(Exception, "Expected Gene for function definition, got " & $node.kind)
+
+  if node.gene == nil:
+    raise new_exception(Exception, "Gene pointer is nil")
+
   var name: string
   let matcher = new_arg_matcher()
   var body_start: int
   var is_generator = false
+  var is_macro_like = false
 
-  if node.gene.type == "fnx".to_symbol_value():
+  # Check if defined with fn! type
+  if node.gene.type != NIL and node.gene.type == "fn!".to_symbol_value():
+    is_macro_like = true
+
+  if node.gene.type != NIL and node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"
     body_start = 1
-  elif node.gene.type == "fnxx".to_symbol_value():
+  elif node.gene.type != NIL and node.gene.type == "fnxx".to_symbol_value():
     name = "<unnamed>"
     body_start = 0
   else:
+    if node.gene.children.len == 0:
+      raise new_exception(Exception, "Invalid function definition: expected function name")
     let first = node.gene.children[0]
     case first.kind:
       of VkSymbol, VkString:
         name = first.str
+        # Check if function name ends with ! (macro-like function)
+        if name.len > 0 and name[^1] == '!':
+          is_macro_like = true
         # Check if function name ends with * (generator function)
-        if name.len > 0 and name[^1] == '*':
+        elif name.len > 0 and name[^1] == '*':
           is_generator = true
       of VkComplexSymbol:
         name = first.ref.csymbol[^1]
+        # Check if function name ends with ! (macro-like function)
+        if name.len > 0 and name[^1] == '!':
+          is_macro_like = true
         # Check if function name ends with * (generator function)
-        if name.len > 0 and name[^1] == '*':
+        elif name.len > 0 and name[^1] == '*':
           is_generator = true
       else:
         todo($first.kind)
@@ -2475,6 +2779,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   result = new_fn(name, matcher, body)
   result.async = is_async
   result.is_generator = is_generator
+  result.is_macro_like = is_macro_like
 
 # compile method is defined in compiler.nim
 
@@ -2506,37 +2811,6 @@ proc to_compile_fn*(node: Value): CompileFn {.gcsafe.} =
 
   # body = wrap_with_try(body)
   result = new_compile_fn(name, matcher, body)
-
-# compile method needs to be defined - see compiler.nim
-
-#################### Macro #######################
-
-proc new_macro*(name: string, matcher: RootMatcher, body: sink seq[Value]): Macro =
-  return Macro(
-    name: name,
-    matcher: matcher,
-    # matching_hint: matcher.hint,
-    body: body,
-  )
-
-proc to_macro*(node: Value): Macro =
-  let first = node.gene.children[0]
-  var name: string
-  if first.kind == VkSymbol:
-    name = first.str
-  elif first.kind == VkComplexSymbol:
-    name = first.ref.csymbol[^1]
-
-  let matcher = new_arg_matcher()
-  matcher.parse(node.gene.children[1])
-  matcher.check_hint()
-
-  var body: seq[Value] = @[]
-  for i in 2..<node.gene.children.len:
-    body.add node.gene.children[i]
-
-  # body = wrap_with_try(body)
-  result = new_macro(name, matcher, body)
 
 # compile method needs to be defined - see compiler.nim
 
@@ -2576,6 +2850,9 @@ proc new_class*(name: string, parent: Class): Class =
     ns: new_namespace(nil, name),
     parent: parent,
     constructor: NIL,
+    members: initTable[Key, Value](),
+    methods: initTable[Key, Method](),
+    version: 0,
   )
 
 proc new_class*(name: string): Class =
@@ -2729,6 +3006,24 @@ proc def_native_method*(self: Class, name: string, f: NativeFn) =
     name: name,
     callable: r.to_ref_value(),
   )
+  self.version.inc()
+
+proc def_member*(self: Class, name: string, value: Value) =
+  self.members[name.to_key()] = value
+  self.version.inc()
+
+proc def_static_method*(self: Class, name: string, f: NativeFn) =
+  let r = new_ref(VkNativeFn)
+  r.native_fn = f
+  self.members[name.to_key()] = r.to_ref_value()
+  self.version.inc()
+
+proc get_member*(self: Class, name: Key): Value =
+  if self.members.hasKey(name):
+    return self.members[name]
+  if not self.parent.is_nil:
+    return self.parent.get_member(name)
+  return NIL
 
 proc def_native_constructor*(self: Class, f: NativeFn) =
   let r = new_ref(VkNativeFn)
@@ -2753,6 +3048,7 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
     callable: r.to_ref_value(),
     is_macro: true,
   )
+  self.version.inc()
 
 proc add_standard_instance_methods*(class: Class) =
   # Currently no standard methods to add
@@ -2781,6 +3077,57 @@ proc clone*(self: Method): Method =
     callable: self.callable,
   )
 
+#################### Callable ######################
+
+proc new_callable*(kind: CallableKind, name: string = ""): Callable =
+  result = Callable(kind: kind, name: name, arity: 0, flags: {})
+
+  # Set default flags based on kind
+  case kind:
+  of CkFunction:
+    result.flags = {CfEvaluateArgs}
+  of CkNativeFunction:
+    result.flags = {CfEvaluateArgs, CfIsNative}
+  of CkMethod:
+    result.flags = {CfEvaluateArgs, CfIsMethod, CfNeedsSelf}
+  of CkNativeMethod:
+    result.flags = {CfEvaluateArgs, CfIsMethod, CfNeedsSelf, CfIsNative}
+  of CkBlock:
+    result.flags = {CfEvaluateArgs}
+
+proc get_arity*(matcher: RootMatcher): int =
+  # Calculate minimum required arguments
+  result = 0
+  for child in matcher.children:
+    if child.required:
+      result.inc()
+
+proc to_callable*(fn: Function): Callable =
+  result = new_callable(CkFunction, fn.name)
+  result.fn = fn
+  result.arity = fn.matcher.get_arity()
+
+proc to_callable*(native_fn: NativeFn, name: string = "", arity: int = 0): Callable =
+  result = new_callable(CkNativeFunction, name)
+  result.native_fn = native_fn
+  result.arity = arity
+
+proc to_callable*(blk: Block): Callable =
+  result = new_callable(CkBlock)
+  result.block_fn = blk
+  result.arity = blk.matcher.get_arity()
+
+proc to_callable*(value: Value): Callable =
+  case value.kind:
+  of VkFunction:
+    return value.ref.fn.to_callable()
+  of VkNativeFn:
+    return to_callable(value.ref.native_fn)
+  of VkBlock:
+    return value.ref.block.to_callable()
+  else:
+    not_allowed("Cannot convert " & $value.kind & " to Callable")
+
 #################### Future ######################
 
 proc new_future*(): FutureObj =
@@ -2788,7 +3135,18 @@ proc new_future*(): FutureObj =
     state: FsPending,
     value: NIL,
     success_callbacks: @[],
-    failure_callbacks: @[]
+    failure_callbacks: @[],
+    nim_future: nil  # Synchronous future by default
+  )
+
+proc new_future*(nim_fut: Future[Value]): FutureObj =
+  ## Create a FutureObj that wraps a Nim async future
+  result = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nim_fut
   )
 
 proc new_future_value*(): Value =
@@ -2802,9 +3160,16 @@ proc complete*(f: FutureObj, value: Value) =
   f.state = FsSuccess
   f.value = value
   # Execute success callbacks
+  # Note: Callbacks are executed immediately when future completes
+  # In real async, these would be scheduled on the event loop
   for callback in f.success_callbacks:
-    # TODO: Execute callback with value
-    discard
+    if callback.kind == VkFunction:
+      # Execute Gene function with value as argument
+      # We need a VM instance to execute, but we don't have one here
+      # This will be handled by update_from_nim_future which has VM access
+      discard
+    # For now, callbacks are stored but not executed here
+    # They will be executed by update_from_nim_future or by explicit VM call
 
 proc fail*(f: FutureObj, error: Value) =
   if f.state != FsPending:
@@ -2813,8 +3178,42 @@ proc fail*(f: FutureObj, error: Value) =
   f.value = error
   # Execute failure callbacks
   for callback in f.failure_callbacks:
-    # TODO: Execute callback with error
-    discard
+    if callback.kind == VkFunction:
+      # Execute Gene function with error as argument
+      # We need a VM instance to execute, but we don't have one here
+      # This will be handled by update_from_nim_future which has VM access
+      discard
+    # For now, callbacks are stored but not executed here
+    # They will be executed by update_from_nim_future or by explicit VM call
+
+proc update_from_nim_future*(f: FutureObj) =
+  ## Check if the underlying Nim future has completed and update our state
+  ## This should be called during event loop polling
+  ## NOTE: This version doesn't execute callbacks - use update_future_from_nim in vm/async.nim for that
+  if f.nim_future.isNil or f.state != FsPending:
+    return  # No Nim future to check, or already completed
+
+  if finished(f.nim_future):
+    # Nim future has completed - copy its result
+    if failed(f.nim_future):
+      # Future failed with exception
+      # TODO: Wrap exception properly when exception handling is ready
+      f.state = FsFailure
+      f.value = new_str_value("Async operation failed")
+    else:
+      # Future succeeded
+      f.state = FsSuccess
+      f.value = read(f.nim_future)
+
+    # Execute appropriate callbacks
+    if f.state == FsSuccess:
+      for callback in f.success_callbacks:
+        # TODO: Execute callback with value
+        discard
+    else:
+      for callback in f.failure_callbacks:
+        # TODO: Execute callback with error
+        discard
 
 #################### Enum ########################
 
@@ -2862,10 +3261,95 @@ converter to_value*(f: NativeFn): Value {.inline.} =
   r.native_fn = f
   result = r.to_ref_value()
 
-#################### Frame #######################
-const INITIAL_FRAME_POOL_SIZE = 1024
+# Helper functions for new NativeFn signature
+proc get_positional_arg*(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value {.inline.} =
+  ## Get positional argument (handles keyword offset automatically)
+  let offset = if has_keyword_args: 1 else: 0
+  return args[offset + index]
 
-var FRAMES {.threadvar.}: seq[Frame]
+proc get_keyword_arg*(args: ptr UncheckedArray[Value], name: string): Value {.inline.} =
+  ## Get keyword argument by name
+  if args[0].kind == VkMap:
+    return args[0].ref.map.get_or_default(name.to_key(), NIL)
+  else:
+    return NIL
+
+proc has_keyword_arg*(args: ptr UncheckedArray[Value], name: string): bool {.inline.} =
+  ## Check if keyword argument exists
+  if args[0].kind == VkMap:
+    return args[0].ref.map.hasKey(name.to_key())
+  else:
+    return false
+
+proc get_positional_count*(arg_count: int, has_keyword_args: bool): int {.inline.} =
+  ## Get the number of positional arguments
+  if has_keyword_args: arg_count - 1 else: arg_count
+
+# Helper functions specifically for native methods
+proc get_self*(args: ptr UncheckedArray[Value], has_keyword_args: bool): Value {.inline.} =
+  ## Get self object for native methods (always first positional argument)
+  return get_positional_arg(args, 0, has_keyword_args)
+
+proc get_method_arg*(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value {.inline.} =
+  ## Get method argument by index (index 0 = first argument after self)
+  return get_positional_arg(args, index + 1, has_keyword_args)
+
+proc get_method_arg_count*(arg_count: int, has_keyword_args: bool): int {.inline.} =
+  ## Get the number of method arguments (excluding self)
+  let positional_count = get_positional_count(arg_count, has_keyword_args)
+  if positional_count > 0: positional_count - 1 else: 0
+
+# Migration helpers
+proc get_legacy_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): seq[Value] =
+  ## Helper to convert to seq[Value] for easier migration
+  result = newSeq[Value]()
+  let offset = if has_keyword_args: 1 else: 0
+  for i in offset..<arg_count:
+    result.add(args[i])
+
+proc create_gene_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  ## For functions that need Gene object temporarily during migration
+  var gene_args = new_gene_value()
+  let offset = if has_keyword_args: 1 else: 0
+  for i in offset..<arg_count:
+    gene_args.gene.children.add(args[i])
+  return gene_args
+
+# Helper for calling native functions with proper casting
+proc call_native_fn*(fn: NativeFn, vm: VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
+  ## Helper to call native function with proper array casting
+  if args.len == 0:
+    return fn(vm, nil, 0, has_keyword_args)
+  else:
+    return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
+
+#################### Frame #######################
+const INITIAL_FRAME_POOL_SIZE* = 1024
+
+var FRAMES* {.threadvar.}: seq[Frame]
+
+proc init*(self: var CallBaseStack) {.inline.} =
+  self.data = newSeq[uint16](0)
+
+proc reset*(self: var CallBaseStack) {.inline.} =
+  if self.data.len > 0:
+    self.data.setLen(0)
+
+proc push*(self: var CallBaseStack, base: uint16) {.inline.} =
+  self.data.add(base)
+
+proc pop*(self: var CallBaseStack): uint16 {.inline.} =
+  assert self.data.len > 0, "Call base stack underflow"
+  let idx = self.data.len - 1
+  result = self.data[idx]
+  self.data.setLen(idx)
+
+proc peek*(self: CallBaseStack): uint16 {.inline.} =
+  assert self.data.len > 0, "Call base stack is empty"
+  result = self.data[self.data.len - 1]
+
+proc is_empty*(self: CallBaseStack): bool {.inline.} =
+  self.data.len == 0
 
 proc reset_frame*(self: Frame) {.inline.} =
   # Reset only necessary fields, avoiding full memory clear
@@ -2880,6 +3364,7 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.args = NIL
   self.current_method = nil
   self.stack_index = 0
+  self.call_bases.reset()
   # Stack array will be overwritten as needed, no need to clear
 
 proc free*(self: var Frame) =
@@ -2897,7 +3382,7 @@ proc free*(self: var Frame) =
     FRAMES.add(self)
   {.pop.}
 
-var FRAME_ALLOCS* = 0
+var FRAME_ALLOCS* {.threadvar.}: int
 var FRAME_REUSES* = 0
 
 proc new_frame*(): Frame {.inline.} =
@@ -2910,6 +3395,7 @@ proc new_frame*(): Frame {.inline.} =
     FRAME_ALLOCS.inc()
   result.ref_count = 1
   result.stack_index = 0  # Reset stack index
+  result.call_bases.init()
   {.pop.}
 
 proc new_frame*(ns: Namespace): Frame {.inline.} =
@@ -2965,6 +3451,27 @@ template pop2*(self: var Frame, to: var Value) =
   self.stack[self.stack_index] = NIL
   {.pop.}
 
+proc push_call_base*(self: Frame) {.inline.} =
+  assert self.stack_index > 0, "Cannot push call base without callee on stack"
+  let base = self.stack_index - 1
+  self.call_bases.push(base)
+
+proc peek_call_base*(self: Frame): uint16 {.inline.} =
+  self.call_bases.peek()
+
+proc pop_call_base*(self: Frame): uint16 {.inline.} =
+  self.call_bases.pop()
+
+proc call_arg_count_from*(self: Frame, base: uint16): int {.inline.} =
+  let stack_top = int(self.stack_index)
+  let base_index = int(base)
+  assert stack_top >= base_index + 1, "Call base exceeds stack height"
+  stack_top - (base_index + 1)
+
+proc pop_call_arg_count*(self: Frame): int {.inline.} =
+  let base = self.pop_call_base()
+  self.call_arg_count_from(base)
+
 #################### COMPILER ####################
 
 proc to_value*(self: ScopeTracker): Value =
@@ -2975,8 +3482,37 @@ proc to_value*(self: ScopeTracker): Value =
 proc new_compilation_unit*(): CompilationUnit =
   CompilationUnit(
     id: new_id(),
+    trace_root: nil,
+    instruction_traces: @[],
     inline_caches: @[],
   )
+
+proc add_instruction*(self: CompilationUnit, instr: Instruction, trace: SourceTrace = nil) =
+  if self.instruction_traces.len < self.instructions.len:
+    self.instruction_traces.setLen(self.instructions.len)
+  self.instructions.add(instr)
+  self.instruction_traces.add(trace)
+
+proc ensure_trace_capacity*(self: CompilationUnit) =
+  if self.instruction_traces.len < self.instructions.len:
+    self.instruction_traces.setLen(self.instructions.len)
+
+proc replace_traces_range*(self: CompilationUnit, start_pos, end_pos: int, replacement_count: int) =
+  if self.instruction_traces.len < self.instructions.len:
+    self.instruction_traces.setLen(self.instructions.len)
+  let clamped_start = max(0, min(start_pos, self.instruction_traces.len))
+  let clamped_end = max(clamped_start, min(end_pos, self.instruction_traces.len - 1))
+  if clamped_start <= clamped_end:
+    let remove_count = clamped_end - clamped_start + 1
+    for _ in 0..<remove_count:
+      self.instruction_traces.delete(clamped_start)
+  if replacement_count > 0:
+    let insert_pos = min(clamped_start, self.instruction_traces.len)
+    for _ in 0..<replacement_count:
+      if insert_pos >= self.instruction_traces.len:
+        self.instruction_traces.add(nil)
+      else:
+        self.instruction_traces.insert(nil, insert_pos)
 
 proc `$`*(self: Instruction): string =
   case self.kind
@@ -2984,13 +3520,12 @@ proc `$`*(self: Instruction): string =
       IkVar, IkVarResolve, IkVarAssign,
       IkAddValue, IkVarAddValue, IkVarSubValue, IkVarMulValue, IkVarDivValue,
       IkIncVar, IkDecVar,
-      IkLtValue, IkVarLtValue,
+      IkLtValue, IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue,
       IkMapSetProp, IkMapSetPropValue,
-      IkArrayAddChildValue,
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
-      IkCallDirect, IkTailCall:
+      IkTailCall, IkNewMacro:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
       else:
@@ -3009,6 +3544,7 @@ proc `$`*(self: Instruction): string =
         result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {target_label.int:04X}"
     of IkVarResolveInherited, IkVarAssignInherited:
       result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
+
     else:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]}"
@@ -3070,6 +3606,16 @@ converter to_value*(i: Instruction): Value =
   r.instr = i
   result = r.to_ref_value()
 
+converter to_value*(t: Thread): Value {.inline.} =
+  let r = new_ref(VkThread)
+  r.thread = t
+  return r.to_ref_value()
+
+converter to_value*(m: ThreadMessage): Value {.inline.} =
+  let r = new_ref(VkThreadMessage)
+  r.thread_message = m
+  return r.to_ref_value()
+
 proc new_instr*(kind: InstructionKind): Instruction =
   Instruction(
     kind: kind,
@@ -3084,11 +3630,17 @@ proc new_instr*(kind: InstructionKind, arg0: Value): Instruction =
 #################### VM ##########################
 
 proc init_app_and_vm*() =
+  # Reset gene namespace initialization flag since we're creating a new App
+  gene_namespace_initialized = false
 
   VM = VirtualMachine(
     exception_handlers: @[],
     current_exception: NIL,
     symbols: addr SYMBOLS,
+    pending_futures: @[],  # Initialize empty list of pending futures
+    thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
+    message_callbacks: @[],  # Initialize empty list of message callbacks
+    thread_local_ns: nil,  # Will be initialized after App is created
   )
 
   # Pre-allocate frame and scope pools
@@ -3129,7 +3681,7 @@ proc init_app_and_vm*() =
   # Add time namespace stub to prevent errors
   let time_ns = new_namespace("time")
   # Simple time function that returns current timestamp
-  proc time_now(self: VirtualMachine, args: Value): Value =
+  proc time_now(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     return epochTime().to_value()
 
   var time_now_fn = new_ref(VkNativeFn)
@@ -3139,16 +3691,45 @@ proc init_app_and_vm*() =
   # Also add to gene namespace for gene/time/now access
   App.app.gene_ns.ref.ns["time".to_key()] = time_ns.to_value()
 
-  # Initialize IO namespace directly here
-  # Functions will be registered later by register_io_functions
-  let io_ns = new_namespace("io")
-  App.app.gene_ns.ns["io".to_key()] = io_ns.to_value()
+  refresh_env_map()
+  set_cmd_args(@[])
 
+  # Initialize thread-local namespace for main thread
+  # This holds thread-specific variables like $thread and $main_thread
+  VM.thread_local_ns = new_namespace("thread_local")
+
+  # For main thread, $thread and $main_thread are the same
+  let main_thread_ref = types.Thread(
+    id: 0,
+    secret: THREADS[0].secret
+  )
+  VM.thread_local_ns["$thread".to_key()] = main_thread_ref.to_value()
+  VM.thread_local_ns["$main_thread".to_key()] = main_thread_ref.to_value()
 
   for callback in VmCreatedCallbacks:
     callback()
 
 #################### Helpers #####################
+
+proc refresh_env_map*() =
+  if App == NIL or App.kind != VkApplication:
+    return
+  var env_table = initTable[Key, Value]()
+  for pair in envPairs():
+    env_table[pair.key.to_key()] = pair.value.to_value()
+  App.app.gene_ns.ref.ns["env".to_key()] = new_map_value(env_table)
+
+proc set_cmd_args*(args: seq[string]) =
+  if App == NIL or App.kind != VkApplication:
+    init_app_and_vm()
+    if App == NIL or App.kind != VkApplication:
+      return
+  App.app.args = args
+  let arr_ref = new_ref(VkArray)
+  arr_ref.arr = @[]
+  for arg in args:
+    arr_ref.arr.add(arg.to_value())
+  App.app.gene_ns.ref.ns["cmd_args".to_key()] = arr_ref.to_ref_value()
 
 const SYM_UNDERSCORE* = SYMBOL_TAG or 0
 const SYM_SELF* = SYMBOL_TAG or 1

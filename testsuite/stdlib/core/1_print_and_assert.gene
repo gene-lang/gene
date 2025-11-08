@@ -1,0 +1,10 @@
+# Gene core print and assert tests
+# Expected: Hello world!
+# Expected: All core print tests done
+
+(print "Hello ")
+(println "world!")
+(assert true)
+(assert (1 == 1))
+
+(gene/println "All core print tests done")

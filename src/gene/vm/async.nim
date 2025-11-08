@@ -1,82 +1,107 @@
 import ../types
-import std/strformat
+import asyncdispatch  # For Future procs: finished, failed, read
+
+# NOTE: Callback execution is deferred for now
+# In a full implementation, callbacks would be executed when futures complete
+# For Phase 1, we're just setting up the infrastructure
+
+# Update a future from its underlying Nim future
+proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
+  ## Check if the underlying Nim future has completed and update Gene future state
+  ## This should be called during event loop polling
+  if future_obj.state != FsPending:
+    return  # Already completed
+
+  # Check Nim futures
+  if future_obj.nim_future.isNil:
+    return  # No Nim future to check
+
+  if finished(future_obj.nim_future):
+    # Nim future has completed - copy its result
+    if failed(future_obj.nim_future):
+      # Future failed with exception
+      # TODO: Wrap exception properly when exception handling is ready
+      future_obj.state = FsFailure
+      future_obj.value = new_str_value("Async operation failed")
+    else:
+      # Future succeeded
+      future_obj.state = FsSuccess
+      future_obj.value = read(future_obj.nim_future)
 
 # Future methods
-proc future_on_success(self: VirtualMachine, args: Value): Value =
+proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
-  if args.kind != VkGene or args.gene.children.len < 2:
+  if arg_count < 2:
     raise new_exception(types.Exception, "Future.on_success requires 2 arguments (self and callback)")
-  
-  let future_arg = args.gene.children[0]
-  let callback_arg = args.gene.children[1]
-  
+
+  let future_arg = get_positional_arg(args, 0, has_keyword_args)
+  let callback_arg = get_positional_arg(args, 1, has_keyword_args)
+
   if future_arg.kind != VkFuture:
     raise new_exception(types.Exception, "on_success can only be called on a Future")
-  
+
   # Validate callback is callable
   if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock}:
     raise new_exception(types.Exception, "on_success callback must be a function or block")
-  
+
   let future_obj = future_arg.ref.future
-  
-  # If future is already completed successfully, execute callback immediately
+
+  # If future is already completed successfully, store callback (will execute later)
   if future_obj.state == FsSuccess:
-    # TODO: Execute callback with value
+    # TODO: Execute callback immediately with the future's value (Phase 1.3)
     # For now, just store it
     future_obj.success_callbacks.add(callback_arg)
   elif future_obj.state == FsPending:
-    # Store callback for later execution
+    # Store callback for later execution when future completes
     future_obj.success_callbacks.add(callback_arg)
   # If failed, don't add to success callbacks
-  
+
   # Return the future for chaining
   return future_arg
 
-proc future_on_failure(self: VirtualMachine, args: Value): Value =
+proc future_on_failure(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
-  if args.kind != VkGene or args.gene.children.len < 2:
+  if arg_count < 2:
     raise new_exception(types.Exception, "Future.on_failure requires 2 arguments (self and callback)")
-  
-  let future_arg = args.gene.children[0]
-  let callback_arg = args.gene.children[1]
-  
+
+  let future_arg = get_positional_arg(args, 0, has_keyword_args)
+  let callback_arg = get_positional_arg(args, 1, has_keyword_args)
+
   if future_arg.kind != VkFuture:
     raise new_exception(types.Exception, "on_failure can only be called on a Future")
-  
+
   # Validate callback is callable
   if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock}:
     raise new_exception(types.Exception, "on_failure callback must be a function or block")
-  
+
   let future_obj = future_arg.ref.future
-  
-  # If future is already failed, execute callback immediately
+
+  # If future is already failed, store callback (will execute later)
   if future_obj.state == FsFailure:
-    # TODO: Execute callback with error
+    # TODO: Execute callback immediately with the future's error value (Phase 1.3)
     # For now, just store it
     future_obj.failure_callbacks.add(callback_arg)
   elif future_obj.state == FsPending:
-    # Store callback for later execution
+    # Store callback for later execution when future fails
     future_obj.failure_callbacks.add(callback_arg)
   # If succeeded, don't add to failure callbacks
-  
+
   # Return the future for chaining
   return future_arg
 
-proc future_state(self: VirtualMachine, args: Value): Value =
+proc future_state(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Get the state of a future
   # When called as a method, args contains the future as the first child
-  if args.kind != VkGene:
-    raise new_exception(types.Exception, fmt"Future.state expects Gene args, got {args.kind}")
-  if args.gene.children.len == 0:
+  if arg_count == 0:
     raise new_exception(types.Exception, "Future.state requires a future object")
-  
-  let future_arg = args.gene.children[0]
-  
+
+  let future_arg = get_positional_arg(args, 0, has_keyword_args)
+
   if future_arg.kind != VkFuture:
     raise new_exception(types.Exception, "state can only be called on a Future")
-  
+
   let future_obj = future_arg.ref.future
-  
+
   # Return state as a symbol
   case future_obj.state:
     of FsPending:
@@ -86,19 +111,19 @@ proc future_state(self: VirtualMachine, args: Value): Value =
     of FsFailure:
       return "failure".to_symbol_value()
 
-proc future_value(self: VirtualMachine, args: Value): Value =
+proc future_value(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Get the value of a completed future
   # When called as a method, args contains the future as the first child
-  if args.kind != VkGene or args.gene.children.len == 0:
+  if arg_count == 0:
     raise new_exception(types.Exception, "Future.value requires a future object")
-  
-  let future_arg = args.gene.children[0]
-  
+
+  let future_arg = get_positional_arg(args, 0, has_keyword_args)
+
   if future_arg.kind != VkFuture:
     raise new_exception(types.Exception, "value can only be called on a Future")
-  
+
   let future_obj = future_arg.ref.future
-  
+
   # Return value if completed, NIL if pending
   if future_obj.state in {FsSuccess, FsFailure}:
     return future_obj.value
@@ -113,21 +138,21 @@ proc init_async*() =
       return
     
     # Native function to complete a future
-    proc complete_future_fn(self: VirtualMachine, args: Value): Value =
+    proc complete_future_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
       # complete_future(future, value) - completes the given future with the value
-      if args.kind != VkGene or args.gene.children.len != 2:
+      if arg_count != 2:
         raise new_exception(types.Exception, "complete_future requires exactly 2 arguments (future and value)")
-      
-      let future_arg = args.gene.children[0]
-      let value_arg = args.gene.children[1]
-      
+
+      let future_arg = get_positional_arg(args, 0, has_keyword_args)
+      let value_arg = get_positional_arg(args, 1, has_keyword_args)
+
       if future_arg.kind != VkFuture:
         raise new_exception(types.Exception, "First argument must be a Future")
-      
+
       let future_obj = future_arg.ref.future
       future_obj.complete(value_arg)
       return NIL
-    
+
     # Add to global namespace
     let complete_fn_ref = new_ref(VkNativeFn)
     complete_fn_ref.native_fn = complete_future_fn
@@ -138,36 +163,34 @@ proc init_async*() =
     # Don't set parent yet - will be set later when object_class is available
     
     # Add Future constructor
-    proc future_constructor(self: VirtualMachine, args: Value): Value =
+    proc future_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
       # Create a new Future instance
       let future_val = new_future_value()
       # If initial value is provided, complete the future immediately
-      if args.kind == VkGene and args.gene.children.len > 0:
-        let initial_value = args.gene.children[0]
+      if arg_count > 0:
+        let initial_value = get_positional_arg(args, 0, has_keyword_args)
         future_val.ref.future.complete(initial_value)
       return future_val
-    
+
     future_class.def_native_constructor(future_constructor)
     
-    # Add complete method  
-    proc future_complete(self: VirtualMachine, args: Value): Value =
+    # Add complete method
+    proc future_complete(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
       # Complete the future with a value
       # When called as a method, args contains [future, value]
-      if args.kind != VkGene:
-        raise new_exception(types.Exception, fmt"Future.complete expects Gene args, got {args.kind}")
-      if args.gene.children.len < 2:
+      if arg_count < 2:
         raise new_exception(types.Exception, "Future.complete requires a future and a value")
-      
-      let future_arg = args.gene.children[0]
-      let value_arg = args.gene.children[1]
-      
+
+      let future_arg = get_positional_arg(args, 0, has_keyword_args)
+      let value_arg = get_positional_arg(args, 1, has_keyword_args)
+
       if future_arg.kind != VkFuture:
         raise new_exception(types.Exception, "complete can only be called on a Future")
-      
+
       let future_obj = future_arg.ref.future
       future_obj.complete(value_arg)
       return NIL
-    
+
     # Add Future methods
     future_class.def_native_method("complete", future_complete)
     future_class.def_native_method("on_success", future_on_success)

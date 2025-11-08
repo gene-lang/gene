@@ -34,6 +34,8 @@ type
     error*: ParseErrorKind
     # references*: References
     document_props_done*: bool  # flag to tell whether we have read document properties
+    trace_root*: SourceTrace
+    trace_stack*: seq[SourceTrace]
 
   TokenKind* = enum
     TkError
@@ -201,6 +203,7 @@ proc new_parser*(options: ParseOptions): Parser =
     # document: Document(),
     options: new_options(options),
     # references: References(),
+    trace_stack: @[],
   )
 
 proc new_parser*(): Parser =
@@ -211,6 +214,7 @@ proc new_parser*(): Parser =
     # document: Document(),
     options: default_options(),
     # references: References(),
+    trace_stack: @[],
   )
 
 proc non_constituent(c: char): bool =
@@ -229,6 +233,24 @@ proc get_macro(ch: char): MacroReader =
 
 proc err_info(self: Parser): ParseInfo =
   result = (self.line_number, self.get_col_number(self.bufpos))
+
+proc current_trace(self: Parser): SourceTrace =
+  if self.trace_stack.len == 0:
+    return nil
+  self.trace_stack[^1]
+
+proc push_trace(self: var Parser, trace: SourceTrace) =
+  if trace.is_nil:
+    return
+  self.trace_stack.add(trace)
+
+proc leave_trace(self: var Parser) =
+  if self.trace_stack.len > 0:
+    # Keep the root trace (index 0) intact so we always have a parent context
+    if self.trace_stack.len > 1:
+      self.trace_stack.setLen(self.trace_stack.len - 1)
+  else:
+    discard
 
 ### === MACRO READERS ===
 
@@ -841,16 +863,38 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
 
   result.list = list
 
-proc add_line_col(self: var Parser, node: var Value) =
-  discard
-  # node.line = self.line_number
-  # node.column = self.getColNumber(self.bufpos)
+proc add_line_col(self: var Parser, gene: ptr Gene, start_pos: int) =
+  if gene.is_nil:
+    return
+
+  let parent_trace = self.current_trace()
+  var column =
+    if start_pos >= 0:
+      self.get_col_number(start_pos)
+    else:
+      self.get_col_number(self.bufpos)
+
+  if column < 1:
+    column = 1
+
+  let line = self.line_number
+  let trace = new_source_trace(self.filename, line, column)
+
+  if not parent_trace.is_nil:
+    attach_child(parent_trace, trace)
+  else:
+    self.trace_root = trace
+
+  gene.trace = trace
+  self.push_trace(trace)
 
 proc read_gene(self: var Parser): Value {.gcsafe.} =
   var gene = new_gene()
   #echo "line ", getCurrentLine(p), "lineno: ", p.line_number, " col: ", getColNumber(p, p.bufpos)
   #echo $get_current_line(p) & " LINENO(" & $p.line_number & ")"
-  self.add_line_col(result)
+  let start_pos = (if self.bufpos > 0: self.bufpos - 1 else: 0)
+  self.add_line_col(gene, start_pos)
+  defer: self.leave_trace()
   gene.type = self.read_gene_type()
   var result_list = self.read_delimited_list(')', true)
   gene.props = result_list.map
@@ -1034,6 +1078,9 @@ proc open*(self: var Parser, input: Stream, filename: string) =
   lexbase.open(self, input, bufLen = 1024 * 1024)
   self.filename = filename
   self.str = ""
+  self.trace_root = new_source_trace(filename, 1, 1)
+  self.trace_stack.setLen(0)
+  self.trace_stack.add(self.trace_root)
 
 proc open*(self: var Parser, input: Stream) =
   self.open(input, "<input>")
@@ -1383,4 +1430,3 @@ proc read*(buffer: string): Value =
 proc read_all*(buffer: string): seq[Value] =
   var parser = new_parser()
   return parser.read_all(buffer)
-
