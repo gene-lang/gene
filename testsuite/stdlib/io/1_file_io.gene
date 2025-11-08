@@ -1,0 +1,19 @@
+# Gene IO namespace tests
+# Expected: sync data
+# Expected: async data
+# Expected: IO tests done
+
+(var path "/tmp/stdlib_io_test.txt")
+(gene/io/write path "sync data")
+
+(var sync_content (gene/io/read path))
+(println sync_content)
+
+(var write_future (gene/io/write_async path "async data"))
+(await write_future)
+(var async_content (await (gene/io/read_async path)))
+(println async_content)
+
+(gene/io/write path "")
+
+(println "IO tests done")

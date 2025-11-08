@@ -1,5 +1,5 @@
 import unittest
-import ../src/gene/types
+import ../src/gene/types except Exception
 
 # Test basic functionality of extended type system
 suite "Extended Type System":

@@ -1,7 +1,7 @@
 import tables
 import unittest
 
-import gene/types
+import gene/types except Exception
 
 import ./helpers
 

@@ -42,6 +42,24 @@ The `run_tests.sh` script executes tests in this specific order:
 - `functions/1_basic_functions.gene` - Function definitions and calls
 - `scopes/1_basic_scopes.gene` - Variable scoping and shadowing
 
+### 6. Standard Library
+
+#### Core (`stdlib/core`)
+- `1_print_and_assert.gene` - Core namespace printing helpers and assertions
+- `2_base64.gene` - Base64 encode/decode helpers
+
+#### Strings (`stdlib/strings`)
+- `1_string_methods.gene` - String length, casing, and append methods
+
+#### Arrays (`stdlib/arrays`)
+- `1_array_methods.gene` - Array size, add, and indexed access
+
+#### IO (`stdlib/io`)
+- `1_file_io.gene` - Read/write helpers (sync and async)
+
+#### Time (`stdlib/time`)
+- `1_sleep_and_now.gene` - time/now with sync and async sleep helpers
+
 ## Running Tests
 
 ### Run all tests in order:

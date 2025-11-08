@@ -1,6 +1,8 @@
 import os, tables
-import gene/commands/base
-import gene/commands/[run, eval, repl, help, parse, compile]
+import ./commands/base
+import ./commands/[run, eval, repl, help, parse, compile, gir]
+import ./gene/vm/thread
+import ./gene/extension/c_api  # Link C API for extensions
 
 var CommandMgr = CommandManager(data: initTable[string, Command](), help: "")
 
@@ -11,8 +13,13 @@ repl.init(CommandMgr)
 help.init(CommandMgr)
 parse.init(CommandMgr)
 compile.init(CommandMgr)
+gir.init(CommandMgr)
+# lsp.init(CommandMgr)
 
 proc main() =
+  # Initialize thread pool for multi-threading support
+  init_thread_pool()
+
   var args = command_line_params()
   
   if args.len == 0:

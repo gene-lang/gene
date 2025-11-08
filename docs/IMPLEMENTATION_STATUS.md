@@ -9,22 +9,22 @@ Location: `/src/`
 This is the **current focus** - a bytecode VM implementation for better performance.
 
 ### Status
-- ✅ Parser 
-- ✅ Bytecode compiler
-- ✅ Basic VM with stack-based execution
-- ✅ Core data types (int, string, bool, array, map, etc.)
-- ✅ Functions and closures
-- ✅ Basic control flow (if/else, loops)
-- ✅ REPL
-- 🚧 Classes and OOP (partial)
-- 🚧 Pattern matching (partial)
-- ❌ Macros
-- ❌ Modules/imports
-- ❌ Async/await
+- ✅ Parser & AST builder
+- ✅ Bytecode compiler + GIR serializer
+- ✅ Stack-based VM with computed-goto dispatch
+- ✅ Core data types (ints, floats, strings, arrays, maps, sets, futures, classes)
+- ✅ Functions, closures, and macro-like functions (`fn!`, `$caller_eval`)
+- ✅ Basic control flow (if/else, loops, try/catch/finally)
+- ✅ CLI commands (`run`, `eval`, `repl`, `parse`, `compile`)
+- ✅ Async/await via synchronous futures (pseudo-async)
+- ✅ Scope lifetime management with proper ref-counting (async-safe)
+- 🚧 Classes/OOP: constructors, inheritance, and method dispatch coverage still limited
+- 🚧 Pattern matching: argument binders work; general `match` forms incomplete
+- 🚧 Module/import system and package tooling
 
 ### Performance
-- Current: ~600K function calls/sec (fib benchmark)
-- Target: 5-10M calls/sec
+- fib(24) benchmark (2025 ARM64 measurements): ~3.8M function calls/sec
+- Optimisation roadmap focuses on allocation pooling, inline caches, and instruction specialisation (see `docs/performance.md`)
 
 ## 2. Reference Implementation (gene-new/) - FEATURE COMPLETE
 

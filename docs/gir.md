@@ -30,21 +30,20 @@ gene compile x.gene
 # => build/x.gir
 ```
 
-**Rules & behavior**
-- Output directory defaults to `build/` mirroring the input path layout.
-- The compiler emits a versioned, relocatable GIR with constant pool & imports table.
-- A content hash and dependency fingerprint are embedded for cache validation.
+**Behaviour**
+- Output directory defaults to `build/`. The relative layout of the input file is preserved.
+- The compiler emits a versioned, relocatable GIR with a constant pool, symbol table, and metadata section.
+- When `--emit-debug` is set, line/column information is embedded to improve stack traces.
 
 **Options**
 ```
--o, --out-dir <dir>     Override output directory (default: build/)
---force                 Rebuild even if cache is up-to-date
---emit-debug            Include line/column maps for better stack traces
---strip-debug           Remove debug info to shrink artifacts
---ir-version <N>        Target a specific IR version (defaults to current)
---no-color              Disable colored diagnostics
--q, --quiet             Reduce logging
--v, --verbose           Extra diagnostics
+-h, --help               Show usage information
+-e, --eval <code>        Compile inline Gene code instead of reading a file
+-f, --format <mode>      Presentation: pretty (default), compact, bytecode, gir
+-o, --out-dir <dir>      Override output directory (default: build/)
+-a, --addresses          Show instruction addresses in pretty output
+--force                  Rebuild even if the cached GIR is newer
+--emit-debug             Include debug info in emitted GIR files
 ```
 
 **Examples**
@@ -72,23 +71,28 @@ gene run build/x.gir
 gene run x.gene
 ```
 
-**Smart cache (optional default behavior):**
-- If you run `gene run x.gene` and a **matching** `build/x.gir` exists that is **valid and newer** than `x.gene` and all tracked dependencies, the VM will **load the GIR** instead of recompiling.
-- Pass `--no-gir-cache` to force running from source every time.
+**Smart cache behaviour**
+- `gene run foo.gene` will look for `build/foo.gir`. If the GIR is newer than the source (and compatible), the VM loads it directly.
+- Pass `--no-gir-cache` to force recompilation from source.
 
 **Options**
 ```
---no-gir-cache          Ignore GIR cache even if valid
---trace                 Enable VM trace output
---profile               Enable VM function/instruction profiler
---args a b c            Positional args passed to the program
+-d, --debug                 Enable verbose logging
+--repl-on-error             Enter REPL if an exception escapes the program
+--trace                     Enable VM instruction tracing
+--trace-instruction         Compile, print instructions, and trace execution
+--compile                   Parse & compile only; output instructions (no exec)
+--profile                   Print per-function execution stats after run
+--profile-instructions      Print per-opcode execution counts after run
+--no-gir-cache              Ignore cached GIR artifacts
 ```
+Additional positional arguments after the file are stored in `$cmd_args`.
 
 **Examples**
 ```bash
 gene run build/x.gir
-gene run x.gene -- --flag1 value
-gene run --no-gir-cache x.gene
+gene run script.gene arg1 arg2
+gene run --no-gir-cache script.gene
 ```
 
 ---
@@ -190,14 +194,10 @@ vm.run(cu, args=@["--flag1","value"]) # execute
 A: Yes. Mark artifacts as `published` (or ship without source hashes). Imports are relinked on the target host. Include debug info if you want readable stack traces.
 
 **Q: What happens if I change macros or natives?**  
-A: If their names or ABI signatures change, the loader will refuse old `.gir` and ask for recompilation. If behavior changed but signatures didn’t, it’s treated like any other dependency change—use the dependency hash to invalidate the cache.
+A: If their names or ABI signatures change, the loader will refuse old GIR files. Behaviour-only changes require bumping the dependency hash so cached artifacts can be invalidated.
 
 **Q: Is `.gir` stable forever?**  
-A: It’s stable **per IR version**. We reserve the right to bump `ir_version` for breaking changes.
-
----
-
-## Proposed CLI spec changes (summary)
+A: It’s stable **per IR version**. When the format changes incompatibly we bump the version and the loader asks you to recompile.
 
 - **New**: `gene compile <files...>` → writes `.gir` under `build/` (default) or `--out-dir`.
 - **Updated**: `gene run` accepts both `*.gene` and `*.gir`.  

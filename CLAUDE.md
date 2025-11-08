@@ -1,157 +1,126 @@
-# CLAUDE.md - Gene Language Development Guide
+<!-- OPENSPEC:START -->
+# OpenSpec Instructions
 
-This file provides comprehensive guidance for AI assistants working with the Gene programming language codebase.
+These instructions are for AI assistants working in this project.
 
-## Project Overview
+Always open `@/openspec/AGENTS.md` when the request:
+- Mentions planning or proposals (words like proposal, spec, change, plan)
+- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
+- Sounds ambiguous and you need the authoritative spec before coding
 
-Gene is a Lisp-like programming language implemented in Nim with a bytecode VM for performance. The project consists of:
-- **Parser**: Converts Gene source code to AST (`src/gene/parser.nim`)
-- **Compiler**: Transforms AST to bytecode (`src/gene/compiler.nim`)  
-- **VM**: Stack-based virtual machine that executes bytecode (`src/gene/vm.nim`)
-- **Type System**: Rich type system with 100+ value types (`src/gene/types.nim`)
+Use `@/openspec/AGENTS.md` to learn:
+- How to create and apply change proposals
+- Spec format and conventions
+- Project structure and guidelines
 
-## Gene Language Syntax
+Keep this managed block so 'openspec update' can refresh the instructions.
 
-Gene uses S-expression syntax similar to Lisp/Clojure:
+<!-- OPENSPEC:END -->
+
+# Gene Agent Guide
+
+These notes summarise the current VM implementation so future agents can orient quickly.  
+Refer back to `CLAUDE.md` for the long-form deep dive when needed.
+
+## Codebase Snapshot
+
+- **Bytecode VM** in Nim (`src/gene/`) with stack frames, pooled scopes, and computed-goto dispatch (`src/gene/vm.nim`).
+- **Gene IR (GIR)** (`src/gene/gir.nim`) persists compiled bytecode (`*.gir`) under `build/` for reuse.
+- **Command infrastructure** (`src/gene/commands/`) exposes `run`, `eval`, `repl`, `parse`, and `compile`.
+- **Reference interpreter** remains in `gene-new/` and is the behavioral oracle during parity work.
+
+Key modules:
+- `src/gene/parser.nim` — S-expression reader with macro dispatch table.
+- `src/gene/compiler.nim` — emits instructions defined in `src/gene/types.nim`.
+- `src/gene/vm/core.nim` — native functions, class initialisation, `register_io_functions`.
+- `src/gene/vm/async.nim` — pseudo future implementation backing `async`/`await`.
+
+## Feature Status
+
+- ✅ Macros and macro-like functions (`fn!`, `$caller_eval`) with unevaluated arguments.
+- ✅ Basic classes (`class`, `new`, nested classes) and namespace plumbing.
+- ✅ Futures run synchronously; `async` wraps expressions and `await` unwraps results.
+- ✅ Scope lifetime management: `IkScopeEnd` correctly uses ref-counting to prevent premature freeing when async blocks capture scopes.
+- ⚠️ Pattern matching beyond argument binders is still experimental (`match` tests largely disabled).
+- ⚠️ Module/import system and richer class method dispatch (constructors, inheritance, keyword args) are incomplete.
+
+## Language Syntax Quick Look
 
 ```gene
 # Comments start with #
-(println "Hello")                    # Function call
-(var x 10)                           # Variable declaration
-(x = 20)                             # Variable assignment
-(fn add [a b] (+ a b))              # Function definition
-(if (> x 5) "big" "small")          # Conditional
-(while (< i 10) (i = (+ i 1)))     # Loop
-(do expr1 expr2 expr3)              # Sequence of expressions
-(try ... catch * ...)               # Exception handling (use * not variable)
-(async expr)                        # Create future
-(await future)                      # Wait for future
-[1 2 3]                             # Array literal
-{:a 1 :b 2}                         # Map literal
+(var x 10)                 # Variable declaration
+(x = (+ x 1))              # Assignment
+(fn add [a b] (+ a b))     # Function definition
+(if (> x 5) "big" "small") # Conditional
+(do expr1 expr2 expr3)     # Sequencing
+(try
+  (throw "boom")
+catch *
+  ($ex .message))          # Catch all exceptions with $ex
+(async (println "hi"))     # Futures resolve synchronously today
+{:a 1 :b [1 2 3]}          # Map literal with nested array
 ```
 
-## Architecture & Memory Model
+## VM Architecture Highlights
 
-### Stack-Based VM
-- Instructions manipulate an operand stack
-- Each frame has its own stack (256 values)
-- Frames are allocated from a pool for efficiency
+- Stack-based VM with pooled frames (256-value stack per frame) and computed-goto dispatch (`{.computedGoto.}`).
+- Scopes (`ScopeObj`) are manually managed structures allocated via `alloc0`; always initialise `members = newSeq[Value]()`.
+- Compilation pipeline: parse S-expressions → build AST (`Gene` nodes) → emit `Instruction` seq defined in `src/gene/types.nim`.
+- GIR serializer (`src/gene/gir.nim`) persists constants + instructions; cached under `build/` and reused by the CLI.
+- Async is pseudo: futures complete immediately on the calling thread. Await simply unwraps the future’s value.
 
-### Scope Management
-- **Scopes** hold local variables (`ScopeObj` with `members: seq[Value]`)
-- Scopes form a chain via `parent` pointers
-- **Critical Issue**: Scopes are freed immediately in `IkScopeEnd` which causes use-after-free bugs with async code
-- Scopes use manual memory management (`alloc0`/`dealloc`)
-- `new_scope` MUST initialize `members = newSeq[Value]()` or it will be nil
+## Instruction Cheatsheet
 
-### Async Implementation
-- Futures complete synchronously (pseudo-async)
-- `IkAsyncStart`/`IkAsyncEnd` wrap expressions in futures
-- Exception handlers with `catch_pc = -2` mark async blocks
-- Async blocks don't capture scopes - they execute immediately
+`InstructionKind` lives in `src/gene/types.nim` (see around `IkPushValue` onwards). Handy groups:
+- **Stack**: `IkPushValue`, `IkPop`, `IkDup`, `IkSwap`.
+- **Variables & Scopes**: `IkVar`, `IkVarResolve`, `IkVarAssign`, `IkScopeStart`, `IkScopeEnd`.
+- **Control Flow**: `IkJump`, `IkJumpIfFalse`, `IkReturn`, `IkLoopStart`, `IkLoopEnd`.
+- **Function/Macro**: `IkFunction`, `IkMacro`, `IkCall`, `IkCallerEval`.
+- **Async**: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`.
 
-## Critical Implementation Details
+When adding new instructions: extend the enum, teach the compiler (emit case), and handle execution in `vm.nim`.
 
-### Known Issues
+## Method Dispatch Notes
 
-1. **Scope Lifetime Bug**: When functions return async blocks that reference parameters, the scope gets freed causing crashes. The `old_scope.free()` in `IkScopeEnd` (vm.nim:419) is the culprit.
+- `IkCallMethod1` in `src/gene/vm.nim` directs dispatch:
+  - `VkInstance` uses the class method tables.
+  - `VkString` methods are provided by `App.app.string_class` (ensure new methods registered in `vm/core.nim`).
+  - `VkFuture` and other special types have dedicated class objects (`future_class`, etc.).
+- `$env` and `$cmd_args` are macro-powered helpers living in the global namespace (`gene/types.nim` initialises them).
 
-2. **Exception Handling**: Use `catch *` with `$ex` to access exception. Using `catch e` crashes on macOS.
+## CLI & Tooling
 
-3. **String Methods**: Implemented in `vm/core.nim` as native functions. Must handle in `IkCallMethodNoArgs` for VkString case.
-
-### VM Instructions
-Located in `types.nim` starting around line 600:
-- Stack: `IkPushValue`, `IkPop`, `IkDup`
-- Variables: `IkVar`, `IkVarResolve`, `IkVarUpdate`  
-- Scope: `IkScopeStart`, `IkScopeEnd`
-- Control: `IkJump`, `IkJumpIf`, `IkReturn`
-- Async: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`
-
-### Method Dispatch
-Methods are resolved in `vm.nim` `IkCallMethodNoArgs`:
-- VkInstance: Look up in class methods table
-- VkString: Use App.app.string_class methods
-- VkFuture: Use App.app.future_class methods
+- Build with `nimble build` (outputs `bin/gene`). `nimble speedy` enables release+native flags.
+- `bin/gene run <file>` caches bytecode to `build/<path>.gir` unless `--no-gir-cache`.
+- `bin/gene eval` accepts inline code or STDIN, with `--trace`, `--compile`, and formatter flags.
+- `bin/gene compile` supports multiple output formats (`pretty`, `compact`, `bytecode`, `gir`) and `--emit-debug`.
+- `bin/gene repl` starts an interactive shell; ensure `register_io_functions` runs before relying on `io/*`.
 
 ## Testing
 
-### Test Suite Structure
-```
-testsuite/
-├── basics/           # Literals, variables, basic types
-├── control_flow/     # if, while, for, do
-├── operators/        # Arithmetic, comparison
-├── arrays/           # Array operations
-├── maps/            # Map operations  
-├── strings/         # String operations
-├── functions/       # Function definitions
-├── scopes/          # Variable scoping
-├── async/           # Async/await tests
-└── run_tests.sh     # Test runner
-```
+- `nimble test` executes the curated Nim test matrix defined in `gene.nimble`.
+- Individual Nim tests can be run with `nim c -r tests/test_X.nim`.
+- `./testsuite/run_tests.sh` drives Gene source programs and expects `bin/gene` to exist.
+- When adding language features, mirror coverage in both Nim tests and Gene test programs.
 
-### Test Format
-- Tests are numbered: `001_feature.gene`, `002_feature.gene`
-- Use `# Expected: output` comments for validation
-- Tests without expected output just verify successful execution
-- Use `assert` for inline validation
+## Known Hazards
 
-### Running Tests
-```bash
-./testsuite/run_tests.sh           # Run all tests
-nim c -r tests/test_vm.nim         # Run VM unit tests
-nimble test                         # Run full test suite
-bin/gene run file.gene              # Run single file
-```
+- **Exception handling**: use `catch *`; naming the exception (`catch ex`) still panics on macOS.
+- **String methods**: `IkCallMethod1` must dispatch to `App.app.string_class` for string-specific natives.
+- **Value initialisation**: manually allocate (`alloc0`) structures; always set `members = newSeq[Value]()` for new scopes.
+- **Environment helpers**: `$env`, `$cmd_args` rely on `set_cmd_args`; ensure command modules set them before evaluating code.
 
-## Development Workflow
+## Documentation Map
 
-### Building
-```bash
-nimble build                        # Build gene executable to bin/
-nim c -d:release src/gene.nim      # Direct compilation
-```
+- `docs/architecture.md` — high-level VM and compiler overview.
+- `docs/gir.md` — GIR format and serialization details.
+- `docs/performance.md` — current fib(24) numbers (~3.8M calls/sec optimised) and optimisation backlog.
+- `docs/IMPLEMENTATION_STATUS.md` — parity tracking vs. the interpreter (update when shipping new language features).
+- `docs/implementation/*.md` — design notes for async, caller_eval, and current dev questions.
 
-### Debugging
-- Add debug output in VM with `echo` statements
-- Check instruction generation in compiler
-- Use `when DEBUG_VM:` blocks for conditional debugging
-- VM crashes often indicate scope/memory issues
+## Contribution Tips
 
-### Common Patterns
-
-**Adding a VM instruction:**
-1. Add to InstructionKind enum in types.nim
-2. Add compilation in compiler.nim
-3. Add execution case in vm.nim
-
-**Adding a native function:**
-1. Define proc in vm/core.nim or appropriate module
-2. Register in init functions
-3. Add to namespace (gene_ns, global_ns, etc.)
-
-**Adding a method to a class:**
-1. Define native function proc
-2. Use `add_method(class, "name", proc)` in init
-3. Handle in IkCallMethodNoArgs for the type
-
-## Important Files
-
-- `src/gene/types.nim`: All type definitions, Value discriminated union
-- `src/gene/vm.nim`: Main VM execution loop, instruction handlers
-- `src/gene/compiler.nim`: AST to bytecode compilation
-- `src/gene/parser.nim`: Source code parsing
-- `src/gene/vm/core.nim`: Core functions, class initialization
-- `src/gene/vm/async.nim`: Future class and async support
-- `src/gene/vm/io.nim`: I/O operations
-
-## Guidelines
-
-- Don't stop work prematurely - run tests to validate
-- Use `tmp/` directory for temporary test files
-- Keep test files in `testsuite/` organized by feature
-- Document known issues as comments in code
-- Initialize ALL fields when creating objects with alloc0
-- Be careful with manual memory management (ref counting)
-- Test async code carefully - scope lifetime is tricky
+- Align new behaviour with `gene-new/` unless intentionally diverging; port interpreter tests when possible.
+- Maintain GIR compatibility when touching instruction encoding.
+- Prefer adding new VM instructions to `InstructionKind` with corresponding compiler/VM changes together in one change.
+- Keep new docs linked from `docs/README.md` to avoid stale references.

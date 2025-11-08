@@ -16,8 +16,8 @@ when isMainModule:
   let code = fmt"""
     (fn fib n
       (if (< n 2)
-        n
-        (+ (fib (- n 1)) (fib (- n 2)))))
+        then n
+        else (+ (fib (- n 1)) (fib (- n 2)))))
     (fib {n})
   """
 
@@ -32,8 +32,15 @@ when isMainModule:
   let result = VM.exec()
   let duration = cpuTime() - start
   
-  # Convert result to int properly
-  let int_result = result.to_int()
+  let int_result =
+    case result.kind
+    of VkInt:
+      result.to_int()
+    of VkFloat:
+      result.to_float().int
+    else:
+      echo fmt"Unexpected result kind: {result.kind}; raw value: {result}"
+      0
   
   echo fmt"Result: fib({n}) = {int_result}"
   echo fmt"Time: {duration:.6f} seconds"

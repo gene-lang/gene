@@ -1,0 +1,8 @@
+# Test advanced math functions
+# Expected: 5
+# Expected: 6
+# Expected: 2.0
+
+(println (min 5 10 15))
+(println (max 2 4 6))
+(println (floor 2.9))

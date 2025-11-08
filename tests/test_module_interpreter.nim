@@ -1,6 +1,6 @@
 import unittest
 
-import gene/types
+import gene/types except Exception
 import gene/interpreter
 
 import ./helpers

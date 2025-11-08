@@ -4,16 +4,16 @@ type
   Extension2 = ref object of CustomValue
     name: string
 
-proc new_extension2*(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc new_extension2*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   let r = new_ref(VkCustom)
   r.custom_data = Extension2(
-    name: if args.gene.children.len > 0: args.gene.children[0].str else: ""
+    name: if arg_count > 0: get_positional_arg(args, 0, has_keyword_args).str else: ""
   )
   result = r.to_ref_value()
 
-proc extension2_name*(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
-  if args.gene.children.len > 0 and args.gene.children[0].kind == VkCustom:
-    let ext = cast[Extension2](args.gene.children[0].ref.custom_data)
+proc extension2_name*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if arg_count > 0 and get_positional_arg(args, 0, has_keyword_args).kind == VkCustom:
+    let ext = cast[Extension2](get_positional_arg(args, 0, has_keyword_args).ref.custom_data)
     return ext.name.to_value()
   "".to_value()
 

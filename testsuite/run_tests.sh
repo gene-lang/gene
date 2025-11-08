@@ -37,17 +37,19 @@ echo
 run_test() {
     local test_file=$1
     local test_name=$(basename "$test_file" .gene)
-    
+    local test_dir=$(dirname "$test_file")
+    local test_basename=$(basename "$test_file")
+
     TOTAL=$((TOTAL + 1))
-    
+
     # Check if test has expected output
     if grep -q "^# Expected:" "$test_file"; then
         # Extract all expected output lines (skip empty Expected: lines)
         local expected_output=$(grep "^# Expected:" "$test_file" | sed 's/^# Expected: //' | grep -v '^$' || true)
-        
+
         if [ -z "$expected_output" ]; then
             # Empty expected output - just check if it runs
-            if $GENE run "$test_file" > /dev/null 2>&1; then
+            if (cd "$test_dir" && $GENE run "$test_basename") > /dev/null 2>&1; then
                 printf "  %-40s ${GREEN}✓ PASS${NC}\n" "$test_name"
                 PASSED=$((PASSED + 1))
             else
@@ -56,7 +58,7 @@ run_test() {
             fi
         else
             # Run test and capture output
-            if actual_output=$($GENE run "$test_file" 2>&1); then
+            if actual_output=$(cd "$test_dir" && $GENE run "$test_basename" 2>&1); then
                 # Filter out empty lines from actual output for comparison
                 actual_output=$(echo "$actual_output" | grep -v '^$' || true)
                 
@@ -88,12 +90,12 @@ run_test() {
         fi
     else
         # No expected output - just check if it runs without error
-        if $GENE run "$test_file" > /dev/null 2>&1; then
+        if (cd "$test_dir" && $GENE run "$test_basename") > /dev/null 2>&1; then
             printf "  %-40s ${GREEN}✓ PASS${NC}\n" "$test_name"
             PASSED=$((PASSED + 1))
         else
             printf "  %-40s ${RED}✗ FAIL${NC}\n" "$test_name"
-            error_output=$($GENE run "$test_file" 2>&1 || true)
+            error_output=$(cd "$test_dir" && $GENE run "$test_basename" 2>&1 || true)
             echo "    Error output:"
             echo "$error_output" | head -5 | sed 's/^/      /'
             FAILED=$((FAILED + 1))
@@ -134,8 +136,14 @@ run_category "Maps" "maps"
 run_category "Strings" "strings"
 run_category "Functions" "functions"
 run_category "Scopes" "scopes"
+run_category "Callable Instances" "callable_instances"
 run_category "Async Support" "async"
 run_category "Generators" "generators"
+run_category "Stdlib Core" "stdlib/core"
+run_category "Stdlib Strings" "stdlib/strings"
+run_category "Stdlib Arrays" "stdlib/arrays"
+# run_category "Stdlib IO" "stdlib/io"
+# run_category "Stdlib Time" "stdlib/time"
 
 # Summary
 echo "================================"

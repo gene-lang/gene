@@ -15,7 +15,7 @@
 # Currently returns NOT_FOUND as yield is not fully implemented
 (var result (gen .next))
 (println "Generator next result:" result)
-(println "Is NOT_FOUND?" (if (result == not_found) "yes" "no"))
+(println "Is NOT_FOUND?" (if (result == not_found) then "yes" else "no"))
 
 # TODO: Once yield is implemented, this should return 0
 # Expected: Generator created: VkGenerator

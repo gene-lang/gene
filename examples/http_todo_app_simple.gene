@@ -1,0 +1,215 @@
+# Simplified TODO App with SQLite
+# This version works with current Gene features
+
+# Open database
+(var db (gene/sqlite/open "/tmp/todo_simple.db"))
+
+# Initialize database table
+(db .execute "CREATE TABLE IF NOT EXISTS todos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  description TEXT NOT NULL,
+  status INTEGER DEFAULT 0
+)")
+
+# Helper functions for HTML generation
+(fn html_page [title body]
+  (var result "<!DOCTYPE html><html><head><title>")
+  (result = (+ result title))
+  (result = (+ result "</title>"))
+  (result = (+ result "<style>"))
+  (result = (+ result "body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }"))
+  (result = (+ result "h1 { color: #333; }"))
+  (result = (+ result ".todo { padding: 10px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; }"))
+  (result = (+ result ".todo.done { background-color: #e8f5e9; text-decoration: line-through; }"))
+  (result = (+ result "form { margin: 20px 0; }"))
+  (result = (+ result "input[type=text] { padding: 8px; width: 300px; }"))
+  (result = (+ result "button { padding: 8px 16px; cursor: pointer; }"))
+  (result = (+ result ".actions { margin-top: 10px; }"))
+  (result = (+ result ".actions a { margin-right: 10px; color: #1976d2; text-decoration: none; }"))
+  (result = (+ result ".actions a:hover { text-decoration: underline; }"))
+  (result = (+ result "</style></head><body>"))
+  (result = (+ result body))
+  (result = (+ result "</body></html>"))
+  result
+)
+
+(fn todo_html [row]
+  # row is [id, description, status]
+  (var id (row .get 0))
+  (var description (row .get 1))
+  (var status_str (row .get 2))
+  (var status (to_i status_str))
+
+  (var class_name "todo")
+  (if (== status 1)
+    (class_name = "todo done")
+  )
+
+  (var html "<div class=\"")
+  (html = (+ html class_name))
+  (html = (+ html "\"><strong>#"))
+  (html = (+ html id))
+  (html = (+ html "</strong> "))
+  (html = (+ html description))
+  (html = (+ html "<div class=\"actions\">"))
+
+  (if (== status 0)
+    (do
+      (html = (+ html "<a href=\"/todo/complete/"))
+      (html = (+ html id))
+      (html = (+ html "\">Complete</a>"))
+    )
+    (do
+      (html = (+ html "<a href=\"/todo/reopen/"))
+      (html = (+ html id))
+      (html = (+ html "\">Reopen</a>"))
+    )
+  )
+
+  (html = (+ html "<a href=\"/todo/delete/"))
+  (html = (+ html id))
+  (html = (+ html "\">Delete</a>"))
+  (html = (+ html "</div></div>"))
+  html
+)
+
+(fn list_page [todos]
+  (var body "<h1>TODO List</h1>")
+  (body = (+ body "<form method=\"POST\" action=\"/todo/create\">"))
+  (body = (+ body "<input type=\"text\" name=\"description\" placeholder=\"Enter a new todo...\" required>"))
+  (body = (+ body "<button type=\"submit\">Add</button>"))
+  (body = (+ body "</form>"))
+  (body = (+ body "<h2>Pending</h2>"))
+
+  (var pending_count 0)
+  (for row in todos
+    (do
+      (var status_str (row .get 2))
+      (var status (to_i status_str))
+      (if (== status 0)
+        (do
+          (pending_count = (+ pending_count 1))
+          (body = (+ body (todo_html row)))
+        )
+      )
+    )
+  )
+
+  (if (== pending_count 0)
+    (body = (+ body "<p>No pending todos!</p>"))
+  )
+
+  (body = (+ body "<h2>Completed</h2>"))
+
+  (var completed_count 0)
+  (for row in todos
+    (do
+      (var status_str (row .get 2))
+      (var status (to_i status_str))
+      (if (== status 1)
+        (do
+          (completed_count = (+ completed_count 1))
+          (body = (+ body (todo_html row)))
+        )
+      )
+    )
+  )
+
+  (if (== completed_count 0)
+    (body = (+ body "<p>No completed todos!</p>"))
+  )
+
+  (html_page "TODO List" body)
+)
+
+# Route handlers
+(fn handle_list [req]
+  (var todos (db .exec "SELECT id, description, status FROM todos ORDER BY id DESC"))
+  (var html (list_page todos))
+  (respond 200 html {^Content-Type "text/html; charset=utf-8"})
+)
+
+(fn handle_create [req]
+  # Parse body to get form data
+  (var body req/body)
+  # Simple form parsing - look for description=value
+  (if (starts_with body "description=")
+    (do
+      (var description (substring body 12))
+      # URL decode - replace + with space
+      (description = (replace description "+" " "))
+
+      (var sql "INSERT INTO todos (description, status) VALUES ('")
+      (sql = (+ sql description))
+      (sql = (+ sql "', 0)"))
+      (db .execute sql)
+    )
+  )
+
+  (respond 302 "" {^Location "/"})
+)
+
+(fn handle_complete [req id]
+  (var sql "UPDATE todos SET status = 1 WHERE id = ")
+  (sql = (+ sql id))
+  (db .execute sql)
+
+  (respond 302 "" {^Location "/"})
+)
+
+(fn handle_reopen [req id]
+  (var sql "UPDATE todos SET status = 0 WHERE id = ")
+  (sql = (+ sql id))
+  (db .execute sql)
+
+  (respond 302 "" {^Location "/"})
+)
+
+(fn handle_delete [req id]
+  (var sql "DELETE FROM todos WHERE id = ")
+  (sql = (+ sql id))
+  (db .execute sql)
+
+  (respond 302 "" {^Location "/"})
+)
+
+# Main request handler
+(fn handle_request [req]
+  (var path req/path)
+  (var method req/method)
+
+  (println "Request:" method path)
+
+  (if (== path "/")
+    (handle_list req)
+    (if (and (== method "POST") (== path "/todo/create"))
+      (handle_create req)
+      (if (starts_with path "/todo/complete/")
+        (do
+          (var id (substring path 15))
+          (handle_complete req id)
+        )
+        (if (starts_with path "/todo/reopen/")
+          (do
+            (var id (substring path 13))
+            (handle_reopen req id)
+          )
+          (if (starts_with path "/todo/delete/")
+            (do
+              (var id (substring path 13))
+              (handle_delete req id)
+            )
+            (respond 404 "Not Found")
+          )
+        )
+      )
+    )
+  )
+)
+
+# Start server
+(println "Starting TODO app on http://localhost:3001")
+(println "Press Ctrl+C to stop")
+
+(start_server 3001 handle_request)
+(gene/run_forever)

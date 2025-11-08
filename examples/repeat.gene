@@ -1,0 +1,9 @@
+#!/usr/bin/env gene run
+
+(repeat 0
+  (println "Should not print!")
+)
+
+(repeat 2
+  (println "Hello World!")
+)

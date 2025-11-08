@@ -1,0 +1,8 @@
+# Test basic math functions
+# Expected: 5
+# Expected: 3.0
+# Expected: 8.0
+
+(println (abs -5))
+(println (sqrt 9))
+(println (pow 2 3))

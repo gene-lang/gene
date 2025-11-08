@@ -1,0 +1,14 @@
+# Gene array method tests
+# Expected: 2
+# Expected: 3
+# Expected: 7
+# Expected: 1
+# Expected: Array method tests done
+
+(var arr [1 2])
+(println (arr .size))
+(arr .add 7)
+(println (arr .size))
+(println (arr .get 2))
+(println (arr .get 0))
+(println "Array method tests done")

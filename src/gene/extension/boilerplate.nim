@@ -15,7 +15,9 @@ proc set_globals*(vm: ptr VirtualMachine) {.exportc, dynlib.} =
 
 # Helper to create native function value
 proc wrap_native_fn*(fn: NativeFn): Value =
-  fn
+  let r = new_ref(VkNativeFn)
+  r.native_fn = fn
+  return r.to_ref_value()
 
 # Wrappers for exception handling
 template wrap_exception*(body: untyped): untyped =

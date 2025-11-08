@@ -1,40 +1,353 @@
-import tables, strutils, strformat, algorithm
+import tables, strutils, strformat, algorithm, options
 import times, os
+import asyncdispatch  # For event loop polling in async support
 
 import ./types
-import ./parser
 import ./compiler
+from ./parser import read, read_all
 import ./vm/args
 import ./vm/module
 import ./vm/arithmetic
+import ./vm/generator
+import ./vm/thread
+import ./vm/async
 
 when not defined(noExtensions):
   import ./vm/extension
 
 const DEBUG_VM = false
 
-# Native functions for built-in properties
-proc class_name_getter(vm: VirtualMachine, args: Value): Value =
-  # The class object is passed in args as the first child
-  if args.kind == VkGene and args.gene.children.len > 0:
-    let target = args.gene.children[0]
-    if target.kind == VkClass:
-      return target.ref.class.name.to_value()
-  not_allowed("name can only be called on classes")
+# ========== Threading Support ==========
 
-proc instance_class_getter(vm: VirtualMachine, args: Value): Value =
-  # The instance object is passed in args as the first child
-  if args.kind == VkGene and args.gene.children.len > 0:
-    let target = args.gene.children[0]
-    if target.kind == VkInstance:
-      let r = new_ref(VkClass)
-      r.class = target.ref.instance_class
-      return r.to_ref_value()
-  not_allowed("class can only be called on instances")
+# Forward declarations
+proc exec*(self: VirtualMachine): Value
+proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
+proc init_stdlib*()  # From stdlib
 
-# Forward declarations from vm/core
-proc init_gene_namespace*()
-proc register_io_functions*()
+var next_message_id {.threadvar.}: int
+
+proc current_trace(self: VirtualMachine): SourceTrace =
+  if self.cu.is_nil:
+    return nil
+  if self.pc >= 0 and self.pc < self.cu.instruction_traces.len:
+    let trace = self.cu.instruction_traces[self.pc]
+    if trace.is_nil and not self.cu.trace_root.is_nil:
+      return self.cu.trace_root
+    return trace
+  if not self.cu.trace_root.is_nil:
+    return self.cu.trace_root
+  nil
+
+proc format_runtime_exception(self: VirtualMachine, value: Value): string =
+  let trace = self.current_trace()
+  let location = trace_location(trace)
+  if location.len > 0:
+    "Gene exception at " & location & ": " & $value
+  else:
+    "Gene exception: " & $value
+
+# VM initialization for worker threads
+proc init_vm_for_thread(thread_id: int) =
+  ## Initialize VM for a worker thread
+  ## Note: App is shared from main thread, only VM is thread-local
+
+  # Initialize thread-local VM (but NOT App - App is shared)
+  VM = VirtualMachine(
+    exception_handlers: @[],
+    current_exception: NIL,
+    symbols: addr SYMBOLS,
+    pending_futures: @[],
+    thread_futures: initTable[int, FutureObj](),
+    message_callbacks: @[],
+  )
+
+  # Initialize thread-local frame pool
+  if FRAMES.len == 0:
+    FRAMES = newSeqOfCap[Frame](INITIAL_FRAME_POOL_SIZE)
+    for i in 0..<INITIAL_FRAME_POOL_SIZE:
+      FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
+      FRAME_ALLOCS.inc()
+
+  # Initialize thread-local ref pool
+  if REF_POOL.len == 0:
+    REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
+    for i in 0..<INITIAL_REF_POOL_SIZE:
+      REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
+
+  # App is already initialized by main thread - we just reference it
+  # No need to call init_stdlib() since App already has all the functions
+
+  # Create thread-local namespace for thread-specific variables
+  # This avoids race conditions when multiple threads access $thread
+  let thread_ns = new_namespace("thread_local")
+
+  # Add $main_thread variable to thread-local namespace
+  let main_thread_ref = types.Thread(
+    id: 0,
+    secret: THREADS[0].secret
+  )
+  thread_ns["$main_thread".to_key()] = main_thread_ref.to_value()
+
+  # Add $thread variable to refer to current thread
+  let current_thread_ref = types.Thread(
+    id: thread_id,
+    secret: THREADS[thread_id].secret
+  )
+  thread_ns["$thread".to_key()] = current_thread_ref.to_value()
+
+  # Store thread-local namespace in VM
+  VM.thread_local_ns = thread_ns
+
+# Thread handler
+proc thread_handler(thread_id: int) {.thread.} =
+  ## Main thread execution loop
+  {.cast(gcsafe).}:
+    try:
+      # Initialize VM for this thread
+      init_vm_for_thread(thread_id)
+
+      # Message loop
+      when DEBUG_VM:
+        echo "DEBUG thread_handler: Starting message loop for thread ", thread_id
+      while true:
+        # Receive message (blocking)
+        let msg = THREAD_DATA[thread_id].channel.recv()
+
+        # Check for termination
+        if msg.msg_type == MtTerminate:
+          break
+
+        # Reset VM state from previous execution
+        reset_vm_state()
+
+        # Execute based on message type
+        case msg.msg_type:
+        of MtRun, MtRunWithReply:
+          # Compile the Gene AST locally (thread-safe, no shared refs)
+          when DEBUG_VM:
+            echo "DEBUG thread_handler: Compiling code: ", msg.code
+          let cu = compile_init(msg.code)
+
+          # Set up VM with scope tracker
+          let scope_tracker = new_scope_tracker()
+          VM.frame = new_frame()
+          VM.frame.stack_index = 0
+          VM.frame.scope = new_scope(scope_tracker)
+          VM.frame.ns = App.app.gene_ns.ref.ns  # Set namespace for symbol lookup
+          VM.cu = cu
+          VM.pc = 0
+
+          # Execute
+          let result = VM.exec()
+
+          # Send reply if requested
+          if msg.msg_type == MtRunWithReply:
+            let reply = ThreadMessage(
+              id: next_message_id,
+              msg_type: MtReply,
+              payload: result,
+              from_message_id: msg.id,
+              from_thread_id: thread_id,
+              from_thread_secret: THREADS[thread_id].secret
+            )
+            next_message_id += 1
+            THREAD_DATA[msg.from_thread_id].channel.send(reply)
+
+        of MtSend, MtSendWithReply:
+          # User message - invoke callbacks
+          let msg_value = msg.to_value()
+
+          # Invoke all registered message callbacks
+          for callback in VM.message_callbacks:
+            try:
+              case callback.kind:
+                of VkFunction:
+                  discard VM.exec_function(callback, @[msg_value])
+                of VkNativeFn:
+                  discard call_native_fn(callback.ref.native_fn, VM, @[msg_value])
+                of VkBlock:
+                  # Blocks don't take arguments, just execute
+                  discard VM.exec_function(callback, @[])
+                else:
+                  discard
+            except:
+              discard  # Ignore callback errors for now
+
+          # If message requests reply and wasn't handled, send NIL reply
+          if msg.msg_type == MtSendWithReply and not msg.handled:
+            var reply: ThreadMessage
+            new(reply)
+            reply.id = next_message_id
+            reply.msg_type = MtReply
+            reply.payload = NIL
+            reply.from_message_id = msg.id
+            reply.from_thread_id = thread_id
+            reply.from_thread_secret = THREADS[thread_id].secret
+            next_message_id += 1
+            THREAD_DATA[msg.from_thread_id].channel.send(reply)
+
+        of MtReply:
+          # Reply message - would complete futures (MVP: skip)
+          discard
+
+        of MtTerminate:
+          break  # Already checked above
+
+      # Clean up thread
+      cleanup_thread(thread_id)
+    except CatchableError as e:
+      echo "Thread ", thread_id, " crashed: ", e.msg
+
+# Spawn functions
+proc spawn_thread(code: ptr Gene, return_value: bool): Value =
+  ## Spawn a new thread to execute Gene AST
+  ## Returns thread reference or future
+  let thread_id = get_free_thread()
+
+  if thread_id == -1:
+    raise newException(ValueError, "Thread pool exhausted (max " & $MAX_THREADS & " threads)")
+
+  # Initialize thread
+  let parent_id = 0  # TODO: Track current thread ID
+  init_thread(thread_id, parent_id)
+
+  # Create thread
+  createThread(THREAD_DATA[thread_id].thread, thread_handler, thread_id)
+
+  # Create message - use new() to allocate to avoid GC issues with threading
+  var msg: ThreadMessage
+  new(msg)
+  msg.id = next_message_id
+  msg.msg_type = if return_value: MtRunWithReply else: MtRun
+  msg.payload = NIL
+  msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)
+  msg.from_thread_id = 0  # TODO: Track current thread ID
+  msg.from_thread_secret = THREADS[0].secret
+  let message_id = next_message_id
+  next_message_id += 1
+
+  # Send message to thread (send the ref directly)
+  THREAD_DATA[thread_id].channel.send(msg)
+
+  # Return value
+  if return_value:
+    # Create a future for the return value
+    let future_obj = FutureObj(
+      state: FsPending,
+      value: NIL,
+      success_callbacks: @[],
+      failure_callbacks: @[],
+      nim_future: nil
+    )
+
+    # Store future in VM's thread_futures table keyed by message ID
+    VM.thread_futures[message_id] = future_obj
+
+    # Return the future
+    let future_val = new_ref(VkFuture)
+    future_val.future = future_obj
+    return future_val.to_ref_value()
+  else:
+    # Return thread reference
+    let thread_ref = types.Thread(
+      id: thread_id,
+      secret: THREADS[thread_id].secret
+    )
+    return thread_ref.to_value()
+
+# ========== End Threading Support ==========
+
+# Template to get the class of a value for unified method calls
+template get_value_class(val: Value): Class =
+  case val.kind:
+  of VkInstance:
+    types.ref(val).instance_class
+  of VkNil:
+    if App.app.nil_class.kind == VkClass:
+      types.ref(App.app.nil_class).class
+    else:
+      nil
+  of VkBool:
+    if App.app.bool_class.kind == VkClass:
+      types.ref(App.app.bool_class).class
+    else:
+      nil
+  of VkInt:
+    if App.app.int_class.kind == VkClass:
+      types.ref(App.app.int_class).class
+    else:
+      nil
+  of VkFloat:
+    if App.app.float_class.kind == VkClass:
+      types.ref(App.app.float_class).class
+    else:
+      nil
+  of VkChar:
+    if App.app.char_class.kind == VkClass:
+      types.ref(App.app.char_class).class
+    else:
+      nil
+  of VkString:
+    types.ref(App.app.string_class).class
+  of VkSymbol:
+    if App.app.symbol_class.kind == VkClass:
+      types.ref(App.app.symbol_class).class
+    else:
+      nil
+  of VkComplexSymbol:
+    if App.app.complex_symbol_class.kind == VkClass:
+      types.ref(App.app.complex_symbol_class).class
+    else:
+      nil
+  of VkArray:
+    types.ref(App.app.array_class).class
+  of VkMap:
+    types.ref(App.app.map_class).class
+  of VkGene:
+    if App.app.gene_class.kind == VkClass:
+      types.ref(App.app.gene_class).class
+    else:
+      nil
+  of VkDate:
+    if App.app.date_class.kind == VkClass:
+      types.ref(App.app.date_class).class
+    else:
+      nil
+  of VkDateTime:
+    if App.app.datetime_class.kind == VkClass:
+      types.ref(App.app.datetime_class).class
+    else:
+      nil
+  of VkSet:
+    if App.app.set_class.kind == VkClass:
+      types.ref(App.app.set_class).class
+    else:
+      nil
+  of VkSelector:
+    if App.app.selector_class.kind == VkClass:
+      types.ref(App.app.selector_class).class
+    else:
+      nil
+  of VkFuture:
+    if App.app.future_class.kind == VkClass:
+      types.ref(App.app.future_class).class
+    else:
+      nil
+  of VkGenerator:
+    if App.app.generator_class.kind == VkClass:
+      types.ref(App.app.generator_class).class
+    else:
+      nil
+  of VkClass:
+    if App.app.class_class.kind == VkClass:
+      types.ref(App.app.class_class).class
+    else:
+      nil
+  else:
+    if App.app.object_class.kind == VkClass:
+      types.ref(App.app.object_class).class
+    else:
+      nil
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:
@@ -167,8 +480,182 @@ proc print_instruction_profile*(self: VirtualMachine) =
   echo fmt"Total time: {total_time * 1000.0:.3f} ms"
   echo "Instructions profiled: ", stats.len
 
-# Forward declaration
-proc exec*(self: VirtualMachine): Value
+#################### Unified Callable System ####################
+
+proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: bool, base: uint16, count: int] {.inline.} =
+  ## Retrieve call base metadata if present, otherwise fall back to expected count.
+  if vm.frame.call_bases.is_empty():
+    result.hasBase = false
+    result.base = 0
+    result.count = expected
+  else:
+    result.hasBase = true
+    result.base = vm.frame.pop_call_base()
+    result.count = vm.frame.call_arg_count_from(result.base)
+    when not defined(release):
+      if expected >= 0 and result.count != expected:
+        discard
+
+proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
+                           args: seq[Value], self_value: Value = NIL,
+                           is_tail_call: bool = false): Value =
+  ## Unified call dispatcher that handles all callable types through a single interface
+  let flags = callable.flags
+
+  # Argument evaluation optimization
+  let processed_args =
+    if CfEvaluateArgs in flags:
+      # For now, use standard evaluation - can optimize later
+      args
+    else:
+      args  # No evaluation for macros
+
+  # Add self parameter for methods
+  let final_args =
+    if CfIsMethod in flags:
+      if self_value == NIL:
+        not_allowed("Method call requires a receiver")
+      @[self_value] & processed_args
+    else:
+      processed_args
+
+  # Dispatch based on callable kind with optimized paths
+  case callable.kind:
+  of CkNativeFunction, CkNativeMethod:
+    # Use new native function signature with helper
+    return call_native_fn(callable.native_fn, vm, final_args)
+
+  of CkFunction, CkMethod:
+    # Handle Gene functions and methods
+    let f = callable.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    # Tail call optimization: reuse current frame if this is a tail call
+    if is_tail_call and vm.frame.kind == FkFunction:
+      # Reuse current frame for tail call optimization
+      var scope: Scope
+      if f.matcher.is_empty():
+        scope = f.parent_scope
+        if scope != nil:
+          scope.ref_count.inc()
+      else:
+        scope = new_scope(f.scope_tracker, f.parent_scope)
+
+      # Update current frame for tail call
+      vm.frame.scope = scope
+      vm.frame.ns = f.ns
+
+      # OPTIMIZATION: Direct argument processing for tail calls
+      if not f.matcher.is_empty():
+        if final_args.len == 0:
+          process_args_zero(f.matcher, vm.frame.scope)
+        elif final_args.len == 1:
+          process_args_one(f.matcher, final_args[0], vm.frame.scope)
+        else:
+          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, vm.frame.scope)
+      # No need to set vm.frame.args for optimized tail calls
+
+      # Jump to beginning of new function
+      vm.cu = f.body_compiled
+      vm.pc = 0
+      return vm.exec()
+    else:
+      # Create new frame for function execution
+      var scope: Scope
+      if f.matcher.is_empty():
+        scope = f.parent_scope
+        if scope != nil:
+          scope.ref_count.inc()
+      else:
+        scope = new_scope(f.scope_tracker, f.parent_scope)
+
+      var new_frame = new_frame()
+      new_frame.kind = FkFunction
+      let r = new_ref(VkFunction)
+      r.fn = callable.fn
+      new_frame.target = r.to_ref_value()
+      new_frame.scope = scope
+      new_frame.caller_frame = vm.frame
+      new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
+      new_frame.ns = f.ns
+
+      # OPTIMIZATION: Direct argument processing without Gene objects
+      if not f.matcher.is_empty():
+        if final_args.len == 0:
+          process_args_zero(f.matcher, new_frame.scope)
+        elif final_args.len == 1:
+          process_args_one(f.matcher, final_args[0], new_frame.scope)
+        else:
+          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, new_frame.scope)
+      # No need to set new_frame.args for optimized argument processing
+
+      # Switch to new frame and execute
+      vm.frame = new_frame
+      vm.cu = f.body_compiled
+      vm.pc = 0
+      return vm.exec()
+
+  of CkBlock:
+    # Handle blocks - similar to functions but with captured scope
+    let blk = callable.block_fn
+    if blk.body_compiled == nil:
+      blk.compile()
+
+    var scope: Scope
+    if blk.matcher.is_empty():
+      scope = blk.frame.scope  # Use captured scope
+    else:
+      scope = new_scope(blk.scope_tracker, blk.frame.scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkBlock
+    let r3 = new_ref(VkBlock)
+    r3.block = callable.block_fn
+    new_frame.target = r3.to_ref_value()
+    new_frame.scope = scope
+    new_frame.caller_frame = vm.frame
+    new_frame.caller_address = Address(cu: vm.cu, pc: vm.pc + 1)
+    new_frame.ns = blk.ns
+
+    # Create args Gene for argument processing
+    var args_gene = new_gene_value()
+    for arg in final_args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    # Process arguments if matcher exists
+    if not blk.matcher.is_empty():
+      process_args(blk.matcher, args_gene, new_frame.scope)
+
+    # Switch to new frame and execute
+    vm.frame = new_frame
+    vm.cu = blk.body_compiled
+    vm.pc = 0
+    return vm.exec()
+
+proc value_to_callable*(value: Value): Callable =
+  ## Convert a Value to a Callable for unified dispatch
+  case value.kind:
+  of VkFunction:
+    return value.ref.fn.to_callable()
+  of VkNativeFn:
+    return to_callable(value.ref.native_fn)
+  of VkBlock:
+    return value.ref.block.to_callable()
+  of VkBoundMethod:
+    # Convert bound method to appropriate callable
+    let bm = value.ref.bound_method
+    let method_callable = value_to_callable(bm.`method`.callable)
+    # Modify flags to indicate it's a method
+    method_callable.flags.incl(CfIsMethod)
+    method_callable.flags.incl(CfNeedsSelf)
+    return method_callable
+  of VkNativeMethod:
+    # Handle native methods
+    return to_callable(value.ref.native_method, "", 0)
+  else:
+    not_allowed("Cannot convert " & $value.kind & " to Callable")
 
 proc render_template(self: VirtualMachine, tpl: Value): Value =
   # Render a template by recursively processing quote/unquote values
@@ -261,13 +748,7 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
       # Render children
       for child in gene.children:
         let rendered = self.render_template(child)
-        if rendered.kind == VkExplode:
-          # Handle %_ spread operator
-          if rendered.ref.explode_value.kind == VkArray:
-            for item in rendered.ref.explode_value.ref.arr:
-              new_gene.children.add(item)
-        else:
-          new_gene.children.add(rendered)
+        new_gene.children.add(rendered)
       
       return new_gene.to_gene_value()
     
@@ -279,11 +760,6 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
         # Skip NIL values that come from %_ (unquote discard)
         if rendered.kind == VkNil and item.kind == VkUnquote and item.ref.unquote_discard:
           continue
-        elif rendered.kind == VkExplode:
-          # Handle spread in arrays
-          if rendered.ref.explode_value.kind == VkArray:
-            for sub_item in rendered.ref.explode_value.ref.arr:
-              new_arr.arr.add(sub_item)
         else:
           new_arr.arr.add(rendered)
       return new_arr.to_ref_value()
@@ -299,10 +775,157 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
       # Other values pass through unchanged
       return tpl
 
+proc call_instance_method(self: VirtualMachine, instance: Value, method_name: string, args: openArray[Value]): bool =
+  ## Helper to forward instance calls to 'call' method
+  ## Returns true if method was found and call was initiated (via continue), false otherwise
+  ## When returns true, the VM state has been set up for the call and caller should continue execution
+  let call_method_key = method_name.to_key()
+  let class = instance.ref.instance_class
+
+  if not class.methods.hasKey(call_method_key):
+    return false
+
+  let meth = class.methods[call_method_key]
+  case meth.callable.kind:
+  of VkFunction:
+    let f = meth.callable.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      # Manually set self and args in scope
+      var all_args = newSeq[Value](args.len + 1)
+      all_args[0] = instance
+      for i in 0..<args.len:
+        all_args[i + 1] = args[i]
+
+      # Process arguments using the direct method
+      if all_args.len > 0:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = meth.callable
+    new_frame.scope = scope
+    new_frame.current_method = meth
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: -3,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    # Call native 'call' method with instance as first argument
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = instance
+    for i in 0..<args.len:
+      all_args[i + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("call method must be a function or native function")
+    return false
+
+proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
+  ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
+  let value_class = get_value_class(value)
+  if value_class == nil:
+    when not defined(release):
+      if self.trace:
+        echo "call_value_method: no class for ", value.kind, " method ", method_name
+    return false
+
+  let meth = value_class.get_method(method_name)
+  if meth == nil:
+    when not defined(release):
+      if self.trace:
+        echo "call_value_method: method ", method_name, " missing on ", value.kind
+    return false
+  case meth.callable.kind:
+  of VkFunction:
+    let f = meth.callable.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      # Build argument list including self and positional args
+      var all_args = newSeq[Value](args.len + 1)
+      all_args[0] = value
+      for i in 0..<args.len:
+        all_args[i + 1] = args[i]
+
+      if all_args.len > 0:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = meth.callable
+    new_frame.scope = scope
+    new_frame.current_method = meth
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: -3,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = value
+    for i in 0..<args.len:
+      all_args[i + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("Method must be a function or native function")
+    return false
+
 proc exec*(self: VirtualMachine): Value =
-  # Initialize gene namespace if not already done
-  init_gene_namespace()
-  
   # Reset self.pc for new execution (unless we're resuming a generator)
   # Generators set their PC before calling exec and need to preserve it
   if self.frame == nil or not self.frame.is_generator:
@@ -319,6 +942,82 @@ proc exec*(self: VirtualMachine): Value =
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
+    # Event loop polling for async support
+    # Poll every 100 instructions to allow async I/O to progress
+    self.event_loop_counter.inc()
+    if self.event_loop_counter >= 100:
+      self.event_loop_counter = 0
+      try:
+        poll(0)  # Non-blocking poll - check for completed async operations
+
+        # Check for thread replies (non-blocking)
+        # Only check if we're the main thread (thread 0)
+        if THREADS[0].in_use:
+          while true:
+            let msg_opt = THREAD_DATA[0].channel.try_recv()
+            if msg_opt.isNone():
+              break
+
+            let msg = msg_opt.get()
+            if msg.msg_type == MtReply:
+              # Complete the future with the reply payload
+              if self.thread_futures.hasKey(msg.from_message_id):
+                let future_obj = self.thread_futures[msg.from_message_id]
+                future_obj.state = FsSuccess
+                future_obj.value = msg.payload
+                self.thread_futures.del(msg.from_message_id)
+
+        # Update all pending futures from their Nim futures
+        var i = 0
+        while i < self.pending_futures.len:
+          let future_obj = self.pending_futures[i]
+          let old_state = future_obj.state
+          update_future_from_nim(self, future_obj)
+
+          # If future just completed, execute callbacks
+          if old_state == FsPending and future_obj.state != FsPending:
+            if future_obj.state == FsSuccess:
+              # Execute success callbacks
+              for callback in future_obj.success_callbacks:
+                try:
+                  case callback.kind:
+                    of VkFunction:
+                      discard self.exec_function(callback, @[future_obj.value])
+                    of VkNativeFn:
+                      var args_arr = [future_obj.value]
+                      discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                    of VkBlock:
+                      # Blocks don't take arguments, just execute
+                      discard self.exec_function(callback, @[])
+                    else:
+                      discard
+                except:
+                  discard  # Ignore callback errors for now
+            elif future_obj.state == FsFailure:
+              # Execute failure callbacks
+              for callback in future_obj.failure_callbacks:
+                try:
+                  case callback.kind:
+                    of VkFunction:
+                      discard self.exec_function(callback, @[future_obj.value])
+                    of VkNativeFn:
+                      var args_arr = [future_obj.value]
+                      discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                    of VkBlock:
+                      discard self.exec_function(callback, @[])
+                    else:
+                      discard
+                except:
+                  discard  # Ignore callback errors for now
+
+          # If future completed, remove from pending list
+          if future_obj.state != FsPending:
+            self.pending_futures.delete(i)
+          else:
+            i.inc()
+      except ValueError:
+        discard  # No async operations pending, this is normal
+
     when not defined(release):
       if self.trace:
         if inst.kind == IkStart: # This is part of INDENT_LOGIC
@@ -365,6 +1064,62 @@ proc exec*(self: VirtualMachine): Value =
         # TODO: validate that there is only one value on the stack
         let v = self.frame.current()
         if self.frame.caller_frame == nil:
+          # Before returning, if there are pending futures, poll with timeout to let them complete
+          var max_iterations = 1000  # Prevent infinite loop
+          var iteration = 0
+          while self.pending_futures.len > 0 and iteration < max_iterations:
+            iteration.inc()
+            try:
+              # Try to drain the async event queue
+              while hasPendingOperations():
+                poll(0)  # Process any ready operations
+
+              # Then wait a bit for timers
+              sleep(10)  # Sleep 10ms to let timers fire
+
+              # Update all pending futures
+              var i = 0
+              while i < self.pending_futures.len:
+                let future_obj = self.pending_futures[i]
+                let old_state = future_obj.state
+                update_future_from_nim(self, future_obj)
+
+
+                # If future just completed, execute callbacks
+                if old_state == FsPending and future_obj.state != FsPending:
+                  if future_obj.state == FsSuccess:
+                    # Execute success callbacks
+                    for callback in future_obj.success_callbacks:
+                      case callback.kind:
+                        of VkFunction, VkBlock:
+                          discard self.exec_function(callback, @[future_obj.value])
+                        of VkNativeFn:
+                          var args_arr = [future_obj.value]
+                          discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                        else:
+                          discard
+                  elif future_obj.state == FsFailure:
+                    # Execute failure callbacks
+                    for callback in future_obj.failure_callbacks:
+                      case callback.kind:
+                        of VkFunction, VkBlock:
+                          discard self.exec_function(callback, @[future_obj.value])
+                        of VkNativeFn:
+                          var args_arr = [future_obj.value]
+                          discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                        else:
+                          discard
+
+                # If future completed, remove from pending list
+                if future_obj.state != FsPending:
+                  self.pending_futures.delete(i)
+                else:
+                  i.inc()
+            except ValueError:
+              # No async operations pending, but we still have futures
+              # This shouldn't happen, but if it does, break to avoid infinite loop
+              break
+
           return v
         else:
           if self.cu.kind == CkCompileFn:
@@ -390,16 +1145,6 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             self.frame.update(self.frame.caller_frame)
             self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
-            continue
-          elif self.cu.kind == CkMacro:
-            # Return to caller who will handle macro expansion
-            self.cu = self.frame.caller_address.cu
-            self.pc = self.frame.caller_address.pc
-            inst = self.cu.instructions[self.pc].addr
-            self.frame.update(self.frame.caller_frame)
-            self.frame.ref_count.dec()
-            # Push the macro result for the caller to process
-            self.frame.push(v)
             continue
 
           let skip_return = self.cu.skip_return
@@ -451,16 +1196,11 @@ proc exec*(self: VirtualMachine): Value =
       of IkScopeEnd:
         var old_scope = self.frame.scope
         self.frame.scope = self.frame.scope.parent
-        # Check ref_count before freeing
-        # Only free if ref_count will drop to 0
-        # The initial ref_count is 1 from new_scope(), so we only free if it's exactly 1
-        if old_scope.ref_count == 1:
-          # Freeing scope with ref_count=1
-          old_scope.free()
-        else:
-          # Just decrement the ref_count since something else is holding a reference
-          old_scope.ref_count.dec()
-          # Scope not freed, still referenced
+        # Decrement ref_count and free if no more references
+        # This prevents use-after-free bugs with async code that may hold scope references
+        # Note: free() will decrement ref_count internally, so we just call it directly
+        old_scope.free()
+        # Scope will only be deallocated if ref_count reaches 0 inside free()
 
       of IkVar:
         {.push checks: off.}
@@ -555,89 +1295,65 @@ proc exec*(self: VirtualMachine): Value =
         # let value = self.frame.current()
         # Find the namespace where the member is defined and assign it there
 
-      of IkCallDirect:
+      of IkRepeatInit:
         {.push checks: off}
-        # Fast direct function call - function is in arg0, args already on stack
-        let target = inst.arg0
-        if target.kind != VkFunction:
-          not_allowed("IkCallDirect requires a function, got " & $target.kind)
-        
-        let f = target.ref.fn
-        
-        # Check if this is a generator function
-        if f.is_generator:
-          # Collect and discard arguments for now (generators will handle them on first .next)
-          let arg_count = inst.arg1.int64.int
-          var args_gene = new_gene(NIL)
-          for i in 0..<arg_count:
-            args_gene.children.insert(self.frame.pop(), 0)
-          
-          # Create generator instance
-          var gen = new_ref(VkGenerator)
-          var genObj: GeneratorObj
-          new(genObj)
-          genObj.function = f
-          genObj.state = GsPending
-          genObj.frame = nil
-          genObj.cu = nil
-          genObj.pc = 0
-          genObj.scope = nil
-          genObj.stack = args_gene.children  # Save args for when generator starts
-          genObj.done = false
-          genObj.has_peeked = false
-          genObj.peeked_value = NIL
-          gen.generator = genObj
-          self.frame.push(gen.to_ref_value())
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
-        
-        # Normal function call
-        if f.body_compiled == nil:
-          f.compile()
-        
-        # Collect arguments from stack (they were pushed in reverse order)
-        let arg_count = inst.arg1.int64.int
-        var args_gene = new_gene(NIL)
-        for i in 0..<arg_count:
-          args_gene.children.insert(self.frame.pop(), 0)
-        
-        # Create new frame
-        var scope: Scope
-        if f.matcher.is_empty():
-          scope = f.parent_scope
-          # Increment ref_count since the frame will own this reference
-          if scope != nil:
-            scope.ref_count.inc()
+        var count_val = self.frame.pop()
+        var remaining: int64
+        case count_val.kind:
+        of VkInt:
+          remaining = count_val.int64
+        of VkFloat:
+          remaining = count_val.float.int64
         else:
-          scope = new_scope(f.scope_tracker, f.parent_scope)
-        
-        var new_frame = new_frame()
-        new_frame.kind = FkFunction
-        new_frame.target = target
-        new_frame.scope = scope
-        new_frame.args = args_gene.to_gene_value()
-        new_frame.caller_frame = self.frame
-        self.frame.ref_count.inc()
-        new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-        new_frame.ns = f.ns
-        
-        # Process arguments if needed
-        if not f.matcher.is_empty():
-          process_args(f.matcher, new_frame.args, new_frame.scope)
-        
-        # Profile function entry
-        if self.profiling:
-          let func_name = if f.name != "": f.name else: "<anonymous>"
-          self.enter_function(func_name)
-        
-        # Switch to new frame and CU
-        self.frame = new_frame
-        self.cu = f.body_compiled
-        self.pc = 0
-        inst = self.cu.instructions[self.pc].addr
-        continue
-        {.pop}
+          if count_val.to_bool:
+            remaining = 1
+          else:
+            remaining = 0
+        when not defined(release):
+          if self.trace:
+            echo "IkRepeatInit remaining=", remaining
+        if remaining <= 0:
+          self.pc = inst.arg0.int64.int
+          if self.pc < self.cu.instructions.len:
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            break
+        else:
+          self.frame.push(remaining.to_value())
+        {.pop.}
+
+      of IkRepeatDecCheck:
+        {.push checks: off}
+        var remaining_val = self.frame.pop()
+        var remaining: int64
+        case remaining_val.kind:
+        of VkInt:
+          remaining = remaining_val.int64
+        of VkFloat:
+          remaining = remaining_val.float.int64
+        else:
+          if remaining_val.to_bool:
+            remaining = 1
+          else:
+            remaining = 0
+        remaining.dec()
+        when not defined(release):
+          if self.trace:
+            echo "IkRepeatDecCheck remaining=", remaining
+        if remaining > 0:
+          self.frame.push(remaining.to_value())
+          self.pc = inst.arg0.int64.int
+          if self.pc < self.cu.instructions.len:
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            break
+        {.pop.}
+
+
+
+
 
       of IkTailCall:
         {.push checks: off}
@@ -786,20 +1502,27 @@ proc exec*(self: VirtualMachine): Value =
               var value = self.frame.ns[name]
               var found_ns = self.frame.ns
               if value == NIL:
-                # Try global namespace
-                value = App.app.global_ns.ref.ns[name]
-                if value != NIL:
-                  found_ns = App.app.global_ns.ref.ns
-                else:
-                  # Try gene namespace
-                  value = App.app.gene_ns.ref.ns[name]
+                # Try thread-local namespace first (for $thread, $main_thread, etc.)
+                if self.thread_local_ns != nil:
+                  value = self.thread_local_ns[name]
                   if value != NIL:
-                    found_ns = App.app.gene_ns.ref.ns
+                    found_ns = self.thread_local_ns
+
+                if value == NIL:
+                  # Try global namespace
+                  value = App.app.global_ns.ref.ns[name]
+                  if value != NIL:
+                    found_ns = App.app.global_ns.ref.ns
                   else:
-                    # Try genex namespace
-                    value = App.app.genex_ns.ref.ns[name]
+                    # Try gene namespace
+                    value = App.app.gene_ns.ref.ns[name]
                     if value != NIL:
-                      found_ns = App.app.genex_ns.ref.ns
+                      found_ns = App.app.gene_ns.ref.ns
+                    else:
+                      # Try genex namespace
+                      value = App.app.genex_ns.ref.ns[name]
+                      if value != NIL:
+                        found_ns = App.app.genex_ns.ref.ns
               
               # Initialize cache if we found the value
               if value != NIL:
@@ -810,7 +1533,7 @@ proc exec*(self: VirtualMachine): Value =
               self.frame.push(value)
 
       of IkSelf:
-        # Get self from first argument  
+        # Get self from first argument
         if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
           self.frame.push(self.frame.args.gene.children[0])
         else:
@@ -988,7 +1711,12 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(value.ref.ns[name])
           of VkClass:
-            self.frame.push(value.ref.class.ns[name])
+            # Check members first (static methods), then ns (namespace members)
+            let member = value.ref.class.get_member(name)
+            if member != NIL:
+              self.frame.push(member)
+            else:
+              self.frame.push(value.ref.class.ns[name])
           of VkEnum:
             # Access enum member
             let member_name = $name
@@ -1328,27 +2056,36 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(length.to_value())
 
       of IkArrayStart:
-        self.frame.push(new_array_value())
-      of IkArrayAddChild:
-        var child: Value
-        self.frame.pop2(child)
-        case child.kind:
-          of VkExplode:
-            # Expand the exploded array into individual elements
-            case child.ref.explode_value.kind:
-              of VkArray:
-                for item in child.ref.explode_value.ref.arr:
-                  self.frame.current().ref.arr.add(item)
-              else:
-                not_allowed("Can only explode arrays")
+        # Mark current stack position as array base
+        self.frame.call_bases.push(self.frame.stack_index)
+
+      of IkArrayAddSpread:
+        # Spread operator - pop array and push all its elements onto stack
+        let value = self.frame.pop()
+        case value.kind:
+          of VkArray:
+            # Push each element onto stack
+            for item in value.ref.arr:
+              self.frame.push(item)
           else:
-            self.frame.current().ref.arr.add(child)
+            not_allowed("... can only spread arrays in array context, got " & $value.kind)
+
       of IkArrayEnd:
-        when not defined(release):
-          if self.trace:
-            echo fmt"IkArrayEnd: array on stack = {self.frame.current()}"
-            # Let's also check what happens next
-        discard
+        # Collect all elements from call base into array
+        let base = self.frame.pop_call_base()
+        let count = int(self.frame.stack_index) - int(base)
+
+        # Create array with exact capacity
+        let arr = new_array_value()
+        if count > 0:
+          arr.ref.arr.setLen(count)
+          # Copy elements from stack
+          for i in 0..<count:
+            arr.ref.arr[i] = self.frame.stack[base + uint16(i)]
+
+        # Pop all elements and push array
+        self.frame.stack_index = base
+        self.frame.push(arr)
 
       of IkMapStart:
         self.frame.push(new_map_value())
@@ -1357,6 +2094,19 @@ proc exec*(self: VirtualMachine): Value =
         var value: Value
         self.frame.pop2(value)
         self.frame.current().ref.map[key] = value
+      of IkMapSetPropValue:
+        # Set property with literal value
+        let key = inst.arg0.Key
+        self.frame.current().ref.map[key] = inst.arg1
+      of IkMapSpread:
+        # Spread map key-value pairs into current map
+        let value = self.frame.pop()
+        case value.kind:
+          of VkMap:
+            for k, v in value.ref.map:
+              self.frame.current().ref.map[k] = v
+          else:
+            not_allowed("... can only spread maps in map context, got " & $value.kind)
       of IkMapEnd:
         discard
 
@@ -1368,12 +2118,8 @@ proc exec*(self: VirtualMachine): Value =
         let gene_type = self.frame.current()
         case gene_type.kind:
           of VkFunction:
-            # if inst.arg1 == 2:
-            #   not_allowed("Macro not allowed here")
-            # inst.arg1 = 1
-
             let f = gene_type.ref.fn
-            
+
             # Check if this is a generator function
             if f.is_generator:
               # Don't create generator here, just continue to collect arguments
@@ -1383,53 +2129,55 @@ proc exec*(self: VirtualMachine): Value =
               self.pc.inc()
               inst = self.cu.instructions[self.pc].addr
               continue
-            
-            # Normal function call
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              # Increment ref_count since the frame will own this reference
-              if scope != nil:
-                scope.ref_count.inc()
+
+            # Check if this is a macro-like function
+            if f.is_macro_like:
+              # Macro-like function: use quoted arguments branch
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                # Increment ref_count since the frame will own this reference
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var r = new_ref(VkFrame)
+              r.frame = new_frame()
+              r.frame.kind = FkMacro
+              r.frame.target = gene_type
+              r.frame.scope = scope
+
+              # Pass caller's context as implicit argument (for $caller_eval)
+              r.frame.caller_context = self.frame
+
+              self.frame.replace(r.to_ref_value())
+              # Continue to next instruction (macro branch with quoted args)
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
+              # Normal function call: use evaluated arguments branch
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                # Increment ref_count since the frame will own this reference
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            var r = new_ref(VkFrame)
-            r.frame = new_frame()
-            r.frame.kind = FkFunction
-            r.frame.target = gene_type
-            r.frame.scope = scope
-            self.frame.replace(r.to_ref_value())
-            self.pc = inst.arg0.int64.int
-            inst = self.cu.instructions[self.pc].addr
-            continue
-
-          of VkMacro:
-            # if inst.arg1 == 1:
-            #   not_allowed("Macro expected here")
-            # inst.arg1 = 2
-
-            var scope: Scope
-            let m = gene_type.ref.macro
-            if m.matcher.is_empty():
-              scope = m.parent_scope
-            else:
-              scope = new_scope(m.scope_tracker, m.parent_scope)
-
-            var r = new_ref(VkFrame)
-            r.frame = new_frame()
-            r.frame.kind = FkMacro
-            r.frame.target = gene_type
-            r.frame.scope = scope
-            
-            # Pass caller's context as implicit argument (design decision D)
-            # Store a reference to the current frame for $caller_eval
-            r.frame.caller_context = self.frame
-            
-            self.frame.replace(r.to_ref_value())
-            self.pc.inc()
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              var r = new_ref(VkFrame)
+              r.frame = new_frame()
+              r.frame.kind = FkFunction
+              r.frame.target = gene_type
+              r.frame.scope = scope
+              self.frame.replace(r.to_ref_value())
+              # Jump to function branch (evaluated arguments)
+              # inst.arg0 contains fn_label which is the start of function branch
+              self.pc = inst.arg0.int64.int
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
           of VkBlock:
             # if inst.arg1 == 2:
@@ -1615,7 +2363,6 @@ proc exec*(self: VirtualMachine): Value =
             g.gene.type = gene_type
             self.frame.push(g)
 
-        {.pop.}
 
       of IkGeneSetType:
         {.push checks: off}
@@ -1663,41 +2410,11 @@ proc exec*(self: VirtualMachine): Value =
             # For function calls, we need to set up the args gene with children
             if v.ref.frame.args.kind != VkGene:
               v.ref.frame.args = new_gene_value()
-            case child.kind:
-              of VkExplode:
-                # Expand the exploded array into individual elements
-                case child.ref.explode_value.kind:
-                  of VkArray:
-                    for item in child.ref.explode_value.ref.arr:
-                      v.ref.frame.args.gene.children.add(item)
-                  else:
-                    not_allowed("Can only explode arrays")
-              else:
-                v.ref.frame.args.gene.children.add(child)
+            v.ref.frame.args.gene.children.add(child)
           of VkNativeFrame:
-            case child.kind:
-              of VkExplode:
-                # Expand the exploded array into individual elements
-                case child.ref.explode_value.kind:
-                  of VkArray:
-                    for item in child.ref.explode_value.ref.arr:
-                      v.ref.native_frame.args.gene.children.add(item)
-                  else:
-                    not_allowed("Can only explode arrays")
-              else:
-                v.ref.native_frame.args.gene.children.add(child)
+            v.ref.native_frame.args.gene.children.add(child)
           of VkGene:
-            case child.kind:
-              of VkExplode:
-                # Expand the exploded array into individual elements
-                case child.ref.explode_value.kind:
-                  of VkArray:
-                    for item in child.ref.explode_value.ref.arr:
-                      v.gene.children.add(item)
-                  else:
-                    not_allowed("Can only explode arrays")
-              else:
-                v.gene.children.add(child)
+            v.gene.children.add(child)
           of VkNil:
             # Skip adding to nil - this might happen in conditional contexts
             discard
@@ -1709,6 +2426,113 @@ proc exec*(self: VirtualMachine): Value =
             # For other value types, we can't add children directly
             # This might be an error in the compilation or a special case
             todo("GeneAddChild: " & $v.kind)
+        {.pop.}
+
+      of IkGeneAdd:
+        # Same as IkGeneAddChild - add single child
+        {.push checks: off}
+        var child: Value
+        self.frame.pop2(child)
+        let v = self.frame.current()
+        case v.kind:
+          of VkFrame:
+            if v.ref.frame.args.kind != VkGene:
+              v.ref.frame.args = new_gene_value()
+            v.ref.frame.args.gene.children.add(child)
+          of VkNativeFrame:
+            v.ref.native_frame.args.gene.children.add(child)
+          of VkGene:
+            v.gene.children.add(child)
+          of VkNil:
+            discard
+          of VkBoundMethod:
+            discard
+          else:
+            todo("GeneAdd: " & $v.kind)
+        {.pop.}
+
+      of IkGeneAddSpread:
+        # Spread array into gene children
+        {.push checks: off}
+        let value = self.frame.pop()
+        let v = self.frame.current()
+        case value.kind:
+          of VkArray:
+            case v.kind:
+              of VkFrame:
+                if v.ref.frame.args.kind != VkGene:
+                  v.ref.frame.args = new_gene_value()
+                for item in value.ref.arr:
+                  v.ref.frame.args.gene.children.add(item)
+              of VkNativeFrame:
+                for item in value.ref.arr:
+                  v.ref.native_frame.args.gene.children.add(item)
+              of VkGene:
+                for item in value.ref.arr:
+                  v.gene.children.add(item)
+              else:
+                not_allowed("... can only spread arrays into gene children, got " & $v.kind)
+          else:
+            not_allowed("... can only spread arrays in gene children context, got " & $value.kind)
+        {.pop.}
+
+      of IkGeneAddChildValue:
+        # Add a literal value as gene child
+        {.push checks: off}
+        let v = self.frame.current()
+        case v.kind:
+          of VkFrame:
+            if v.ref.frame.args.kind != VkGene:
+              v.ref.frame.args = new_gene_value()
+            v.ref.frame.args.gene.children.add(inst.arg0)
+          of VkNativeFrame:
+            v.ref.native_frame.args.gene.children.add(inst.arg0)
+          of VkGene:
+            v.gene.children.add(inst.arg0)
+          else:
+            todo("GeneAddChildValue: " & $v.kind)
+        {.pop.}
+
+      of IkGeneSetPropValue:
+        # Set property with literal value
+        {.push checks: off}
+        let key = inst.arg0.Key
+        let current = self.frame.current()
+        case current.kind:
+          of VkGene:
+            current.gene.props[key] = inst.arg1
+          of VkFrame:
+            if current.ref.frame.args.kind != VkGene:
+              current.ref.frame.args = new_gene_value()
+            current.ref.frame.args.gene.props[key] = inst.arg1
+          of VkNativeFrame:
+            discard
+          else:
+            todo("GeneSetPropValue for " & $current.kind)
+        {.pop.}
+
+      of IkGenePropsSpread:
+        # Spread map key-value pairs into gene properties
+        {.push checks: off}
+        let value = self.frame.pop()
+        let current = self.frame.current()
+        case value.kind:
+          of VkMap:
+            case current.kind:
+              of VkGene:
+                for k, v in value.ref.map:
+                  current.gene.props[k] = v
+              of VkFrame:
+                if current.ref.frame.args.kind != VkGene:
+                  current.ref.frame.args = new_gene_value()
+                for k, v in value.ref.map:
+                  current.ref.frame.args.gene.props[k] = v
+              of VkNativeFrame:
+                discard
+              else:
+                not_allowed("... can only spread maps into gene properties, got " & $current.kind)
+          else:
+            not_allowed("... can only spread maps in gene properties context, got " & $value.kind)
         {.pop.}
 
       of IkGeneEnd:
@@ -1842,23 +2666,24 @@ proc exec*(self: VirtualMachine): Value =
                 continue
 
               of FkMacro:
-                let m = frame.target.ref.macro
-                if m.body_compiled == nil:
-                  m.compile()
+                # Handle macro-like function (VkFunction with is_macro_like=true)
+                let f = frame.target.ref.fn
+                if f.body_compiled == nil:
+                  f.compile()
 
                 self.pc.inc()
                 frame.caller_frame.update(self.frame)
                 frame.caller_address = Address(cu: self.cu, pc: self.pc)
-                frame.ns = m.ns
+                frame.ns = f.ns
                 # Pop the frame from the stack before switching context
                 discard self.frame.pop()
                 self.frame.update(frame)
-                self.cu = m.body_compiled
-                
+                self.cu = f.body_compiled
+
                 # Process arguments if matcher exists
-                if not m.matcher.is_empty():
-                  process_args(m.matcher, frame.args, frame.scope)
-                
+                if not f.matcher.is_empty():
+                  process_args(f.matcher, frame.args, frame.scope)
+
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
                 continue
@@ -1915,11 +2740,11 @@ proc exec*(self: VirtualMachine): Value =
             case frame.kind:
               of NfFunction:
                 let f = frame.target.ref.native_fn
-                self.frame.replace(f(self, frame.args))
+                self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
               of NfMethod:
                 # Native method call - invoke the native function with self as first arg
                 let f = frame.target.ref.native_fn
-                self.frame.replace(f(self, frame.args))
+                self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
               else:
                 todo($frame.kind)
 
@@ -1930,21 +2755,8 @@ proc exec*(self: VirtualMachine): Value =
               let f = value.gene.type.ref.fn
               if f.is_generator:
                 # Create generator instance with the arguments from the gene
-                var gen = new_ref(VkGenerator)
-                var genObj: GeneratorObj
-                new(genObj)
-                genObj.function = f
-                genObj.state = GsPending
-                genObj.frame = nil
-                genObj.cu = nil
-                genObj.pc = 0
-                genObj.scope = nil
-                genObj.stack = value.gene.children  # Save arguments
-                genObj.done = false
-                genObj.has_peeked = false
-                genObj.peeked_value = NIL
-                gen.generator = genObj
-                self.frame.replace(gen.to_ref_value())
+                let gen_value = new_generator_value(f, value.gene.children)
+                self.frame.replace(gen_value)
               else:
                 discard
             else:
@@ -2331,6 +3143,59 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("Cannot compare " & $var_value.kind & " < " & $literal_value.kind)
         {.pop.}
 
+      of IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue:
+        {.push checks: off}
+        let cmp_kind = inst.kind
+        let var_value = if inst.arg1 == 0:
+          self.frame.scope.members[inst.arg0.int64]
+        else:
+          var scope = self.frame.scope
+          for _ in 0..<inst.arg1:
+            scope = scope.parent
+          scope.members[inst.arg0.int64]
+
+        self.pc.inc()
+        let data_inst = self.cu.instructions[self.pc].addr
+        let literal_value = data_inst.arg0
+
+        template compare(opInt, opFloat, desc: untyped) =
+          case var_value.kind:
+            of VkInt:
+              let leftInt = var_value.to_int()
+              case literal_value.kind:
+                of VkInt:
+                  let rightInt = literal_value.to_int()
+                  self.frame.push(opInt(leftInt, rightInt))
+                of VkFloat:
+                  self.frame.push(opFloat(system.float64(leftInt), literal_value.to_float()))
+                else:
+                  not_allowed("Cannot compare " & $var_value.kind & " " & desc & " " & $literal_value.kind)
+            of VkFloat:
+              let leftFloat = var_value.to_float()
+              case literal_value.kind:
+                of VkInt:
+                  self.frame.push(opFloat(leftFloat, system.float64(literal_value.to_int())))
+                of VkFloat:
+                  self.frame.push(opFloat(leftFloat, literal_value.to_float()))
+                else:
+                  not_allowed("Cannot compare " & $var_value.kind & " " & desc & " " & $literal_value.kind)
+            else:
+              not_allowed("Cannot compare " & $var_value.kind & " " & desc & " " & $literal_value.kind)
+
+        case cmp_kind:
+          of IkVarLeValue:
+            compare(lte_int_fast, lte_float_fast, "<=")
+          of IkVarGtValue:
+            compare(gt_int_fast, gt_float_fast, ">")
+          of IkVarGeValue:
+            compare(gte_int_fast, gte_float_fast, ">=")
+          of IkVarEqValue:
+            compare(eq_int_fast, eq_float_fast, "==")
+          else:
+            discard
+        inst = data_inst
+        {.pop.}
+
       of IkLtValue:
         var first: Value
         self.frame.pop2(first)
@@ -2472,16 +3337,6 @@ proc exec*(self: VirtualMachine): Value =
         else:
           self.frame.push(TRUE)
 
-      of IkSpread:
-        # Spread operator - pop array and create explode marker
-        let value = self.frame.pop()
-        case value.kind:
-          of VkArray:
-            let r = new_ref(VkExplode)
-            r.explode_value = value
-            self.frame.push(r.to_ref_value())
-          else:
-            not_allowed("... can only spread arrays")
 
       of IkCreateRange:
         let step = self.frame.pop()
@@ -2547,6 +3402,7 @@ proc exec*(self: VirtualMachine): Value =
           class: class,
         )
         class.methods[name.str.to_key()] = m
+        class.version.inc()
         
         # Set the function's namespace to the class namespace
         fn_value.ref.fn.ns = class.ns
@@ -2681,8 +3537,29 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.scope.ref_count.inc()
           # Function captured scope, ref_count incremented
         f.parent_scope = self.frame.scope
-        
-        f.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
+
+        var scope_tracker_obj: ScopeTracker = nil
+        var precompiled: CompilationUnit = nil
+        let data_value = inst.arg0
+
+        case data_value.kind
+        of VkFunctionDef:
+          let info = to_function_def_info(data_value)
+          scope_tracker_obj = new_scope_tracker(info.scope_tracker)
+          if info.compiled_body.kind == VkCompiledUnit:
+            precompiled = info.compiled_body.ref.cu
+        of VkScopeTracker:
+          scope_tracker_obj = new_scope_tracker(data_value.ref.scope_tracker)
+        else:
+          scope_tracker_obj = ScopeTracker()
+
+        if scope_tracker_obj == nil:
+          scope_tracker_obj = ScopeTracker()
+
+        f.scope_tracker = scope_tracker_obj
+
+        if precompiled != nil:
+          f.body_compiled = precompiled
 
         if not f.matcher.is_empty():
           for child in f.matcher.children:
@@ -2719,27 +3596,6 @@ proc exec*(self: VirtualMachine): Value =
         
         self.frame.push(v)
         {.pop.}
-
-      of IkMacro:
-        let m = to_macro(inst.arg0)
-        m.ns = self.frame.ns
-        # More data are stored in the next instruction slot
-        self.pc.inc()
-        inst = self.cu.instructions[self.pc].addr
-        when not defined(release):
-          if inst.kind != IkData:
-            raise new_exception(types.Exception, fmt"Expected IkData after IkMacro, got {inst.kind}")
-        # Capture parent scope with proper reference counting
-        if self.frame.scope != nil:
-          self.frame.scope.ref_count.inc()
-        m.parent_scope = self.frame.scope
-        m.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
-        
-        let r = new_ref(VkMacro)
-        r.macro = m
-        let v = r.to_ref_value()
-        m.ns[m.name.to_key()] = v
-        self.frame.push(v)
 
       of IkBlock:
         {.push checks: off}
@@ -2879,7 +3735,6 @@ proc exec*(self: VirtualMachine): Value =
         else:
           # Not in a generator context - this is an error
           raise new_exception(types.Exception, "yield used outside of generator function")
-          self.frame.push(NOT_FOUND)
 
       of IkNamespace:
         let name = inst.arg0
@@ -2895,13 +3750,11 @@ proc exec*(self: VirtualMachine): Value =
         if import_gene.kind != VkGene:
           not_allowed("Import expects a gene")
         
-        # echo "DEBUG: Processing import ", import_gene
+        let (module_path, imports, module_ns, is_native, handled) = self.handle_import(import_gene.gene)
         
-        let (module_path, imports, module_ns, is_native) = self.handle_import(import_gene.gene)
-        
-        # echo "DEBUG: Module path: ", module_path
-        # echo "DEBUG: Imports: ", imports  
-        # echo "DEBUG: Module namespace members: ", module_ns.members
+        if handled:
+          self.frame.push(NIL)
+          continue
         
         # If module is not cached, we need to execute it
         if not ModuleCache.hasKey(module_path):
@@ -2973,7 +3826,7 @@ proc exec*(self: VirtualMachine): Value =
         let name = inst.arg0
         self.frame.ns[name.str.to_key()] = value
         self.frame.push(value)
-
+      
       of IkClass:
         let name = inst.arg0
         let class = new_class(name.str)
@@ -2985,10 +3838,20 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(v)
 
       of IkNew:
-        # Stack: [class, args_gene] -> [instance]
-        let args = self.frame.pop()  # Gene containing constructor arguments
-        let class_val = self.frame.pop()  # Class to instantiate
-        
+        # Stack: either [class, args_gene] or just [class]
+        var class_val = self.frame.pop()
+        var args: Value
+        if class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
+          # Legacy path where class is wrapped in a gene; no args provided
+          args = new_gene_value()
+        elif class_val.kind == VkGene:
+          # Top value is the argument gene; grab class next
+          args = class_val
+          class_val = self.frame.pop()
+        else:
+          # No explicit arguments were provided
+          args = new_gene_value()
+
         # Get the class
         let class = if class_val.kind == VkClass:
           class_val.ref.class
@@ -3002,7 +3865,7 @@ proc exec*(self: VirtualMachine): Value =
         case class.constructor.kind:
           of VkNativeFn:
             # Call native constructor
-            let result = class.constructor.ref.native_fn(self, args)
+            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
             self.frame.push(result)
             
           of VkFunction:
@@ -3070,6 +3933,103 @@ proc exec*(self: VirtualMachine): Value =
           else:
             todo($class.constructor.kind)
 
+      of IkNewMacro:
+        # Macro constructor call - similar to IkNew but with caller context
+        # Stack: either [class, args_gene] or just [class]
+        var class_val = self.frame.pop()
+        var args: Value
+        if class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
+          args = new_gene_value()
+        elif class_val.kind == VkGene:
+          args = class_val
+          class_val = self.frame.pop()
+        else:
+          args = new_gene_value()
+
+        # Get the class
+        let class = if class_val.kind == VkClass:
+          class_val.ref.class
+        elif class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
+          # Legacy path for Gene with type set to class
+          class_val.gene.type.ref.class
+        else:
+          raise new_exception(types.Exception, "new! requires a class, got " & $class_val.kind)
+
+        # Check constructor type
+        case class.constructor.kind:
+          of VkNativeFn:
+            # Call native constructor (same as regular)
+            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
+            self.frame.push(result)
+
+          of VkFunction:
+            # Macro constructor - function receives unevaluated arguments
+            let instance = new_ref(VkInstance)
+            instance.instance_class = class
+            self.frame.push(instance.to_ref_value())
+
+            class.constructor.ref.fn.compile()
+            let compiled = class.constructor.ref.fn.body_compiled
+            compiled.skip_return = true
+
+            # Create scope for constructor
+            let f = class.constructor.ref.fn
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              # Increment ref_count since the frame will own this reference
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            self.pc.inc()
+            let new_frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+            new_frame.caller_context = self.frame  # Store caller context for macro evaluation
+            self.frame = new_frame
+            self.frame.scope = scope  # Set the scope
+
+            # Pass instance as first argument for constructor
+            let args_gene = new_gene(NIL)
+            args_gene.children.add(instance.to_ref_value())
+            # Add other arguments if present (they remain unevaluated)
+            if args.kind == VkGene:
+              for child in args.gene.children:
+                args_gene.children.add(child)
+            self.frame.args = args_gene.to_gene_value()
+            self.frame.ns = class.constructor.ref.fn.ns
+
+            # Process arguments if matcher exists
+            if not f.matcher.is_empty():
+              # For macro constructors, arguments are passed as unevaluated expressions
+              var constructor_args = new_gene(NIL)
+              if args.kind == VkGene:
+                for child in args.gene.children:
+                  constructor_args.children.add(child)
+              process_args(f.matcher, constructor_args.to_gene_value(), scope)
+
+              # For constructors, set properties on the instance for parameters marked with is_prop
+              for i, param in f.matcher.children:
+                if param.is_prop and i < scope.members.len:
+                  let value = scope.members[i]
+                  if value.kind != VkNil:
+                    # Set the property on the instance
+                    instance.instance_props[param.name_key] = value
+
+            self.cu = compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+          of VkNil:
+            # No constructor - create empty instance (same as regular)
+            let instance = new_ref(VkInstance)
+            instance.instance_class = class
+            self.frame.push(instance.to_ref_value())
+
+          else:
+            todo($class.constructor.kind)
+
       of IkSubClass:
         let name = inst.arg0
         let parent_class = self.frame.pop()
@@ -3089,45 +4049,28 @@ proc exec*(self: VirtualMachine): Value =
         let v = self.frame.current()
         let method_name = inst.arg0.str
         
-        # Check for built-in properties that should return values directly
-        # Properties are different from methods - they return values immediately
-        if v.kind == VkClass and method_name == "name":
-          # For property access, pop the object and push the property value
-          discard self.frame.pop()
-          self.frame.push(v.ref.class.name.to_value())
-        elif v.kind == VkInstance and method_name == "class":
-          # For property access, pop the object and push the property value
-          discard self.frame.pop()
-          let r = new_ref(VkClass)
-          r.class = v.ref.instance_class
-          self.frame.push(r.to_ref_value())
-        elif v.kind == VkFuture and method_name == "state":
-          # For Future.state property, return the state directly
-          discard self.frame.pop()
-          let future_obj = v.ref.future
-          case future_obj.state:
-            of FsPending:
-              self.frame.push("pending".to_symbol_value())
-            of FsSuccess:
-              self.frame.push("success".to_symbol_value())
-            of FsFailure:
-              self.frame.push("failure".to_symbol_value())
-        elif v.kind == VkFuture and method_name == "value":
-          # For Future.value property, return the value directly
-          discard self.frame.pop()
-          let future_obj = v.ref.future
-          if future_obj.state == FsSuccess:
-            self.frame.push(future_obj.value)
-          else:
-            self.frame.push(NIL)
+        let class = v.get_class()
+        var cache: ptr InlineCache
+        if self.pc < self.cu.inline_caches.len:
+          cache = self.cu.inline_caches[self.pc].addr
         else:
-          # Normal method resolution
-          let class = v.get_class()
-          let meth = class.get_method(method_name)
+          while self.cu.inline_caches.len <= self.pc:
+            self.cu.inline_caches.add(InlineCache())
+          cache = self.cu.inline_caches[self.pc].addr
+
+        var meth: Method
+        if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+          meth = cache.cached_method
+        else:
+          meth = class.get_method(method_name)
           if meth == nil:
             not_allowed("Method '" & method_name & "' not found on " & $v.kind)
-          # Push the method callable on top of the object
-          self.frame.push(meth.callable)
+          cache.class = class
+          cache.class_version = class.version
+          cache.cached_method = meth
+
+        # Push the method callable on top of the object
+        self.frame.push(meth.callable)
 
       of IkThrow:
         {.push checks: off}
@@ -3192,7 +4135,7 @@ proc exec*(self: VirtualMachine): Value =
             continue
         else:
           # No handler, raise Nim exception
-          raise new_exception(types.Exception, "Gene exception: " & $value)
+          raise new_exception(types.Exception, self.format_runtime_exception(value))
         {.pop.}
         
       of IkTryStart:
@@ -3295,7 +4238,7 @@ proc exec*(self: VirtualMachine): Value =
               raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
             continue
           else:
-            raise new_exception(types.Exception, "Gene exception: " & $value)
+            raise new_exception(types.Exception, self.format_runtime_exception(value))
 
       of IkGetClass:
         # Get the class of a value
@@ -3412,15 +4355,19 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         let expr = self.frame.pop()
         
-        # We need to be in a macro context to use $caller_eval
-        if self.frame.kind != FkMacro:
-          not_allowed("$caller_eval can only be used within macros")
+        # We need to be in a macro context (or function called as macro) to use $caller_eval
+        # Check current frame first, then check if any parent frame has caller_context
+        var current_frame = self.frame
+        while current_frame != nil:
+          if current_frame.caller_context != nil:
+            break
+          current_frame = current_frame.caller_frame
+
+        if current_frame == nil or current_frame.caller_context == nil:
+          not_allowed("$caller_eval can only be used within macros or macro-like functions")
         
-        # Get the caller's context
-        if self.frame.caller_context == nil:
-          not_allowed("$caller_eval: caller context not available")
-        
-        let caller_frame = self.frame.caller_context
+        # Get the caller's context from the frame that has it
+        let caller_frame = current_frame.caller_context
         
         # The expression might be a quoted symbol like :a
         # We need to evaluate it, not compile the quote itself
@@ -3435,7 +4382,7 @@ proc exec*(self: VirtualMachine): Value =
             # Direct symbol evaluation in caller's context
             let key = expr_to_eval.str.to_key()
             var r = NIL
-            
+
             # First check if it's a local variable in the caller's scope
             if caller_frame.scope != nil and caller_frame.scope.tracker != nil:
               let found = caller_frame.scope.tracker.locate(key)
@@ -3448,7 +4395,7 @@ proc exec*(self: VirtualMachine): Value =
                   scope = scope.parent
                 if found.local_index < scope.members.len:
                   r = scope.members[found.local_index]
-            
+
             if r == NIL:
               # Not a local variable, look in namespaces
               r = caller_frame.ns[key]
@@ -3458,9 +4405,13 @@ proc exec*(self: VirtualMachine): Value =
                   r = App.app.gene_ns.ref.ns[key]
                   if r == NIL:
                     not_allowed("Unknown symbol in caller context: " & expr_to_eval.str)
-            
+
             self.frame.push(r)
-            
+
+          of VkInt, VkFloat, VkString, VkBool, VkNil, VkChar:
+            # For literals, no evaluation needed - just return as-is
+            self.frame.push(expr_to_eval)
+
           else:
             # For complex expressions, compile and execute
             # This will have issues with local variables, but at least handles globals
@@ -3474,6 +4425,10 @@ proc exec*(self: VirtualMachine): Value =
             # Create a new frame that inherits from caller's frame
             let eval_frame = new_frame(caller_frame, Address(cu: saved_cu, pc: saved_pc))
             eval_frame.ns = caller_frame.ns
+            # Copy caller_context so nested $caller_eval calls work
+            # Use the caller_context we found during the traversal
+            if current_frame != nil and current_frame.caller_context != nil:
+              eval_frame.caller_context = current_frame.caller_context
             # Self is now passed as argument, copy args from caller
             eval_frame.args = caller_frame.args
             eval_frame.scope = caller_frame.scope
@@ -3575,159 +4530,77 @@ proc exec*(self: VirtualMachine): Value =
               continue
             else:
               # No handler, raise Nim exception
-              raise new_exception(types.Exception, "Gene exception: " & $future.value)
+              raise new_exception(types.Exception, self.format_runtime_exception(future.value))
           of FsPending:
-            # For now, we don't support actual async operations
-            not_allowed("Cannot await a pending future in pseudo-async mode")
-        {.pop.}
-      
-      of IkCallMethodNoArgs:
-        # Method call with no arguments (e.g., obj.name)
-        let method_name = inst.arg0.str
-        var obj: Value
-        self.frame.pop2(obj)
-        
-        case obj.kind:
-        of VkClass:
-          # Handle built-in class properties
-          if method_name == "name":
-            self.frame.push(obj.ref.class.name.to_value())
-          else:
-            todo("class method: " & method_name)
-        of VkInstance:
-          # Handle instance methods
-          if method_name == "class":
-            let r = new_ref(VkClass)
-            r.class = obj.ref.instance_class
-            self.frame.push(r.to_ref_value())
-          else:
-            # Look up the method in the instance's class
-            let class = obj.ref.instance_class
-            let method_key = method_name.to_key()
-            if class.methods.hasKey(method_key):
-              let meth = class.methods[method_key]
-              # For IkCallMethodNoArgs, we should call the method directly
-              # not just return a bound method
-              case meth.callable.kind:
-              of VkFunction:
-                # Call the method directly with obj as self
-                let f = meth.callable.ref.fn
-                if f.body_compiled == nil:
-                  f.compile()
-                
-                # Create a new frame for the method call
-                var scope: Scope
-                if f.matcher.is_empty():
-                  scope = f.parent_scope
-                  # Increment ref_count since the frame will own this reference
-                  if scope != nil:
-                    scope.ref_count.inc()
+            # Poll event loop until future completes
+            # Callbacks will update the future state when async operations complete
+            while future.state == FsPending:
+              # Check for thread replies (non-blocking)
+              if THREADS[0].in_use:
+                while true:
+                  let msg_opt = THREAD_DATA[0].channel.try_recv()
+                  if msg_opt.isNone():
+                    break
+
+                  let msg = msg_opt.get()
+                  if msg.msg_type == MtReply:
+                    # Complete the future with the reply payload
+                    if self.thread_futures.hasKey(msg.from_message_id):
+                      let future_obj = self.thread_futures[msg.from_message_id]
+                      future_obj.state = FsSuccess
+                      future_obj.value = msg.payload
+                      self.thread_futures.del(msg.from_message_id)
+
+              # Poll the event loop to process async operations and fire callbacks
+              try:
+                if hasPendingOperations():
+                  poll(0)  # Process ready operations
+              except ValueError:
+                discard  # No async operations pending
+
+              # Remove completed futures from pending list
+              var i = 0
+              while i < self.pending_futures.len:
+                if self.pending_futures[i].state != FsPending:
+                  self.pending_futures.delete(i)
                 else:
-                  scope = new_scope(f.scope_tracker, f.parent_scope)
-                
-                self.pc.inc()
-                self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
-                self.frame.kind = FkFunction
-                self.frame.target = meth.callable
-                self.frame.scope = scope
-                self.frame.current_method = meth
-                self.frame.ns = f.ns
-                # Pass obj as self (first argument)
-                let args_gene = new_gene(NIL)
-                args_gene.children.add(obj)
-                self.frame.args = args_gene.to_gene_value()
-                self.cu = f.body_compiled
-                self.pc = 0
-                inst = self.cu.instructions[self.pc].addr
-                continue
-              else:
-                not_allowed("Method must be a function")
-            else:
-              not_allowed("Method " & method_name & " not found on instance")
-        of VkString:
-          # Handle string methods
-          let string_class = App.app.string_class.ref.class
-          let method_key = method_name.to_key()
-          if string_class.methods.hasKey(method_key):
-            let meth = string_class.methods[method_key]
-            # Call the native method directly
-            case meth.callable.kind:
-            of VkNativeFn:
-              # Create a gene with the string as the first argument
-              var args_gene = new_gene()
-              args_gene.children.add(obj)  # Add self (the string) as first argument
-              let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
-              self.frame.push(result)
-            else:
-              not_allowed("String method must be a native function")
-          else:
-            not_allowed("Method " & method_name & " not found on string")
-        of VkFuture:
-          # Handle future methods
-          if App.app.future_class.kind == VkClass:
-            let future_class = App.app.future_class.ref.class
-            let method_key = method_name.to_key()
-            if future_class.methods.hasKey(method_key):
-              let meth = future_class.methods[method_key]
-              # Call the native method directly
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Create a gene with the future as the first argument
-                var args_gene = new_gene()
-                args_gene.children.add(obj)  # Add self (the future) as first argument
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
-                self.frame.push(result)
-              else:
-                not_allowed("Future method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on future")
-          else:
-            not_allowed("Future class not initialized")
-        of VkGenerator:
-          # Handle generator methods
-          if App.app.generator_class.kind == VkClass:
-            let generator_class = App.app.generator_class.ref.class
-            let method_key = method_name.to_key()
-            if generator_class.methods.hasKey(method_key):
-              let meth = generator_class.methods[method_key]
-              # Call the native method directly
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Create a gene with the generator as the first argument
-                var args_gene = new_gene()
-                args_gene.children.add(obj)  # Add self (the generator) as first argument
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
-                self.frame.push(result)
-              else:
-                not_allowed("Generator method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on generator")
-          else:
-            not_allowed("Generator class not initialized")
-        of VkArray:
-          # Handle array methods
-          if App.app.array_class.kind == VkClass:
-            let array_class = App.app.array_class.ref.class
-            let method_key = method_name.to_key()
-            if array_class.methods.hasKey(method_key):
-              let meth = array_class.methods[method_key]
-              # Call the native method directly
-              case meth.callable.kind:
-              of VkNativeFn:
-                # Create a gene with the array as the first argument
-                var args_gene = new_gene()
-                args_gene.children.add(obj)  # Add self (the array) as first argument
-                let result = meth.callable.ref.native_fn(self, args_gene.to_gene_value())
-                self.frame.push(result)
-              else:
-                not_allowed("Array method must be a native function")
-            else:
-              not_allowed("Method " & method_name & " not found on array")
-          else:
-            not_allowed("Array class not initialized")
-        else:
-          todo($obj.kind & " method: " & method_name)
-      
+                  i.inc()
+
+            # Future has completed, handle the result
+            case future.state:
+              of FsSuccess:
+                self.frame.push(future.value)
+              of FsFailure:
+                # Re-throw the exception
+                self.current_exception = future.value
+                if self.exception_handlers.len > 0:
+                  let handler = self.exception_handlers[^1]
+                  self.cu = handler.cu
+                  self.pc = handler.catch_pc
+                  if self.pc < self.cu.instructions.len:
+                    inst = self.cu.instructions[self.pc].addr
+                  else:
+                    raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
+                  continue
+                else:
+                  raise new_exception(types.Exception, self.format_runtime_exception(future.value))
+              of FsPending:
+                # Should not happen
+                not_allowed("Future still pending after polling")
+        {.pop.}
+
+      of IkSpawnThread:
+        # Spawn a new thread
+        {.push checks: off}
+        # Threading support - spawn_thread is imported at top level
+        let return_value_flag = self.frame.pop()
+        let code_val = self.frame.pop()
+        let return_value = return_value_flag == TRUE
+        let code = cast[ptr Gene](code_val)  # Gene AST
+        let result = spawn_thread(code, return_value)
+        self.frame.push(result)
+        {.pop.}
+
       # Superinstructions for performance
       of IkPushCallPop:
         # Combined PUSH; CALL; POP for void function calls
@@ -3834,7 +4707,938 @@ proc exec*(self: VirtualMachine): Value =
           self.frame.ref_count.dec()
           self.frame.push(FALSE)
           continue
-      
+
+      # Unified call instructions
+      of IkUnifiedCall0:
+        {.push checks: off}
+        # Zero-argument unified call
+        let call_info = self.pop_call_base_info(0)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 0:
+            raise new_exception(types.Exception, fmt"IkUnifiedCall0 expected 0 args, got {call_info.count}")
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, @[]))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+            # OPTIMIZATION: Direct argument processing without Gene objects
+            if not f.matcher.is_empty():
+              process_args_zero(f.matcher, scope)
+            # No need to set new_frame.args for zero-argument functions
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            # If this is an async function, set up exception handler
+            if f.async:
+              self.exception_handlers.add(ExceptionHandler(
+                catch_pc: -3,  # Special marker for async function
+                finally_pc: -1,
+                frame: self.frame,
+                cu: self.cu,
+                saved_value: NIL,
+                has_saved_value: false,
+                in_finally: false
+              ))
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          # Zero arguments - use new signature with nil pointer
+          let result = target.ref.native_fn(self, nil, 0, false)
+          self.frame.push(result)
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          if not b.matcher.is_empty():
+            process_args(b.matcher, new_frame.args, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        of VkClass:
+          # Handle class constructor calls
+          let class = target.ref.class
+          let instance_ref = new_ref(VkInstance)
+          instance_ref.instance_class = class
+          let instance = instance_ref.to_ref_value()
+
+          # Check if class has an init method
+          let init_method = class.get_method("init")
+          if init_method != nil:
+            # Call init method with no arguments
+            case init_method.callable.kind:
+            of VkFunction:
+              let f = init_method.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = init_method.callable
+              new_frame.scope = scope
+              new_frame.current_method = init_method
+              new_frame.args = new_gene_value()
+              new_frame.args.gene.children.add(instance)  # Add self as first argument
+              if not f.matcher.is_empty():
+                process_args(f.matcher, new_frame.args, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Call native init method with instance as first argument
+              discard call_native_fn(init_method.callable.ref.native_fn, self, [instance])
+              self.frame.push(instance)
+
+            else:
+              not_allowed("Init method must be a function or native function")
+          else:
+            # No init method, just return the instance
+            self.frame.push(instance)
+
+        of VkInstance:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", []):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", []):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
+
+        else:
+          not_allowed("IkUnifiedCall0 requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedCall1:
+        {.push checks: off}
+        # Single-argument unified call
+        let call_info = self.pop_call_base_info(1)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 1:
+            raise new_exception(types.Exception, fmt"IkUnifiedCall1 expected 1 arg, got {call_info.count}")
+        let arg = self.frame.pop()
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, @[arg]))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+
+            # OPTIMIZATION: Direct single-argument processing without Gene objects
+            if not f.matcher.is_empty():
+              process_args_one(f.matcher, arg, scope)
+            # No need to set new_frame.args for single-parameter functions
+
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            # If this is an async function, set up exception handler
+            if f.async:
+              self.exception_handlers.add(ExceptionHandler(
+                catch_pc: -3,  # Special marker for async function
+                finally_pc: -1,
+                frame: self.frame,
+                cu: self.cu,
+                saved_value: NIL,
+                has_saved_value: false,
+                in_finally: false
+              ))
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          # Single argument - use new signature with helper
+          let result = call_native_fn(target.ref.native_fn, self, [arg])
+          self.frame.push(result)
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          new_frame.args.gene.children.add(arg)
+          if not b.matcher.is_empty():
+            process_args(b.matcher, new_frame.args, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        of VkClass:
+          # Handle class constructor calls with one argument
+          let class = target.ref.class
+          let instance_ref = new_ref(VkInstance)
+          instance_ref.instance_class = class
+          let instance = instance_ref.to_ref_value()
+
+          # Check if class has an init method
+          let init_method = class.get_method("init")
+          if init_method != nil:
+            # Call init method with one argument
+            case init_method.callable.kind:
+            of VkFunction:
+              let f = init_method.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = init_method.callable
+              new_frame.scope = scope
+              new_frame.current_method = init_method
+              new_frame.args = new_gene_value()
+              new_frame.args.gene.children.add(instance)  # Add self as first argument
+              new_frame.args.gene.children.add(arg)       # Add the constructor argument
+              if not f.matcher.is_empty():
+                process_args(f.matcher, new_frame.args, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Call native init method with instance and argument
+              discard call_native_fn(init_method.callable.ref.native_fn, self, [instance, arg])
+              self.frame.push(instance)
+
+            else:
+              not_allowed("Init method must be a function or native function")
+          else:
+            # No init method, just return the instance (ignore the argument)
+            self.frame.push(instance)
+
+        of VkInstance:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", [arg]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", @[arg]):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
+
+        else:
+          not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedCall:
+        {.push checks: off}
+        # Multi-argument unified call
+        let call_info = self.pop_call_base_info(inst.arg1.int)
+        let arg_count = call_info.count
+        var args = newSeq[Value](arg_count)
+        for i in countdown(arg_count - 1, 0):
+          args[i] = self.frame.pop()
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, args))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+
+            # OPTIMIZATION: Direct multi-argument processing without Gene objects
+            if not f.matcher.is_empty():
+              # Convert seq[Value] to ptr UncheckedArray[Value] for direct processing
+              if args.len > 0:
+                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+              else:
+                process_args_zero(f.matcher, scope)
+            # No need to set new_frame.args for optimized argument processing
+
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            # If this is an async function, set up exception handler
+            if f.async:
+              self.exception_handlers.add(ExceptionHandler(
+                catch_pc: -3,  # Special marker for async function
+                finally_pc: -1,
+                frame: self.frame,
+                cu: self.cu,
+                saved_value: NIL,
+                has_saved_value: false,
+                in_finally: false
+              ))
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          # Multi-argument - use new signature with helper
+          let result = call_native_fn(target.ref.native_fn, self, args)
+          self.frame.push(result)
+
+        of VkInstance:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", args):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
+
+        else:
+          not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall0:
+        {.push checks: off}
+        # Zero-argument unified method call
+        let call_info = self.pop_call_base_info(0)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 0:
+            raise new_exception(types.Exception, fmt"IkUnifiedMethodCall0 expected 0 args, got {call_info.count}")
+        let method_name = inst.arg0.str
+        let obj = self.frame.pop()
+        if call_value_method(self, obj, method_name, []):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+        
+        case obj.kind:
+        of VkInstance:
+          # OPTIMIZATION: Use inline cache for method lookup
+          let class = obj.ref.instance_class
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            meth = class.get_method(method_name)
+            if meth != nil:
+              cache.class = class
+              cache.class_version = class.version
+              cache.cached_method = meth
+
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              # OPTIMIZED: Follow IkCallMethod1 pattern for zero-arg method calls
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              # Use exact same scope optimization as original IkCallMethod1
+              var scope: Scope
+              if f.matcher.is_empty():
+                # FAST PATH: Reuse parent scope directly
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                # SLOW PATH: Create new scope and manually set self
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+                # Manual argument matching: set self in scope without Gene objects
+                if f.scope_tracker.mappings.len > 0 and f.scope_tracker.mappings.hasKey("self".to_key()):
+                  let self_idx = f.scope_tracker.mappings["self".to_key()]
+                  while scope.members.len <= self_idx:
+                    scope.members.add(NIL)
+                  scope.members[self_idx] = obj
+
+              # ULTRA-OPTIMIZED: Minimal frame creation (like original IkCallMethod1)
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+              # Set frame.args so IkSelf can access self
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              new_frame.args = args_gene
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: -3,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Method call with self as first argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
+              self.frame.push(result)
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
+          let method_key = method_name.to_key()
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
+            case meth.callable.kind:
+            of VkNativeFn:
+              # Method call with self as first argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
+              self.frame.push(result)
+            else:
+              not_allowed($obj.kind & " method must be a native function")
+          else:
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall1:
+        {.push checks: off}
+        # Single-argument unified method call
+        let call_info = self.pop_call_base_info(1)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 1:
+            raise new_exception(types.Exception, fmt"IkUnifiedMethodCall1 expected 1 arg, got {call_info.count}")
+        let method_name = inst.arg0.str
+        let arg = self.frame.pop()
+        let obj = self.frame.pop()
+
+        if call_value_method(self, obj, method_name, [arg]):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        case obj.kind:
+        of VkInstance:
+          # OPTIMIZATION: Use inline cache for method lookup
+          let class = obj.ref.instance_class
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            meth = class.get_method(method_name)
+            if meth != nil:
+              cache.class = class
+              cache.class_version = class.version
+              cache.cached_method = meth
+
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              # OPTIMIZED: Follow IkCallMethod1 pattern for single-arg method calls
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              # Use exact same scope optimization as IkUnifiedMethodCall0
+              var scope: Scope
+              if f.matcher.is_empty():
+                # FAST PATH: Reuse parent scope directly
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                # SLOW PATH: Create new scope and manually set self and arg
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+                # Manual argument matching: set self and arg in scope without Gene objects
+                # Matcher should have 2 params: [self, arg_name]
+                if f.matcher.children.len >= 2:
+                  if f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
+
+                  let param = f.matcher.children[1]  # Second param is the actual argument
+                  if param.kind == MatchData and f.scope_tracker.mappings.hasKey(param.name_key):
+                    let arg_idx = f.scope_tracker.mappings[param.name_key]
+                    while scope.members.len <= arg_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg_idx] = arg
+
+              # ULTRA-OPTIMIZED: Minimal frame creation (like IkUnifiedMethodCall0)
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+              # Set frame.args so IkSelf can access self
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              args_gene.gene.children.add(arg)
+              new_frame.args = args_gene
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: -3,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Method call with self and one argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
+          let method_key = method_name.to_key()
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
+            case meth.callable.kind:
+            of VkNativeFn:
+              # Method call with self and one argument
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
+              self.frame.push(result)
+            else:
+              not_allowed($obj.kind & " method must be a native function")
+          else:
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall2:
+        {.push checks: off}
+        # Two-argument unified method call
+        let call_info = self.pop_call_base_info(2)
+        when not defined(release):
+          if call_info.hasBase and call_info.count != 2:
+            raise new_exception(types.Exception, fmt"IkUnifiedMethodCall2 expected 2 args, got {call_info.count}")
+        let method_name = inst.arg0.str
+        let arg2 = self.frame.pop()
+        let arg1 = self.frame.pop()
+        let obj = self.frame.pop()
+
+        if call_value_method(self, obj, method_name, [arg1, arg2]):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        case obj.kind:
+        of VkInstance:
+          # OPTIMIZATION: Use inline cache for method lookup
+          let class = obj.ref.instance_class
+          var cache: ptr InlineCache
+          if self.pc < self.cu.inline_caches.len:
+            cache = self.cu.inline_caches[self.pc].addr
+          else:
+            while self.cu.inline_caches.len <= self.pc:
+              self.cu.inline_caches.add(InlineCache())
+            cache = self.cu.inline_caches[self.pc].addr
+
+          var meth: Method
+          if cache.class != nil and cache.class == class and cache.class_version == class.version and cache.cached_method != nil:
+            # CACHE HIT: Use cached method
+            meth = cache.cached_method
+          else:
+            # CACHE MISS: Look up method and cache it
+            meth = class.get_method(method_name)
+            if meth != nil:
+              cache.class = class
+              cache.class_version = class.version
+              cache.cached_method = meth
+
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              # OPTIMIZED: Follow IkCallMethod pattern for two-arg method calls
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              # Use exact same scope optimization as IkUnifiedMethodCall0
+              var scope: Scope
+              if f.matcher.is_empty():
+                # FAST PATH: Reuse parent scope directly
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                # SLOW PATH: Create new scope and manually set self and args
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+                # Manual argument matching: set self and 2 args in scope without Gene objects
+                # Matcher should have 3 params: [self, arg1_name, arg2_name]
+                if f.matcher.children.len >= 3:
+                  if f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
+
+                  let param1 = f.matcher.children[1]
+                  if param1.kind == MatchData and f.scope_tracker.mappings.hasKey(param1.name_key):
+                    let arg1_idx = f.scope_tracker.mappings[param1.name_key]
+                    while scope.members.len <= arg1_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg1_idx] = arg1
+
+                  let param2 = f.matcher.children[2]
+                  if param2.kind == MatchData and f.scope_tracker.mappings.hasKey(param2.name_key):
+                    let arg2_idx = f.scope_tracker.mappings[param2.name_key]
+                    while scope.members.len <= arg2_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg2_idx] = arg2
+
+              # ULTRA-OPTIMIZED: Minimal frame creation
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+              # Set frame.args so IkSelf can access self
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              args_gene.gene.children.add(arg1)
+              args_gene.gene.children.add(arg2)
+              new_frame.args = args_gene
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: -3,
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Method call with self and two arguments
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
+          let method_key = method_name.to_key()
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
+            case meth.callable.kind:
+            of VkNativeFn:
+              # Method call with self and two arguments
+              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              self.frame.push(result)
+            else:
+              not_allowed($obj.kind & " method must be a native function")
+          else:
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCall:
+        {.push checks: off}
+        # Multi-argument unified method call
+        let method_name = inst.arg0.str
+        let call_info = self.pop_call_base_info((inst.arg1 - 1).int)
+        let arg_count = call_info.count  # Excludes self
+        var args = newSeq[Value](arg_count)
+        for i in countdown(arg_count - 1, 0):
+          args[i] = self.frame.pop()
+        let obj = self.frame.pop()
+
+        if call_value_method(self, obj, method_name, args):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        case obj.kind:
+        of VkInstance:
+          let class = obj.ref.instance_class
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.args = new_gene_value()
+              new_frame.args.gene.children.add(obj)  # Add self as first argument
+              for arg in args:
+                new_frame.args.gene.children.add(arg)
+              if not f.matcher.is_empty():
+                process_args(f.matcher, new_frame.args, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Multi-argument method call with self as first argument
+              var call_args = @[obj]
+              call_args.add(args)
+              let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        of VkString, VkArray, VkMap, VkFuture, VkGenerator:
+          # Use template to get class
+          let value_class = get_value_class(obj)
+          if value_class == nil:
+            not_allowed($obj.kind & " class not initialized")
+
+          let method_key = method_name.to_key()
+          if value_class.methods.hasKey(method_key):
+            let meth = value_class.methods[method_key]
+            case meth.callable.kind:
+            of VkNativeFn:
+              # Multi-argument method call with self as first argument
+              var call_args = @[obj]
+              call_args.add(args)
+              let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
+              self.frame.push(result)
+            else:
+              not_allowed($obj.kind & " method must be a native function")
+          else:
+            not_allowed("Method " & method_name & " not found on " & $obj.kind)
+        else:
+          not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
       else:
         todo($inst.kind)
 
@@ -3905,20 +5709,28 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   new_frame.target = fn
   new_frame.scope = scope
   new_frame.ns = f.ns
+  # Increment ref_count when storing caller_frame
+  if saved_frame != nil:
+    saved_frame.ref_count.inc()
   new_frame.caller_frame = saved_frame  # Set the caller frame so return works
   new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
   # Mark this frame as coming from exec_function
   new_frame.from_exec_function = true
   
-  # Convert args to Gene value
-  let args_gene = new_gene(NIL)
-  for arg in args:
-    args_gene.children.add(arg)
-  new_frame.args = args_gene.to_gene_value()
-  
-  # Process arguments if matcher exists
+  # OPTIMIZATION: Direct argument processing for exec_function
   if not f.matcher.is_empty():
-    process_args(f.matcher, new_frame.args, scope)
+    if args.len == 0:
+      process_args_zero(f.matcher, scope)
+    elif args.len == 1:
+      process_args_one(f.matcher, args[0], scope)
+    else:
+      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+
+  # Set frame.args so IkSelf can access arguments (especially self in methods)
+  let args_gene = new_gene_value()
+  for arg in args:
+    args_gene.gene.children.add(arg)
+  new_frame.args = args_gene
   
   # Set up VM for function execution
   self.frame = new_frame
@@ -3934,15 +5746,15 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   return result
 
 proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
-  # Initialize gene namespace if not already done
-  init_gene_namespace()
-  
   let compiled = parse_and_compile(code, module_name)
 
   let ns = new_namespace(module_name)
+  ns["__module_name__".to_key()] = module_name.to_value()
+  ns["__is_main__".to_key()] = TRUE
   
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
+  App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
   
   # Add eval function to the module namespace
   # Add eval function to the namespace if it exists in global_ns
@@ -4074,9 +5886,9 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   
   return result
 
-include "./vm/core"
-import "./vm/async"
-import "./vm/generator"
-# Temporarily import http module until extension loading is fixed
+include "./stdlib"
+
+# Temporarily import http and sqlite modules until extension loading is fixed
 when not defined(noExtensions):
   import "../genex/http"
+  import "../genex/sqlite"
