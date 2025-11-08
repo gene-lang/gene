@@ -1,0 +1,29 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master, develop, claude/** ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Nim
+      uses: alaviss/setup-nim@0.1.1
+      with:
+        path: nim
+        version: stable
+
+    - name: Build project
+      run: nimble build -y
+
+    - name: Run tests
+      run: |
+        chmod +x testsuite/run_tests.sh
+        testsuite/run_tests.sh
