@@ -9,8 +9,8 @@ import cgi
 include ../gene/extension/boilerplate
 import ../gene/compiler
 import ../gene/vm
-# Explicitly alias to use asyncfutures.Future in this module
-type Future {.used.} = asyncfutures.Future
+# Explicitly alias to use asyncfutures.Future in this module (preserve generic)
+type Future[T] {.used.} = asyncfutures.Future[T]
 
 # Global variables to store classes
 var request_class_global: Class
