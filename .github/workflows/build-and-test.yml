@@ -23,7 +23,10 @@ jobs:
     - name: Build project
       run: nimble build -y
 
-    - name: Run tests
+    - name: Run nimble tests
+      run: nimble test
+
+    - name: Run testsuite
       run: |
         chmod +x testsuite/run_tests.sh
         testsuite/run_tests.sh
