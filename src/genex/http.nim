@@ -2,13 +2,15 @@ import tables, strutils
 import httpclient, uri
 import std/json
 import asynchttpserver, asyncdispatch
+import asyncfutures  # Import asyncfutures explicitly
 import nativesockets, net
 import cgi
 
 include ../gene/extension/boilerplate
 import ../gene/compiler
-from ../gene/types import nil
-import ../gene/vm except Future
+import ../gene/vm
+# Explicitly alias to use asyncfutures.Future in this module
+type Future {.used.} = asyncfutures.Future
 
 # Global variables to store classes
 var request_class_global: Class
