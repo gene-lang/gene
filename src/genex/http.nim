@@ -7,7 +7,8 @@ import cgi
 
 include ../gene/extension/boilerplate
 import ../gene/compiler
-import ../gene/vm
+from ../gene/types import nil
+import ../gene/vm except Future
 
 # Global variables to store classes
 var request_class_global: Class
