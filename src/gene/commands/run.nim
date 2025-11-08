@@ -206,9 +206,6 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         except CatchableError:
           # Fall back to compilation if GIR load fails
           discard
-    
-    # Read and compile source file
-    code = readFile(file)
   
   let start = cpu_time()
   var value: Value
@@ -230,7 +227,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     VM.instruction_profiling = true
   
   if options.trace_instruction:
-    # Show both compilation and execution with trace
+    # For trace/debug modes, we need to read the file into memory
+    # so we can inspect compilation output and then execute
+    let code = readFile(file)
     echo "=== Compilation Output ==="
     let compiled = parse_and_compile(code, file)
     echo "Instructions:"
@@ -245,13 +244,15 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     VM.cu = compiled
     value = VM.exec()
   elif options.compile or options.debugging:
+    # For trace/debug modes, we need to read the file into memory
+    let code = readFile(file)
     echo "=== Compilation Output ==="
     let compiled = parse_and_compile(code, file)
     echo "Instructions:"
     for i, instr in compiled.instructions:
       echo fmt"{i:03d}: {instr}"
     echo ""
-    
+
     if not options.trace:  # If not tracing, just show compilation
       VM.cu = compiled
       value = VM.exec()
@@ -260,7 +261,13 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       VM.cu = compiled
       value = VM.exec()
   else:
-    value = VM.exec(code, file)
+    # Normal execution: use streaming for memory efficiency
+    let stream = newFileStream(file, fmRead)
+    if stream.isNil:
+      stderr.writeLine("Error: Failed to open file: " & file)
+      return failure("Failed to open file")
+    defer: stream.close()
+    value = VM.exec(stream, file)
   
   if options.print_result:
     echo value

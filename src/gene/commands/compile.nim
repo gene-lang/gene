@@ -336,25 +336,29 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       if not fileExists(file):
         stderr.writeLine("Error: File not found: " & file)
         quit(1)
-      
-      code = readFile(file)
+
       source_name = file
-      
+
       # Check if GIR output is requested
       if options.format == "gir":
         let gir_path = get_gir_path(file, options.out_dir)
-        
+
         # Check if recompilation is needed
         if not options.force and is_gir_up_to_date(gir_path, file):
           echo "Up-to-date: " & gir_path
           continue
-        
+
         echo "Compiling: " & source_name & " -> " & gir_path
-        
+
         try:
-          let parsed = read_all(code)
-          let compiled = compile(parsed)
-          
+          # Use streaming compilation for better memory efficiency
+          let stream = newFileStream(file, fmRead)
+          if stream.isNil:
+            stderr.writeLine("Error: Failed to open file: " & file)
+            quit(1)
+          defer: stream.close()
+          let compiled = parse_and_compile(stream, file)
+
           # Save to GIR file
           save_gir(compiled, gir_path, file, options.emit_debug)
           echo "Written: " & gir_path
@@ -369,10 +373,11 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
           stderr.writeLine("Compilation error in " & source_name & ": " & e.msg)
           quit(1)
       else:
-        # Display instructions
+        # Display instructions - read file for inspection
         echo "=== Compiling: " & source_name & " ==="
-        
+
         try:
+          code = readFile(file)
           let parsed = read_all(code)
           let compiled = compile(parsed)
           

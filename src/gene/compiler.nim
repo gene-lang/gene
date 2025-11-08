@@ -2651,5 +2651,45 @@ proc parse_and_compile*(input: string, filename = "<input>"): CompilationUnit =
   
   return self.output
 
+proc parse_and_compile*(stream: Stream, filename = "<input>"): CompilationUnit =
+  ## Parse and compile Gene code from a stream with streaming compilation
+  ## This is more memory-efficient for large files as it doesn't load everything into memory
+  ## Parse one item -> compile immediately -> repeat
+
+  var parser = new_parser()
+  parser.open(stream, filename)
+  defer: parser.close()
+
+  # Initialize compilation
+  let self = Compiler(output: new_compilation_unit(), tail_position: false)
+  self.output.instructions.add(Instruction(kind: IkStart))
+  self.start_scope()
+
+  var is_first = true
+
+  # Streaming compilation: parse one -> compile one -> repeat
+  try:
+    while true:
+      let node = parser.read()
+      if node != PARSER_IGNORE:
+        # Pop previous result before compiling next item (except for first)
+        if not is_first:
+          self.output.instructions.add(Instruction(kind: IkPop))
+
+        # Compile current item
+        self.compile(node)
+        is_first = false
+  except ParseEofError:
+    # Expected end of input
+    discard
+
+  # Finalize compilation
+  self.end_scope()
+  self.output.instructions.add(Instruction(kind: IkEnd))
+  self.output.optimize_noops()
+  self.output.update_jumps()
+
+  return self.output
+
 
 # Compile methods for Function, Macro, Block, and CompileFn are defined above
