@@ -264,13 +264,19 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       VM.cu = compiled
       value = VM.exec()
   else:
-    # Normal execution: use streaming for memory efficiency
-    let stream = newFileStream(file, fmRead)
-    if stream.isNil:
-      stderr.writeLine("Error: Failed to open file: " & file)
-      return failure("Failed to open file")
-    defer: stream.close()
-    value = VM.exec(stream, file)
+    # Normal execution
+    # Check if code was already read (from stdin or --eval)
+    if code != "":
+      # Code already in memory - use string-based execution
+      value = VM.exec(code, file)
+    else:
+      # Read from file using streaming for memory efficiency
+      let stream = newFileStream(file, fmRead)
+      if stream.isNil:
+        stderr.writeLine("Error: Failed to open file: " & file)
+        return failure("Failed to open file")
+      defer: stream.close()
+      value = VM.exec(stream, file)
   
   if options.print_result:
     echo value
