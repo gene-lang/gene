@@ -1,5 +1,5 @@
 import tables, strutils, strformat, algorithm, options
-import times, os
+import times, os, streams
 import asyncdispatch  # For event loop polling in async support
 
 import ./types
@@ -5777,15 +5777,15 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
 
 proc exec*(self: VirtualMachine, stream: Stream, module_name: string): Value =
   ## Execute Gene code from a stream (more memory-efficient for large files)
-  # Initialize gene namespace if not already done
-  init_gene_namespace()
-
   let compiled = parse_and_compile(stream, module_name)
 
   let ns = new_namespace(module_name)
+  ns["__module_name__".to_key()] = module_name.to_value()
+  ns["__is_main__".to_key()] = TRUE
 
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
+  App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
 
   # Initialize frame if it doesn't exist
   if self.frame == nil:

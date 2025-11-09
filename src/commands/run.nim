@@ -1,4 +1,4 @@
-import parseopt, times, strformat, terminal, os, strutils
+import parseopt, times, strformat, terminal, os, strutils, streams
 
 import ../gene/types
 import ../gene/vm
