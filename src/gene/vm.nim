@@ -1,4 +1,4 @@
-import tables, strutils, strformat, algorithm, options
+import tables, strutils, strformat, algorithm, options, streams
 import times, os
 import asyncdispatch  # For event loop polling in async support
 
@@ -5824,6 +5824,29 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
   else:
     self.frame.update(new_frame(ns))
   
+  # Self is now passed as argument, not stored in frame
+  self.cu = compiled
+
+  self.exec()
+
+proc exec*(self: VirtualMachine, stream: Stream, module_name: string): Value =
+  ## Execute Gene code from a stream (more memory-efficient for large files)
+  # Initialize gene namespace if not already done
+  init_gene_namespace()
+
+  let compiled = parse_and_compile(stream, module_name)
+
+  let ns = new_namespace(module_name)
+
+  # Add gene namespace to module namespace
+  ns["gene".to_key()] = App.app.gene_ns
+
+  # Initialize frame if it doesn't exist
+  if self.frame == nil:
+    self.frame = new_frame(ns)
+  else:
+    self.frame.update(new_frame(ns))
+
   # Self is now passed as argument, not stored in frame
   self.cu = compiled
 

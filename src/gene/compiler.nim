@@ -2928,17 +2928,17 @@ proc replace_chunk*(self: var CompilationUnit, start_pos: int, end_pos: int, rep
   self.instructions[start_pos..end_pos] = replacement
 
 # Parse and compile functions - unified interface for future streaming implementation
-proc parse_and_compile*(input: string, filename = "<input>"): CompilationUnit =
+proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false): CompilationUnit =
   ## Parse and compile Gene code from a string with streaming compilation
   ## Parse one item -> compile immediately -> repeat
-  
+
   var parser = new_parser()
   var stream = new_string_stream(input)
   parser.open(stream, filename)
   defer: parser.close()
-  
+
   # Initialize compilation
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, trace_stack: @[])
+  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
   
@@ -2977,6 +2977,57 @@ proc parse_and_compile*(input: string, filename = "<input>"): CompilationUnit =
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
   
+  return self.output
+
+proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false): CompilationUnit =
+  ## Parse and compile Gene code from a stream with streaming compilation
+  ## This is more memory-efficient for large files as it doesn't load everything into memory
+  ## Parse one item -> compile immediately -> repeat
+
+  var parser = new_parser()
+  parser.open(stream, filename)
+  defer: parser.close()
+
+  # Initialize compilation
+  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  self.output.instructions.add(Instruction(kind: IkStart))
+  self.start_scope()
+
+  var is_first = true
+
+  # Streaming compilation: parse one -> compile one -> repeat
+  try:
+    while true:
+      let node = parser.read()
+      if node != PARSER_IGNORE:
+        # Pop previous result before compiling next item (except for first)
+        if not is_first:
+          self.output.instructions.add(Instruction(kind: IkPop))
+
+        self.last_error_trace = nil
+        try:
+          # Compile current item
+          self.compile(node)
+          is_first = false
+        except CatchableError as e:
+          var trace = self.last_error_trace
+          if trace.is_nil and node.kind == VkGene:
+            trace = node.gene.trace
+          let location = trace_location(trace)
+          let message = if location.len > 0: location & ": " & e.msg else: e.msg
+          raise new_exception(types.Exception, message)
+  except ParseEofError:
+    # Expected end of input
+    discard
+
+  # Finalize compilation
+  self.end_scope()
+  self.output.instructions.add(Instruction(kind: IkEnd))
+  self.output.optimize_noops()
+  self.output.update_jumps()
+  self.output.ensure_trace_capacity()
+  self.output.trace_root = parser.trace_root
+
   return self.output
 
 

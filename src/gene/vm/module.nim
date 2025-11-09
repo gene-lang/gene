@@ -1,4 +1,4 @@
-import tables, strutils, hashes, os
+import tables, strutils, hashes, os, streams
 
 import ../types
 import ../parser
@@ -271,29 +271,27 @@ proc compile_module*(path: string): CompilationUnit =
   # Read module file
   var code: string
   var actual_path = path
-  
+
   # Try with .gene extension if not present
   if not path.endsWith(".gene"):
     actual_path = path & ".gene"
-  
-  try:
-    code = readFile(actual_path)
-  except IOError as e:
+
+  # Try to open the file as a stream
+  var stream = newFileStream(actual_path, fmRead)
+  if stream.isNil:
     # Try without extension if .gene failed
     if actual_path != path:
-      try:
-        code = readFile(path)
-      except IOError:
-        not_allowed("Failed to read module '" & path & "': " & e.msg)
+      stream = newFileStream(path, fmRead)
+      if stream.isNil:
+        not_allowed("Failed to open module '" & path & "'")
+      actual_path = path
     else:
-      not_allowed("Failed to read module '" & path & "': " & e.msg)
-  
-  # Parse the module code
-  var parser = new_parser()
-  let parsed = parser.read_all(code)
-  
-  # Use the standard compile function
-  return compile(parsed)
+      not_allowed("Failed to open module '" & path & "'")
+
+  defer: stream.close()
+
+  # Use streaming compilation for better memory efficiency
+  return parse_and_compile(stream, actual_path)
 
 proc load_module*(vm: VirtualMachine, path: string): Namespace =
   ## Load a module from file and return its namespace

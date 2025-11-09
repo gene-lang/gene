@@ -134,18 +134,23 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       # Check if GIR output is requested
       if options.format == "gir":
         let gir_path = get_gir_path(file, options.out_dir)
-        
+
         # Check if recompilation is needed
         if not options.force and is_gir_up_to_date(gir_path, file):
           echo "Up-to-date: " & gir_path
           continue
-        
+
         echo "Compiling: " & source_name & " -> " & gir_path
-        
+
         try:
-          let parsed = read_all(code)
-          let compiled = compile(parsed, options.eager_functions)
-          
+          # Use streaming compilation for better memory efficiency
+          let stream = newFileStream(file, fmRead)
+          if stream.isNil:
+            stderr.writeLine("Error: Failed to open file: " & file)
+            quit(1)
+          defer: stream.close()
+          let compiled = parse_and_compile(stream, file, options.eager_functions)
+
           # Save to GIR file
           save_gir(compiled, gir_path, file, options.emit_debug)
           echo "Written: " & gir_path
