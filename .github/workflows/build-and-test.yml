@@ -1,0 +1,35 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master, develop, claude/** ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y libpcre3-dev
+
+    - name: Setup Nim
+      uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: '2.2.0'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build project
+      run: nimble build -y
+
+    - name: Run nimble tests
+      run: nimble test
+
+    - name: Run testsuite
+      run: |
+        chmod +x testsuite/run_tests.sh
+        testsuite/run_tests.sh
