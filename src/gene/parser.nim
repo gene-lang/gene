@@ -1074,7 +1074,8 @@ proc init*() =
   init_handlers()
 
 proc open*(self: var Parser, input: Stream, filename: string) =
-  lexbase.open(self, input)
+  # Use 1MB buffer instead of default 8192 bytes to support large files
+  lexbase.open(self, input, bufLen = 1024 * 1024)
   self.filename = filename
   self.str = ""
   self.trace_root = new_source_trace(filename, 1, 1)
