@@ -56,22 +56,21 @@
 
 # 2.1 Constructor with instance variables
 (println "2.1 Constructor with instance variables:")
-# (class Person
-#   (.ctor [name age]
-#     (/name = name)
-#     (/age = age)
-#   )
-# )
-# (var alice (new Person "Alice" 30))
-# (println alice/name)  # Should print "Alice"
-# (println alice/age)   # Should print 30
-(println "NOT IMPLEMENTED YET")
+(class Person
+  (.ctor [name age]
+    (/name = name)
+    (/age = age)
+  )
+)
+(var alice (new Person "Alice" 30))
+(println alice/name)  # Should print "Alice"
+(println alice/age)   # Should print 30
 (println "")
 
 # 2.2 Constructor with parameter shadowing (shorthand)
 (println "2.2 Constructor with parameter shadowing:")
 # (class Point
-#   (.ctor /x /y)  # Shorthand: automatically assigns to /x and /y
+#   (.ctor [/x /y])  # Shorthand: automatically assigns to /x and /y
 # )
 # (var p (new Point 10 20))
 # (println p/x)  # Should print 10
@@ -81,66 +80,68 @@
 
 # 2.3 Methods
 (println "2.3 Methods:")
-# (class Counter
-#   (.ctor _
-#     (/count = 0)
-#   )
-#   (.fn increment _
-#     (/count = (+ /count 1))
-#   )
-#   (.fn get_count _
-#     /count
-#   )
-# )
-# (var c (new Counter))
-# (c .increment)
-# (c .increment)
-# (println (c .get_count))  # Should print 2
-(println "NOT IMPLEMENTED YET")
+(class Counter
+  (.ctor _
+    (/count = 0)
+  )
+  (.fn increment _
+    (/count = (+ /count 1))
+  )
+  (.fn get_count _
+    /count
+  )
+)
+(var c (new Counter))
+(c .increment)
+(c .increment)
+(println (c .get_count))  # Should print 2
 (println "")
 
 # 2.4 Method with parameters
 (println "2.4 Method with parameters:")
-# (class Calculator
-#   (.fn add [a b]
-#     (+ a b)
-#   )
-#   (.fn multiply [a b]
-#     (* a b)
-#   )
-# )
-# (var calc (new Calculator))
-# (println (calc .add 5 3))       # Should print 8
-# (println (calc .multiply 4 7))  # Should print 28
-(println "NOT IMPLEMENTED YET")
+(class Calculator
+  (.fn add [a b]
+    (+ a b)
+  )
+  (.fn multiply [a b]
+    (* a b)
+  )
+)
+(var calc (new Calculator))
+(println (calc .add 5 3))       # Should print 8
+(println (calc .multiply 4 7))  # Should print 28
 (println "")
 
 # 2.5 Method invocation with dot notation
 (println "2.5 Method invocation with dot notation:")
 # (class Greeter
-#   (.ctor /name)
+#   (.ctor name
+#     (/name = name)
+#   )
 #   (.fn greet _
 #     (println "Hello, I'm " /name)
 #   )
 # )
 # (var greeter (new Greeter "Bob"))
-# greeter/.greet  # Dot notation: object/.method
+# (println greeter/.greet)  # Dot notation: object/.method
 (println "NOT IMPLEMENTED YET")
 (println "")
 
 # 2.6 Instance variable access
 (println "2.6 Instance variable access:")
-# (class Rectangle
-#   (.ctor /width /height)
-#   (.fn area _
-#     (* /width /height)
-#   )
-# )
-# (var rect (new Rectangle 10 5))
-# (println rect/width)   # Should print 10
-# (println rect/height)  # Should print 5
-# (println (rect .area)) # Should print 50
-(println "NOT IMPLEMENTED YET")
+(class Rectangle
+  (.ctor [width height]
+    (/width = width)
+    (/height = height)
+  )
+  (.fn area _
+    (* /width /height)
+  )
+)
+(var rect (new Rectangle 10 5))
+(println rect/width)   # Should print 10
+(println rect/height)  # Should print 5
+(println (rect .area)) # Should print 50
 (println "")
 
 # 2.7 Instance variable assignment from outside
@@ -159,32 +160,30 @@
 
 # 2.8 Inheritance with method override
 (println "2.8 Inheritance with method override:")
-# (class Animal2
-#   (.fn speak _
-#     "Some sound"
-#   )
-# )
-# (class Dog2 < Animal2
-#   (.fn speak _
-#     "Woof!"
-#   )
-# )
-# (var dog2 (new Dog2))
-# (println (dog2 .speak))  # Should print "Woof!"
-(println "NOT IMPLEMENTED YET")
+(class Animal2
+  (.fn speak _
+    "Some sound"
+  )
+)
+(class Dog2 < Animal2
+  (.fn speak _
+    "Woof!"
+  )
+)
+(var dog2 (new Dog2))
+(println (dog2 .speak))  # Should print "Woof!"
 (println "")
 
 # 2.9 Inheritance with method inherited (not overridden)
 (println "2.9 Inheritance with method inherited:")
-# (class Base
-#   (.fn test _
-#     "Base.test"
-#   )
-# )
-# (class Derived < Base)
-# (var d (new Derived))
-# (println (d .test))  # Should print "Base.test"
-(println "NOT IMPLEMENTED YET")
+(class Base
+  (.fn test _
+    "Base.test"
+  )
+)
+(class Derived < Base)
+(var d (new Derived))
+(println (d .test))  # Should print "Base.test"
 (println "")
 
 # 2.10 Super calls
