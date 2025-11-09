@@ -431,7 +431,10 @@ proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     if arg_count < 1:
       not_allowed("vm_compile requires an argument")
 
-    let compiler = Compiler(output: new_compilation_unit())
+    let compiler = Compiler(
+      output: new_compilation_unit(),
+      method_access_mode: MamAutoCall
+    )
     let scope_tracker = vm.frame.caller_frame.scope.tracker
     # compiler.output.scope_tracker = scope_tracker
     compiler.scope_trackers.add(scope_tracker)

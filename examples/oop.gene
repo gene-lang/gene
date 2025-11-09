@@ -114,16 +114,16 @@
 
 # 2.5 Method invocation with dot notation
 (println "2.5 Method invocation with dot notation:")
-# (class Greeter
-#   (.ctor name
-#     (/name = name)
-#   )
-#   (.fn greet _
-#     (println "Hello, I'm " /name)
-#   )
-# )
-# (var greeter (new Greeter "Bob"))
-# (println greeter/.greet)  # Dot notation: object/.method
+(class Greeter
+  (.ctor name
+    (/name = name)
+  )
+  (.fn greet _
+    (println "Hello, I'm " /name)
+  )
+)
+(var greeter (new Greeter "Bob"))
+(println greeter/.greet)  # Dot notation: object/.method
 (println "NOT IMPLEMENTED YET")
 (println "")
 
@@ -146,16 +146,15 @@
 
 # 2.7 Instance variable assignment from outside
 (println "2.7 Instance variable assignment from outside:")
-# (class Mutable
-#   (.ctor _
-#     (/value = 0)
-#   )
-# )
-# (var m (new Mutable))
-# (println m/value)  # Should print 0
-# (m/value = 42)
-# (println m/value)  # Should print 42
-(println "NOT IMPLEMENTED YET")
+(class Mutable
+  (.ctor _
+    (/value = 0)
+  )
+)
+(var m (new Mutable))
+(println m/value)  # Should print 0
+(m/value = 42)
+(println m/value)  # Should print 42
 (println "")
 
 # 2.8 Inheritance with method override
@@ -209,13 +208,14 @@
 
 # 2.11 Inherited constructor
 (println "2.11 Inherited constructor:")
-# (class ParentWithCtor
-#   (.ctor /name)
-# )
-# (class ChildWithCtor < ParentWithCtor)
-# (var child_obj (new ChildWithCtor "Alice"))
-# (println child_obj/name)  # Should print "Alice"
-(println "NOT IMPLEMENTED YET")
+(class ParentWithCtor
+  (.ctor name
+    (/name = name)
+  )
+)
+(class ChildWithCtor < ParentWithCtor)
+(var child_obj (new ChildWithCtor "Alice"))
+(println child_obj/name)  # Should print "Alice"
 (println "")
 
 # 2.12 Namespaced class definition
@@ -240,7 +240,7 @@
 (println "NOT IMPLEMENTED YET")
 (println "")
 
-# 2.14 Mixins
+# 2.14 Mixins - maybe not a good idea.
 (println "2.14 Mixins:")
 # (mixin Flyable
 #   (.fn fly _
@@ -374,21 +374,20 @@
 
 # 3.4 Method returning self (for chaining)
 (println "3.4 Method returning self (for chaining):")
-# (class Builder
-#   (.ctor _
-#     (/value = 0)
-#   )
-#   (.fn add [n]
-#     (/value = (+ /value n))
-#     self
-#   )
-#   (.fn get _
-#     /value
-#   )
-# )
-# (var builder (new Builder))
-# (println ((((builder .add 1) .add 2) .add 3) .get))  # Should print 6
-(println "NOT IMPLEMENTED YET")
+(class Builder
+  (.ctor _
+    (/value = 0)
+  )
+  (.fn add [n]
+    (/value = (+ /value n))
+    self
+  )
+  (.fn get _
+    /value
+  )
+)
+(var builder (new Builder))
+(println ((((builder .add 1) .add 2) .add 3) .get))  # Should print 6
 (println "")
 
 (println "")

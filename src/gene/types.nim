@@ -626,6 +626,10 @@ type
     start_label*: Label
     end_label*: Label
 
+  MethodAccessMode* = enum
+    MamAutoCall
+    MamReference
+
   Compiler* = ref object
     output*: CompilationUnit
     quote_level*: int
@@ -635,6 +639,7 @@ type
     eager_functions*: bool
     trace_stack*: seq[SourceTrace]
     last_error_trace*: SourceTrace
+    method_access_mode*: MethodAccessMode
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop

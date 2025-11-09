@@ -158,10 +158,13 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       if is_int:
         self.emit(Instruction(kind: IkGetChild, arg0: i))
       elif s.starts_with("."):
-        # For method access, use IkResolveMethod to get the method
-        # without calling it. The actual call will happen when the
-        # gene is executed.
-        self.emit(Instruction(kind: IkResolveMethod, arg0: s[1..^1].to_symbol_value()))
+        let method_value = s[1..^1].to_symbol_value()
+        if self.method_access_mode == MamReference:
+          # Preserve legacy behavior when compiling method references
+          self.emit(Instruction(kind: IkResolveMethod, arg0: method_value))
+        else:
+          # Default: immediately invoke zero-arg method via dot notation
+          self.emit(Instruction(kind: IkUnifiedMethodCall0, arg0: method_value))
       elif s == "...":
         # Spread operator in complex symbols - not yet implemented
         # This would handle cases like a/.../b but is an edge case
@@ -1341,7 +1344,12 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       # This is a method call - compile it specially
       # The object will be on the stack after compiling the type
       # We need to ensure it's passed as the first argument
-      self.compile(gene.type)  # This pushes object and method
+      let prev_mode = self.method_access_mode
+      self.method_access_mode = MamReference
+      try:
+        self.compile(gene.type)  # This pushes object and method
+      finally:
+        self.method_access_mode = prev_mode
       
       # After compiling obj/.method, stack has [obj, method]
       # IkGeneStartDefault will pop the method
@@ -2324,7 +2332,13 @@ proc optimize_noops(self: CompilationUnit) =
 
 
 proc compile*(input: seq[Value], eager_functions: bool): CompilationUnit =
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
 
@@ -2356,7 +2370,13 @@ proc compile*(f: Function, eager_functions: bool) =
   if f.body_compiled != nil:
     return
 
-  var self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  var self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -2399,7 +2419,13 @@ proc compile*(b: Block, eager_functions: bool) =
   if b.body_compiled != nil:
     return
 
-  var self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  var self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(b.scope_tracker)
 
@@ -2437,7 +2463,13 @@ proc compile*(f: CompileFn, eager_functions: bool) =
   if f.body_compiled != nil:
     return
 
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -2848,7 +2880,12 @@ proc compile_import(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkImport))
 
 proc compile_init*(input: Value): CompilationUnit =
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.output.skip_return = true
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
@@ -2887,7 +2924,13 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   defer: parser.close()
 
   # Initialize compilation
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
   
@@ -2938,7 +2981,13 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   defer: parser.close()
 
   # Initialize compilation
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.output.instructions.add(Instruction(kind: IkStart))
   self.start_scope()
 
