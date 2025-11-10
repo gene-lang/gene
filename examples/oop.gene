@@ -268,13 +268,16 @@
 
 # 2.16 Object syntax (singleton objects)
 (println "2.16 Object syntax (singleton objects):")
-# ($object config
-#   (.fn get_version _
-#     "1.0.0"
-#   )
-# )
-# (println config/.get_version)  # Should print "1.0.0"
-(println "NOT IMPLEMENTED YET")
+(object config
+  (.ctor _
+    (/version = "1.0.0")
+  )
+  (.fn do_something _
+    (println "Doing something...")
+  )
+)
+(println config/version)  # Should print "1.0.0"
+(config .do_something)
 (println "")
 
 # 2.17 Macro-like methods (receive unevaluated arguments)
@@ -359,11 +362,10 @@
 
 # 3.3 Constructor with no parameters
 (println "3.3 Constructor with no parameters:")
-# (class Empty
-#   (.ctor _)
-# )
-# (var empty (new Empty))
-(println "NOT IMPLEMENTED YET")
+(class Empty
+  (.ctor _)
+)
+(var empty (new Empty))
 (println "")
 
 # 3.4 Method returning self (for chaining)

@@ -1260,6 +1260,56 @@ proc compile_class(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkCompileInit))
     self.emit(Instruction(kind: IkCallInit))
 
+proc compile_object(self: Compiler, gene: ptr Gene) =
+  if gene.children.len == 0:
+    not_allowed("object requires a name")
+
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  let name = gene.children[0]
+
+  if name.kind != VkSymbol:
+    not_allowed("object name must be a symbol")
+
+  var class_name_str = name.str
+  if class_name_str.len == 0:
+    not_allowed("object name cannot be empty")
+  if not class_name_str.ends_with("Class"):
+    class_name_str &= "Class"
+  let class_name = class_name_str.to_symbol_value()
+
+  # Build class definition gene
+  let inherits_symbol = "<".to_symbol_value()
+  var class_gene = new_gene("class".to_symbol_value())
+  if container_expr != NIL:
+    class_gene.props[container_key()] = container_expr
+  class_gene.children.add(class_name)
+
+  var body_start = 1
+  if gene.children.len >= 3 and gene.children[1] == inherits_symbol:
+    class_gene.children.add(inherits_symbol)
+    class_gene.children.add(gene.children[2])
+    body_start = 3
+
+  for i in body_start..<gene.children.len:
+    class_gene.children.add(gene.children[i])
+
+  self.compile(class_gene.to_gene_value())
+
+  # Instantiate singleton and bind it to the provided name
+  var new_call = new_gene("new".to_symbol_value())
+  new_call.children.add(class_name)
+
+  var var_gene = new_gene("var".to_symbol_value())
+  if container_expr != NIL:
+    var_gene.props[container_key()] = container_expr
+  var_gene.children.add(name)
+  var_gene.children.add(new_call.to_gene_value())
+  self.compile(var_gene.to_gene_value())
+
+  # Return the singleton instance so (object ...) can be used as an expression
+  self.compile(name)
+
 # Construct a Gene object whose type is the class
 # The Gene object will be used as the arguments to the constructor
 proc compile_new(self: Compiler, gene: ptr Gene) =
@@ -2152,6 +2202,9 @@ proc compile_gene(self: Compiler, input: Value) =
         return
       of "class":
         self.compile_class(gene)
+        return
+      of "object":
+        self.compile_object(gene)
         return
       of "new", "new!":
         self.compile_new(gene)
