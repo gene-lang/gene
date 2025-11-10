@@ -17,6 +17,16 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
+# Multi-Agent Collaboration
+
+**IMPORTANT**: check whether `.multi_agent_protocol.md` exists at the beginning of your session. If it does, the user wants you to collaborate with other agents.
+
+To activate multi-agent mode:
+1. Read `.multiagentprotocol.md`
+2. Follow the initialization sequence described in the protocol
+3. Request your agent identity from @user
+4. Check `.multi_agent_conversation.md` for context and messages
+
 # Gene Agent Guide
 
 These notes summarise the current VM implementation so future agents can orient quickly.  
