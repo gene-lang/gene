@@ -22,21 +22,23 @@ What's missing:
 
 ### Design Decisions
 
-1. **Simplify Model**: Remove `IkNewMacro` instruction, treat macro constructors as regular methods
-2. **Compile-Time Transformation**: `compile_new` transforms `(new! Class ...)` to regular method calls
-3. **Track Constructor Type in Class**: Add `has_macro_constructor` flag to Class
-4. **Extend Super Syntax**: Add `(super .ctor!)` support alongside existing `(super .ctor)`
-5. **Clear Error Messages**: Provide actionable feedback for mismatches
+1. **Simplify Model**: Remove `IkNewMacro` instruction, use existing `IkNew` with enhanced validation
+2. **Dual Validation**: Both compile-time and runtime validation for safety with dynamic instantiation
+3. **Preserve Gene Wrapper**: Keep `IkGeneStart`/`IkGeneAddChild`/`IkGeneEnd` for unevaluated arguments
+4. **Track Constructor Type in Class**: Add `has_macro_constructor` flag to Class
+5. **Extend Super Syntax**: Add `(super .ctor!)` support alongside existing `(super .ctor)`
+6. **Clear Error Messages**: Provide actionable feedback for mismatches
 
-### Simplified Approach
+### Hybrid Approach
 
-Instead of having special VM instructions for macro constructors, we:
+We combine compile-time and runtime approaches:
 
-1. **Define macro constructors** with `.ctor!` - creates constructor logic with unevaluated argument handling
-2. **Call macro constructors** with `new!` - compiler handles this with dedicated logic
-3. **Remove special VM handling** - no need for `IkNewMacro`, use existing constructor infrastructure
+1. **Define macro constructors** with `.ctor!` - creates constructor with unevaluated argument handling
+2. **Call macro constructors** with `new!` - compiler handles with Gene wrapper for unevaluated args
+3. **Dual validation** - compile-time checks for static cases, runtime checks for dynamic cases
+4. **Unified VM path** - use existing `IkNew` with enhanced validation logic
 
-This means `(new! MyClass arg1 arg2)` is handled specially at compile time to pass arguments unevaluated.
+This means `(new! MyClass arg1 arg2)` gets special treatment to pass arguments unevaluated while maintaining runtime safety.
 
 ## Implementation Details
 
@@ -63,7 +65,7 @@ Remove `IkNewMacro` instruction from InstructionKind enum.
 - Leave as `false` for regular `.ctor`
 - `.ctor!` creates constructor with unevaluated argument handling
 
-**Simplified `compile_new` function**:
+**Enhanced `compile_new` function**:
 ```nim
 proc compile_new(self: Compiler, gene: ptr Gene) =
   # Check if this is a macro constructor call (new!)
@@ -74,23 +76,23 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
     if gene.children.len == 0:
       not_allowed("new! requires at least a class name")
 
-    # Validate class has macro constructor
-    let class_expr = gene.children[0]
-    # ... validation logic ...
+    # Compile the class
+    self.compile(gene.children[0])
 
-    # Compile class and arguments with quote level for unevaluated args
-    self.compile(class_expr)
+    # Wrap arguments in Gene for unevaluated passing (preserves AST)
+    self.emit(Instruction(kind: IkGeneStart))
 
     self.quote_level.inc()
     for i in 1..<gene.children.len:
       self.compile(gene.children[i])
+      self.emit(Instruction(kind: IkGeneAddChild))
     self.quote_level.dec()
 
-    # Use existing constructor infrastructure (no special VM instruction needed)
+    self.emit(Instruction(kind: IkGeneEnd))
     self.emit(Instruction(kind: IkNew))
   else:
-    # Regular constructor compilation (existing logic)
-    # ... existing IkNew handling ...
+    # Regular constructor compilation with validation
+    # ... existing IkNew handling with added checks for macro constructor mismatches ...
 ```
 
 **Super Constructor Support**:
@@ -105,9 +107,14 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
 
 **File**: `src/gene/vm.nim`
 
+**Enhanced IkNew Handler**:
+- Add runtime validation in `IkNew` handler for constructor type mismatches
+- Check `class.has_macro_constructor` against call type (evaluated vs unevaluated args)
+- Provide clear error messages for dynamic scenarios
+
 **Remove IkNewMacro Handler**:
 - Delete the `IkNewMacro` case from the VM dispatch
-- No special runtime handling needed - uses regular method dispatch
+- All constructor calls use unified `IkNew` path
 
 **Super Constructor Handling**:
 - Extend existing super call mechanism to handle both regular and macro cases
@@ -116,21 +123,25 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
 ### 4. Error Messages
 
 **Clear, Actionable Messages**:
-- "Constructor mismatch: Class 'Foo' has a macro constructor, use 'new!' instead of 'new'"
-- "Constructor mismatch: Class 'Bar' has a regular constructor, use 'new' instead of 'new!'"
+- **Compile-time**: "Constructor mismatch: Class 'Foo' has a macro constructor, use 'new!' instead of 'new'"
+- **Compile-time**: "Constructor mismatch: Class 'Bar' has a regular constructor, use 'new' instead of 'new!'"
+- **Runtime**: "Cannot instantiate macro constructor 'Foo' with evaluated arguments, use 'new!'"
+- **Runtime**: "Cannot instantiate regular constructor 'Bar' with unevaluated arguments, use 'new'"
 - "Super constructor mismatch: Parent class has a macro constructor, use '(super .ctor!)' instead of '(super .ctor)'"
 
 ## Implementation Phases
 
 ### Phase 1: Simplify Infrastructure
 1. Remove `IkNewMacro` instruction from VM and types
-2. Update `compile_new` to transform `new!` calls to method calls
-3. Update constructor definition to create regular methods
+2. Update `compile_new` to preserve Gene wrapper for unevaluated arguments
+3. Enhance `IkNew` handler with runtime validation
+4. Update constructor definition to handle unevaluated arguments
 
 ### Phase 2: Constructor Type Tracking
 1. Add `has_macro_constructor` field to Class
 2. Set flag during `.ctor!` processing
 3. Add compile-time validation for `new`/`new!` mismatches
+4. Add runtime validation in VM for dynamic scenarios
 
 ### Phase 3: Super Constructor Support
 1. Add `(super .ctor!)` syntax parsing

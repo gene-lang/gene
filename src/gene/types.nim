@@ -528,6 +528,7 @@ type
     ns*: Namespace # Class can act like a namespace
     for_singleton*: bool # if it's the class associated with a single object, can not be extended
     version*: uint64  # Incremented when methods are mutated
+    has_macro_constructor*: bool  # Track if class has macro constructor for validation
 
   Method* = ref object
     class*: Class
@@ -794,9 +795,6 @@ type
     IkUnifiedMethodCall1 # Single-argument method call
     IkUnifiedMethodCall2 # Two-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
-
-    # Macro-specific instructions
-    IkNewMacro        # Macro constructor call
 
     IkResolveSymbol
     IkSetMember
@@ -2862,6 +2860,7 @@ proc new_class*(name: string, parent: Class): Class =
     members: initTable[Key, Value](),
     methods: initTable[Key, Method](),
     version: 0,
+    has_macro_constructor: false,  # Initialize to false, will be set during constructor compilation
   )
 
 proc new_class*(name: string): Class =
@@ -3534,7 +3533,7 @@ proc `$`*(self: Instruction): string =
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
-      IkTailCall, IkNewMacro:
+      IkTailCall:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
       else:

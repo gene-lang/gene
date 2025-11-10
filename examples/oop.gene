@@ -298,19 +298,23 @@
 
 # 2.18 Macro constructor (receives unevaluated arguments)
 (println "2.18 Macro constructor:")
-# (class LazyPoint
-#   (.ctor! [x y]
-#     (/x = ($caller_eval x))
-#     (/y = ($caller_eval y))
-#   )
-#   (.fn get_x _
-#     /x
-#   )
-# )
-# (var a 5)
-# (var lp (new! LazyPoint a (+ 3 2)))
-# (println (lp .get_x))  # Should print 5
-(println "NOT IMPLEMENTED YET")
+(class LazyPoint
+  (.ctor! [x y]
+    (/x = x)      # Keep x as symbol
+    (/y = y)      # Keep y as symbol
+  )
+  (.fn get_x _
+    /x
+  )
+  (.fn get_y _
+    /y
+  )
+)
+(var a 5)
+(var lp (new! LazyPoint a b))
+(println (lp .get_x))  # Should print symbol 'a'
+(println (lp .get_y))  # Should print symbol 'b'
+(println "")
 (println "")
 
 # 2.19 Class variables (static members)

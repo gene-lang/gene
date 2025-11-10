@@ -1327,10 +1327,13 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
   # Check if this is a macro constructor call (new!)
   let is_macro_new = gene.type.kind == VkSymbol and gene.type.str == "new!"
 
-  # Compile the class (first argument)
+  
+  # Compile the class first, then the arguments
+  # Stack will be: [class, args] so VM can pop args first, then class
   self.compile(gene.children[0])
 
-  # Compile the arguments as a Gene when necessary
+  # Always create a Gene for arguments (for both regular and macro constructors)
+  # This ensures the VM validation logic works correctly
   if gene.children.len > 1:
     # Create a Gene containing all arguments
     self.emit(Instruction(kind: IkGeneStart))
@@ -1343,18 +1346,20 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
         self.emit(Instruction(kind: IkGeneAddChild))
       self.quote_level.dec()
     else:
-      # For regular constructor, evaluate arguments normally
+      # For regular constructor, evaluate arguments normally, then add to Gene
       for i in 1..<gene.children.len:
         self.compile(gene.children[i])
         self.emit(Instruction(kind: IkGeneAddChild))
 
     self.emit(Instruction(kind: IkGeneEnd))
-
-  # Emit appropriate instruction based on constructor type
-  if is_macro_new:
-    self.emit(Instruction(kind: IkNewMacro))
   else:
-    self.emit(Instruction(kind: IkNew))
+    # No arguments - push empty Gene
+    self.emit(Instruction(kind: IkGeneStart))
+    self.emit(Instruction(kind: IkGeneEnd))
+
+  # Use unified IkNew instruction for both regular and macro constructors
+  # Runtime validation will handle the differences
+  self.emit(Instruction(kind: IkNew))
 
 proc compile_super(self: Compiler, gene: ptr Gene) =
   # Super: returns the parent class

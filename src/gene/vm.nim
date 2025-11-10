@@ -2531,7 +2531,7 @@ proc exec*(self: VirtualMachine): Value =
           of VkGene:
             v.gene.children.add(child)
           of VkNil:
-            # Skip adding to nil - this might happen in conditional contexts
+            # Skip adding to nil - this might happen happen in conditional contexts
             discard
           of VkBoundMethod:
             # For bound methods, we might need to handle arguments
@@ -3548,9 +3548,12 @@ proc exec*(self: VirtualMachine): Value =
         
         # Set the constructor
         class.constructor = fn_value
-        
+
         # Set the function's namespace to the class namespace
         fn_value.ref.fn.ns = class.ns
+
+        # Set has_macro_constructor flag based on function type
+        class.has_macro_constructor = fn_value.ref.fn.is_macro_like
         
         # Return the function
         self.frame.push(fn_value)
@@ -4006,6 +4009,22 @@ proc exec*(self: VirtualMachine): Value =
           class_val.gene.type.ref.class
         else:
           raise new_exception(types.Exception, "new requires a class, got " & $class_val.kind)
+
+        # Runtime validation for constructor type mismatches
+        # Check if we have unevaluated arguments (symbols) in the Gene
+        var has_unevaluated_args = false
+        if args.kind == VkGene and args.gene.children.len > 0:
+          # Check if any arguments are symbols (indicating unevaluated)
+          for child in args.gene.children:
+            if child.kind == VkSymbol:
+              has_unevaluated_args = true
+              break
+
+        if class.has_macro_constructor and not has_unevaluated_args:
+          raise new_exception(types.Exception, "Cannot instantiate macro constructor '" & class.name & "' with evaluated arguments, use 'new!' instead of 'new'")
+
+        if not class.has_macro_constructor and has_unevaluated_args:
+          raise new_exception(types.Exception, "Cannot instantiate regular constructor '" & class.name & "' with unevaluated arguments, use 'new' instead of 'new!'")
         
         # Check constructor type
         case class.constructor.kind:
@@ -4069,96 +4088,6 @@ proc exec*(self: VirtualMachine): Value =
             instance.instance_class = class
             self.frame.push(instance.to_ref_value())
             
-          else:
-            todo($class.constructor.kind)
-
-      of IkNewMacro:
-        # Macro constructor call - similar to IkNew but with caller context
-        # Stack: either [class, args_gene] or just [class]
-        var class_val = self.frame.pop()
-        var args: Value
-        if class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
-          args = new_gene_value()
-        elif class_val.kind == VkGene:
-          args = class_val
-          class_val = self.frame.pop()
-        else:
-          args = new_gene_value()
-
-        # Get the class
-        let class = if class_val.kind == VkClass:
-          class_val.ref.class
-        elif class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
-          # Legacy path for Gene with type set to class
-          class_val.gene.type.ref.class
-        else:
-          raise new_exception(types.Exception, "new! requires a class, got " & $class_val.kind)
-
-        # Check constructor type
-        case class.constructor.kind:
-          of VkNativeFn:
-            # Call native constructor (same as regular)
-            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
-            self.frame.push(result)
-
-          of VkFunction:
-            # Macro constructor - function receives unevaluated arguments
-            let instance = new_ref(VkInstance)
-            instance.instance_class = class
-            self.frame.push(instance.to_ref_value())
-
-            class.constructor.ref.fn.compile()
-            let compiled = class.constructor.ref.fn.body_compiled
-            compiled.skip_return = true
-
-            # Create scope for constructor
-            let f = class.constructor.ref.fn
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              # Increment ref_count since the frame will own this reference
-              if scope != nil:
-                scope.ref_count.inc()
-            else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
-
-            self.pc.inc()
-            let new_frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
-            new_frame.caller_context = self.frame  # Store caller context for macro evaluation
-            self.frame = new_frame
-            self.frame.scope = scope  # Set the scope
-
-            # Pass instance as first argument for constructor
-            let args_gene = new_gene(NIL)
-            args_gene.children.add(instance.to_ref_value())
-            # Add other arguments if present (they remain unevaluated)
-            if args.kind == VkGene:
-              for child in args.gene.children:
-                args_gene.children.add(child)
-            self.frame.args = args_gene.to_gene_value()
-            self.frame.ns = class.constructor.ref.fn.ns
-
-            # Process arguments if matcher exists
-            if not f.matcher.is_empty():
-              # For macro constructors, arguments are passed as unevaluated expressions
-              var constructor_args = new_gene(NIL)
-              if args.kind == VkGene:
-                for child in args.gene.children:
-                  constructor_args.children.add(child)
-              process_args(f.matcher, constructor_args.to_gene_value(), scope)
-              assign_property_params(f.matcher, scope, instance.to_ref_value())
-
-            self.cu = compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
-
-          of VkNil:
-            # No constructor - create empty instance (same as regular)
-            let instance = new_ref(VkInstance)
-            instance.instance_class = class
-            self.frame.push(instance.to_ref_value())
-
           else:
             todo($class.constructor.kind)
 

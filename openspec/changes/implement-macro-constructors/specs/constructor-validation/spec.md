@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Constructor Type Validation
-The compiler SHALL validate that constructor calls match the constructor type defined in the class and transform `new!` calls to method calls.
+The compiler SHALL validate that constructor calls match the constructor type defined in the class and handle `new!` calls with unevaluated arguments. Runtime validation SHALL also protect dynamic instantiations.
 
 #### Scenario: Regular constructor with regular instantiation
 **WHEN** a class is defined with a regular constructor (`.ctor`) and instantiated with `new`
@@ -192,4 +192,44 @@ All existing code SHALL continue to work without changes.
 (for i 0 5
   (people .push (new Person ("Person" + i) (20 + i)))
 )
+```
+
+### Requirement: Runtime Validation for Dynamic Instantiation
+The VM SHALL validate constructor types at runtime to protect dynamic instantiations and provide clear error messages.
+
+#### Scenario: Dynamic instantiation with macro constructor (runtime error)
+**WHEN** a macro constructor is instantiated dynamically with evaluated arguments
+**THEN** the VM SHALL throw a clear runtime error
+**AND** the error SHALL indicate macro constructor requires `new!`.
+
+```gene
+(class LazyPerson
+  (.ctor! [name age]
+    (/name = ($caller_eval name))
+    (/age = ($caller_eval age))
+  )
+)
+
+# Dynamic instantiation that should fail
+(var class_ref LazyPerson)
+(var obj (new class_ref "Alice" 30))  # Should throw: "Cannot instantiate macro constructor 'LazyPerson' with evaluated arguments, use 'new!'"
+```
+
+#### Scenario: Dynamic instantiation with regular constructor (runtime error)
+**WHEN** a regular constructor is instantiated dynamically with unevaluated arguments
+**THEN** the VM SHALL throw a clear runtime error
+**AND** the error SHALL indicate regular constructor requires `new`.
+
+```gene
+(class Person
+  (.ctor [name age]
+    (/name = name)
+    (/age = age)
+  )
+)
+
+# Dynamic instantiation that should fail
+(var class_ref Person)
+(var args_gene ["Alice" 30])
+(var obj (new! class_ref args_gene))  # Should throw: "Cannot instantiate regular constructor 'Person' with unevaluated arguments, use 'new'"
 ```

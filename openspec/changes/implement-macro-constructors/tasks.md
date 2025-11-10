@@ -8,11 +8,16 @@
 - [ ] Remove `IkNewMacro` from any listing/trace utilities
 - [ ] Update GIR serialization if needed
 
+### 1.1.1 Enhance IkNew handler
+- [ ] Add runtime validation to `IkNew` handler for constructor type mismatches
+- [ ] Check class.has_macro_constructor against argument types
+- [ ] Provide clear runtime error messages for dynamic instantiations
+
 ### 1.2 Update compile_new for macro constructors
 - [ ] Modify `compile_new` to detect `new!` calls
-- [ ] Handle unevaluated argument compilation with quote level
-- [ ] Use existing constructor infrastructure (no special VM instruction)
-- [ ] Ensure quote level handling works for unevaluated arguments
+- [ ] Preserve Gene wrapper (IkGeneStart/IkGeneAddChild/IkGeneEnd) for unevaluated arguments
+- [ ] Handle quote level correctly for unevaluated arguments
+- [ ] Use existing constructor infrastructure with enhanced `IkNew`
 
 ### 1.3 Update constructor definitions
 - [ ] Ensure `.ctor!` creates constructor with unevaluated argument handling
@@ -31,11 +36,12 @@
 - [ ] Ensure `.ctor` leaves field as `false`
 - [ ] Test that field is set correctly for both constructor types
 
-### 2.3 Add compile-time validation
+### 2.3 Add validation (compile-time and runtime)
 - [ ] Add validation in `compile_new` to check `new` vs regular constructor
 - [ ] Add validation in `compile_new` to check `new!` vs macro constructor
-- [ ] Implement clear error messages for compile-time mismatches
-- [ ] Test compile-time validation scenarios
+- [ ] Add runtime validation in VM `IkNew` handler for dynamic scenarios
+- [ ] Implement clear error messages for both compile-time and runtime mismatches
+- [ ] Test validation scenarios (static and dynamic)
 
 ## Phase 3: Super Constructor Support
 
