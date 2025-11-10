@@ -124,7 +124,6 @@
 )
 (var greeter (new Greeter "Bob"))
 (println greeter/.greet)  # Dot notation: object/.method
-(println "NOT IMPLEMENTED YET")
 (println "")
 
 # 2.6 Instance variable access
@@ -187,23 +186,22 @@
 
 # 2.10 Super calls
 (println "2.10 Super calls:")
-# (class Parent
-#   (.fn greet [name]
-#     (println "Parent says: Hello " name)
-#   )
-# )
-# (class Child < Parent
-#   (.fn greet [name]
-#     (super .greet name)
-#     (println "Child says: Hi " name)
-#   )
-# )
-# (var child (new Child))
-# (child .greet "World")
-# # Should print:
-# # Parent says: Hello World
-# # Child says: Hi World
-(println "NOT IMPLEMENTED YET")
+(class Parent
+  (.fn greet [name]
+    (println "Parent says: Hello " name)
+  )
+)
+(class Child < Parent
+  (.fn greet [name]
+    (super .greet name)
+    (println "Child says: Hi " name)
+  )
+)
+(var child (new Child))
+(child .greet "World")
+# Should print:
+# Parent says: Hello World
+# Child says: Hi World
 (println "")
 
 # 2.11 Inherited constructor

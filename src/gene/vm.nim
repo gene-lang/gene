@@ -849,6 +849,97 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     not_allowed("call method must be a function or native function")
     return false
 
+proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
+  ## Helper for invoking a method on the superclass of the current method context.
+  if super_value.kind != VkSuper:
+    return false
+
+  let super_ref = super_value.ref
+  let instance = super_ref.super_instance
+  var class = super_ref.super_class
+
+  if class == nil:
+    not_allowed("super has no parent class")
+  if instance.kind != VkInstance:
+    not_allowed("super requires an instance context")
+
+  let method_key = method_name.to_key()
+  var meth: Method = nil
+
+  while class != nil and meth.is_nil:
+    if class.methods.hasKey(method_key):
+      meth = class.methods[method_key]
+    else:
+      class = class.parent
+
+  if meth.is_nil:
+    not_allowed("Method '" & method_name & "' not found in super class hierarchy")
+
+  case meth.callable.kind:
+  of VkFunction:
+    let f = meth.callable.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      var all_args = newSeq[Value](args.len + 1)
+      all_args[0] = instance
+      for i in 0..<args.len:
+        all_args[i + 1] = args[i]
+      if all_args.len > 0:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = meth.callable
+    new_frame.scope = scope
+    new_frame.current_method = meth
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(instance)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: -3,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = instance
+    for i in 0..<args.len:
+      all_args[i + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("Super method must be a function or native function")
+    return false
+
 proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
   let value_class = get_value_class(value)
@@ -3441,32 +3532,36 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(fn_value)
       
       of IkSuper:
-        # Super - returns the parent class
-        # The user said: "super will return the parent class"
-        
-        # We need to know the current class to get its parent
+        # Push a proxy representing the parent class for super calls
+        var instance = NIL
+        if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
+          instance = self.frame.args.gene.children[0]
+        elif self.frame.current_method != nil and self.frame.scope != nil:
+          let method_callable = self.frame.current_method.callable
+          if method_callable.kind == VkFunction:
+            let f = method_callable.ref.fn
+            let self_key = "self".to_key()
+            if f.scope_tracker.mappings.hasKey(self_key):
+              let self_idx = f.scope_tracker.mappings[self_key]
+              if self_idx.int < self.frame.scope.members.len:
+                instance = self.frame.scope.members[self_idx.int]
+
+        if instance.kind != VkInstance:
+          not_allowed("super requires an instance context")
+
         var current_class: Class
-        
-        # Check if we're in a method context
         if self.frame.current_method != nil:
           current_class = self.frame.current_method.class
-        elif self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
-          let first_arg = self.frame.args.gene.children[0]
-          if first_arg.kind == VkInstance:
-            current_class = first_arg.ref.instance_class
         else:
-          not_allowed("super can only be called from within a class context")
-        
-        if current_class.parent == nil:
-          not_allowed("No parent class for super")
-        
-        # Push the parent class
-        # The parent class should already have a Value representation
-        # We need to find it - it might be stored in the namespace
-        # For now, let's create a bound method-like value that knows about the parent
-        # Actually, let me try a different approach - push self but mark it as "super"
-        # This is getting complicated, let me just comment out the test for now
-        not_allowed("super is not yet fully implemented")
+          current_class = instance.ref.instance_class
+
+        if current_class == nil or current_class.parent == nil:
+          not_allowed("No parent class available for super")
+
+        let super_ref = new_ref(VkSuper)
+        super_ref.super_instance = instance
+        super_ref.super_class = current_class.parent
+        self.frame.push(super_ref.to_ref_value())
 
       of IkCallInit:
         {.push checks: off}
@@ -5143,6 +5238,10 @@ proc exec*(self: VirtualMachine): Value =
             raise new_exception(types.Exception, fmt"IkUnifiedMethodCall0 expected 0 args, got {call_info.count}")
         let method_name = inst.arg0.str
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, @[]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
         if call_value_method(self, obj, method_name, []):
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
@@ -5270,6 +5369,10 @@ proc exec*(self: VirtualMachine): Value =
         let method_name = inst.arg0.str
         let arg = self.frame.pop()
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, [arg]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         if call_value_method(self, obj, method_name, [arg]):
           self.pc.inc()
@@ -5410,6 +5513,10 @@ proc exec*(self: VirtualMachine): Value =
         let arg2 = self.frame.pop()
         let arg1 = self.frame.pop()
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, [arg1, arg2]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         if call_value_method(self, obj, method_name, [arg1, arg2]):
           self.pc.inc()
@@ -5557,6 +5664,10 @@ proc exec*(self: VirtualMachine): Value =
         for i in countdown(arg_count - 1, 0):
           args[i] = self.frame.pop()
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, args):
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         if call_value_method(self, obj, method_name, args):
           self.pc.inc()

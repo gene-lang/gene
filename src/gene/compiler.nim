@@ -196,8 +196,8 @@ proc compile_symbol(self: Compiler, input: Value) =
           self.emit(Instruction(kind: IkPushSelf))
         return
       elif symbol_str == "super":
-        # Special handling for super - will be handled differently when it's a function call
-        self.emit(Instruction(kind: IkPushValue, arg0: input))
+        # Push runtime super proxy (handled by IkSuper at execution time)
+        self.emit(Instruction(kind: IkSuper))
         return
       elif symbol_str.startsWith("@") and symbol_str.len > 1:
         # Handle @shorthand syntax: @test -> (@ "test"), @0 -> (@ 0)

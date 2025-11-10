@@ -148,6 +148,7 @@ type
     VkMixin              # For mixin support
     VkMethod
     VkBoundMethod
+    VkSuper
     VkInstance
     VkCast               # Type casting
     VkEnum
@@ -318,6 +319,9 @@ type
         `method`*: Method
       of VkBoundMethod:
         bound_method*: BoundMethod
+      of VkSuper:
+        super_instance*: Value
+        super_class*: Class
       of VkInstance:
         instance_class*: Class
         instance_props*: Table[Key, Value]
