@@ -279,19 +279,18 @@
 
 # 2.17 Macro-like methods (receive unevaluated arguments)
 (println "2.17 Macro-like methods:")
-# (class MacroTest
-#   (.fn normal [a]
-#     a
-#   )
-#   (.fn macro_like! [a]
-#     a
-#   )
-# )
-# (var b 1)
-# (var mt (new MacroTest))
-# (println (mt .normal b))       # Should print 1
-# (println (mt .macro_like! b))  # Should print 'b (symbol)
-(println "NOT IMPLEMENTED YET")
+(class MacroTest
+  (.fn normal [a]
+    a
+  )
+  (.fn macro_like! [a]
+    a
+  )
+)
+(var b 1)
+(var mt (new MacroTest))
+(println (mt .normal b))       # Should print 1
+(println (mt .macro_like! b))  # Should print b (symbol)
 (println "")
 
 # 2.18 Macro constructor (receives unevaluated arguments)

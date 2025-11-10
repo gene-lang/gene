@@ -1757,11 +1757,22 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
 
   let arg_count = gene.children.len - start_index
 
+  # Check if this is a macro-like method (ends with !)
+  let is_macro_like_method = method_name.ends_with("!")
+
   if gene.props.len == 0:
     # Fast path: positional arguments only
     # Compile arguments - they'll be on stack after object
-    for i in start_index..<gene.children.len:
-      self.compile(gene.children[i])
+    if is_macro_like_method:
+      # For macro-like methods, pass arguments as unevaluated expressions
+      self.quote_level.inc()
+      for i in start_index..<gene.children.len:
+        self.compile(gene.children[i])
+      self.quote_level.dec()
+    else:
+      # For regular methods, evaluate arguments normally
+      for i in start_index..<gene.children.len:
+        self.compile(gene.children[i])
 
     # Use unified method call instructions
     if arg_count == 0:
@@ -1800,6 +1811,10 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   # Now add the object as the first argument
   self.emit(Instruction(kind: IkGeneAddChild))
 
+  # Add properties and arguments
+  if is_macro_like_method:
+    self.quote_level.inc()
+
   # Add properties if any
   for k, v in gene.props:
     self.compile(v)
@@ -1809,6 +1824,9 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   for i in start_index..<gene.children.len:
     self.compile(gene.children[i])
     self.emit(Instruction(kind: IkGeneAddChild))
+
+  if is_macro_like_method:
+    self.quote_level.dec()
 
   # Emit the call instruction
   # Note: Tail call optimization seems to have issues with methods, disable for now
