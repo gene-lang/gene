@@ -39,6 +39,11 @@ one when the original name contained a slash.
   supports `IkSetMember` (namespaces, classes, instances, maps, etc.).
   The identifier is stored on that container instead of the current
   scope or namespace.
+- **Numeric Segments**: if the final segment is numeric (e.g. `arr/0`)
+  the compiler emits `IkGetChild`/`IkSetChild` instead of member access.
+  This keeps array/gene indexing syntax working even when the value is
+  assigned to via slash notation, so `(arr/0 = value)` mutates the first
+  element rather than setting a string property named `"0"`.
 
 The container expression is evaluated immediately before the
 definition/assignment runs, so it can reference dynamic values such as
@@ -61,6 +66,11 @@ definition/assignment runs, so it can reference dynamic values such as
 (.fn set_status [value]
   (/status = value)
 )
+
+; Numeric tail segments use child access
+(var arr [1 2 3])
+(arr/0 = 10)  # Compiles to IkSetChild 0
+(println arr/0)
 ```
 
 All three cases rely on the same rewriting rule internally, allowing
