@@ -3925,6 +3925,10 @@ proc exec*(self: VirtualMachine): Value =
       of IkClass:
         let name = inst.arg0
         let class = new_class(name.str)
+        if not App.is_nil and App.kind == VkApplication:
+          let base = App.app.object_class
+          if base.kind == VkClass and class.parent.is_nil:
+            class.parent = base.ref.class
         class.add_standard_instance_methods()
         let r = new_ref(VkClass)
         r.class = class
@@ -4005,14 +4009,7 @@ proc exec*(self: VirtualMachine): Value =
                 for child in args.gene.children:
                   constructor_args.children.add(child)
               process_args(f.matcher, constructor_args.to_gene_value(), scope)
-              
-              # For constructors, set properties on the instance for parameters marked with is_prop
-              for i, param in f.matcher.children:
-                if param.is_prop and i < scope.members.len:
-                  let value = scope.members[i]
-                  if value.kind != VkNil:
-                    # Set the property on the instance
-                    instance.instance_props[param.name_key] = value
+              assign_property_params(f.matcher, scope, instance.to_ref_value())
             
             self.cu = compiled
             self.pc = 0
@@ -4102,14 +4099,7 @@ proc exec*(self: VirtualMachine): Value =
                 for child in args.gene.children:
                   constructor_args.children.add(child)
               process_args(f.matcher, constructor_args.to_gene_value(), scope)
-
-              # For constructors, set properties on the instance for parameters marked with is_prop
-              for i, param in f.matcher.children:
-                if param.is_prop and i < scope.members.len:
-                  let value = scope.members[i]
-                  if value.kind != VkNil:
-                    # Set the property on the instance
-                    instance.instance_props[param.name_key] = value
+              assign_property_params(f.matcher, scope, instance.to_ref_value())
 
             self.cu = compiled
             self.pc = 0

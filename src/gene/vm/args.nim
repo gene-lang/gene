@@ -1,6 +1,34 @@
 import tables, sets
 import ../types
 
+proc resolve_property_instance(scope: Scope): Value =
+  if scope.is_nil or scope.tracker.is_nil:
+    return NIL
+  let selfKey = "self".to_key()
+  if scope.tracker.mappings.hasKey(selfKey):
+    let idx = scope.tracker.mappings[selfKey]
+    if idx.int < scope.members.len:
+      return scope.members[idx.int]
+  NIL
+
+proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instance: Value = NIL) =
+  ## Assign shorthand property parameters (e.g. [/x]) directly onto the instance.
+  if matcher.is_nil or scope.is_nil or matcher.children.len == 0:
+    return
+
+  var instance = explicit_instance
+  if instance == NIL:
+    instance = resolve_property_instance(scope)
+
+  if instance.kind != VkInstance:
+    return
+
+  for i, param in matcher.children:
+    if param.is_prop and i < scope.members.len:
+      let value = scope.members[i]
+      if value.kind != VkNil:
+        instance.ref.instance_props[param.name_key] = value
+
 # Forward declaration for original process_args function
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)
 
@@ -19,6 +47,7 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
     for i, param in matcher.children:
       if param.default_value.kind != VkNil:
         scope.members[i] = param.default_value
+    assign_property_params(matcher, scope)
     return
 
   # For now, handle only positional arguments (most common case)
@@ -46,7 +75,9 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
     for i in 0..<arg_count:
       args_gene.gene.children.add(args[i])
     process_args(matcher, args_gene, scope)
+    return
 
+  assign_property_params(matcher, scope)
 # Optimized version for zero arguments
 proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
   ## Ultra-fast path for zero-argument functions
@@ -60,6 +91,8 @@ proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
       scope.members[i] = new_array_value()
     elif param.default_value.kind != VkNil:
       scope.members[i] = param.default_value
+
+  assign_property_params(matcher, scope)
 
 # Optimized version for single argument
 proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.} =
@@ -90,6 +123,7 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.
           scope.members[i] = new_array_value()
         elif param.default_value.kind != VkNil:
           scope.members[i] = param.default_value
+  assign_property_params(matcher, scope)
 
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
   ## Process function arguments and bind them to the scope
@@ -141,4 +175,6 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
       else:
         # No value provided and no default - keep as NIL
         discard
+
+  assign_property_params(matcher, scope)
   

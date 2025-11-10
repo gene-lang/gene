@@ -69,19 +69,19 @@
 
 # 2.2 Constructor with parameter shadowing (shorthand)
 (println "2.2 Constructor with parameter shadowing:")
-# (class Point
-#   (.ctor [/x /y])  # Shorthand: automatically assigns to /x and /y
-# )
-# (var p (new Point 10 20))
-# (println p/x)  # Should print 10
-# (println p/y)  # Should print 20
+(class Point
+  (.ctor [/x /y])  # Shorthand: automatically assigns to /x and /y
+)
+(var p (new Point 10 20))
+(println p/x)  # Should print 10
+(println p/y)  # Should print 20
 (println "NOT IMPLEMENTED YET")
 (println "")
 
 # 2.3 Methods
 (println "2.3 Methods:")
 (class Counter
-  (.ctor _
+  (.ctor []
     (/count = 0)
   )
   (.fn increment _
@@ -124,6 +124,7 @@
 )
 (var greeter (new Greeter "Bob"))
 (println greeter/.greet)  # Dot notation: object/.method
+(println "NOT IMPLEMENTED YET")
 (println "")
 
 # 2.6 Instance variable access
@@ -202,6 +203,7 @@
 # Should print:
 # Parent says: Hello World
 # Child says: Hi World
+(println "NOT IMPLEMENTED YET")
 (println "")
 
 # 2.11 Inherited constructor
@@ -228,14 +230,13 @@
 
 # 2.13 Type checking with .is
 (println "2.13 Type checking with .is:")
-# (class Fruit)
-# (class Apple < Fruit)
-# (var apple (new Apple))
-# (println (apple .is Apple))  # Should print true
-# (println (apple .is Fruit))  # Should print true
-# (println (apple .is String)) # Should print false
-# (println ([] .is Array))     # Should print true
-(println "NOT IMPLEMENTED YET")
+(class Fruit)
+(class Apple < Fruit)
+(var apple (new Apple))
+(println (apple .is Apple))  # Should print true
+(println (apple .is Fruit))  # Should print true
+(println (apple .is String)) # Should print false
+(println ([] .is Array))     # Should print true
 (println "")
 
 # 2.14 Mixins - maybe not a good idea.

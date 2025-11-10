@@ -1079,10 +1079,6 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkDefineMethod, arg0: name))
 
 proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
-  # Constructor definition: (.ctor args body...), (.ctor arg body...), (.ctor! args body...)
-  if gene.children.len < 2:
-    not_allowed("Constructor definition requires at least args and body")
-
   # Check if this is a macro constructor (.ctor!)
   let is_macro_ctor = gene.type.kind == VkSymbol and gene.type.str == ".ctor!"
 
@@ -1114,8 +1110,11 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
     fn_value.gene.children.add(args)
   
   # Add remaining body
-  for i in 1..<gene.children.len:
-    fn_value.gene.children.add(gene.children[i])
+  if gene.children.len == 1:
+    fn_value.gene.children.add(NIL)
+  else:
+    for i in 1..<gene.children.len:
+      fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
   self.compile_fn(fn_value)
