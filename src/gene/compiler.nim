@@ -6,6 +6,82 @@ import "./compiler/if"
 
 const DEBUG = false
 
+proc container_key(): Key {.inline.} =
+  "container".to_key()
+
+proc build_container_value(parts: seq[string]): Value =
+  if parts.len == 0:
+    return NIL
+  if parts.len == 1:
+    return parts[0].to_symbol_value()
+  parts.to_complex_symbol()
+
+proc split_container_name(name: Value): tuple[base: Value, container: Value] =
+  result.base = name
+  result.container = NIL
+
+  proc normalize_prefix(prefix: seq[string]): seq[string] =
+    result = @[]
+    if prefix.len == 0:
+      return
+    result = prefix
+    if result.len > 0 and result[0].len == 0:
+      result[0] = "self"
+
+  case name.kind
+  of VkComplexSymbol:
+    let cs = name.ref.csymbol
+    if cs.len < 2:
+      return
+    if cs[0] == "$ns":
+      return
+    let prefix = cs[0..^2]
+    if prefix.len == 0:
+      return
+    let normalized = normalize_prefix(prefix)
+    let container_value = build_container_value(normalized)
+    if container_value == NIL:
+      return
+    result.base = cs[^1].to_symbol_value()
+    result.container = container_value
+  of VkSymbol:
+    let s = name.str
+    if s.contains("/") and s != "$ns":
+      let parts = s.split("/")
+      if parts.len < 2:
+        return
+      if parts[0] == "$ns":
+        return
+      var prefix = parts[0..^2]
+      let normalized = normalize_prefix(prefix)
+      let container_value = build_container_value(normalized)
+      if container_value == NIL:
+        return
+      result.base = parts[^1].to_symbol_value()
+      result.container = container_value
+  else:
+    discard
+
+proc apply_container_to_child(gene: ptr Gene, child_index: int) =
+  if gene.children.len <= child_index:
+    return
+  if gene.props.hasKey(container_key()):
+    return
+  let (base, container_value) = split_container_name(gene.children[child_index])
+  if container_value == NIL:
+    return
+  gene.props[container_key()] = container_value
+  gene.children[child_index] = base
+
+proc apply_container_to_type(gene: ptr Gene) =
+  if gene.props.hasKey(container_key()):
+    return
+  let (base, container_value) = split_container_name(gene.type)
+  if container_value == NIL:
+    return
+  gene.props[container_key()] = container_value
+  gene.type = base
+
 #################### Trace Helpers #################
 
 proc current_trace(self: Compiler): SourceTrace =
@@ -370,6 +446,10 @@ proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
 
 proc compile_var(self: Compiler, gene: ptr Gene) =
+  if gene.children.len == 0:
+    not_allowed("var requires a name")
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
   let name = gene.children[0]
   
   # Handle namespace variables like $ns/a
@@ -388,7 +468,18 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
       let var_name = parts[1..^1].join("/")
       self.emit(Instruction(kind: IkNamespaceStore, arg0: var_name.to_symbol_value()))
       return
-  
+
+  if container_expr != NIL:
+    if name.kind != VkSymbol:
+      not_allowed("Property variable name must resolve to a symbol")
+    self.compile(container_expr)
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+    else:
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+    self.emit(Instruction(kind: IkSetMember, arg0: name))
+    return
+
   # Regular variable handling
   if name.kind != VkSymbol:
     not_allowed("Variable name must be a symbol")
@@ -405,11 +496,35 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     self.scope_tracker.next_index.inc()
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
 
+proc compile_container_assignment(self: Compiler, container_expr: Value, name_sym: Value, operator: string, rhs: Value) =
+  if name_sym.kind != VkSymbol:
+    not_allowed("Container assignment target must resolve to a symbol")
+  self.compile(container_expr)
+  if operator != "=":
+    self.emit(Instruction(kind: IkDup))
+    self.emit(Instruction(kind: IkGetMember, arg0: name_sym))
+  self.compile(rhs)
+  case operator:
+    of "=":
+      discard
+    of "+=":
+      self.emit(Instruction(kind: IkAdd))
+    of "-=":
+      self.emit(Instruction(kind: IkSub))
+    else:
+      not_allowed("Unsupported compound assignment operator: " & operator)
+  self.emit(Instruction(kind: IkSetMember, arg0: name_sym))
+
 proc compile_assignment(self: Compiler, gene: ptr Gene) =
+  apply_container_to_type(gene)
   let `type` = gene.type
   let operator = gene.children[0].str
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
   
   if `type`.kind == VkSymbol:
+    if container_expr != NIL:
+      self.compile_container_assignment(container_expr, `type`, operator, gene.children[1])
+      return
     # For compound assignment, we need to load the current value first
     if operator != "=":
       let key = `type`.str.to_key()
@@ -1123,13 +1238,21 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkDefineConstructor))
 
 proc compile_class(self: Compiler, gene: ptr Gene) =
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
+
   var body_start = 1
   if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
     body_start = 3
+    if container_expr != NIL:
+      self.compile(container_expr)
     self.compile(gene.children[2])
-    self.emit(Instruction(kind: IkSubClass, arg0: gene.children[0]))
+    self.emit(Instruction(kind: IkSubClass, arg0: gene.children[0], arg1: container_flag))
   else:
-    self.emit(Instruction(kind: IkClass, arg0: gene.children[0]))
+    if container_expr != NIL:
+      self.compile(container_expr)
+    self.emit(Instruction(kind: IkClass, arg0: gene.children[0], arg1: container_flag))
 
   if gene.children.len > body_start:
     let body = new_stream_value(gene.children[body_start..^1])

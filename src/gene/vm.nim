@@ -1016,6 +1016,30 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
     not_allowed("Method must be a function or native function")
     return false
 
+proc ensure_namespace_path(root: Namespace, parts: seq[string], uptoExclusive: int): Namespace =
+  ## Ensure that the namespace path exists (creating as needed) and return the target namespace.
+  if root.is_nil:
+    not_allowed("Cannot define class without an active namespace")
+  var current = root
+  for i in 0..<uptoExclusive:
+    let key = parts[i].to_key()
+    var value = if current.members.hasKey(key): current.members[key] else: NIL
+    if value == NIL or value.kind != VkNamespace:
+      let new_ns = new_namespace(current, parts[i])
+      value = new_ns.to_value()
+      current.members[key] = value
+    current = value.ref.ns
+  result = current
+
+proc namespace_from_value(container: Value): Namespace =
+  case container.kind
+  of VkNamespace:
+    result = container.ref.ns
+  of VkClass:
+    result = container.ref.class.ns
+  else:
+    not_allowed("Class container must be a namespace or class, got " & $container.kind)
+
 proc exec*(self: VirtualMachine): Value =
   # Reset self.pc for new execution (unless we're resuming a generator)
   # Generators set their PC before calling exec and need to preserve it
@@ -3924,7 +3948,30 @@ proc exec*(self: VirtualMachine): Value =
       
       of IkClass:
         let name = inst.arg0
-        let class = new_class(name.str)
+        var class_name: string
+        var target_ns = self.frame.ns
+        var class_key: Key
+        if inst.arg1 != 0:
+          let container_value = self.frame.pop()
+          target_ns = namespace_from_value(container_value)
+        case name.kind
+        of VkSymbol:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkString:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkComplexSymbol:
+          if name.ref.csymbol.len == 0:
+            not_allowed("Class name cannot be an empty path")
+          class_name = name.ref.csymbol[^1]
+          class_key = class_name.to_key()
+          if name.ref.csymbol.len > 1:
+            target_ns = ensure_namespace_path(self.frame.ns, name.ref.csymbol, name.ref.csymbol.len - 1)
+        else:
+          not_allowed("Unsupported class name type: " & $name.kind)
+
+        let class = new_class(class_name)
         if not App.is_nil and App.kind == VkApplication:
           let base = App.app.object_class
           if base.kind == VkClass and class.parent.is_nil:
@@ -3933,7 +3980,7 @@ proc exec*(self: VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        self.frame.ns[name.Key] = v
+        target_ns.members[class_key] = v
         self.frame.push(v)
 
       of IkNew:
@@ -4117,8 +4164,31 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkSubClass:
         let name = inst.arg0
+        var class_name: string
+        var target_ns = self.frame.ns
+        var class_key: Key
+        if inst.arg1 != 0:
+          let container_value = self.frame.pop()
+          target_ns = namespace_from_value(container_value)
+        case name.kind
+        of VkSymbol:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkString:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkComplexSymbol:
+          if name.ref.csymbol.len == 0:
+            not_allowed("Class name cannot be an empty path")
+          class_name = name.ref.csymbol[^1]
+          class_key = class_name.to_key()
+          if name.ref.csymbol.len > 1:
+            target_ns = ensure_namespace_path(self.frame.ns, name.ref.csymbol, name.ref.csymbol.len - 1)
+        else:
+          not_allowed("Unsupported class name type: " & $name.kind)
+
         let parent_class = self.frame.pop()
-        let class = new_class(name.str)
+        let class = new_class(class_name)
         if parent_class.kind == VkClass:
           class.parent = parent_class.ref.class
         else:
@@ -4126,7 +4196,7 @@ proc exec*(self: VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        self.frame.ns[name.Key] = v
+        target_ns.members[class_key] = v
         self.frame.push(v)
 
       of IkResolveMethod:
