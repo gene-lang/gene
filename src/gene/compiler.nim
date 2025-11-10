@@ -499,10 +499,15 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
 proc compile_container_assignment(self: Compiler, container_expr: Value, name_sym: Value, operator: string, rhs: Value) =
   if name_sym.kind != VkSymbol:
     not_allowed("Container assignment target must resolve to a symbol")
+  let name_str = name_sym.str
+  let (is_index, index) = to_int(name_str)
   self.compile(container_expr)
   if operator != "=":
     self.emit(Instruction(kind: IkDup))
-    self.emit(Instruction(kind: IkGetMember, arg0: name_sym))
+    if is_index:
+      self.emit(Instruction(kind: IkGetChild, arg0: index))
+    else:
+      self.emit(Instruction(kind: IkGetMember, arg0: name_sym))
   self.compile(rhs)
   case operator:
     of "=":
@@ -513,7 +518,10 @@ proc compile_container_assignment(self: Compiler, container_expr: Value, name_sy
       self.emit(Instruction(kind: IkSub))
     else:
       not_allowed("Unsupported compound assignment operator: " & operator)
-  self.emit(Instruction(kind: IkSetMember, arg0: name_sym))
+  if is_index:
+    self.emit(Instruction(kind: IkSetChild, arg0: index))
+  else:
+    self.emit(Instruction(kind: IkSetMember, arg0: name_sym))
 
 proc compile_assignment(self: Compiler, gene: ptr Gene) =
   apply_container_to_type(gene)
