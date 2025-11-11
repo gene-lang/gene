@@ -1,6 +1,15 @@
 #!/usr/bin/env gene run
 
 # Simplified HTTP Todo App - works with current Gene capabilities
+#
+# Usage:
+#   gene run examples/simple_http_todo.gene        # Uses default port 8080
+#   gene run examples/simple_http_todo.gene 3000   # Uses port 3000
+#   gene run examples/simple_http_todo.gene 9000   # Uses port 9000
+#   gene run examples/simple_http_todo.gene 5000   # Uses port 5000
+#
+# Supported ports: 3000, 5000, 9000 (defaults to 8080)
+# Unknown ports will fall back to default 8080
 (println "Starting simplified HTTP Todo App...")
 
 # Simple Todo class
@@ -123,10 +132,37 @@
   (println "Creating router...")
   (var router (new SimpleRouter))
 
-  (println "Starting server on port 8080...")
-  (start_server 8080 router)
+  # Parse command line arguments for port and start server
+  (println "Command line arguments:" $cmd_args)
 
-  (println "Server started! Visit http://localhost:8080")
+  (if (($cmd_args .size) > 1)
+    (var port_arg ($cmd_args/1 .to_s))
+    (println "Port argument provided:" port_arg)
+
+    # Start server with appropriate port based on argument
+    (if (== port_arg "3000")
+      (println "Starting server on port 3000...")
+      (start_server 3000 router)
+      (println "Server started! Visit http://localhost:3000")
+    else (if (== port_arg "9000")
+      (println "Starting server on port 9000...")
+      (start_server 9000 router)
+      (println "Server started! Visit http://localhost:9000")
+    else (if (== port_arg "5000")
+      (println "Starting server on port 5000...")
+      (start_server 5000 router)
+      (println "Server started! Visit http://localhost:5000")
+    else
+      (println "Unknown port, starting server on default port 8080...")
+      (start_server 8080 router)
+      (println "Server started! Visit http://localhost:8080")
+    )))
+  else
+    (println "No port argument provided, starting server on default port 8080...")
+    (start_server 8080 router)
+    (println "Server started! Visit http://localhost:8080")
+  )
+
   (println "Press Ctrl+C to stop")
 
   # Run forever
