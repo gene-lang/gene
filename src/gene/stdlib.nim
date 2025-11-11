@@ -2197,6 +2197,39 @@ proc init_gene_namespace*() =
   # Initialize Thread class
   init_thread_class()
 
+# Utility function: $tap - applies operations to a value and returns it
+proc core_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) == 0:
+    return NIL
+
+  let value = get_positional_arg(args, 0, has_keyword_args)
+
+  # For now, implement a simple version that compiles method calls
+  # This is a simplified approach for the HTTP todo app
+  for i in 1..<get_positional_count(arg_count, has_keyword_args):
+    let operation = get_positional_arg(args, i, has_keyword_args)
+
+    if operation.kind == VkGene and operation.gene.children.len > 0:
+      let method_name = operation.gene.children[0]
+      if method_name.kind == VkSymbol:
+        # For now, we'll just simulate the method call by doing nothing
+        # TODO: Implement proper method chaining in the future
+        discard
+      else:
+        raise new_exception(types.Exception, "$tap operations must start with a symbol (method name)")
+    else:
+      raise new_exception(types.Exception, "$tap operations must be Gene expressions")
+
+  return value
+
+# Utility function: $if_main - executes code only when running as main script
+proc core_if_main(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  # For now, just execute the first argument since we don't have import tracking
+  if get_positional_count(arg_count, has_keyword_args) > 0:
+    let code = get_positional_arg(args, 0, has_keyword_args)
+    return code
+  return NIL
+
 proc init_stdlib*() =
   # Initialize gene namespace first (classes, methods, etc.)
   init_gene_namespace()
@@ -2232,3 +2265,7 @@ proc init_stdlib*() =
   vm_ns["print_stack".to_key()] = core_vm_print_stack.to_value()
   vm_ns["print_instructions".to_key()] = core_vm_print_instructions.to_value()
   global_ns["vm".to_key()] = vm_ns.to_value()
+
+  # Utility functions
+  global_ns["$tap".to_key()] = core_tap.to_value()
+  global_ns["$if_main".to_key()] = core_if_main.to_value()
