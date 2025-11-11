@@ -96,7 +96,7 @@ When adding new instructions: extend the enum, teach the compiler (emit case), a
   - `VkInstance` uses the class method tables.
   - `VkString` methods are provided by `App.app.string_class` (ensure new methods registered in `vm/core.nim`).
   - `VkFuture` and other special types have dedicated class objects (`future_class`, etc.).
-- `$env` and `$cmd_args` are macro-powered helpers living in the global namespace (`gene/types.nim` initialises them).
+- `$env`, `$program`, and `$args` are macro-powered helpers living in the global namespace (`gene/types.nim` initialises them).
 
 ## CLI & Tooling
 
@@ -118,7 +118,7 @@ When adding new instructions: extend the enum, teach the compiler (emit case), a
 - **Exception handling**: use `catch *`; naming the exception (`catch ex`) still panics on macOS.
 - **String methods**: `IkCallMethod1` must dispatch to `App.app.string_class` for string-specific natives.
 - **Value initialisation**: manually allocate (`alloc0`) structures; always set `members = newSeq[Value]()` for new scopes.
-- **Environment helpers**: `$env`, `$cmd_args` rely on `set_cmd_args`; ensure command modules set them before evaluating code.
+- **Environment helpers**: `$env`, `$program`, and `$args` rely on `set_program_args`; ensure command modules set them before evaluating code.
 
 ## Documentation Map
 

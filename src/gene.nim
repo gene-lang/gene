@@ -32,7 +32,7 @@ proc main() =
     return
   
   var cmd = args[0]
-  var cmd_args = args[1 .. ^1]
+  let command_args = args[1 .. ^1]
   
   # Use safe lookup
   let handler = CommandMgr.lookup(cmd)
@@ -47,7 +47,7 @@ proc main() =
     quit(1)
   
   # Execute the command
-  let result = handler(cmd, cmd_args)
+  let result = handler(cmd, command_args)
   if not result.success:
     if result.error.len > 0:
       echo "Error: ", result.error

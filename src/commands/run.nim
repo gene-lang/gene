@@ -54,7 +54,8 @@ proc parse_options(args: seq[string]): Options =
       if not found_file:
         found_file = true
         result.file = key
-      result.args.add(key)
+      else:
+        result.args.add(key)
     of cmdLongOption, cmdShortOption:
       if found_file:
         result.args.add(key)
@@ -127,7 +128,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       # Initialize the VM if not already initialized
       init_app_and_vm()
       init_stdlib()
-      set_cmd_args(options.args)
+      set_program_args(file, options.args)
       
       # Enable tracing/profiling if requested
       if options.trace:
@@ -177,7 +178,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         let start = cpu_time()
         init_app_and_vm()
         init_stdlib()
-        set_cmd_args(options.args)
+        set_program_args(file, options.args)
         
         if options.trace:
           VM.trace = true
@@ -215,7 +216,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   # Initialize the VM if not already initialized
   init_app_and_vm()
   init_stdlib()
-  set_cmd_args(options.args)
+  set_program_args(file, options.args)
   
   # Enable tracing if requested
   if options.trace:

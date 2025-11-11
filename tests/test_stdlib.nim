@@ -1,4 +1,6 @@
-import os
+import unittest
+import ../src/gene/vm
+import ../src/gene/types except Exception
 import ./helpers
 
 test_vm """
@@ -66,16 +68,22 @@ test_vm """
 #   check result.kind == VkString
 #   check result.str == "fallback"
 
-# init_all()
-# set_cmd_args(@["script.gene", "123"])
+test "Global $program and $args reflect CLI inputs":
+  init_all()
+  set_program_args("script.gene", @["123", "456"])
 
-# test_vm "$cmd_args/0", proc(result: Value) =
-#   check result.kind == VkString
-#   check result.str == "script.gene"
+  let program_val = VM.exec("$program", "test_code")
+  check program_val.kind == VkString
+  check program_val.str == "script.gene"
 
-# test_vm "$cmd_args/1", proc(result: Value) =
-#   check result.kind == VkString
-#   check result.str == "123"
+  let args_val = VM.exec("$args", "test_code")
+  check args_val.kind == VkArray
+  check args_val.ref.arr.len == 2
+  check args_val.ref.arr[0].str == "123"
+  check args_val.ref.arr[1].str == "456"
+
+  # Reset to default state for later tests
+  set_program_args("", @[])
 
 # test_vm """
 #   ($if_main

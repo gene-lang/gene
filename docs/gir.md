@@ -86,7 +86,7 @@ gene run x.gene
 --profile-instructions      Print per-opcode execution counts after run
 --no-gir-cache              Ignore cached GIR artifacts
 ```
-Additional positional arguments after the file are stored in `$cmd_args`.
+The executed script path is exposed as `$program`, and additional positional arguments after the file are stored in `$args`.
 
 **Examples**
 ```bash

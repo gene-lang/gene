@@ -7,7 +7,7 @@ This directory contains example Gene programs demonstrating various language fea
 - `hello_world.gene` - Simple Hello World program
 - `print.gene` - Various print operations
 - `fib.gene` - Fibonacci sequence calculation
-- `cmd_args.gene` - Command line argument handling
+- `cmd_args.gene` - Command line argument handling via `$program`/`$args`
 - `env.gene` - Environment variable access
 
 ## Data Structures

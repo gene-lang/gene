@@ -97,7 +97,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   
   init_app_and_vm()
   init_stdlib()
-  set_cmd_args(@[])
+  set_program_args("<eval>", @[])
   
   
   try:

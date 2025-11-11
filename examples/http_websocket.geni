@@ -650,17 +650,17 @@ $if_main
   init_db
 
   var port
-    if ($cmd_args/.size > 1)
-      = $cmd_args/1/.to_i
+    if ($args/.size > 0)
+      = $args/0/.to_i
     else # elif/else/when/catch/finally/... are treated as a special word that is part of if/case/try statement that has same indentation
       = 2080
 
   # Alternative
   var port
     if
-      $cmd_args/.size > 1
+      $args/.size > 0
     then
-      = $cmd_args/1/.to_i
+      = $args/0/.to_i
     else # elif/else/when/catch/finally/... are treated as a special word that is part of if/case/try statement that has same indentation
       = 2080
 

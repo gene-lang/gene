@@ -662,8 +662,8 @@
   (init_db)
 
   (var port
-    (if (($cmd_args .size) > 1)
-      $cmd_args/1/.to_i
+    (if (($args .size) > 0)
+      $args/0/.to_i
     else
       2080
     )

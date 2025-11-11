@@ -2244,7 +2244,7 @@ proc new_gene_value*(`type`: Value): Value {.inline.} =
 #################### Application #################
 
 proc refresh_env_map*()
-proc set_cmd_args*(args: seq[string])
+proc set_program_args*(program: string, args: seq[string])
 
 proc app*(self: Value): Application {.inline.} =
   self.ref.app
@@ -3700,7 +3700,7 @@ proc init_app_and_vm*() =
   App.app.gene_ns.ref.ns["time".to_key()] = time_ns.to_value()
 
   refresh_env_map()
-  set_cmd_args(@[])
+  set_program_args("", @[])
 
   # Initialize thread-local namespace for main thread
   # This holds thread-specific variables like $thread and $main_thread
@@ -3727,7 +3727,7 @@ proc refresh_env_map*() =
     env_table[pair.key.to_key()] = pair.value.to_value()
   App.app.gene_ns.ref.ns["env".to_key()] = new_map_value(env_table)
 
-proc set_cmd_args*(args: seq[string]) =
+proc set_program_args*(program: string, args: seq[string]) =
   if App == NIL or App.kind != VkApplication:
     init_app_and_vm()
     if App == NIL or App.kind != VkApplication:
@@ -3737,7 +3737,8 @@ proc set_cmd_args*(args: seq[string]) =
   arr_ref.arr = @[]
   for arg in args:
     arr_ref.arr.add(arg.to_value())
-  App.app.gene_ns.ref.ns["cmd_args".to_key()] = arr_ref.to_ref_value()
+  App.app.gene_ns.ref.ns["args".to_key()] = arr_ref.to_ref_value()
+  App.app.gene_ns.ref.ns["program".to_key()] = program.to_value()
 
 const SYM_UNDERSCORE* = SYMBOL_TAG or 0
 const SYM_SELF* = SYMBOL_TAG or 1

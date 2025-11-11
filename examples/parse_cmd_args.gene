@@ -12,7 +12,7 @@ gene examples/parse_cmd_args.gene -d -i first -i second test.gene
     (option -r --run)
     (argument ^!required file)
   ]
-  $cmd_args   # The global variable that holds the command line argument array
+  $args   # The global variable that holds the command line argument array
 )
 
 (println "debug = "   debug)
