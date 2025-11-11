@@ -524,12 +524,7 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
 
   # Regular variable handling
   if name.kind != VkSymbol:
-    when not defined(release):
-      echo "ERROR: Variable name is not a symbol"
-      echo "  name.kind = ", name.kind
-      if name.kind == VkComplexSymbol:
-        echo "  complex symbol parts = ", name.ref.csymbol
-    not_allowed("Variable name must be a symbol")
+    not_allowed("Variable name must be a symbol, got " & $name.kind)
     
   let index = self.scope_tracker.next_index
   self.scope_tracker.mappings[name.str.to_key()] = index
@@ -2818,8 +2813,6 @@ proc compile_with(self: Compiler, gene: ptr Gene) =
 
 proc compile_tap(self: Compiler, gene: ptr Gene) =
   # ($tap value body...) or ($tap value :name body...)
-  when not defined(release):
-    echo "DEBUG compile_tap: gene.children.len = ", gene.children.len
   if gene.children.len < 1:
     not_allowed("$tap expects at least 1 argument")
 

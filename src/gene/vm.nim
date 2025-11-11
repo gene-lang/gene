@@ -3907,15 +3907,8 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkImport:
         let import_gene = self.frame.pop()
-        when not defined(release):
-          echo "IkImport: popped value kind = ", import_gene.kind
-          if import_gene.kind == VkGene:
-            echo "  Gene type = ", import_gene.gene.type
-            echo "  Gene children.len = ", import_gene.gene.children.len
         if import_gene.kind != VkGene:
-          echo "ERROR: Import got ", import_gene.kind, " instead of VkGene"
-          echo "  Value = ", import_gene
-          not_allowed("Import expects a gene")
+          not_allowed("Import expects a gene, got " & $import_gene.kind)
         
         let (module_path, imports, module_ns, is_native, handled) = self.handle_import(import_gene.gene)
         
@@ -5708,8 +5701,6 @@ proc exec*(self: VirtualMachine): Value =
           else:
             not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
-          when not defined(release):
-            echo "DEBUG IkUnifiedMethodCall2: obj.kind = ", obj.kind, ", method = ", method_name
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
 
