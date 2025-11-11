@@ -8,7 +8,7 @@
 # ===== OOP Approach =====
 
 (class BankAccount
-  (.ctor /balance /owner
+  (.ctor [/balance /owner]
     # Constructor body
   )
   

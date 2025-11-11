@@ -7,7 +7,7 @@
 
 # Define a Person class with multiple properties
 (class Person
-  (.ctor /name /age /score
+  (.ctor [/name /age /score]
     # Constructor body
   )
   
@@ -22,7 +22,7 @@
 
 # Define a nested class structure
 (class Company
-  (.ctor /name /employees
+  (.ctor [/name /employees]
     # Constructor body
   )
 )

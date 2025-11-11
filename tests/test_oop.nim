@@ -197,6 +197,35 @@ test_vm """
 #   ([] .is Array)
 # """, true
 
+# Object syntax (singleton objects)
+test_vm """
+  (object Config
+    (.ctor _
+      (/version = "1.0.0")
+    )
+    (.fn get_version _
+      /version
+    )
+  )
+  (Config .get_version)
+""", proc(r: Value) =
+  check r.str == "1.0.0"
+
+test_vm """
+  (class Base
+    (.fn value _
+      1
+    )
+  )
+  (var singleton (object Service < Base
+    (.fn value _
+      (+ (super .value) 1)
+    )
+  ))
+  (singleton .value)
+""", proc(r: Value) =
+  check r.int64 == 2
+
 # on_extended callback
 # test_vm """
 #   (class A

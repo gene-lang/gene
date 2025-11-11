@@ -431,7 +431,10 @@ proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     if arg_count < 1:
       not_allowed("vm_compile requires an argument")
 
-    let compiler = Compiler(output: new_compilation_unit())
+    let compiler = Compiler(
+      output: new_compilation_unit(),
+      method_access_mode: MamAutoCall
+    )
     let scope_tracker = vm.frame.caller_frame.scope.tracker
     # compiler.output.scope_tracker = scope_tracker
     compiler.scope_trackers.add(scope_tracker)
@@ -967,8 +970,39 @@ proc init_gene_namespace*() =
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     display_value(self_arg, true).to_value()
 
+  proc object_is_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 2:
+      not_allowed("Object.is expects a class as the second argument")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let target_arg = get_positional_arg(args, 1, has_keyword_args)
+
+    var target_class: Class
+    case target_arg.kind
+    of VkClass:
+      target_class = target_arg.ref.class
+    of VkInstance:
+      target_class = target_arg.ref.instance_class
+    else:
+      not_allowed("Object.is expects a class or instance as the second argument")
+
+    if target_class.is_nil:
+      return FALSE
+
+    let actual_class_value = value_class_value(self_arg)
+    if actual_class_value.kind != VkClass:
+      return FALSE
+
+    var current = actual_class_value.ref.class
+    while current != nil:
+      if current == target_class:
+        return TRUE
+      current = current.parent
+    return FALSE
+
   object_class.def_native_method("class", object_class_method)
   object_class.def_native_method("to_s", object_to_s_method)
+  object_class.def_native_method("is", object_is_method)
   App.app.gene_ns.ns["Object".to_key()] = App.app.object_class
   App.app.global_ns.ns["Object".to_key()] = App.app.object_class
   

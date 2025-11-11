@@ -7,7 +7,7 @@
 
 # Define a simple Point class
 (class Point
-  (.ctor /x /y
+  (.ctor [/x /y]
     # Constructor body - properties are auto-assigned
   )
   

@@ -148,6 +148,7 @@ type
     VkMixin              # For mixin support
     VkMethod
     VkBoundMethod
+    VkSuper
     VkInstance
     VkCast               # Type casting
     VkEnum
@@ -318,6 +319,9 @@ type
         `method`*: Method
       of VkBoundMethod:
         bound_method*: BoundMethod
+      of VkSuper:
+        super_instance*: Value
+        super_class*: Class
       of VkInstance:
         instance_class*: Class
         instance_props*: Table[Key, Value]
@@ -524,6 +528,7 @@ type
     ns*: Namespace # Class can act like a namespace
     for_singleton*: bool # if it's the class associated with a single object, can not be extended
     version*: uint64  # Incremented when methods are mutated
+    has_macro_constructor*: bool  # Track if class has macro constructor for validation
 
   Method* = ref object
     class*: Class
@@ -626,6 +631,10 @@ type
     start_label*: Label
     end_label*: Label
 
+  MethodAccessMode* = enum
+    MamAutoCall
+    MamReference
+
   Compiler* = ref object
     output*: CompilationUnit
     quote_level*: int
@@ -635,6 +644,7 @@ type
     eager_functions*: bool
     trace_stack*: seq[SourceTrace]
     last_error_trace*: SourceTrace
+    method_access_mode*: MethodAccessMode
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop
@@ -785,9 +795,6 @@ type
     IkUnifiedMethodCall1 # Single-argument method call
     IkUnifiedMethodCall2 # Two-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
-
-    # Macro-specific instructions
-    IkNewMacro        # Macro constructor call
 
     IkResolveSymbol
     IkSetMember
@@ -2853,6 +2860,7 @@ proc new_class*(name: string, parent: Class): Class =
     members: initTable[Key, Value](),
     methods: initTable[Key, Method](),
     version: 0,
+    has_macro_constructor: false,  # Initialize to false, will be set during constructor compilation
   )
 
 proc new_class*(name: string): Class =
@@ -3525,7 +3533,7 @@ proc `$`*(self: Instruction): string =
       IkResolveSymbol, IkResolveMethod,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
-      IkTailCall, IkNewMacro:
+      IkTailCall:
       if self.label.int > 0:
         result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
       else:

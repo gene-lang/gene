@@ -1,7 +1,6 @@
 import tables, strutils, hashes, os, streams
 
 import ../types
-import ../parser
 import ../compiler
 when not defined(noExtensions):
   import ./extension

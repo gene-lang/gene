@@ -6,6 +6,82 @@ import "./compiler/if"
 
 const DEBUG = false
 
+proc container_key(): Key {.inline.} =
+  "container".to_key()
+
+proc build_container_value(parts: seq[string]): Value =
+  if parts.len == 0:
+    return NIL
+  if parts.len == 1:
+    return parts[0].to_symbol_value()
+  parts.to_complex_symbol()
+
+proc split_container_name(name: Value): tuple[base: Value, container: Value] =
+  result.base = name
+  result.container = NIL
+
+  proc normalize_prefix(prefix: seq[string]): seq[string] =
+    result = @[]
+    if prefix.len == 0:
+      return
+    result = prefix
+    if result.len > 0 and result[0].len == 0:
+      result[0] = "self"
+
+  case name.kind
+  of VkComplexSymbol:
+    let cs = name.ref.csymbol
+    if cs.len < 2:
+      return
+    if cs[0] == "$ns":
+      return
+    let prefix = cs[0..^2]
+    if prefix.len == 0:
+      return
+    let normalized = normalize_prefix(prefix)
+    let container_value = build_container_value(normalized)
+    if container_value == NIL:
+      return
+    result.base = cs[^1].to_symbol_value()
+    result.container = container_value
+  of VkSymbol:
+    let s = name.str
+    if s.contains("/") and s != "$ns":
+      let parts = s.split("/")
+      if parts.len < 2:
+        return
+      if parts[0] == "$ns":
+        return
+      var prefix = parts[0..^2]
+      let normalized = normalize_prefix(prefix)
+      let container_value = build_container_value(normalized)
+      if container_value == NIL:
+        return
+      result.base = parts[^1].to_symbol_value()
+      result.container = container_value
+  else:
+    discard
+
+proc apply_container_to_child(gene: ptr Gene, child_index: int) =
+  if gene.children.len <= child_index:
+    return
+  if gene.props.hasKey(container_key()):
+    return
+  let (base, container_value) = split_container_name(gene.children[child_index])
+  if container_value == NIL:
+    return
+  gene.props[container_key()] = container_value
+  gene.children[child_index] = base
+
+proc apply_container_to_type(gene: ptr Gene) =
+  if gene.props.hasKey(container_key()):
+    return
+  let (base, container_value) = split_container_name(gene.type)
+  if container_value == NIL:
+    return
+  gene.props[container_key()] = container_value
+  gene.type = base
+
 #################### Trace Helpers #################
 
 proc current_trace(self: Compiler): SourceTrace =
@@ -158,10 +234,13 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       if is_int:
         self.emit(Instruction(kind: IkGetChild, arg0: i))
       elif s.starts_with("."):
-        # For method access, use IkResolveMethod to get the method
-        # without calling it. The actual call will happen when the
-        # gene is executed.
-        self.emit(Instruction(kind: IkResolveMethod, arg0: s[1..^1].to_symbol_value()))
+        let method_value = s[1..^1].to_symbol_value()
+        if self.method_access_mode == MamReference:
+          # Preserve legacy behavior when compiling method references
+          self.emit(Instruction(kind: IkResolveMethod, arg0: method_value))
+        else:
+          # Default: immediately invoke zero-arg method via dot notation
+          self.emit(Instruction(kind: IkUnifiedMethodCall0, arg0: method_value))
       elif s == "...":
         # Spread operator in complex symbols - not yet implemented
         # This would handle cases like a/.../b but is an edge case
@@ -193,8 +272,8 @@ proc compile_symbol(self: Compiler, input: Value) =
           self.emit(Instruction(kind: IkPushSelf))
         return
       elif symbol_str == "super":
-        # Special handling for super - will be handled differently when it's a function call
-        self.emit(Instruction(kind: IkPushValue, arg0: input))
+        # Push runtime super proxy (handled by IkSuper at execution time)
+        self.emit(Instruction(kind: IkSuper))
         return
       elif symbol_str.startsWith("@") and symbol_str.len > 1:
         # Handle @shorthand syntax: @test -> (@ "test"), @0 -> (@ 0)
@@ -367,6 +446,10 @@ proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
 
 proc compile_var(self: Compiler, gene: ptr Gene) =
+  if gene.children.len == 0:
+    not_allowed("var requires a name")
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
   let name = gene.children[0]
 
   # Handle namespace variables like $ns/a
@@ -386,46 +469,58 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
       self.emit(Instruction(kind: IkNamespaceStore, arg0: var_name.to_symbol_value()))
       return
 
-    # Handle class/instance variables like /table (which becomes ["", "table"])
-    if parts.len >= 2 and parts[0] == "":
-      # This is a class or instance variable, store it in namespace
-      if gene.children.len > 1:
-        # Compile the value
-        self.compile(gene.children[1])
-      else:
-        # No value, use NIL
-        self.emit(Instruction(kind: IkPushValue, arg0: NIL))
-
-      # Store in namespace with the full name (e.g., "/table")
-      let var_name = "/" & parts[1..^1].join("/")
-      self.emit(Instruction(kind: IkNamespaceStore, arg0: var_name.to_symbol_value()))
-      return
-
-    # Handle namespace/class member variables like Record/orm
-    # This stores a value in a namespace or class member
-    if parts.len >= 2:
-      # Resolve the first part (e.g., "Record")
-      let key = parts[0].to_key()
-      if self.scope_tracker.mappings.has_key(key):
-        self.emit(Instruction(kind: IkVarResolve, arg0: self.scope_tracker.mappings[key].to_value()))
-      else:
-        self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
-
-      # Navigate through intermediate parts if more than 2 parts
-      for i in 1..<parts.len-1:
-        let part_key = parts[i].to_key()
-        self.emit(Instruction(kind: IkGetMember, arg0: cast[Value](part_key)))
-
+# Handle class/instance variables like /table (which becomes ["", "table"])
+  if parts.len >= 2 and parts[0] == "":
+    # This is a class or instance variable, store it in namespace
+    if gene.children.len > 1:
       # Compile the value
-      if gene.children.len > 1:
-        self.compile(gene.children[1])
-      else:
-        self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+      self.compile(gene.children[1])
+    else:
+      # No value, use NIL
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
 
-      # Set the final member (e.g., "orm")
-      let last_key = parts[^1].to_key()
-      self.emit(Instruction(kind: IkSetMember, arg0: last_key))
-      return
+    # Store in namespace with the full name (e.g., "/table")
+    let var_name = "/" & parts[1..^1].join("/")
+    self.emit(Instruction(kind: IkNamespaceStore, arg0: var_name.to_symbol_value()))
+    return
+
+  # Handle namespace/class member variables like Record/orm
+  # This stores a value in a namespace or class member
+  if parts.len >= 2:
+    # Resolve the first part (e.g., "Record")
+    let key = parts[0].to_key()
+    if self.scope_tracker.mappings.has_key(key):
+      self.emit(Instruction(kind: IkVarResolve, arg0: self.scope_tracker.mappings[key].to_value()))
+    else:
+      self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
+
+    # Navigate through intermediate parts if more than 2 parts
+    for i in 1..<parts.len-1:
+      let part_key = parts[i].to_key()
+      self.emit(Instruction(kind: IkGetMember, arg0: cast[Value](part_key)))
+
+    # Compile the value
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+    else:
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+
+    # Set the final member (e.g., "orm")
+    let last_key = parts[^1].to_key()
+    self.emit(Instruction(kind: IkSetMember, arg0: last_key))
+    return
+
+  # Handle container expressions for variable declarations
+  if container_expr != NIL:
+    if name.kind != VkSymbol:
+      not_allowed("Property variable name must resolve to a symbol")
+    self.compile(container_expr)
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+    else:
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+    self.emit(Instruction(kind: IkSetMember, arg0: name))
+    return
 
   # Regular variable handling
   if name.kind != VkSymbol:
@@ -448,11 +543,43 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     self.scope_tracker.next_index.inc()
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
 
+proc compile_container_assignment(self: Compiler, container_expr: Value, name_sym: Value, operator: string, rhs: Value) =
+  if name_sym.kind != VkSymbol:
+    not_allowed("Container assignment target must resolve to a symbol")
+  let name_str = name_sym.str
+  let (is_index, index) = to_int(name_str)
+  self.compile(container_expr)
+  if operator != "=":
+    self.emit(Instruction(kind: IkDup))
+    if is_index:
+      self.emit(Instruction(kind: IkGetChild, arg0: index))
+    else:
+      self.emit(Instruction(kind: IkGetMember, arg0: name_sym))
+  self.compile(rhs)
+  case operator:
+    of "=":
+      discard
+    of "+=":
+      self.emit(Instruction(kind: IkAdd))
+    of "-=":
+      self.emit(Instruction(kind: IkSub))
+    else:
+      not_allowed("Unsupported compound assignment operator: " & operator)
+  if is_index:
+    self.emit(Instruction(kind: IkSetChild, arg0: index))
+  else:
+    self.emit(Instruction(kind: IkSetMember, arg0: name_sym))
+
 proc compile_assignment(self: Compiler, gene: ptr Gene) =
+  apply_container_to_type(gene)
   let `type` = gene.type
   let operator = gene.children[0].str
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
   
   if `type`.kind == VkSymbol:
+    if container_expr != NIL:
+      self.compile_container_assignment(container_expr, `type`, operator, gene.children[1])
+      return
     # For compound assignment, we need to load the current value first
     if operator != "=":
       let key = `type`.str.to_key()
@@ -1050,7 +1177,19 @@ proc compile_compile(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkData, arg0: r.to_ref_value()))
 
 proc compile_ns(self: Compiler, gene: ptr Gene) =
-  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0]))
+  # Apply container splitting to handle complex symbols like app/models
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
+
+  # If we have a container, compile it first to push it onto the stack
+  if container_expr != NIL:
+    self.compile(container_expr)
+
+  # Emit namespace instruction with container flag
+  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0], arg1: container_flag))
+
+  # Handle namespace body if present
   if gene.children.len > 1:
     let body = new_stream_value(gene.children[1..^1])
     self.emit(Instruction(kind: IkPushValue, arg0: body))
@@ -1122,10 +1261,6 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkDefineMethod, arg0: name))
 
 proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
-  # Constructor definition: (.ctor args body...), (.ctor arg body...), (.ctor! args body...)
-  if gene.children.len < 2:
-    not_allowed("Constructor definition requires at least args and body")
-
   # Check if this is a macro constructor (.ctor!)
   let is_macro_ctor = gene.type.kind == VkSymbol and gene.type.str == ".ctor!"
 
@@ -1157,8 +1292,11 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
     fn_value.gene.children.add(args)
   
   # Add remaining body
-  for i in 1..<gene.children.len:
-    fn_value.gene.children.add(gene.children[i])
+  if gene.children.len == 1:
+    fn_value.gene.children.add(NIL)
+  else:
+    for i in 1..<gene.children.len:
+      fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
   self.compile_fn(fn_value)
@@ -1166,20 +1304,94 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   # Set as constructor for the class
   self.emit(Instruction(kind: IkDefineConstructor))
 
-proc compile_class(self: Compiler, gene: ptr Gene) =
-  var body_start = 1
-  if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
-    body_start = 3
-    self.compile(gene.children[2])
-    self.emit(Instruction(kind: IkSubClass, arg0: gene.children[0]))
-  else:
-    self.emit(Instruction(kind: IkClass, arg0: gene.children[0]))
+proc compile_class_with_container(self: Compiler, class_name: Value, parent_class: Value, container_expr: Value, body_start: int, gene: ptr Gene) =
+  ## Helper to compile class with container handling
+  ## Implements stack-based approach: compile container → push to stack → create class as member
+  let has_container = container_expr != NIL
+  let container_flag = (if has_container: 1.int32 else: 0.int32)
 
+  # If we have a container, compile it first to push it onto the stack
+  if has_container:
+    self.compile(container_expr)
+
+  # Emit class or subclass instruction
+  if parent_class != NIL:
+    self.compile(parent_class)
+    self.emit(Instruction(kind: IkSubClass, arg0: class_name, arg1: container_flag))
+  else:
+    self.emit(Instruction(kind: IkClass, arg0: class_name, arg1: container_flag))
+
+  # Compile class body if present
   if gene.children.len > body_start:
     let body = new_stream_value(gene.children[body_start..^1])
     self.emit(Instruction(kind: IkPushValue, arg0: body))
     self.emit(Instruction(kind: IkCompileInit))
     self.emit(Instruction(kind: IkCallInit))
+
+proc compile_class(self: Compiler, gene: ptr Gene) =
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+
+  var body_start = 1
+  var parent_class: Value = NIL
+
+  # Check for inheritance syntax: (class Name < Parent ...)
+  if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
+    body_start = 3
+    parent_class = gene.children[2]
+
+  # Use helper function for actual compilation
+  self.compile_class_with_container(gene.children[0], parent_class, container_expr, body_start, gene)
+
+proc compile_object(self: Compiler, gene: ptr Gene) =
+  if gene.children.len == 0:
+    not_allowed("object requires a name")
+
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  let name = gene.children[0]
+
+  if name.kind != VkSymbol:
+    not_allowed("object name must be a symbol")
+
+  var class_name_str = name.str
+  if class_name_str.len == 0:
+    not_allowed("object name cannot be empty")
+  if not class_name_str.ends_with("Class"):
+    class_name_str &= "Class"
+  let class_name = class_name_str.to_symbol_value()
+
+  # Build class definition gene
+  let inherits_symbol = "<".to_symbol_value()
+  var class_gene = new_gene("class".to_symbol_value())
+  if container_expr != NIL:
+    class_gene.props[container_key()] = container_expr
+  class_gene.children.add(class_name)
+
+  var body_start = 1
+  if gene.children.len >= 3 and gene.children[1] == inherits_symbol:
+    class_gene.children.add(inherits_symbol)
+    class_gene.children.add(gene.children[2])
+    body_start = 3
+
+  for i in body_start..<gene.children.len:
+    class_gene.children.add(gene.children[i])
+
+  self.compile(class_gene.to_gene_value())
+
+  # Instantiate singleton and bind it to the provided name
+  var new_call = new_gene("new".to_symbol_value())
+  new_call.children.add(class_name)
+
+  var var_gene = new_gene("var".to_symbol_value())
+  if container_expr != NIL:
+    var_gene.props[container_key()] = container_expr
+  var_gene.children.add(name)
+  var_gene.children.add(new_call.to_gene_value())
+  self.compile(var_gene.to_gene_value())
+
+  # Return the singleton instance so (object ...) can be used as an expression
+  self.compile(name)
 
 # Construct a Gene object whose type is the class
 # The Gene object will be used as the arguments to the constructor
@@ -1190,13 +1402,12 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
   # Check if this is a macro constructor call (new!)
   let is_macro_new = gene.type.kind == VkSymbol and gene.type.str == "new!"
 
-  when not defined(release):
-    echo "DEBUG compile_new: class = ", gene.children[0]
-
-  # Compile the class (first argument)
+# Compile the class first, then the arguments
+  # Stack will be: [class, args] so VM can pop args first, then class
   self.compile(gene.children[0])
 
-  # Compile the arguments as a Gene when necessary
+  # Always create a Gene for arguments (for both regular and macro constructors)
+  # This ensures the VM validation logic works correctly
   if gene.children.len > 1:
     # Create a Gene containing all arguments
     self.emit(Instruction(kind: IkGeneStart))
@@ -1209,18 +1420,20 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
         self.emit(Instruction(kind: IkGeneAddChild))
       self.quote_level.dec()
     else:
-      # For regular constructor, evaluate arguments normally
+      # For regular constructor, evaluate arguments normally, then add to Gene
       for i in 1..<gene.children.len:
         self.compile(gene.children[i])
         self.emit(Instruction(kind: IkGeneAddChild))
 
     self.emit(Instruction(kind: IkGeneEnd))
-
-  # Emit appropriate instruction based on constructor type
-  if is_macro_new:
-    self.emit(Instruction(kind: IkNewMacro))
   else:
-    self.emit(Instruction(kind: IkNew))
+    # No arguments - push empty Gene
+    self.emit(Instruction(kind: IkGeneStart))
+    self.emit(Instruction(kind: IkGeneEnd))
+
+  # Use unified IkNew instruction for both regular and macro constructors
+  # Runtime validation will handle the differences
+  self.emit(Instruction(kind: IkNew))
 
 proc compile_super(self: Compiler, gene: ptr Gene) =
   # Super: returns the parent class
@@ -1390,7 +1603,12 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       # This is a method call - compile it specially
       # The object will be on the stack after compiling the type
       # We need to ensure it's passed as the first argument
-      self.compile(gene.type)  # This pushes object and method
+      let prev_mode = self.method_access_mode
+      self.method_access_mode = MamReference
+      try:
+        self.compile(gene.type)  # This pushes object and method
+      finally:
+        self.method_access_mode = prev_mode
       
       # After compiling obj/.method, stack has [obj, method]
       # IkGeneStartDefault will pop the method
@@ -1676,11 +1894,22 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
 
   let arg_count = gene.children.len - start_index
 
+  # Check if this is a macro-like method (ends with !)
+  let is_macro_like_method = method_name.ends_with("!")
+
   if gene.props.len == 0:
     # Fast path: positional arguments only
     # Compile arguments - they'll be on stack after object
-    for i in start_index..<gene.children.len:
-      self.compile(gene.children[i])
+    if is_macro_like_method:
+      # For macro-like methods, pass arguments as unevaluated expressions
+      self.quote_level.inc()
+      for i in start_index..<gene.children.len:
+        self.compile(gene.children[i])
+      self.quote_level.dec()
+    else:
+      # For regular methods, evaluate arguments normally
+      for i in start_index..<gene.children.len:
+        self.compile(gene.children[i])
 
     # Use unified method call instructions
     if arg_count == 0:
@@ -1719,6 +1948,10 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   # Now add the object as the first argument
   self.emit(Instruction(kind: IkGeneAddChild))
 
+  # Add properties and arguments
+  if is_macro_like_method:
+    self.quote_level.inc()
+
   # Add properties if any
   for k, v in gene.props:
     self.compile(v)
@@ -1728,6 +1961,9 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   for i in start_index..<gene.children.len:
     self.compile(gene.children[i])
     self.emit(Instruction(kind: IkGeneAddChild))
+
+  if is_macro_like_method:
+    self.quote_level.dec()
 
   # Emit the call instruction
   # Note: Tail call optimization seems to have issues with methods, disable for now
@@ -2054,6 +2290,9 @@ proc compile_gene(self: Compiler, input: Value) =
       of "class":
         self.compile_class(gene)
         return
+      of "object":
+        self.compile_object(gene)
+        return
       of "new", "new!":
         self.compile_new(gene)
         return
@@ -2373,7 +2612,13 @@ proc optimize_noops(self: CompilationUnit) =
 
 
 proc compile*(input: seq[Value], eager_functions: bool): CompilationUnit =
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
 
@@ -2405,7 +2650,13 @@ proc compile*(f: Function, eager_functions: bool) =
   if f.body_compiled != nil:
     return
 
-  var self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  var self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -2448,7 +2699,13 @@ proc compile*(b: Block, eager_functions: bool) =
   if b.body_compiled != nil:
     return
 
-  var self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  var self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(b.scope_tracker)
 
@@ -2486,7 +2743,13 @@ proc compile*(f: CompileFn, eager_functions: bool) =
   if f.body_compiled != nil:
     return
 
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -2899,7 +3162,12 @@ proc compile_import(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkImport))
 
 proc compile_init*(input: Value): CompilationUnit =
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.output.skip_return = true
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
@@ -2938,7 +3206,13 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   defer: parser.close()
 
   # Initialize compilation
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
   
@@ -2989,7 +3263,13 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   defer: parser.close()
 
   # Initialize compilation
-  let self = Compiler(output: new_compilation_unit(), tail_position: false, eager_functions: eager_functions, trace_stack: @[])
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall
+  )
   self.output.instructions.add(Instruction(kind: IkStart))
   self.start_scope()
 

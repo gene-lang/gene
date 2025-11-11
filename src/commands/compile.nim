@@ -1,4 +1,4 @@
-import parseopt, strutils, os, terminal
+import parseopt, strutils, os, terminal, streams
 import ../gene/types
 import ../gene/parser
 import ../gene/compiler

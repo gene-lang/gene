@@ -849,6 +849,97 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     not_allowed("call method must be a function or native function")
     return false
 
+proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
+  ## Helper for invoking a method on the superclass of the current method context.
+  if super_value.kind != VkSuper:
+    return false
+
+  let super_ref = super_value.ref
+  let instance = super_ref.super_instance
+  var class = super_ref.super_class
+
+  if class == nil:
+    not_allowed("super has no parent class")
+  if instance.kind != VkInstance:
+    not_allowed("super requires an instance context")
+
+  let method_key = method_name.to_key()
+  var meth: Method = nil
+
+  while class != nil and meth.is_nil:
+    if class.methods.hasKey(method_key):
+      meth = class.methods[method_key]
+    else:
+      class = class.parent
+
+  if meth.is_nil:
+    not_allowed("Method '" & method_name & "' not found in super class hierarchy")
+
+  case meth.callable.kind:
+  of VkFunction:
+    let f = meth.callable.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      var all_args = newSeq[Value](args.len + 1)
+      all_args[0] = instance
+      for i in 0..<args.len:
+        all_args[i + 1] = args[i]
+      if all_args.len > 0:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = meth.callable
+    new_frame.scope = scope
+    new_frame.current_method = meth
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(instance)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: -3,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = instance
+    for i in 0..<args.len:
+      all_args[i + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("Super method must be a function or native function")
+    return false
+
 proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
   let value_class = get_value_class(value)
@@ -924,6 +1015,30 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
   else:
     not_allowed("Method must be a function or native function")
     return false
+
+proc ensure_namespace_path(root: Namespace, parts: seq[string], uptoExclusive: int): Namespace =
+  ## Ensure that the namespace path exists (creating as needed) and return the target namespace.
+  if root.is_nil:
+    not_allowed("Cannot define class without an active namespace")
+  var current = root
+  for i in 0..<uptoExclusive:
+    let key = parts[i].to_key()
+    var value = if current.members.hasKey(key): current.members[key] else: NIL
+    if value == NIL or value.kind != VkNamespace:
+      let new_ns = new_namespace(current, parts[i])
+      value = new_ns.to_value()
+      current.members[key] = value
+    current = value.ref.ns
+  result = current
+
+proc namespace_from_value(container: Value): Namespace =
+  case container.kind
+  of VkNamespace:
+    result = container.ref.ns
+  of VkClass:
+    result = container.ref.class.ns
+  else:
+    not_allowed("Class container must be a namespace or class, got " & $container.kind)
 
 proc exec*(self: VirtualMachine): Value =
   # Reset self.pc for new execution (unless we're resuming a generator)
@@ -2425,7 +2540,7 @@ proc exec*(self: VirtualMachine): Value =
           of VkGene:
             v.gene.children.add(child)
           of VkNil:
-            # Skip adding to nil - this might happen in conditional contexts
+            # Skip adding to nil - this might happen happen in conditional contexts
             discard
           of VkBoundMethod:
             # For bound methods, we might need to handle arguments
@@ -3442,40 +3557,47 @@ proc exec*(self: VirtualMachine): Value =
         
         # Set the constructor
         class.constructor = fn_value
-        
+
         # Set the function's namespace to the class namespace
         fn_value.ref.fn.ns = class.ns
+
+        # Set has_macro_constructor flag based on function type
+        class.has_macro_constructor = fn_value.ref.fn.is_macro_like
         
         # Return the function
         self.frame.push(fn_value)
       
       of IkSuper:
-        # Super - returns the parent class
-        # The user said: "super will return the parent class"
-        
-        # We need to know the current class to get its parent
+        # Push a proxy representing the parent class for super calls
+        var instance = NIL
+        if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
+          instance = self.frame.args.gene.children[0]
+        elif self.frame.current_method != nil and self.frame.scope != nil:
+          let method_callable = self.frame.current_method.callable
+          if method_callable.kind == VkFunction:
+            let f = method_callable.ref.fn
+            let self_key = "self".to_key()
+            if f.scope_tracker.mappings.hasKey(self_key):
+              let self_idx = f.scope_tracker.mappings[self_key]
+              if self_idx.int < self.frame.scope.members.len:
+                instance = self.frame.scope.members[self_idx.int]
+
+        if instance.kind != VkInstance:
+          not_allowed("super requires an instance context")
+
         var current_class: Class
-        
-        # Check if we're in a method context
         if self.frame.current_method != nil:
           current_class = self.frame.current_method.class
-        elif self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
-          let first_arg = self.frame.args.gene.children[0]
-          if first_arg.kind == VkInstance:
-            current_class = first_arg.ref.instance_class
         else:
-          not_allowed("super can only be called from within a class context")
-        
-        if current_class.parent == nil:
-          not_allowed("No parent class for super")
-        
-        # Push the parent class
-        # The parent class should already have a Value representation
-        # We need to find it - it might be stored in the namespace
-        # For now, let's create a bound method-like value that knows about the parent
-        # Actually, let me try a different approach - push self but mark it as "super"
-        # This is getting complicated, let me just comment out the test for now
-        not_allowed("super is not yet fully implemented")
+          current_class = instance.ref.instance_class
+
+        if current_class == nil or current_class.parent == nil:
+          not_allowed("No parent class available for super")
+
+        let super_ref = new_ref(VkSuper)
+        super_ref.super_instance = instance
+        super_ref.super_class = current_class.parent
+        self.frame.push(super_ref.to_ref_value())
 
       of IkCallInit:
         {.push checks: off}
@@ -3760,11 +3882,27 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkNamespace:
         let name = inst.arg0
+        var parent_ns: Namespace = nil
+
+        # Check if we have a container (for nested namespaces like app/models)
+        if inst.arg1 != 0:
+          let container_value = self.frame.pop()
+          if container_value.kind == VkNil:
+            not_allowed("Cannot create nested namespace '" & name.str & "': parent namespace not found. Did you forget to create the parent namespace first?")
+          parent_ns = namespace_from_value(container_value)
+
+        # Create the namespace
         let ns = new_namespace(name.str)
         let r = new_ref(VkNamespace)
         r.ns = ns
         let v = r.to_ref_value()
-        self.frame.ns[name.Key] = v
+
+        # Store in appropriate parent
+        if parent_ns != nil:
+          parent_ns[name.Key] = v
+        else:
+          self.frame.ns[name.Key] = v
+
         self.frame.push(v)
 
       of IkImport:
@@ -3874,15 +4012,42 @@ proc exec*(self: VirtualMachine): Value =
       
       of IkClass:
         let name = inst.arg0
-        let class = new_class(name.str)
+        var class_name: string
+        var target_ns = self.frame.ns
+        var class_key: Key
+        if inst.arg1 != 0:
+          let container_value = self.frame.pop()
+          target_ns = namespace_from_value(container_value)
+        case name.kind
+        of VkSymbol:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkString:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkComplexSymbol:
+          if name.ref.csymbol.len == 0:
+            not_allowed("Class name cannot be an empty path")
+          class_name = name.ref.csymbol[^1]
+          class_key = class_name.to_key()
+          if name.ref.csymbol.len > 1:
+            target_ns = ensure_namespace_path(self.frame.ns, name.ref.csymbol, name.ref.csymbol.len - 1)
+        else:
+          not_allowed("Unsupported class name type: " & $name.kind)
+
+        let class = new_class(class_name)
         # Set the class namespace's parent to the current frame's namespace
         # This allows class bodies to access global symbols like other classes
         class.ns.parent = self.frame.ns
+        if not App.is_nil and App.kind == VkApplication:
+          let base = App.app.object_class
+          if base.kind == VkClass and class.parent.is_nil:
+            class.parent = base.ref.class
         class.add_standard_instance_methods()
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        self.frame.ns[name.Key] = v
+        target_ns.members[class_key] = v
         self.frame.push(v)
 
       of IkNew:
@@ -3912,6 +4077,22 @@ proc exec*(self: VirtualMachine): Value =
             if class_val.kind == VkGene:
               echo "  Gene type = ", class_val.gene.type
           raise new_exception(types.Exception, "new requires a class, got " & $class_val.kind)
+
+        # Runtime validation for constructor type mismatches
+        # Check if we have unevaluated arguments (symbols) in the Gene
+        var has_unevaluated_args = false
+        if args.kind == VkGene and args.gene.children.len > 0:
+          # Check if any arguments are symbols (indicating unevaluated)
+          for child in args.gene.children:
+            if child.kind == VkSymbol:
+              has_unevaluated_args = true
+              break
+
+        if class.has_macro_constructor and not has_unevaluated_args:
+          raise new_exception(types.Exception, "Cannot instantiate macro constructor '" & class.name & "' with evaluated arguments, use 'new!' instead of 'new'")
+
+        if not class.has_macro_constructor and has_unevaluated_args:
+          raise new_exception(types.Exception, "Cannot instantiate regular constructor '" & class.name & "' with unevaluated arguments, use 'new' instead of 'new!'")
         
         # Check constructor type
         case class.constructor.kind:
@@ -3962,14 +4143,7 @@ proc exec*(self: VirtualMachine): Value =
                 for child in args.gene.children:
                   constructor_args.children.add(child)
               process_args(f.matcher, constructor_args.to_gene_value(), scope)
-              
-              # For constructors, set properties on the instance for parameters marked with is_prop
-              for i, param in f.matcher.children:
-                if param.is_prop and i < scope.members.len:
-                  let value = scope.members[i]
-                  if value.kind != VkNil:
-                    # Set the property on the instance
-                    instance.instance_props[param.name_key] = value
+              assign_property_params(f.matcher, scope, instance.to_ref_value())
             
             self.cu = compiled
             self.pc = 0
@@ -3985,107 +4159,33 @@ proc exec*(self: VirtualMachine): Value =
           else:
             todo($class.constructor.kind)
 
-      of IkNewMacro:
-        # Macro constructor call - similar to IkNew but with caller context
-        # Stack: either [class, args_gene] or just [class]
-        var class_val = self.frame.pop()
-        var args: Value
-        if class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
-          args = new_gene_value()
-        elif class_val.kind == VkGene:
-          args = class_val
-          class_val = self.frame.pop()
-        else:
-          args = new_gene_value()
-
-        # Get the class
-        let class = if class_val.kind == VkClass:
-          class_val.ref.class
-        elif class_val.kind == VkGene and class_val.gene.type != NIL and class_val.gene.type.kind == VkClass:
-          # Legacy path for Gene with type set to class
-          class_val.gene.type.ref.class
-        else:
-          raise new_exception(types.Exception, "new! requires a class, got " & $class_val.kind)
-
-        # Check constructor type
-        case class.constructor.kind:
-          of VkNativeFn:
-            # Call native constructor (same as regular)
-            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
-            self.frame.push(result)
-
-          of VkFunction:
-            # Macro constructor - function receives unevaluated arguments
-            let instance = new_ref(VkInstance)
-            instance.instance_class = class
-            self.frame.push(instance.to_ref_value())
-
-            class.constructor.ref.fn.compile()
-            let compiled = class.constructor.ref.fn.body_compiled
-            compiled.skip_return = true
-
-            # Create scope for constructor
-            let f = class.constructor.ref.fn
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              # Increment ref_count since the frame will own this reference
-              if scope != nil:
-                scope.ref_count.inc()
-            else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
-
-            self.pc.inc()
-            let new_frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
-            new_frame.caller_context = self.frame  # Store caller context for macro evaluation
-            self.frame = new_frame
-            self.frame.scope = scope  # Set the scope
-
-            # Pass instance as first argument for constructor
-            let args_gene = new_gene(NIL)
-            args_gene.children.add(instance.to_ref_value())
-            # Add other arguments if present (they remain unevaluated)
-            if args.kind == VkGene:
-              for child in args.gene.children:
-                args_gene.children.add(child)
-            self.frame.args = args_gene.to_gene_value()
-            self.frame.ns = class.constructor.ref.fn.ns
-
-            # Process arguments if matcher exists
-            if not f.matcher.is_empty():
-              # For macro constructors, arguments are passed as unevaluated expressions
-              var constructor_args = new_gene(NIL)
-              if args.kind == VkGene:
-                for child in args.gene.children:
-                  constructor_args.children.add(child)
-              process_args(f.matcher, constructor_args.to_gene_value(), scope)
-
-              # For constructors, set properties on the instance for parameters marked with is_prop
-              for i, param in f.matcher.children:
-                if param.is_prop and i < scope.members.len:
-                  let value = scope.members[i]
-                  if value.kind != VkNil:
-                    # Set the property on the instance
-                    instance.instance_props[param.name_key] = value
-
-            self.cu = compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
-
-          of VkNil:
-            # No constructor - create empty instance (same as regular)
-            let instance = new_ref(VkInstance)
-            instance.instance_class = class
-            self.frame.push(instance.to_ref_value())
-
-          else:
-            todo($class.constructor.kind)
-
       of IkSubClass:
         let name = inst.arg0
+        var class_name: string
+        var target_ns = self.frame.ns
+        var class_key: Key
+        if inst.arg1 != 0:
+          let container_value = self.frame.pop()
+          target_ns = namespace_from_value(container_value)
+        case name.kind
+        of VkSymbol:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkString:
+          class_name = name.str
+          class_key = name.str.to_key()
+        of VkComplexSymbol:
+          if name.ref.csymbol.len == 0:
+            not_allowed("Class name cannot be an empty path")
+          class_name = name.ref.csymbol[^1]
+          class_key = class_name.to_key()
+          if name.ref.csymbol.len > 1:
+            target_ns = ensure_namespace_path(self.frame.ns, name.ref.csymbol, name.ref.csymbol.len - 1)
+        else:
+          not_allowed("Unsupported class name type: " & $name.kind)
+
         let parent_class = self.frame.pop()
-        let class = new_class(name.str)
+        let class = new_class(class_name)
         if parent_class.kind == VkClass:
           class.parent = parent_class.ref.class
         else:
@@ -4093,7 +4193,7 @@ proc exec*(self: VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        self.frame.ns[name.Key] = v
+        target_ns.members[class_key] = v
         self.frame.push(v)
 
       of IkResolveMethod:
@@ -5195,6 +5295,10 @@ proc exec*(self: VirtualMachine): Value =
             raise new_exception(types.Exception, fmt"IkUnifiedMethodCall0 expected 0 args, got {call_info.count}")
         let method_name = inst.arg0.str
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, @[]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
         if call_value_method(self, obj, method_name, []):
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
@@ -5322,6 +5426,10 @@ proc exec*(self: VirtualMachine): Value =
         let method_name = inst.arg0.str
         let arg = self.frame.pop()
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, [arg]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         if call_value_method(self, obj, method_name, [arg]):
           self.pc.inc()
@@ -5462,6 +5570,10 @@ proc exec*(self: VirtualMachine): Value =
         let arg2 = self.frame.pop()
         let arg1 = self.frame.pop()
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, [arg1, arg2]):
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         if call_value_method(self, obj, method_name, [arg1, arg2]):
           self.pc.inc()
@@ -5611,6 +5723,10 @@ proc exec*(self: VirtualMachine): Value =
         for i in countdown(arg_count - 1, 0):
           args[i] = self.frame.pop()
         let obj = self.frame.pop()
+        if obj.kind == VkSuper:
+          if call_super_method(self, obj, method_name, args):
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         if call_value_method(self, obj, method_name, args):
           self.pc.inc()
@@ -5831,15 +5947,15 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
 
 proc exec*(self: VirtualMachine, stream: Stream, module_name: string): Value =
   ## Execute Gene code from a stream (more memory-efficient for large files)
-  # Initialize gene namespace if not already done
-  init_gene_namespace()
-
   let compiled = parse_and_compile(stream, module_name)
 
   let ns = new_namespace(module_name)
+  ns["__module_name__".to_key()] = module_name.to_value()
+  ns["__is_main__".to_key()] = TRUE
 
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
+  App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
 
   # Initialize frame if it doesn't exist
   if self.frame == nil:
