@@ -1122,6 +1122,22 @@ proc init_gene_namespace*() =
   string_class.def_native_method("length", length_fn.native_fn)
   string_class.def_native_method("size", length_fn.native_fn)
   
+  proc string_to_i(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.to_i requires self argument")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("to_i can only be called on a string")
+    let trimmed = self_arg.str.strip()
+    if trimmed.len == 0:
+      not_allowed("to_i requires a numeric string")
+    try:
+      return trimmed.parseInt().int64.to_value()
+    except ValueError:
+      not_allowed("to_i requires a numeric string")
+
+  string_class.def_native_method("to_i", string_to_i)
+
   # to_upper method
   proc string_to_upper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:

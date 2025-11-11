@@ -92,6 +92,18 @@ test_vm """
 """, "abc"
 
 test_vm """
+  ("42" .to_i)
+""", 42
+
+test_vm """
+  ("  -7  " .to_i)
+""", -7
+
+test_vm_error """
+  ("abc" .to_i)
+"""
+
+test_vm """
   ("abc" .char_at 1)
 """, 'b'
 
