@@ -3860,11 +3860,27 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkNamespace:
         let name = inst.arg0
+        var parent_ns: Namespace = nil
+
+        # Check if we have a container (for nested namespaces like app/models)
+        if inst.arg1 != 0:
+          let container_value = self.frame.pop()
+          if container_value.kind == VkNil:
+            not_allowed("Cannot create nested namespace '" & name.str & "': parent namespace not found. Did you forget to create the parent namespace first?")
+          parent_ns = namespace_from_value(container_value)
+
+        # Create the namespace
         let ns = new_namespace(name.str)
         let r = new_ref(VkNamespace)
         r.ns = ns
         let v = r.to_ref_value()
-        self.frame.ns[name.Key] = v
+
+        # Store in appropriate parent
+        if parent_ns != nil:
+          parent_ns[name.Key] = v
+        else:
+          self.frame.ns[name.Key] = v
+
         self.frame.push(v)
 
       of IkImport:

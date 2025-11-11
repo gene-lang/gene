@@ -1130,7 +1130,19 @@ proc compile_compile(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkData, arg0: r.to_ref_value()))
 
 proc compile_ns(self: Compiler, gene: ptr Gene) =
-  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0]))
+  # Apply container splitting to handle complex symbols like app/models
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
+
+  # If we have a container, compile it first to push it onto the stack
+  if container_expr != NIL:
+    self.compile(container_expr)
+
+  # Emit namespace instruction with container flag
+  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0], arg1: container_flag))
+
+  # Handle namespace body if present
   if gene.children.len > 1:
     let body = new_stream_value(gene.children[1..^1])
     self.emit(Instruction(kind: IkPushValue, arg0: body))
@@ -1245,28 +1257,44 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   # Set as constructor for the class
   self.emit(Instruction(kind: IkDefineConstructor))
 
-proc compile_class(self: Compiler, gene: ptr Gene) =
-  apply_container_to_child(gene, 0)
-  let container_expr = gene.props.getOrDefault(container_key(), NIL)
-  let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
+proc compile_class_with_container(self: Compiler, class_name: Value, parent_class: Value, container_expr: Value, body_start: int, gene: ptr Gene) =
+  ## Helper to compile class with container handling
+  ## Implements stack-based approach: compile container → push to stack → create class as member
+  let has_container = container_expr != NIL
+  let container_flag = (if has_container: 1.int32 else: 0.int32)
 
-  var body_start = 1
-  if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
-    body_start = 3
-    if container_expr != NIL:
-      self.compile(container_expr)
-    self.compile(gene.children[2])
-    self.emit(Instruction(kind: IkSubClass, arg0: gene.children[0], arg1: container_flag))
+  # If we have a container, compile it first to push it onto the stack
+  if has_container:
+    self.compile(container_expr)
+
+  # Emit class or subclass instruction
+  if parent_class != NIL:
+    self.compile(parent_class)
+    self.emit(Instruction(kind: IkSubClass, arg0: class_name, arg1: container_flag))
   else:
-    if container_expr != NIL:
-      self.compile(container_expr)
-    self.emit(Instruction(kind: IkClass, arg0: gene.children[0], arg1: container_flag))
+    self.emit(Instruction(kind: IkClass, arg0: class_name, arg1: container_flag))
 
+  # Compile class body if present
   if gene.children.len > body_start:
     let body = new_stream_value(gene.children[body_start..^1])
     self.emit(Instruction(kind: IkPushValue, arg0: body))
     self.emit(Instruction(kind: IkCompileInit))
     self.emit(Instruction(kind: IkCallInit))
+
+proc compile_class(self: Compiler, gene: ptr Gene) =
+  apply_container_to_child(gene, 0)
+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+
+  var body_start = 1
+  var parent_class: Value = NIL
+
+  # Check for inheritance syntax: (class Name < Parent ...)
+  if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
+    body_start = 3
+    parent_class = gene.children[2]
+
+  # Use helper function for actual compilation
+  self.compile_class_with_container(gene.children[0], parent_class, container_expr, body_start, gene)
 
 proc compile_object(self: Compiler, gene: ptr Gene) =
   if gene.children.len == 0:

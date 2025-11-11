@@ -3,51 +3,98 @@
 This document explains how the VM compiler rewrites complex symbol
 expressions when they are used as definition targets (class names,
 variables, and assignments). The goal is to allow slash-delimited
-paths such as `geometry/shapes/Circle` or `/status` while still
-compiling down to a single identifier plus an explicit container
-expression.
+paths such as `geometry/shapes/Circle` or `/status` while using
+efficient compile-time resolution.
 
-## Rewriting Rules
+## Compilation Strategy
 
-The compiler normalises complex symbols **before** emitting bytecode:
+The compiler transforms complex symbols **before** emitting bytecode
+using a stack-based approach for better performance:
 
-- `(class A/B ...)` &rarr; `(class B ^container A ...)`
-- `(class geometry/shapes/Circle ...)` &rarr;
-  `(class Circle ^container geometry/shapes ...)`
-- `(var /a value)` &rarr; `(var a ^container self value)`
-- `(/a = value)` &rarr; `(a = value ^container self)`
+- `(class A/B ...)` → Compile A, push to stack → Compile B as member of stack top
+- `(class geometry/shapes/Circle ...)` → Compile geometry → Compile shapes → Compile Circle as member of shapes
+- `(var /a value)` → Compile self, push to stack → Compile a as member of self
+- `(/a = value)` → Compile self, push to stack → Set member on stack top
 
-General rule:
+## Compilation Rules
 
-1. Split the complex symbol into segments.
-2. The final segment becomes the actual identifier.
-3. Every prefix segment becomes the `^container` expression.
-   - A leading `/` becomes `self`.
-   - Multi-segment prefixes (e.g. `a/b/c`) become a complex symbol again.
+### Class Definitions
+**Single-segment**: `(class A/B ...)`
+1. Compile container `A` and push to stack
+2. Compile class `B` using `IkClassAsMember` with stack top as target
+3. Result: `B` class stored as member of `A`
 
-Users can still write `^container` manually; the rewriter only injects
-one when the original name contained a slash.
+**Multi-segment**: `(class A/B/C ...)`
+1. Compile `A` → push to stack
+2. Compile `B` as member of `A` → push result to stack
+3. Compile `C` as member of stack top (which is `B`)
+4. Result: `C` class stored as member of `B`, which is member of `A`
 
-## Runtime Semantics
+### Variable Declarations
+**Leading slash**: `(var /a value)`
+1. Compile `self` and push to stack
+2. Compile variable `a` as member of stack top
+3. Result: `a` stored as member of current instance
 
-`^container` always represents the receiver for the definition:
+**Complex container**: `(var container/a value)`
+1. Compile `container` and push to stack
+2. Compile variable `a` as member of stack top
+3. Result: `a` stored as member of `container`
 
-- **Classes**: the container must evaluate to a namespace or class
-  object. The class is stored inside that namespace instead of the
-  current one.
-- **Variables / Assignments**: the container can be any object that
-  supports `IkSetMember` (namespaces, classes, instances, maps, etc.).
-  The identifier is stored on that container instead of the current
-  scope or namespace.
-- **Numeric Segments**: if the final segment is numeric (e.g. `arr/0`)
-  the compiler emits `IkGetChild`/`IkSetChild` instead of member access.
-  This keeps array/gene indexing syntax working even when the value is
-  assigned to via slash notation, so `(arr/0 = value)` mutates the first
-  element rather than setting a string property named `"0"`.
+### Assignments
+**Leading slash**: `(/a = value)`
+1. Compile `self` and push to stack
+2. Set member on stack top using `IkSetMember`
+3. Result: `a` member updated on current instance
 
-The container expression is evaluated immediately before the
-definition/assignment runs, so it can reference dynamic values such as
-`self`.
+**Complex target**: `(container/prop = value)`
+1. Compile `container` and push to stack
+2. Set member on stack top using `IkSetMember`
+3. Result: `prop` member updated on `container`
+
+## Numeric Segment Handling
+
+When the final segment is numeric, the compiler uses child access instructions:
+
+- `(arr/0 = value)` → Compile `arr` → Use `IkSetChild` with index 0
+- `(g/1 = value)` → Compile `g` → Use `IkSetChild` with index 1
+- `(data/items/2 = value)` → Compile `data/items` → Set member `items` → Use `IkSetChild` with index 2
+
+## VM Instructions Used
+
+### Existing Instructions
+- `IkClass`: Standard class creation
+- `IkClassAsMember`: Create class as member of existing object (or extend IkClass with member flag)
+- `IkSetMember`: Set property on object
+- `IkSetChild`: Set child element in array/gene
+
+### Required Enhancements
+- **IkClassAsMember**: If not exists, extend `IkClass` with `arg1 = 1` flag to signal member creation
+- **Stack Management**: Ensure proper stack ordering for multi-segment resolution
+
+## Advantages
+
+1. **Compile-time Resolution**: No runtime container lookup overhead
+2. **Simple Implementation**: Uses existing VM infrastructure
+3. **Predictable Behavior**: Containers resolved at compile time
+4. **Better Performance**: No dynamic evaluation needed
+5. **Clear Semantics**: Stack-based compilation is intuitive
+
+## Leading Slash Semantics
+
+A leading `/` always represents `self` in the current context:
+- Class methods: `/property` refers to the instance
+- Global scope: `/variable` refers to current namespace or global scope
+- Nested contexts: `/property` resolves to nearest `self`
+
+## Container Type Support
+
+The system supports multiple container types automatically:
+- **Namespaces**: Classes stored in namespace hierarchy
+- **Classes**: Properties and methods stored on class objects
+- **Instances**: Properties set on object instances
+- **Maps**: Key-value pairs in map objects
+- **Arrays/Gene**: Child element modification via numeric indexing
 
 ## Examples
 
