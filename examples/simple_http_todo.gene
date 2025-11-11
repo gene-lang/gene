@@ -134,7 +134,7 @@
   )
 
   (println "Starting server on port" port "...")
-  (start_server 8080 router)
+  (start_server port router)
   (println "Press Ctrl+C to stop")
 
   # Run forever
