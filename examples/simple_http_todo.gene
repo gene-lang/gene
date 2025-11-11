@@ -95,10 +95,9 @@
 
 # Simple router
 (class SimpleRouter
-  (var /todo_controller (new TodoController))
 
   (.ctor _
-    # Initialize controller
+    (/todo_controller = (new TodoController))
   )
 
   (.fn handle request
@@ -107,15 +106,14 @@
 
     (println (method & " " & path))
 
-    (cond
-      (and (== method "GET") (== path "/"))
-        (/todo_controller .index request)
+    (if ((method == "GET") && (path == "/"))
+      (/todo_controller .index request)
 
-      (and (== method "POST") (== path "/todos"))
-        (/todo_controller .create request)
+    elif ((method == "POST") && (path && "/todos"))
+      (/todo_controller .create request)
 
-      true
-        (respond 404 "Not found")
+    else
+      (respond 404 "Not found")
     )
   )
 )
@@ -130,7 +128,7 @@
 
   (var port 8080)
   (if ($args/.size > 0)
-    (port = ($args/0/.to_i))
+    (port = $args/0/.to_i)
   )
 
   (println "Starting server on port" port "...")
