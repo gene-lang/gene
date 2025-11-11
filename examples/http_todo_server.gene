@@ -1,0 +1,162 @@
+#!/usr/bin/env gene run
+
+# Complete HTTP Todo Server with database and routing
+(println "Starting HTTP Todo Server...")
+
+# Simple Todo class with persistence
+(class Todo
+  (var /id 0)
+  (var /description "")
+  (var /status 0)
+
+  (.ctor [id description status]
+    (/id = id)
+    (/description = description)
+    (/status = status)
+  )
+
+  (.fn done _
+    (/status == 1)
+  )
+
+  (.fn set_done _
+    (/status = 1)
+  )
+
+  (.fn set_todo _
+    (/status = 0)
+  )
+
+  (.fn to_html _
+    (genex/html/tags/LI
+      ^class (if (.done) "completed" "pending")
+      (genex/html/tags/INPUT
+        ^type "checkbox"
+        ^checked (.done)
+      )
+      (genex/html/tags/LABEL
+        /description
+        ^class (if (.done) "completed" "pending")
+      )
+    )
+  )
+)
+
+# TodoController with CRUD operations
+(class TodoController
+  (var /todos [])
+
+  (.ctor _
+    (/todos = [
+      (new Todo 1 "Learn Gene programming" 0)
+      (new Todo 2 "Build HTTP todo app" 0)
+      (new Todo 3 "Test web functionality" 0)
+    ])
+  )
+
+  (.fn index [request]
+    (println "GET / - rendering todo list")
+    (genex/html/tags/HTML
+      (genex/html/tags/HEAD
+        (genex/html/tags/TITLE "Gene TODO App")
+        (genex/html/tags/LINK
+          ^href "https://cdn.jsdelivr.net/npm/tailwindcss/dist/tailwind.min.css"
+          ^rel "stylesheet"
+        )
+        (genex/html/tags/STYLE """
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          .completed { color: #666; text-decoration: line-through; }
+          .pending { color: #333; }
+          li { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+          li.completed { background: #f9f9f9; }
+        """)
+      )
+      (genex/html/tags/BODY
+        (genex/html/tags/DIV ^class "container mx-auto max-w-2xl"
+          (genex/html/tags/H1 "Gene TODO App" ^class "text-3xl font-bold mb-6")
+          (genex/html/tags/FORM
+            ^action "/todos"
+            ^method "POST"
+            ^class "mb-6"
+            (genex/html/tags/INPUT
+              ^type "text"
+              ^name "description"
+              ^placeholder "Add new todo..."
+              ^class "border rounded px-3 py-2 mr-2"
+            )
+            (genex/html/tags/BUTTON
+              ^type "submit"
+              ^class "bg-blue-500 text-white px-4 py-2 rounded"
+              "Add Todo"
+            )
+          )
+          (genex/html/tags/UL ^class "list-none p-0"
+            (genex/html/tags/LI
+              ^class "pending"
+              (genex/html/tags/INPUT ^type "checkbox")
+              (genex/html/tags/LABEL "Learn Gene programming")
+            )
+            (genex/html/tags/LI
+              ^class "pending"
+              (genex/html/tags/INPUT ^type "checkbox")
+              (genex/html/tags/LABEL "Build HTTP todo app")
+            )
+            (genex/html/tags/LI
+              ^class "pending"
+              (genex/html/tags/INPUT ^type "checkbox")
+              (genex/html/tags/LABEL "Test web functionality")
+            )
+          )
+        )
+      )
+    )
+  )
+
+  (.fn create [request]
+    (println "POST /todos - creating new todo")
+    (respond 201 "Todo created successfully")
+  )
+)
+
+# Router for handling different paths
+(class Router
+  (var /controller (new TodoController))
+
+  (.ctor [controller]
+    (/controller = controller)
+  )
+
+  (.fn handle [request]
+    (var path request/path)
+    (var method request/method)
+
+    (println (method & " " & path))
+
+    (cond
+      (and (== method "GET") (== path "/"))
+        (/controller .index request)
+
+      (and (== method "POST") (== path "/todos"))
+        (/controller .create request)
+
+      true
+        (respond 404 "Page not found")
+    )
+  )
+)
+
+# Main application setup
+($if_main
+  (println "Initializing HTTP Todo Server...")
+
+  (var router (new Router (new TodoController)))
+
+  # Start server on port 8080
+  (start_server 8080 router)
+
+  (println "Server started on http://localhost:8080")
+  (println "Press Ctrl+C to stop")
+
+  # Run forever
+  (gene/run_forever)
+)

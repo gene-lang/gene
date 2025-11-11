@@ -1,0 +1,114 @@
+#!/usr/bin/env gene run
+
+# Working HTTP Todo App - demonstrates core functionality
+# This example shows:
+# - Class definition and instantiation
+# - Method calls on instances
+# - HTML generation using genex/html/tags
+# - Router pattern with controllers
+
+(println "Creating working HTTP Todo App")
+
+# Simple Todo class
+(class Todo
+  (var /id 0)
+  (var /description "")
+  (var /status 0)
+
+  (.ctor [id description status]
+    (/id = id)
+    (/description = description)
+    (/status = status)
+  )
+
+  (.fn done _
+    (/status == 1)
+  )
+
+  (.fn set_done _
+    (/status = 1)
+  )
+
+  (.fn set_todo _
+    (/status = 0)
+  )
+)
+
+# Simple controller
+(class TodoController
+  (.fn index path
+    (var todos [
+      (new Todo 1 "Learn Gene programming" 0)
+      (new Todo 2 "Build HTTP todo app" 0)
+      (new Todo 3 "Test web functionality" 0)
+    ])
+
+    (genex/html/tags/HTML
+      (genex/html/tags/HEAD
+        (genex/html/tags/TITLE "Working TODO App")
+        (genex/html/tags/LINK
+          ^href "https://cdn.jsdelivr.net/npm/tailwindcss/dist/tailwind.min.css"
+          ^rel "stylesheet"
+        )
+        (genex/html/tags/STYLE """
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          .completed { color: #666; text-decoration: line-through; }
+          .pending { color: #333; }
+          li { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+        """)
+      )
+      (genex/html/tags/BODY
+        (genex/html/tags/H1 "Working TODO App")
+        (genex/html/tags/UL
+          (genex/html/tags/LI "Learn Gene programming")
+          (genex/html/tags/LI "Build HTTP todo app")
+          (genex/html/tags/LI "Test web functionality")
+        )
+      )
+    )
+  )
+
+  (.fn create path
+    (var new_todo (new Todo 0 "New TODO item" 0))
+    (new_todo .set_todo)
+    (println "Created new todo:" new_todo/description)
+    "Created"
+  )
+)
+
+# Simple router
+(class SimpleRouter
+  (var /routes [])
+
+  (.ctor _
+    (/routes = [])
+  )
+
+  (.fn add_route [path controller action]
+    (/routes = (/routes || []))
+  )
+
+  (.fn handle [path]
+    (println "Handling request for:" path)
+    (var controller (new TodoController))
+    (controller .index path)
+  )
+)
+
+# Test the functionality
+($if_main
+  (println "Creating test todo...")
+  (var test_todo (new Todo 0 "Test from $if_main" 0))
+  (println "Todo created:" test_todo/description)
+
+  (test_todo .set_done)
+  (println "Todo marked as done:" (test_todo .done))
+
+  (println "Testing router...")
+  (var router (new SimpleRouter))
+  (var html_result (router .handle "/"))
+  (println "Generated HTML:")
+  (println html_result)
+
+  (println "Working HTTP Todo App test complete!")
+)
