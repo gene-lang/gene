@@ -30,6 +30,7 @@ proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
 proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc vm_start_server(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 
@@ -95,6 +96,65 @@ proc to_json*(val: Value): string =
     return "{" & items.join(",") & "}"
   else:
     return "null"
+
+proc new_map_from_pairs(pairs: seq[(string, string)]): Value =
+  var table = initTable[Key, Value]()
+  for (k, v) in pairs:
+    table[k.to_key()] = v.to_value()
+  result = new_map_value(table)
+
+proc parse_form_body(body: string): Value =
+  var pairs: seq[(string, string)] = @[]
+  for key, val in decodeData(body):
+    pairs.add((key, val))
+  if pairs.len == 0:
+    return NIL
+  new_map_from_pairs(pairs)
+
+proc parse_body_params(body: string, content_type: string): Value =
+  let trimmed = body.strip()
+  if trimmed.len == 0:
+    return NIL
+  let normalized = content_type.toLowerAscii()
+  if normalized.contains("application/json"):
+    try:
+      return parse_json(trimmed)
+    except CatchableError:
+      return NIL
+  let is_form = normalized.contains("application/x-www-form-urlencoded") or
+                (normalized.len == 0 and trimmed.contains("="))
+  if is_form:
+    return parse_form_body(trimmed)
+  return NIL
+
+proc server_request_get_prop(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, prop: Key): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "ServerRequest method requires self")
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  if self_val.kind != VkInstance:
+    raise new_exception(types.Exception, "ServerRequest methods must be called on an instance")
+  return self_val.ref.instance_props.getOrDefault(prop, NIL)
+
+proc server_request_path(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "path".to_key())
+
+proc server_request_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "method".to_key())
+
+proc server_request_url(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "url".to_key())
+
+proc server_request_params(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "params".to_key())
+
+proc server_request_headers(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "headers".to_key())
+
+proc server_request_body(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "body".to_key())
+
+proc server_request_body_params(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  server_request_get_prop(vm, args, arg_count, has_keyword_args, "body_params".to_key())
 
 proc http_get*(url: string, headers: Table[string, string] = initTable[string, string]()): string =
   var client = newHttpClient()
@@ -539,6 +599,16 @@ proc init_http_classes*() =
       request_class_global.def_native_constructor(request_constructor)
       request_class_global.def_native_method("send", request_send)
 
+    {.cast(gcsafe).}:
+      server_request_class_global = new_class("ServerRequest")
+      server_request_class_global.def_native_method("path", server_request_path)
+      server_request_class_global.def_native_method("method", server_request_method)
+      server_request_class_global.def_native_method("url", server_request_url)
+      server_request_class_global.def_native_method("params", server_request_params)
+      server_request_class_global.def_native_method("headers", server_request_headers)
+      server_request_class_global.def_native_method("body", server_request_body)
+      server_request_class_global.def_native_method("body_params", server_request_body_params)
+
     # Create Response class
     {.cast(gcsafe).}:
       response_class_global = new_class("Response")
@@ -549,12 +619,16 @@ proc init_http_classes*() =
     let request_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
       request_class_ref.class = request_class_global
+    let server_request_class_ref = new_ref(VkClass)
+    {.cast(gcsafe).}:
+      server_request_class_ref.class = server_request_class_global
     let response_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
       response_class_ref.class = response_class_global
     
     if App.app.gene_ns.kind == VkNamespace:
       App.app.gene_ns.ref.ns["Request".to_key()] = request_class_ref.to_ref_value()
+      App.app.gene_ns.ref.ns["ServerRequest".to_key()] = server_request_class_ref.to_ref_value()
       App.app.gene_ns.ref.ns["Response".to_key()] = response_class_ref.to_ref_value()
     
     # Add helper functions to global namespace
@@ -574,6 +648,10 @@ proc init_http_classes*() =
     let respond_fn = new_ref(VkNativeFn)
     respond_fn.native_fn = vm_respond
     App.app.global_ns.ref.ns["respond".to_key()] = respond_fn.to_ref_value()
+    
+    let redirect_fn = new_ref(VkNativeFn)
+    redirect_fn.native_fn = vm_redirect
+    App.app.global_ns.ref.ns["redirect".to_key()] = redirect_fn.to_ref_value()
     
     # Add run_forever to gene namespace for gene/run_forever
     if App.app.gene_ns.kind == VkNamespace:
@@ -679,7 +757,13 @@ proc create_server_request(req: asynchttpserver.Request): Value =
   instance.instance_props["headers".to_key()] = headers_map.to_ref_value()
   
   # Store body if present
-  instance.instance_props["body".to_key()] = req.body.to_value()
+  let body_content = req.body
+  instance.instance_props["body".to_key()] = body_content.to_value()
+  
+  var content_type = ""
+  if req.headers.hasKey("Content-Type"):
+    content_type = req.headers["Content-Type"]
+  instance.instance_props["body_params".to_key()] = parse_body_params(body_content, content_type)
   
   return instance.to_ref_value()
 
@@ -853,6 +937,39 @@ proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   instance.instance_props["body".to_key()] = body.to_value()
   instance.instance_props["headers".to_key()] = headers.to_ref_value()
   
+  return instance.to_ref_value()
+
+proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "redirect requires a destination URL")
+
+  let location_arg = get_positional_arg(args, 0, has_keyword_args)
+  if location_arg.kind != VkString:
+    raise new_exception(types.Exception, "redirect destination must be a string")
+
+  var status = 302
+  if get_positional_count(arg_count, has_keyword_args) > 1:
+    let status_arg = get_positional_arg(args, 1, has_keyword_args)
+    if status_arg.kind == VkInt:
+      status = status_arg.int64.int
+    else:
+      raise new_exception(types.Exception, "redirect status must be an integer")
+
+  let headers = new_ref(VkMap)
+  headers.map = Table[Key, Value]()
+  headers.map["Location".to_key()] = location_arg.str.to_value()
+
+  let instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    if server_response_class_global != nil:
+      instance.instance_class = server_response_class_global
+    else:
+      instance.instance_class = new_class("ServerResponse")
+
+  instance.instance_props["status".to_key()] = status.to_value()
+  instance.instance_props["body".to_key()] = "".to_value()
+  instance.instance_props["headers".to_key()] = headers.to_ref_value()
+
   return instance.to_ref_value()
 
 # Run event loop forever

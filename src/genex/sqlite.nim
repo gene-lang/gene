@@ -1,4 +1,5 @@
 import db_connector/db_sqlite
+import db_connector/sqlite3 as sqlite3mod
 import tables
 
 # For static linking, don't include boilerplate to avoid duplicate set_globals
@@ -21,6 +22,36 @@ type
 # Global table to store connections by ID
 var connection_table {.threadvar.}: Table[system.int64, ConnectionWrapper]
 var next_conn_id {.threadvar.}: system.int64
+
+proc bind_gene_param(stmt: SqlPrepared, idx: int, value: Value) =
+  case value.kind
+  of VkNil:
+    stmt.bindNull(idx)
+  of VkBool:
+    stmt.bindParam(idx, if value.to_bool: 1 else: 0)
+  of VkInt:
+    stmt.bindParam(idx, value.int64)
+  of VkFloat:
+    stmt.bindParam(idx, value.float)
+  of VkString:
+    stmt.bindParam(idx, value.str)
+  else:
+    stmt.bindParam(idx, $value)
+
+proc bind_gene_params(stmt: SqlPrepared, params: seq[Value]) =
+  for i, param in params:
+    bind_gene_param(stmt, i + 1, param)
+
+proc collect_params(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, start_idx: int): seq[Value] =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional <= start_idx:
+    return @[]
+  result = @[]
+  for i in start_idx..<positional:
+    result.add(get_positional_arg(args, i, has_keyword_args))
+
+proc finalize_stmt(stmt: SqlPrepared) =
+  discard sqlite3mod.finalize(stmt.PStmt)
 
 # Open a database connection
 proc vm_open(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -70,7 +101,6 @@ proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
   if self.kind != VkInstance:
     raise new_exception(types.Exception, "exec must be called on a Connection instance")
 
-  # Get the wrapper
   let conn_id_key = "__conn_id__".to_key()
   if not self.ref.instance_props.hasKey(conn_id_key):
     raise new_exception(types.Exception, "Invalid Connection instance")
@@ -80,7 +110,6 @@ proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
     raise new_exception(types.Exception, "Connection not found")
 
   let wrapper = connection_table[conn_id]
-
   if wrapper.closed:
     raise new_exception(types.Exception, "Connection is closed")
 
@@ -88,19 +117,23 @@ proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
   if sql_arg.kind != VkString:
     raise new_exception(types.Exception, "SQL statement must be a string")
 
-  let stmt = sql_arg.str
+  let stmt_text = sql_arg.str
+  let params = collect_params(args, arg_count, has_keyword_args, 2)
 
-  # Execute query and collect results
+  let prepared = wrapper.conn.prepare(stmt_text)
   var result = new_array_value(@[])
-
   try:
-    for row in wrapper.conn.instantRows(sql(stmt)):
+    bind_gene_params(prepared, params)
+    for row in wrapper.conn.instantRows(prepared):
+      let column_count = row.len.int
       var row_array = new_array_value(@[])
-      for i in 0..<row.len:
-        row_array.ref.arr.add(new_str_value(row[i]))
+      for col in 0..<column_count:
+        row_array.ref.arr.add(row[int32(col)].to_value())
       result.ref.arr.add(row_array)
-  except:
-    raise new_exception(types.Exception, "SQL execution failed: " & getCurrentExceptionMsg())
+  except DbError as e:
+    raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
+  finally:
+    finalize_stmt(prepared)
 
   return result
 
@@ -113,7 +146,6 @@ proc vm_execute(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   if self.kind != VkInstance:
     raise new_exception(types.Exception, "execute must be called on a Connection instance")
 
-  # Get the wrapper
   let conn_id_key = "__conn_id__".to_key()
   if not self.ref.instance_props.hasKey(conn_id_key):
     raise new_exception(types.Exception, "Invalid Connection instance")
@@ -123,7 +155,6 @@ proc vm_execute(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     raise new_exception(types.Exception, "Connection not found")
 
   let wrapper = connection_table[conn_id]
-
   if wrapper.closed:
     raise new_exception(types.Exception, "Connection is closed")
 
@@ -131,12 +162,23 @@ proc vm_execute(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   if sql_arg.kind != VkString:
     raise new_exception(types.Exception, "SQL statement must be a string")
 
-  let stmt = sql_arg.str
+  let stmt_text = sql_arg.str
+  let params = collect_params(args, arg_count, has_keyword_args, 2)
+
+  let prepared = wrapper.conn.prepare(stmt_text)
+  bind_gene_params(prepared, params)
 
   try:
-    wrapper.conn.exec(sql(stmt))
-  except:
-    raise new_exception(types.Exception, "SQL execution failed: " & getCurrentExceptionMsg())
+    var rc = sqlite3mod.step(prepared.PStmt)
+    while rc == sqlite3mod.SQLITE_ROW:
+      rc = sqlite3mod.step(prepared.PStmt)
+    if rc != sqlite3mod.SQLITE_DONE:
+      let err = $sqlite3mod.errmsg(wrapper.conn)
+      raise new_exception(types.Exception, "SQL execution failed: " & err)
+  except DbError as e:
+    raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
+  finally:
+    finalize_stmt(prepared)
 
   return NIL
 
@@ -162,7 +204,7 @@ proc vm_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: in
 
   if not wrapper.closed:
     try:
-      wrapper.conn.close()
+      db_sqlite.close(wrapper.conn)
       wrapper.closed = true
     except:
       raise new_exception(types.Exception, "Failed to close connection: " & getCurrentExceptionMsg())
