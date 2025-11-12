@@ -1795,7 +1795,7 @@ proc exec*(self: VirtualMachine): Value =
         let name = cast[Key](symbol_value)
         var value: Value
         self.frame.pop2(value)
-        
+
         # Check for NIL first to give better error message
         if value.kind == VkNil:
           let symbol_index = cast[uint64](name) and PAYLOAD_MASK

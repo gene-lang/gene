@@ -614,10 +614,7 @@
 
   # Return bool: whether the path/method/... of the request matches
   (.fn match req
-    (
-      (req/path == /path) &&
-      (/http_methods/.empty || (/http_methods .contains req/method))
-    )
+    ((req/path == /path) && ((/http_methods .empty) || (/http_methods .contains req/method)))
   )
 )
 
@@ -649,29 +646,45 @@
 )
 
 (fn create_router _
-  ($tap (new Router)
-    (.map "/" HomeController)
-    (.map ^^POST   "/todos" TodosController :create)
-    (.map ^^PATCH  "/todos" TodosController :update)
-    (.map ^^DELETE "/todos" TodosController :delete)
-    (.map          "/todos" TodosController)
-  )
+  (println "create_router: Creating new Router")
+  (var r (new Router))
+  (println "create_router: Router created")
+  (println "create_router: Mapping 1...")
+  (r .map "/" HomeController)
+  (println "create_router: Mapping 2...")
+  (r .map ^^POST   "/todos" TodosController :create)
+  (println "create_router: Mapping 3...")
+  (r .map ^^PATCH  "/todos" TodosController :update)
+  (println "create_router: Mapping 4...")
+  (r .map ^^DELETE "/todos" TodosController :delete)
+  (println "create_router: Mapping 5...")
+  (r .map          "/todos" TodosController)
+  (println "create_router: All mappings added")
+  r
 )
 
 ($if_main
+  (println "Starting app...")
   (init_db)
+  (println "DB initialized")
 
   (var port
     (if (($args .size) > 0)
-      $args/0/.to_i
+      (($args ./ 0) .to_i)
     else
       2080
     )
   )
+  (println "Port: " port)
 
+  (println "Creating app...")
   (var app ($tap (new App port)
+    (println "Setting handler...")
     (/handler = (create_router))
+    (println "Handler set")
   ))
+  (println "App created")
 
+  (println "Starting server...")
   (app .start)
 )
