@@ -6085,23 +6085,41 @@ when not defined(noExtensions):
     # Create OpenAI namespace
     let ai_ns = new_namespace("ai")
 
-    # OpenAI client creation and operations
+    # Create OpenAIClient class
+    let openai_client_class = new_class("OpenAIClient")
+    openai_client_class.parent = App.app.object_class
+
+    # Create instance methods for OpenAIClient
+    var chat_fn = new_ref(VkNativeFn)
+    chat_fn.native_fn = vm_openai_client_chat
+    openai_client_class.def_native_method("chat", chat_fn.native_fn)
+
+    var embeddings_fn = new_ref(VkNativeFn)
+    embeddings_fn.native_fn = vm_openai_client_embeddings
+    openai_client_class.def_native_method("embeddings", embeddings_fn.native_fn)
+
+    var respond_fn = new_ref(VkNativeFn)
+    respond_fn.native_fn = vm_openai_client_respond
+    openai_client_class.def_native_method("respond", respond_fn.native_fn)
+
+    var stream_fn = new_ref(VkNativeFn)
+    stream_fn.native_fn = vm_openai_client_stream
+    openai_client_class.def_native_method("stream", stream_fn.native_fn)
+
+    # Register OpenAI client constructor in ai namespace
     ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
-    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
-    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
-    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
-    ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
+
+    # Register the class in namespaces
+    ai_ns["OpenAIClient".to_key()] = openai_client_class.to_value()
+    global_ns["OpenAIClient".to_key()] = openai_client_class.to_value()
+    App.app.global_ns.ns["OpenAIClient".to_key()] = openai_client_class.to_value()
 
     # Register the AI namespace in genex namespace
     App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
 
-    # Also register in global namespace for direct access
-    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
-    global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
-    global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
-    global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
-    global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()
-
-    # Convenience aliases
-    global_ns["OpenAIClient".to_key()] = ai_ns.to_value()
-    App.app.global_ns.ns["OpenAIClient".to_key()] = ai_ns.to_value()
+    # Register convenience functions in ai namespace for direct access
+    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
+    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
+    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
+    ai_ns["stream".to_key()] = vm_openai_stream.to_value()

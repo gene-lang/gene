@@ -48,6 +48,25 @@ nimble speedy
 nim c -o:bin/gene src/gene.nim
 ```
 
+## Local LLM Runtime (llama.cpp)
+
+Gene ships with a `genex/llm` namespace that can call local GGUF models through [llama.cpp](https://github.com/ggerganov/llama.cpp). The runtime is optional — you can stay on the built-in mock backend by compiling with `-d:GENE_LLM_MOCK` — but if you want real inference:
+
+1. Fetch the submodule and its dependencies:
+   ```bash
+   git submodule update --init --recursive tools/llama.cpp
+   ```
+2. Build the native libraries (runs CMake inside `build/llama/` and compiles the shim to `libgene_llm.a`):
+   ```bash
+   tools/build_llama_runtime.sh            # set GENE_LLAMA_METAL=1 or GENE_LLAMA_CUDA=1 for GPU variants
+   ```
+   The script leaves `build/llama/libllama.a` and `build/llama/libgene_llm.a` in place so the Nim build/linker can pick them up automatically.
+3. Rebuild Gene as usual (`nimble build`, `nimble speedy`, etc.). No extra flags are needed once the libraries exist.
+
+Usage tips:
+- `examples/llm/mock_completion.gene` looks for `GENE_LLM_MODEL=/path/to/model.gguf` and falls back to `tests/fixtures/llm/mock-model.gguf` (a tiny placeholder) when the env var is absent.
+- To force the mock backend without rebuilding the native shim, compile with `nimble build -d:GENE_LLM_MOCK`.
+
 ## Command-Line Tool
 
 All commands are dispatched through `bin/gene <command> [options]`:
