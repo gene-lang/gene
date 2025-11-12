@@ -615,8 +615,8 @@
   # Return bool: whether the path/method/... of the request matches
   (.fn match req
     (
-      (req/.path == /path) &&
-      (/http_methods/.empty || (/http_methods .contains req/.method))
+      (req/path == /path) &&
+      (/http_methods/.empty || (/http_methods .contains req/method))
     )
   )
 )
