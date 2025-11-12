@@ -5,16 +5,6 @@ import tables, json
 import ../../gene/types
 import openai_client
 
-# Inline VM helper functions to avoid circular imports
-proc get_positional_count(arg_count: int, has_keyword_args: bool): int =
-  if has_keyword_args:
-    arg_count shr 8
-  else:
-    arg_count
-
-proc get_positional_arg(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value =
-  args[index]
-
 # Helper to convert Gene Value to JsonNode
 proc geneValueToJson*(value: Value): JsonNode =
   case value.kind
@@ -36,7 +26,7 @@ proc geneValueToJson*(value: Value): JsonNode =
   of VkMap:
     var obj = newJObject()
     for key, val in value.ref.map:
-      obj[$key] = geneValueToJson(val)
+      obj[get_symbol(int(key))] = geneValueToJson(val)
     result = obj
   of VkGene:
     # Handle Gene expressions by evaluating them first
@@ -85,7 +75,7 @@ var next_client_id: int = 1
 
 # Native function: Create new OpenAI client
 proc vm_openai_new_client(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  var options: JsonNode = nil
+  var options: JsonNode = newJNull()
 
   if get_positional_count(arg_count, has_keyword_args) > 0:
     let options_val = get_positional_arg(args, 0, has_keyword_args)

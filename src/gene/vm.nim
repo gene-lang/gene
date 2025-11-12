@@ -6078,7 +6078,7 @@ when not defined(noExtensions):
   import "../genex/sqlite"
   import "../genex/html"
   import "../genex/ai/bindings"
-  # import "../genex/llm"  # Temporarily disabled
+  import "../genex/llm"
 
   # Register OpenAI API functions to avoid circular dependencies
   when not defined(noai):

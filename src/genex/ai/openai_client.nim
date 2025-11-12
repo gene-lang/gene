@@ -100,14 +100,23 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
       if body != "":
         echo "DEBUG: Body: ", body[0..min(body.len, 200)] & (if body.len > 200: "..." else: "")
 
-    let response = client.request(url, httpMethod = parseEnum[HttpMethod](httpMethod),
-                              body = body, headers = headers)
+    let response = client.request(url, httpMethod = case httpMethod.toUpperAscii():
+      of "GET": HttpGet
+      of "POST": HttpPost
+      of "PUT": HttpPut
+      of "DELETE": HttpDelete
+      of "HEAD": HttpHead
+      of "PATCH": HttpPatch
+      of "OPTIONS": HttpOptions
+      else: HttpPost,  # Default to POST for OpenAI APIs
+      body = body, headers = headers)
 
     when defined(debug):
       echo "DEBUG: Response status: ", response.status
       echo "DEBUG: Response headers: ", response.headers
 
-    if response.status != "200":
+    let statusCode = response.status.split()[0]  # Extract just the status code (e.g., "200" from "200 OK")
+    if statusCode != "200":
       let errorBody = try: parseJson(response.body) except: %*{"message": response.body}
       var errorMsg = ""
       var errorType = ""
@@ -121,7 +130,7 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
 
       var error = OpenAIError(
         msg: "OpenAI API Error: " & errorMsg,
-        status: parseInt(response.status),
+        status: parseInt(statusCode),
         provider_error: errorType
       )
 
@@ -130,7 +139,7 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
         error.request_id = response.headers["x-request-id"]
 
       # Extract retry-after for rate limiting
-      if response.status == "429" and response.headers.hasKey("retry-after"):
+      if statusCode == "429" and response.headers.hasKey("retry-after"):
         try:
           error.retry_after = parseInt(response.headers["retry-after"])
         except:
