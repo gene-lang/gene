@@ -6077,3 +6077,31 @@ when not defined(noExtensions):
   import "../genex/http"
   import "../genex/sqlite"
   import "../genex/html"
+  import "../genex/ai/bindings"
+  # import "../genex/llm"  # Temporarily disabled
+
+  # Register OpenAI API functions to avoid circular dependencies
+  when not defined(noai):
+    # Create OpenAI namespace
+    let ai_ns = new_namespace("ai")
+
+    # OpenAI client creation and operations
+    ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
+    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
+    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
+    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
+    ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+
+    # Register the AI namespace in genex namespace
+    App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
+
+    # Also register in global namespace for direct access
+    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
+    global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
+    global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
+    global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
+    global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()
+
+    # Convenience aliases
+    global_ns["OpenAIClient".to_key()] = ai_ns.to_value()
+    App.app.global_ns.ns["OpenAIClient".to_key()] = ai_ns.to_value()
