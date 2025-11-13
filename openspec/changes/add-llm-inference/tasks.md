@@ -1,6 +1,6 @@
 ## 1. Spec & API
-- [ ] 1.1 Review llama.cpp C API surface and document supported options for v1 (model path, context length, thread count).
-- [ ] 1.2 Finalize `genex/llm` Gene API signatures in spec deltas (`load_model`, `new_session`, `infer`, optional streaming callback).
+- [x] 1.1 Review llama.cpp C API surface and document supported options for v1 (model path, context length, thread count).
+- [x] 1.2 Finalize `genex/llm` Gene API signatures in spec deltas (`load_model`, `new_session`, `infer`, optional streaming callback).
 
 ## 2. Implementation
 - [ ] 2.1 Add llama.cpp shim build (tools script + Nimble hooks) and expose C-friendly functions for load/session/infer.

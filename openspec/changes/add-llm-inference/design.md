@@ -71,6 +71,28 @@ Gene code  ──(call genex/llm)──> Nim native shim ──FFI──> llama.
 - Options maps are plain Gene maps with keyword keys; Nim parses them and supplies defaults (context length, threads, seed, temperature, top_p, top_k).
 - No streaming callback in v1; design leaves room for a future `^stream` handler but it’s disabled/ignored for now.
 
+### Option reference
+**`genex/llm/load_model`**
+- `^context` (int, default 2048) — clamp to ≥256 tokens, capped only by what llama.cpp accepts.
+- `^threads` (int, default = host CPU count) — clamp to ≥1, forwarded to llama.cpp thread pool.
+- `^gpu_layers` (int, default 0) — number of layers to keep on GPU; clamp to ≥0.
+- `^disable_mmap` (bool, default false) — when true, disables llama.cpp’s mmap usage for filesystems that do not support it.
+- `^mlock` (bool, default false) — locks model pages into RAM to avoid swapping when supported.
+- `^allow_missing` (bool, default false) — skips the upfront filesystem existence check so the mock backend can be exercised without a real file.
+
+**`Model .new_session`**
+- `^context` (int, default = model context) — cannot exceed the model’s supported context window; backend will reject invalid sizes.
+- `^batch` (int, default = min(512, ^context)) — controls prompt batching; values >512 are clamped.
+- `^threads` (int, default = model threads) — lets callers oversubscribe/undersubscribe relative to the load-time default.
+- `^seed` (int, default 42) — sampling seed.
+- `^temperature` (float, default 0.7), `^top_p` (float, default 0.9), `^top_k` (int, default 40) — stored as the session’s baseline sampling config.
+- `^max_tokens` (int, default 256, clamp ≥1) — used when `.infer` is invoked without overrides.
+
+**`Session .infer`**
+- Accepts `^max_tokens`, `^temperature`, `^top_p`, `^top_k`, and `^seed` to override the session defaults for a single call.
+- `^timeout`, `^timeout_ms`, and `^stream` remain **unsupported** in v1; providing them must raise a descriptive Gene exception so callers know streaming is deferred.
+- Returns a completion map containing `^text`, `^tokens` (array of emitted token strings), `^finish_reason` (`:stop|:length|:cancelled|:error`), and `^latency_ms`.
+
 ### Memory & Lifetime Safety
 - `LlmModel` and `LlmSession` values keep `VkExternal` handles alive; we add `.finalizer` procs that enqueue a “destroy” job to the worker thread, ensuring llama.cpp resources are freed off the VM thread.
 - Reference loops avoided by storing only raw pointer ints in Gene objects, with actual Nim refs owning them.

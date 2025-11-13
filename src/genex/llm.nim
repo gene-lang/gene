@@ -1,47 +1,28 @@
-import os, strutils, tables, math, osproc
-include ../gene/extension/boilerplate
-import ../gene/vm
+import os, strutils, tables, osproc
+import ../gene/types
 
 when defined(GENE_LLM_MOCK):
   type
-    ModelState = ref object
-      id: int64
+    ModelState = ref object of CustomValue
       path: string
       context_len: int
       threads: int
+      closed: bool
+      open_sessions: int
 
-    SessionState = ref object
-      id: int64
-      model_id: int64
+    SessionState = ref object of CustomValue
+      model: ModelState
       context_len: int
       temperature: float
       top_p: float
       top_k: int
       seed: int
       max_tokens: int
+      closed: bool
 
   var
-    model_class_global: Class
-    session_class_global: Class
-
-  var
-    model_table {.threadvar.}: Table[int64, ModelState]
-    session_table {.threadvar.}: Table[int64, SessionState]
-    next_model_id {.threadvar.}: int64
-    next_session_id {.threadvar.}: int64
-    tables_initialized {.threadvar.}: bool
-
-  const
-    MODEL_ID_KEY = "__model_id__"
-    SESSION_ID_KEY = "__session_id__"
-
-  proc ensure_tables_initialized() =
-    if not tables_initialized:
-      model_table = initTable[int64, ModelState]()
-      session_table = initTable[int64, SessionState]()
-      next_model_id = 1
-      next_session_id = 1
-      tables_initialized = true
+    model_class_global {.threadvar.}: Class
+    session_class_global {.threadvar.}: Class
 
   proc expect_map(val: Value, context: string): Value =
     if val == NIL:
@@ -133,44 +114,42 @@ when defined(GENE_LLM_MOCK):
   proc cancellation_value(reason: string = ":cancelled"): Value =
     build_completion_value("", @[], reason, 0)
 
-  proc create_model_instance(state: ModelState): Value =
-    let model_id_key = MODEL_ID_KEY.to_key()
-    var instance = new_ref(VkInstance)
-    instance.instance_class = model_class_global
-    if instance.instance_props == nil:
-      instance.instance_props = initTable[Key, Value]()
-    instance.instance_props[model_id_key] = state.id.to_value()
-    instance.instance_props["path".to_key()] = state.path.to_value()
-    instance.instance_props["context".to_key()] = state.context_len.to_value()
-    instance.instance_props["threads".to_key()] = state.threads.to_value()
-    instance.to_ref_value()
+  proc expect_model(val: Value, context: string): ModelState =
+    if val.kind != VkCustom or val.ref.custom_class != model_class_global:
+      raise new_exception(types.Exception, context & " requires an LLM model instance")
+    cast[ModelState](get_custom_data(val, "LLM model payload missing"))
 
-  proc create_session_instance(state: SessionState): Value =
-    let session_id_key = SESSION_ID_KEY.to_key()
-    var instance = new_ref(VkInstance)
-    instance.instance_class = session_class_global
-    if instance.instance_props == nil:
-      instance.instance_props = initTable[Key, Value]()
-    instance.instance_props[session_id_key] = state.id.to_value()
-    instance.instance_props["model_id".to_key()] = state.model_id.to_value()
-    instance.instance_props["context".to_key()] = state.context_len.to_value()
-    instance.instance_props["max_tokens".to_key()] = state.max_tokens.to_value()
-    instance.instance_props["temperature".to_key()] = state.temperature.to_value()
-    instance.instance_props["top_p".to_key()] = state.top_p.to_value()
-    instance.instance_props["top_k".to_key()] = state.top_k.to_value()
-    instance.to_ref_value()
+  proc expect_session(val: Value, context: string): SessionState =
+    if val.kind != VkCustom or val.ref.custom_class != session_class_global:
+      raise new_exception(types.Exception, context & " requires an LLM session instance")
+    cast[SessionState](get_custom_data(val, "LLM session payload missing"))
 
-  proc read_model_id(val: Value): int64 =
-    let key = MODEL_ID_KEY.to_key()
-    if val.kind != VkInstance or val.ref.instance_props == nil or not val.ref.instance_props.hasKey(key):
-      raise new_exception(types.Exception, "LLM model instance is invalid or missing internal id")
-    val.ref.instance_props[key].to_int()
+  proc new_model_value(state: ModelState): Value {.gcsafe.} =
+    new_custom_value(model_class_global, state)
 
-  proc read_session_id(val: Value): int64 =
-    let key = SESSION_ID_KEY.to_key()
-    if val.kind != VkInstance or val.ref.instance_props == nil or not val.ref.instance_props.hasKey(key):
-      raise new_exception(types.Exception, "LLM session instance is invalid or missing internal id")
-    val.ref.instance_props[key].to_int()
+  proc new_session_value(state: SessionState): Value {.gcsafe.} =
+    new_custom_value(session_class_global, state)
+
+  proc ensure_model_open(state: ModelState) =
+    if state.closed:
+      raise new_exception(types.Exception, "LLM model has been closed")
+
+  proc ensure_session_open(state: SessionState) =
+    if state.closed:
+      raise new_exception(types.Exception, "LLM session has been closed")
+
+  proc cleanup_session(state: SessionState) =
+    if state == nil or state.closed:
+      return
+    state.closed = true
+    if state.model != nil and state.model.open_sessions > 0:
+      state.model.open_sessions.dec()
+
+  proc cleanup_model(state: ModelState) =
+    if state == nil or state.closed:
+      return
+    state.closed = true
+
 
   proc vm_load_model(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -187,8 +166,6 @@ when defined(GENE_LLM_MOCK):
       else:
         NIL
 
-    ensure_tables_initialized()
-
     let resolved_path = normalize_path(path_val.str)
     let allow_missing = get_bool_option(opts, "allow_missing", false)
     if not allow_missing and not fileExists(resolved_path):
@@ -197,18 +174,24 @@ when defined(GENE_LLM_MOCK):
     let context_len = max(256, get_int_option(opts, "context", 2048))
     let threads = max(1, get_int_option(opts, "threads", countProcessors()))
 
-    let model_id = next_model_id
-    inc next_model_id
-
     let state = ModelState(
-      id: model_id,
       path: resolved_path,
       context_len: context_len,
       threads: threads
     )
-    model_table[model_id] = state
+    new_model_value(state)
 
-    create_model_instance(state)
+  proc vm_model_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 1:
+      raise new_exception(types.Exception, "Model.close requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    let state = expect_model(self_val, "Model.close")
+    ensure_model_open(state)
+    if state.open_sessions > 0:
+      raise new_exception(types.Exception, "Cannot close model while sessions are active")
+    cleanup_model(state)
+    NIL
 
   proc vm_model_new_session(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -216,17 +199,14 @@ when defined(GENE_LLM_MOCK):
       raise new_exception(types.Exception, "Model.new_session requires self")
 
     let self_val = get_positional_arg(args, 0, has_keyword_args)
-    let model_id = read_model_id(self_val)
-    if not model_table.hasKey(model_id):
-      raise new_exception(types.Exception, "Referenced LLM model has been released or never loaded")
+    let model_state = expect_model(self_val, "Model.new_session")
+    ensure_model_open(model_state)
 
     let opts =
       if positional >= 2:
         expect_map(get_positional_arg(args, 1, has_keyword_args), "new_session")
       else:
         NIL
-
-    let model_state = model_table[model_id]
 
     let context_len = get_int_option(opts, "context", model_state.context_len)
     let temperature = get_float_option(opts, "temperature", 0.7)
@@ -235,12 +215,8 @@ when defined(GENE_LLM_MOCK):
     let seed = get_int_option(opts, "seed", 42)
     let max_tokens = max(0, get_int_option(opts, "max_tokens", 256))
 
-    let session_id = next_session_id
-    inc next_session_id
-
     let session_state = SessionState(
-      id: session_id,
-      model_id: model_id,
+      model: model_state,
       context_len: context_len,
       temperature: temperature,
       top_p: top_p,
@@ -248,9 +224,18 @@ when defined(GENE_LLM_MOCK):
       seed: seed,
       max_tokens: max_tokens
     )
-    session_table[session_id] = session_state
+    model_state.open_sessions.inc()
+    new_session_value(session_state)
 
-    create_session_instance(session_state)
+  proc vm_session_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 1:
+      raise new_exception(types.Exception, "Session.close requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    let session_state = expect_session(self_val, "Session.close")
+    ensure_session_open(session_state)
+    cleanup_session(session_state)
+    NIL
 
   proc vm_session_infer(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -258,9 +243,8 @@ when defined(GENE_LLM_MOCK):
       raise new_exception(types.Exception, "Session.infer requires self and a prompt string")
 
     let self_val = get_positional_arg(args, 0, has_keyword_args)
-    let session_id = read_session_id(self_val)
-    if not session_table.hasKey(session_id):
-      raise new_exception(types.Exception, "LLM session no longer exists or was never created")
+    let session_state = expect_session(self_val, "Session.infer")
+    ensure_session_open(session_state)
 
     let prompt_val = get_positional_arg(args, 1, has_keyword_args)
     if prompt_val.kind != VkString:
@@ -272,7 +256,6 @@ when defined(GENE_LLM_MOCK):
       else:
         NIL
 
-    let session_state = session_table[session_id]
     var max_tokens = get_int_option(opts, "max_tokens", session_state.max_tokens)
     var temperature = get_float_option(opts, "temperature", session_state.temperature)
     if temperature <= 0:
@@ -280,7 +263,7 @@ when defined(GENE_LLM_MOCK):
     let timeout_provided = has_option(opts, "timeout") or has_option(opts, "timeout_ms")
 
     if timeout_provided:
-      return cancellation_value()
+      raise new_exception(types.Exception, "Session.infer timeout is not supported for local inference yet")
 
     if max_tokens <= 0:
       return cancellation_value()
@@ -299,18 +282,22 @@ when defined(GENE_LLM_MOCK):
   proc init_llm_module*() =
     VmCreatedCallbacks.add proc() =
       {.cast(gcsafe).}:
-        ensure_tables_initialized()
-
         if App == NIL or App.kind != VkApplication:
           return
         if App.app.genex_ns == NIL or App.app.genex_ns.kind != VkNamespace:
           return
 
         model_class_global = new_class("Model")
+        if App.app.object_class.kind == VkClass:
+          model_class_global.parent = App.app.object_class.ref.class
         model_class_global.def_native_method("new_session", vm_model_new_session)
+        model_class_global.def_native_method("close", vm_model_close)
 
         session_class_global = new_class("Session")
+        if App.app.object_class.kind == VkClass:
+          session_class_global.parent = App.app.object_class.ref.class
         session_class_global.def_native_method("infer", vm_session_infer)
+        session_class_global.def_native_method("close", vm_session_close)
 
         let llm_ns = new_ref(VkNamespace)
         llm_ns.ns = new_namespace("llm")
@@ -349,8 +336,8 @@ else:
     {.passL: "-lc++".}
 
   type
-    GeneLlmModel {.importc: "gene_llm_model", header: "gene_llm.h".} = object
-    GeneLlmSession {.importc: "gene_llm_session", header: "gene_llm.h".} = object
+    GeneLlmModel {.importc: "struct gene_llm_model", header: "gene_llm.h".} = object
+    GeneLlmSession {.importc: "struct gene_llm_session", header: "gene_llm.h".} = object
 
     GeneLlmStatus {.size: sizeof(cint).} = enum
       glsOk = 0
@@ -407,17 +394,16 @@ else:
   proc gene_llm_free_completion(completion: ptr GeneLlmCompletion) {.cdecl, importc: "gene_llm_free_completion", header: "gene_llm.h".}
 
   type
-    ModelState = ref object
-      id: int64
+    ModelState = ref object of CustomValue
       path: string
       handle: ptr GeneLlmModel
       context_len: int
       threads: int
       closed: bool
+      open_sessions: int
 
-    SessionState = ref object
-      id: int64
-      model_id: int64
+    SessionState = ref object of CustomValue
+      model: ModelState
       handle: ptr GeneLlmSession
       context_len: int
       temperature: float
@@ -428,33 +414,58 @@ else:
       closed: bool
 
   var
-    model_class_global: Class
-    session_class_global: Class
-
-  var
-    model_table {.threadvar.}: Table[int64, ModelState]
-    session_table {.threadvar.}: Table[int64, SessionState]
-    next_model_id {.threadvar.}: int64
-    next_session_id {.threadvar.}: int64
-    tables_initialized {.threadvar.}: bool
+    model_class_global {.threadvar.}: Class
+    session_class_global {.threadvar.}: Class
     backend_ready {.threadvar.}: bool
-
-  const
-    MODEL_ID_KEY = "__model_id__"
-    SESSION_ID_KEY = "__session_id__"
-
-  proc ensure_tables_initialized() =
-    if not tables_initialized:
-      model_table = initTable[int64, ModelState]()
-      session_table = initTable[int64, SessionState]()
-      next_model_id = 1
-      next_session_id = 1
-      tables_initialized = true
+    tracked_models {.threadvar.}: seq[ModelState]
+    tracked_sessions {.threadvar.}: seq[SessionState]
 
   proc ensure_backend() =
     if not backend_ready:
       gene_llm_backend_init()
       backend_ready = true
+
+  proc track_model(state: ModelState) =
+    tracked_models.add(state)
+
+  proc untrack_model(state: ModelState) =
+    for i in countdown(tracked_models.len - 1, 0):
+      if tracked_models[i] == state:
+        tracked_models.delete(i)
+        break
+
+  proc track_session(state: SessionState) =
+    tracked_sessions.add(state)
+
+  proc untrack_session(state: SessionState) =
+    for i in countdown(tracked_sessions.len - 1, 0):
+      if tracked_sessions[i] == state:
+        tracked_sessions.delete(i)
+        break
+
+  proc expect_model(val: Value, context: string): ModelState =
+    if val.kind != VkCustom or val.ref.custom_class != model_class_global:
+      raise new_exception(types.Exception, context & " requires an LLM model instance")
+    cast[ModelState](get_custom_data(val, "LLM model payload missing"))
+
+  proc expect_session(val: Value, context: string): SessionState =
+    if val.kind != VkCustom or val.ref.custom_class != session_class_global:
+      raise new_exception(types.Exception, context & " requires an LLM session instance")
+    cast[SessionState](get_custom_data(val, "LLM session payload missing"))
+
+  proc new_model_value(state: ModelState): Value {.gcsafe.} =
+    new_custom_value(model_class_global, state)
+
+  proc new_session_value(state: SessionState): Value {.gcsafe.} =
+    new_custom_value(session_class_global, state)
+
+  proc ensure_model_open(state: ModelState) =
+    if state.closed:
+      raise new_exception(types.Exception, "LLM model has been closed")
+
+  proc ensure_session_open(state: SessionState) =
+    if state.closed:
+      raise new_exception(types.Exception, "LLM session has been closed")
 
   proc expect_map(val: Value, context: string): Value =
     if val == NIL:
@@ -524,6 +535,27 @@ else:
   proc raise_backend_error(err: GeneLlmError) =
     raise new_exception(types.Exception, error_string(err))
 
+  proc cleanup_session(state: SessionState) =
+    if state == nil or state.closed:
+      return
+    state.closed = true
+    if state.handle != nil:
+      gene_llm_free_session(state.handle)
+      state.handle = nil
+    if state.model != nil and state.model.open_sessions > 0:
+      state.model.open_sessions.dec()
+    untrack_session(state)
+
+  proc cleanup_model(state: ModelState) =
+    if state == nil or state.closed:
+      return
+    state.closed = true
+    if state.handle != nil:
+      gene_llm_free_model(state.handle)
+      state.handle = nil
+    untrack_model(state)
+
+
   proc completion_to_value(completion: var GeneLlmCompletion): Value =
     var map_table = initTable[Key, Value]()
     let text_value = if completion.text == nil: "" else: $completion.text
@@ -555,54 +587,6 @@ else:
 
     new_map_value(map_table)
 
-  proc create_model_instance(state: ModelState): Value =
-    let model_id_key = MODEL_ID_KEY.to_key()
-    var instance = new_ref(VkInstance)
-    instance.instance_class = model_class_global
-    if instance.instance_props == nil:
-      instance.instance_props = initTable[Key, Value]()
-    instance.instance_props[model_id_key] = state.id.to_value()
-    instance.instance_props["path".to_key()] = state.path.to_value()
-    instance.instance_props["context".to_key()] = state.context_len.to_value()
-    instance.instance_props["threads".to_key()] = state.threads.to_value()
-    instance
-    instance.to_ref_value()
-
-  proc create_session_instance(state: SessionState): Value =
-    let session_id_key = SESSION_ID_KEY.to_key()
-    var instance = new_ref(VkInstance)
-    instance.instance_class = session_class_global
-    if instance.instance_props == nil:
-      instance.instance_props = initTable[Key, Value]()
-    instance.instance_props[session_id_key] = state.id.to_value()
-    instance.instance_props["model_id".to_key()] = state.model_id.to_value()
-    instance.instance_props["context".to_key()] = state.context_len.to_value()
-    instance.instance_props["max_tokens".to_key()] = state.max_tokens.to_value()
-    instance.instance_props["temperature".to_key()] = state.temperature.to_value()
-    instance.instance_props["top_p".to_key()] = state.top_p.to_value()
-    instance.instance_props["top_k".to_key()] = state.top_k.to_value()
-    instance
-
-  proc read_model_id(val: Value): int64 =
-    let key = MODEL_ID_KEY.to_key()
-    if val.kind != VkInstance or val.ref.instance_props == nil or not val.ref.instance_props.hasKey(key):
-      raise new_exception(types.Exception, "LLM model instance is invalid or missing internal id")
-    val.ref.instance_props[key].to_int()
-
-  proc read_session_id(val: Value): int64 =
-    let key = SESSION_ID_KEY.to_key()
-    if val.kind != VkInstance or val.ref.instance_props == nil or not val.ref.instance_props.hasKey(key):
-      raise new_exception(types.Exception, "LLM session instance is invalid or missing internal id")
-    val.ref.instance_props[key].to_int()
-
-  proc ensure_model_open(state: ModelState) =
-    if state.closed:
-      raise new_exception(types.Exception, "LLM model has been closed")
-
-  proc ensure_session_open(state: SessionState) =
-    if state.closed:
-      raise new_exception(types.Exception, "LLM session has been closed")
-
   proc vm_load_model(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
@@ -618,7 +602,6 @@ else:
       else:
         NIL
 
-    ensure_tables_initialized()
     ensure_backend()
 
     let resolved_path = normalize_path(path_val.str)
@@ -640,20 +623,14 @@ else:
     if status != glsOk or handle == nil:
       raise_backend_error(err)
 
-    let model_id = next_model_id
-    inc next_model_id
-
     let state = ModelState(
-      id: model_id,
       path: resolved_path,
       handle: handle,
       context_len: int(model_opts.context_length),
-      threads: int(model_opts.threads),
-      closed: false
+      threads: int(model_opts.threads)
     )
-    model_table[model_id] = state
-
-    create_model_instance(state)
+    track_model(state)
+    new_model_value(state)
 
   proc vm_model_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -661,20 +638,13 @@ else:
       raise new_exception(types.Exception, "Model.close requires self")
 
     let self_val = get_positional_arg(args, 0, has_keyword_args)
-    let model_id = read_model_id(self_val)
-    if not model_table.hasKey(model_id):
-      raise new_exception(types.Exception, "Unknown LLM model instance")
-
-    let state = model_table[model_id]
+    let state = expect_model(self_val, "Model.close")
     ensure_model_open(state)
 
-    for _, session_state in session_table:
-      if session_state.model_id == model_id and not session_state.closed:
-        raise new_exception(types.Exception, "Cannot close model while sessions are active")
+    if state.open_sessions > 0:
+      raise new_exception(types.Exception, "Cannot close model while sessions are active")
 
-    gene_llm_free_model(state.handle)
-    state.closed = true
-    model_table.del(model_id)
+    cleanup_model(state)
     NIL
 
   proc vm_model_new_session(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -683,11 +653,7 @@ else:
       raise new_exception(types.Exception, "Model.new_session requires self")
 
     let self_val = get_positional_arg(args, 0, has_keyword_args)
-    let model_id = read_model_id(self_val)
-    if not model_table.hasKey(model_id):
-      raise new_exception(types.Exception, "Referenced LLM model has been released or never loaded")
-
-    let model_state = model_table[model_id]
+    let model_state = expect_model(self_val, "Model.new_session")
     ensure_model_open(model_state)
 
     let opts =
@@ -713,24 +679,19 @@ else:
     if status != glsOk or handle == nil:
       raise_backend_error(err)
 
-    let session_id = next_session_id
-    inc next_session_id
-
     let session_state = SessionState(
-      id: session_id,
-      model_id: model_id,
+      model: model_state,
       handle: handle,
       context_len: int(session_opts.context_length),
-      temperature: float(session_opts.temperature),
-      top_p: float(session_opts.top_p),
+      temperature: cast[float](session_opts.temperature),
+      top_p: cast[float](session_opts.top_p),
       top_k: int(session_opts.top_k),
       seed: int(session_opts.seed),
-      max_tokens: int(session_opts.max_tokens),
-      closed: false
+      max_tokens: int(session_opts.max_tokens)
     )
-    session_table[session_id] = session_state
-
-    create_session_instance(session_state)
+    model_state.open_sessions.inc()
+    track_session(session_state)
+    new_session_value(session_state)
 
   proc vm_session_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -738,15 +699,9 @@ else:
       raise new_exception(types.Exception, "Session.close requires self")
 
     let self_val = get_positional_arg(args, 0, has_keyword_args)
-    let session_id = read_session_id(self_val)
-    if not session_table.hasKey(session_id):
-      raise new_exception(types.Exception, "Unknown LLM session instance")
-
-    let state = session_table[session_id]
+    let state = expect_session(self_val, "Session.close")
     ensure_session_open(state)
-    gene_llm_free_session(state.handle)
-    state.closed = true
-    session_table.del(session_id)
+    cleanup_session(state)
     NIL
 
   proc vm_session_infer(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -755,11 +710,7 @@ else:
       raise new_exception(types.Exception, "Session.infer requires self and a prompt string")
 
     let self_val = get_positional_arg(args, 0, has_keyword_args)
-    let session_id = read_session_id(self_val)
-    if not session_table.hasKey(session_id):
-      raise new_exception(types.Exception, "LLM session no longer exists or was never created")
-
-    let session_state = session_table[session_id]
+    let session_state = expect_session(self_val, "Session.infer")
     ensure_session_open(session_state)
 
     let prompt_val = get_positional_arg(args, 1, has_keyword_args)
@@ -795,25 +746,18 @@ else:
     result_value
 
   proc cleanup_llm_backend() {.noconv.} =
-    if not tables_initialized:
-      return
-    for session_id, state in session_table.mpairs:
-      if not state.closed:
-        gene_llm_free_session(state.handle)
-        state.closed = true
-    session_table.clear()
-    for model_id, state in model_table.mpairs:
-      if not state.closed:
-        gene_llm_free_model(state.handle)
-        state.closed = true
-    model_table.clear()
+    for state in tracked_sessions:
+      cleanup_session(state)
+    tracked_sessions.setLen(0)
+    for state in tracked_models:
+      cleanup_model(state)
+    tracked_models.setLen(0)
 
   addQuitProc(cleanup_llm_backend)
 
   proc init_llm_module*() =
     VmCreatedCallbacks.add proc() =
       {.cast(gcsafe).}:
-        ensure_tables_initialized()
         ensure_backend()
 
         if App == NIL or App.kind != VkApplication:
@@ -822,10 +766,14 @@ else:
           return
 
         model_class_global = new_class("Model")
+        if App.app.object_class.kind == VkClass:
+          model_class_global.parent = App.app.object_class.ref.class
         model_class_global.def_native_method("new_session", vm_model_new_session)
         model_class_global.def_native_method("close", vm_model_close)
 
         session_class_global = new_class("Session")
+        if App.app.object_class.kind == VkClass:
+          session_class_global.parent = App.app.object_class.ref.class
         session_class_global.def_native_method("infer", vm_session_infer)
         session_class_global.def_native_method("close", vm_session_close)
 
