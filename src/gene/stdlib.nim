@@ -907,6 +907,13 @@ proc init_gene_namespace*() =
       let class_ref = new_ref(VkClass)
       class_ref.class = val.ref.instance_class
       return class_ref.to_ref_value()
+    of VkCustom:
+      if val.ref.custom_class != nil:
+        let class_ref = new_ref(VkClass)
+        class_ref.class = val.ref.custom_class
+        return class_ref.to_ref_value()
+      else:
+        App.app.object_class
     of VkSelector:
       App.app.selector_class
     else:
@@ -985,6 +992,8 @@ proc init_gene_namespace*() =
       target_class = target_arg.ref.class
     of VkInstance:
       target_class = target_arg.ref.instance_class
+    of VkCustom:
+      target_class = target_arg.ref.custom_class
     else:
       not_allowed("Object.is expects a class or instance as the second argument")
 

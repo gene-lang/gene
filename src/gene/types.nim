@@ -2911,6 +2911,11 @@ proc get_class*(val: Value): Class =
       return App.ref.app.package_class.ref.class
     of VkInstance:
       return val.ref.instance_class
+    of VkCustom:
+      if val.ref.custom_class != nil:
+        return val.ref.custom_class
+      else:
+        return App.ref.app.object_class.ref.class
     # of VkCast:
     #   return val.cast_class
     of VkClass:
@@ -2995,6 +3000,51 @@ proc get_class*(val: Value): Class =
     #     return val.custom_class
     else:
       todo("get_class " & $val.kind)
+
+proc has_object_class*(val: Value): bool {.inline.} =
+  case val.kind
+  of VkInstance, VkCustom:
+    true
+  else:
+    false
+
+proc get_object_class*(val: Value): Class {.inline.} =
+  case val.kind
+  of VkInstance:
+    val.ref.instance_class
+  of VkCustom:
+    val.ref.custom_class
+  else:
+    nil
+
+proc require_object_class*(val: Value, context: string): Class =
+  let cls = val.get_object_class()
+  if cls.is_nil:
+    raise new_exception(Exception, context)
+  cls
+
+proc new_custom_value*(custom_class: Class, data: CustomValue): Value =
+  ## Create a VkCustom value backed by a Gene class.
+  if custom_class.is_nil:
+    raise new_exception(Exception, "Custom values require a class")
+  let ref_val = new_ref(VkCustom)
+  ref_val.custom_class = custom_class
+  ref_val.custom_data = data
+  ref_val.to_ref_value()
+
+proc get_custom_data*(val: Value, context: string = "Custom value expected"): CustomValue =
+  ## Retrieve the CustomValue payload from a VkCustom value.
+  if val.kind != VkCustom:
+    raise new_exception(Exception, context)
+  if val.ref.custom_data.is_nil:
+    raise new_exception(Exception, context & ": missing payload")
+  val.ref.custom_data
+
+proc object_class_name*(val: Value): string =
+  let cls = val.get_object_class()
+  if cls.is_nil or cls.name.len == 0:
+    return "UnknownObject"
+  cls.name
 
 proc is_a*(self: Value, class: Class): bool =
   var my_class = self.get_class

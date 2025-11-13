@@ -260,6 +260,8 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
 # Template to get the class of a value for unified method calls
 template get_value_class(val: Value): Class =
   case val.kind:
+  of VkCustom:
+    types.ref(val).custom_class
   of VkInstance:
     types.ref(val).instance_class
   of VkNil:
@@ -780,9 +782,9 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
   ## Returns true if method was found and call was initiated (via continue), false otherwise
   ## When returns true, the VM state has been set up for the call and caller should continue execution
   let call_method_key = method_name.to_key()
-  let class = instance.ref.instance_class
+  let class = instance.get_object_class()
 
-  if not class.methods.hasKey(call_method_key):
+  if class.is_nil or not class.methods.hasKey(call_method_key):
     return false
 
   let meth = class.methods[call_method_key]
@@ -2418,13 +2420,13 @@ proc exec*(self: VirtualMachine): Value =
               else:
                 not_allowed("Method must be a function, got " & $target.kind)
           
-          of VkInstance:
+          of VkInstance, VkCustom:
             # Check if instance has a call method
-            let instance = gene_type.ref
             let call_method_key = "call".to_key()
-            if instance.instance_class.methods.hasKey(call_method_key):
+            let instance_class = gene_type.get_object_class()
+            if instance_class != nil and instance_class.methods.hasKey(call_method_key):
               # Instance has a call method, create a frame for it
-              let meth = instance.instance_class.methods[call_method_key]
+              let meth = instance_class.methods[call_method_key]
               let target = meth.callable
               
               case target.kind:
@@ -3582,14 +3584,14 @@ proc exec*(self: VirtualMachine): Value =
               if self_idx.int < self.frame.scope.members.len:
                 instance = self.frame.scope.members[self_idx.int]
 
-        if instance.kind != VkInstance:
+        if instance.kind notin {VkInstance, VkCustom}:
           not_allowed("super requires an instance context")
 
         var current_class: Class
         if self.frame.current_method != nil:
           current_class = self.frame.current_method.class
         else:
-          current_class = instance.ref.instance_class
+          current_class = instance.get_object_class()
 
         if current_class == nil or current_class.parent == nil:
           not_allowed("No parent class available for super")
@@ -4434,6 +4436,13 @@ proc exec*(self: VirtualMachine): Value =
           let instance_class_ref = new_ref(VkClass)
           instance_class_ref.class = value.ref.instance_class
           class_val = instance_class_ref.to_ref_value()
+        of VkCustom:
+          if value.ref.custom_class != nil:
+            let custom_class_ref = new_ref(VkClass)
+            custom_class_ref.class = value.ref.custom_class
+            class_val = custom_class_ref.to_ref_value()
+          else:
+            class_val = App.app.object_class
         of VkApplication:
           # Applications don't have a specific class
           class_val = App.app.object_class
@@ -4457,6 +4466,8 @@ proc exec*(self: VirtualMachine): Value =
         case value.kind
         of VkInstance:
           actual_class = value.ref.instance_class
+        of VkCustom:
+          actual_class = value.ref.custom_class
         of VkClass:
           actual_class = value.ref.class
         else:
@@ -5001,13 +5012,13 @@ proc exec*(self: VirtualMachine): Value =
             # No init method, just return the instance
             self.frame.push(instance)
 
-        of VkInstance:
+        of VkInstance, VkCustom:
           # Forward to 'call' method if it exists
           if call_instance_method(self, target, "call", []):
             inst = self.cu.instructions[self.pc].addr
             continue
           else:
-            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+            not_allowed("Instance of " & target.object_class_name & " is not callable (no 'call' method)")
         of VkSelector:
           if call_value_method(self, target, "call", []):
             self.pc.inc()
@@ -5172,13 +5183,13 @@ proc exec*(self: VirtualMachine): Value =
             # No init method, just return the instance (ignore the argument)
             self.frame.push(instance)
 
-        of VkInstance:
+        of VkInstance, VkCustom:
           # Forward to 'call' method if it exists
           if call_instance_method(self, target, "call", [arg]):
             inst = self.cu.instructions[self.pc].addr
             continue
           else:
-            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+            not_allowed("Instance of " & target.object_class_name & " is not callable (no 'call' method)")
         of VkSelector:
           if call_value_method(self, target, "call", @[arg]):
             self.pc.inc()
@@ -5260,13 +5271,13 @@ proc exec*(self: VirtualMachine): Value =
           let result = call_native_fn(target.ref.native_fn, self, args)
           self.frame.push(result)
 
-        of VkInstance:
+        of VkInstance, VkCustom:
           # Forward to 'call' method if it exists
           if call_instance_method(self, target, "call", args):
             inst = self.cu.instructions[self.pc].addr
             continue
           else:
-            not_allowed("Instance of " & target.ref.instance_class.name & " is not callable (no 'call' method)")
+            not_allowed("Instance of " & target.object_class_name & " is not callable (no 'call' method)")
         of VkSelector:
           if call_value_method(self, target, "call", args):
             self.pc.inc()
@@ -5298,9 +5309,11 @@ proc exec*(self: VirtualMachine): Value =
           continue
         
         case obj.kind:
-        of VkInstance:
+        of VkInstance, VkCustom:
           # OPTIMIZATION: Use inline cache for method lookup
-          let class = obj.ref.instance_class
+          let class = obj.get_object_class()
+          if class.is_nil:
+            not_allowed("Object has no class for method call")
           var cache: ptr InlineCache
           if self.pc < self.cu.inline_caches.len:
             cache = self.cu.inline_caches[self.pc].addr
@@ -5430,9 +5443,11 @@ proc exec*(self: VirtualMachine): Value =
           continue
 
         case obj.kind:
-        of VkInstance:
+        of VkInstance, VkCustom:
           # OPTIMIZATION: Use inline cache for method lookup
-          let class = obj.ref.instance_class
+          let class = obj.get_object_class()
+          if class.is_nil:
+            not_allowed("Object has no class for method call")
           var cache: ptr InlineCache
           if self.pc < self.cu.inline_caches.len:
             cache = self.cu.inline_caches[self.pc].addr
@@ -5574,9 +5589,11 @@ proc exec*(self: VirtualMachine): Value =
           continue
 
         case obj.kind:
-        of VkInstance:
+        of VkInstance, VkCustom:
           # OPTIMIZATION: Use inline cache for method lookup
-          let class = obj.ref.instance_class
+          let class = obj.get_object_class()
+          if class.is_nil:
+            not_allowed("Object has no class for method call")
           var cache: ptr InlineCache
           if self.pc < self.cu.inline_caches.len:
             cache = self.cu.inline_caches[self.pc].addr
@@ -5725,8 +5742,10 @@ proc exec*(self: VirtualMachine): Value =
           continue
 
         case obj.kind:
-        of VkInstance:
-          let class = obj.ref.instance_class
+        of VkInstance, VkCustom:
+          let class = obj.get_object_class()
+          if class.is_nil:
+            not_allowed("Object has no class for method call")
           let meth = class.get_method(method_name)
           if meth != nil:
             case meth.callable.kind:
@@ -6078,4 +6097,4 @@ when not defined(noExtensions):
   import "../genex/sqlite"
   import "../genex/html"
   import "../genex/ai/bindings"
-  # import "../genex/llm"  # Temporarily disabled
+  # import "../genex/llm"
