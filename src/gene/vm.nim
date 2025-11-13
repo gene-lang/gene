@@ -6097,4 +6097,4 @@ when not defined(noExtensions):
   import "../genex/sqlite"
   import "../genex/html"
   import "../genex/ai/bindings"
-  # import "../genex/llm"
+  import "../genex/llm"

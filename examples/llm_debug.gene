@@ -1,0 +1,23 @@
+#!/usr/bin/env gene
+# Debug LLM inference result structure
+
+(println "🔍 Debug LLM inference result")
+(println "==============================")
+
+# Load model
+(var model (genex/llm/load_model "tmp/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"))
+(println "Model: " model)
+
+# Create session
+(var session (model .new_session))
+(println "Session: " session)
+
+# Test inference and inspect result
+(var result (session .infer "Hello"))
+(println "Result:")
+(println result/text)
+
+# Cleanup
+(session .close)
+(model .close)
+(println "✅ Debug complete!")

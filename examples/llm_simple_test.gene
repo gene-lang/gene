@@ -1,0 +1,30 @@
+#!/usr/bin/env gene
+# Simple LLM Test for Gene + llama.cpp
+
+(println "🍎 Gene LLM Test - Apple Silicon")
+(println "=================================")
+
+# Test 1: Load the TinyLlama model
+(println "📥 Loading TinyLlama model...")
+(var model_path "tmp/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
+(var model (genex/llm/load_model model_path))
+(println "✅ Model loaded: " model)
+
+# Test 2: Create a session with default parameters
+(println "")
+(println "🔧 Creating session...")
+(var session (model .new_session))
+(println "✅ Session created: " session)
+
+# Test 3: Basic inference
+(println "")
+(println "🚀 Testing inference...")
+(var result (session .infer "Hello! My name is"))
+(println "✅ Response: " result/text)
+
+# Test 4: Cleanup
+(println "")
+(println "🧹 Cleaning up...")
+(session .close)
+(model .close)
+(println "✅ Complete!")

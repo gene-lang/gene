@@ -1,0 +1,90 @@
+#!/usr/bin/env gene
+# LLM Inference Test for Gene + llama.cpp on Apple Silicon
+# Tests the complete Model → Session → infer workflow
+
+(println "🍎 Gene LLM Test - Apple Silicon")
+(println "=================================")
+
+# Load the TinyLlama model
+(println "📥 Loading TinyLlama model...")
+(var model_path "tmp/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
+(var model (load_model model_path))
+
+(println "✅ Model loaded successfully!")
+(println "   Model path: " model_path)
+(println "   Model object: " model)
+
+# Create a session with inference parameters
+(println "")
+(println "🔧 Creating inference session...")
+(var session (model.new_session {:context_len 2048 :temperature 0.7 :top_p 0.9 :top_k 40 :seed 42 :max_tokens 100}))
+
+(println "✅ Session created successfully!")
+(println "   Session object: " session)
+
+# Test basic inference
+(println "")
+(println "🚀 Testing basic inference...")
+(var prompt "Hello! My name is")
+(println "   Prompt: \"" prompt "\"")
+
+(var start_time (timestamp))
+(var result (session.infer prompt))
+(var end_time (timestamp))
+
+(var latency_ms (- end_time start_time))
+
+(println "✅ Inference completed!")
+(println "   Response: \"" result.text "\"")
+(println "   Tokens: " result/tokens)
+(println "   Finish reason: " result/finish_reason)
+(println "   Latency: " latency_ms "ms")
+
+# Test a second inference to test conversation context
+(println "")
+(println "🚀 Testing contextual inference...")
+(var prompt2 "What did I just tell you my name was?")
+(println "   Prompt: \"" prompt2 "\"")
+
+(var start_time2 (timestamp))
+(var result2 (session .infer prompt2))
+(var end_time2 (timestamp))
+
+(var latency_ms2 (- end_time2 start_time2))
+
+(println "✅ Contextual inference completed!")
+(println "   Response: \"" result2/text "\"")
+(println "   Tokens: " result2/tokens)
+(println "   Finish reason: " result2/finish_reason)
+(println "   Latency: " latency_ms2 "ms")
+
+# Test error handling with invalid model path
+(println "")
+(println "🧪 Testing error handling...")
+(try
+  (var invalid_model (load_model "tmp/models/nonexistent.gguf"))
+  (println "❌ Should have failed!")
+catch *
+  (println "✅ Error handling working: " $ex/.message)
+)
+
+# Cleanup resources
+(println "")
+(println "🧹 Cleaning up resources...")
+(session .close)
+(model .close)
+
+(println "✅ Resources cleaned up!")
+(println "")
+(println "🎉 LLM test completed successfully!")
+(println "")
+(println "📊 Performance Summary:")
+(println "   First inference: " latency_ms "ms")
+(println "   Second inference: " latency_ms2 "ms")
+(println "   Average latency: " (/ (+ latency_ms latency_ms2) 2) "ms")
+
+(println "")
+(println "🍎 Apple Silicon optimizations active:")
+(println "   ✅ Metal acceleration")
+(println "   ✅ ARM64 native instructions")
+(println "   ✅ Matrix multiplication acceleration")

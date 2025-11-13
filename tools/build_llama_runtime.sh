@@ -6,9 +6,24 @@ LLAMA_DIR="$ROOT_DIR/tools/llama.cpp"
 BUILD_DIR="$ROOT_DIR/build/llama"
 SHIM_SRC="$ROOT_DIR/src/genex/llm/shim/gene_llm.cpp"
 
-if [ ! -d "$LLAMA_DIR" ]; then
-  echo "llama.cpp submodule is missing. Run 'git submodule update --init --recursive tools/llama.cpp'." >&2
-  exit 1
+# Auto-detect Apple Silicon and enable Metal support
+ARCH="$(uname -m)"
+if [ "$ARCH" = "arm64" ]; then
+  echo "🍎 Detected Apple Silicon ($ARCH), enabling Metal acceleration"
+  export GENE_LLAMA_METAL=1
+  # For Apple Silicon, ensure we're using the right architecture
+  CMAKE_ARCH_FLAGS="-DCMAKE_OSX_ARCHITECTURES=arm64"
+else
+  echo "💻 Detected Intel/Other architecture ($ARCH)"
+  CMAKE_ARCH_FLAGS=""
+fi
+
+# Initialize submodule if missing
+if [ ! -d "$LLAMA_DIR" ] || [ -z "$(ls -A "$LLAMA_DIR" 2>/dev/null)" ]; then
+  echo "📦 Initializing llama.cpp submodule..."
+  cd "$ROOT_DIR"
+  git submodule update --init --recursive tools/llama.cpp
+  cd "$ROOT_DIR/tools"
 fi
 
 mkdir -p "$BUILD_DIR"
@@ -16,9 +31,11 @@ mkdir -p "$BUILD_DIR"
 declare -a EXTRA_CMAKE_FLAGS=()
 if [ "${GENE_LLAMA_METAL:-0}" = "1" ]; then
   EXTRA_CMAKE_FLAGS+=("-DGGML_METAL=ON")
+  echo "⚡ Metal acceleration enabled"
 fi
 if [ "${GENE_LLAMA_CUDA:-0}" = "1" ]; then
   EXTRA_CMAKE_FLAGS+=("-DGGML_CUDA=ON")
+  echo "🚀 CUDA acceleration enabled"
 fi
 
 cmake_args=(
@@ -36,15 +53,31 @@ cmake_args=(
 if [ ${#EXTRA_CMAKE_FLAGS[@]} -gt 0 ]; then
   cmake_args+=("${EXTRA_CMAKE_FLAGS[@]}")
 fi
-
-cmake "${cmake_args[@]}"
-
-cmake --build "$BUILD_DIR" --target llama --config Release -j"$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-
-if [ -f "$BUILD_DIR/src/libllama.a" ]; then
-  cp "$BUILD_DIR/src/libllama.a" "$BUILD_DIR/libllama.a"
+if [ -n "$CMAKE_ARCH_FLAGS" ]; then
+  cmake_args+=($CMAKE_ARCH_FLAGS)
 fi
 
+echo "🔧 Configuring llama.cpp with: ${cmake_args[*]}"
+cmake "${cmake_args[@]}"
+
+echo "🏗️  Building llama.cpp library..."
+JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+cmake --build "$BUILD_DIR" --target llama --config Release -j"$JOBS"
+
+# Find the built library location
+if [ -f "$BUILD_DIR/src/libllama.a" ]; then
+  cp "$BUILD_DIR/src/libllama.a" "$BUILD_DIR/libllama.a"
+  echo "✅ Found libllama.a in src/"
+elif [ -f "$BUILD_DIR/libllama.a" ]; then
+  echo "✅ Found libllama.a in build root"
+else
+  echo "❌ Could not find libllama.a after build"
+  ls -la "$BUILD_DIR"
+  find "$BUILD_DIR" -name "*.a" -type f
+  exit 1
+fi
+
+echo "🔗 Building Gene LLM shim..."
 clang++ -std=c++17 -O3 -fPIC \
   -I"$LLAMA_DIR/include" \
   -I"$LLAMA_DIR/ggml/include" \
@@ -53,4 +86,6 @@ clang++ -std=c++17 -O3 -fPIC \
 
 ar rcs "$BUILD_DIR/libgene_llm.a" "$BUILD_DIR/gene_llm.o"
 
-echo "llama runtime built at $BUILD_DIR"
+echo "✅ Llama runtime built successfully at $BUILD_DIR"
+echo "📁 Libraries: libllama.a $(ls -la "$BUILD_DIR/libllama.a" | awk '{print $5}' | numfmt --to=iec)"
+echo "📁 Shim: libgene_llm.a $(ls -la "$BUILD_DIR/libgene_llm.a" | awk '{print $5}' | numfmt --to=iec)"

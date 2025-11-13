@@ -331,8 +331,19 @@ else:
     {.passC: "-I" & ggmlIncludeDir.}
     {.passC: "-I" & shimIncludeDir.}
     {.passL: "-L" & llamaBuildDir.}
+    {.passL: "-L" & llamaBuildDir & "/ggml/src".}
+    {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-blas".}
+    {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-metal".}
     {.passL: "-lgene_llm".}
     {.passL: "-lllama".}
+    {.passL: "-lggml".}
+    {.passL: "-lggml-base".}
+    {.passL: "-lggml-cpu".}
+    {.passL: "-lggml-blas".}
+    {.passL: "-lggml-metal".}
+    {.passL: "-framework Metal".}
+    {.passL: "-framework Foundation".}
+    {.passL: "-framework Accelerate".}
     {.passL: "-lc++".}
 
   type
