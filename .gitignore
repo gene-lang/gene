@@ -36,7 +36,6 @@ tests/test_*
 nimcache/
 *.exe
 
-gene/
 gene-new/
 gene-rust/
 

@@ -170,7 +170,9 @@ proc buildChatPayload*(config: OpenAIConfig, options: JsonNode): JsonNode =
   var payload = %*{
     "model": if options.hasKey("model"): options["model"].getStr(config.model) else: config.model,
     "messages": if options.hasKey("messages"): options["messages"] else: %*[],
-    "max_tokens": if options.hasKey("max_tokens"): options["max_tokens"].getInt(1000) else: 1000,
+    "max_completion_tokens": if options.hasKey("max_completion_tokens"): options["max_completion_tokens"].getInt(1000)
+                              elif options.hasKey("max_tokens"): options["max_tokens"].getInt(1000)
+                              else: 1000,
     "temperature": if options.hasKey("temperature"): options["temperature"].getFloat(1.0) else: 1.0,
     "stream": if options.hasKey("stream"): options["stream"].getBool(false) else: false
   }

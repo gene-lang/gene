@@ -8,8 +8,8 @@ import openai_client, streaming
 
 var openai_client_class*: Class
 var openai_error_class*: Class
-var openai_clients: Table[int, OpenAIConfig] = initTable[int, OpenAIConfig]()
-var next_client_id: int = 1
+var openai_clients: Table[system.int64, OpenAIConfig] = initTable[system.int64, OpenAIConfig]()
+var next_client_id: system.int64 = 1
 
 proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 
@@ -98,27 +98,30 @@ proc openai_error_value*(err: OpenAIError): Value {.gcsafe.} =
     error_obj.instance_props["metadata".to_key()] = jsonToGeneValue(err.metadata)
   result = error_obj.to_ref_value()
 
-proc register_client(config: OpenAIConfig): Value {.gcsafe.} =
-  var cls: Class = nil
-  {.cast(gcsafe).}:
-    cls = openai_client_class
-
-  if cls.isNil:
-    raise new_exception(types.Exception, "OpenAIClient class is not registered")
-
+proc register_client(config: OpenAIConfig): Value =
   let client_id = next_client_id
   inc(next_client_id)
-  {.cast(gcsafe).}:
-    openai_clients[client_id] = config
+  openai_clients[client_id] = config
 
   let instance = new_ref(VkInstance)
+
+  # Try to use the global class first, but fall back to creating a new one if needed
   {.cast(gcsafe).}:
-    instance.instance_class = cls
+    if openai_client_class != nil:
+      instance.instance_class = openai_client_class
+    else:
+      # Create a temporary class if the global one is not yet available
+      var base_parent: Class = nil
+      if App != nil and App.app.object_class.kind == VkClass:
+        base_parent = App.app.object_class.ref.class
+      instance.instance_class = new_class("OpenAIClient", base_parent)
+
   instance.instance_props = initTable[Key, Value]()
   instance.instance_props["client_id".to_key()] = client_id.to_value
   instance.instance_props["base_url".to_key()] = config.base_url.to_value
   instance.instance_props["model".to_key()] = config.model.to_value
-  return instance.to_ref_value()
+
+  result = instance.to_ref_value()
 
 proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Value] =
   if client_val.kind != VkInstance:
@@ -127,7 +130,7 @@ proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Va
   if not client_val.ref.instance_props.has_key("client_id".to_key()):
     return (nil, new_error("Invalid OpenAI client"))
 
-  let client_id = client_val.ref.instance_props["client_id".to_key()].int
+  let client_id = client_val.ref.instance_props["client_id".to_key()].to_int()
   var cfg: OpenAIConfig = nil
   {.cast(gcsafe).}:
     if openai_clients.hasKey(client_id):
@@ -139,7 +142,7 @@ proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Va
   (cfg, NIL)
 
 # Native function: Create new OpenAI client
-proc vm_openai_new_client*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_new_client*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var options: JsonNode = newJNull()
 
   if get_positional_count(arg_count, has_keyword_args) > 0:
@@ -149,12 +152,14 @@ proc vm_openai_new_client*(vm: VirtualMachine, args: ptr UncheckedArray[Value], 
   let config = buildOpenAIConfig(options)
   return register_client(config)
 
-proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   var options: JsonNode = newJNull()
   if get_positional_count(arg_count, has_keyword_args) > 0:
     options = geneValueToJson(get_positional_arg(args, 0, has_keyword_args))
+
   let config = buildOpenAIConfig(options)
-  return register_client(config)
+  {.cast(gcsafe).}:
+    result = register_client(config)
 
 proc openai_error_result(err: OpenAIError): Value =
   return openai_error_value(err)
@@ -399,3 +404,57 @@ proc attach_openai_client_class*(cls: Class) =
       parent_cls = App.app.object_class.ref.class
     openai_error_class = new_class("OpenAIError", parent_cls)
     openai_error_class.def_native_method("to_s", openai_error_to_s)
+
+# Initialize OpenAI classes and functions
+proc init_openai_classes*() =
+  VmCreatedCallbacks.add proc() {.gcsafe.} =
+    if App == NIL or App.kind != VkApplication:
+      return
+    if App.app.global_ns == NIL or App.app.global_ns.kind != VkNamespace:
+      return
+    if App.app.genex_ns == NIL or App.app.genex_ns.kind != VkNamespace:
+      return
+
+    # Create OpenAI namespace
+    let ai_ns = new_namespace("ai")
+
+    # Create OpenAIClient class and attach native constructor/methods
+    var base_parent: Class = nil
+    if App.app.object_class.kind == VkClass:
+      base_parent = App.app.object_class.ref.class
+    let openai_client_class = new_class("OpenAIClient", base_parent)
+    {.cast(gcsafe).}:
+      attach_openai_client_class(openai_client_class)
+
+    # Register OpenAI client constructor helper
+    let global_ns = App.app.global_ns.ref.ns
+    ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
+    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
+
+    # Register the class in namespaces
+    let openai_class_ref = new_ref(VkClass)
+    openai_class_ref.class = openai_client_class
+    let openai_class_value = openai_class_ref.to_ref_value()
+
+    ai_ns["OpenAIClient".to_key()] = openai_class_value
+    global_ns["OpenAIClient".to_key()] = openai_class_value
+
+    {.cast(gcsafe).}:
+      if not openai_error_class.isNil:
+        let error_class_ref = new_ref(VkClass)
+        error_class_ref.class = openai_error_class
+        let error_class_value = error_class_ref.to_ref_value()
+        ai_ns["OpenAIError".to_key()] = error_class_value
+        global_ns["OpenAIError".to_key()] = error_class_value
+
+    # Register the AI namespace in genex namespace
+    App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
+
+    # Register convenience functions in ai namespace for direct access
+    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
+    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
+    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
+    ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+
+# Call init function
+init_openai_classes()
