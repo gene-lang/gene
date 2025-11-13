@@ -1,7 +1,7 @@
 ## Streaming implementation for OpenAI API
 ## Handles SSE (Server-Sent Events) and chunked streaming
 
-import json, strutils, httpclient, tables
+import json, strutils, httpclient, tables, streams
 import ../../gene/types
 import openai_client
 
@@ -35,12 +35,13 @@ proc parseSSELine*(line: string): StreamEvent =
   return StreamEvent(event: "unknown", done: false)
 
 # Stream processing for both SSE and chunked responses
-proc processStream*(body: string, handler: StreamHandler) =
-  var buffer = ""
-  var lines = body.splitLines()
+proc processStream*(stream: Stream, handler: StreamHandler) =
+  if stream.isNil:
+    return
 
-  for line in lines:
-    let line = line.strip()
+  while not stream.atEnd():
+    var line = stream.readLine()
+    line = line.strip()
     if line.len == 0:
       continue
 
@@ -54,6 +55,11 @@ proc processStream*(body: string, handler: StreamHandler) =
 
     if event.done:
       break
+
+proc processBufferedStream*(body: string, handler: StreamHandler) =
+  var buffer = newStringStream(body)
+  defer: buffer.close()
+  processStream(buffer, handler)
 
 # HTTP streaming request processor
 proc performStreamingRequest*(config: OpenAIConfig, endpoint: string,
@@ -92,11 +98,15 @@ proc performStreamingRequest*(config: OpenAIConfig, endpoint: string,
       raise OpenAIError(
         msg: "OpenAI Streaming Error: " & errorMsg,
         status: parseInt(statusCode),
-        provider_error: "streaming_error"
+        provider_error: "streaming_error",
+        metadata: errorBody
       )
 
     # Process the streaming response
-    processStream(response.body, handler)
+    if response.bodyStream != nil:
+      processStream(response.bodyStream, handler)
+    else:
+      processBufferedStream(response.body, handler)
 
   except OpenAIError:
     raise
@@ -108,65 +118,3 @@ proc performStreamingRequest*(config: OpenAIConfig, endpoint: string,
     )
   finally:
     client.close()
-
-# Convert Gene callback to StreamHandler
-proc createGeneStreamHandler*(vm: VirtualMachine, callback: Value): StreamHandler =
-  proc handler(event: StreamEvent) {.gcsafe.} =
-    try:
-      # Convert StreamEvent to Gene Value
-      var event_obj = new_ref(VkInstance)
-      event_obj.instance_props = initTable[Key, Value]()
-      event_obj.instance_props["event".to_key()] = event.event.to_value
-      event_obj.instance_props["done".to_key()] = event.done.to_value
-
-      if event.data != nil:
-        # Convert JSON to Gene value
-        var map = initTable[Key, Value]()
-        for key, value in event.data:
-          map[key.to_key()] = case value.kind
-          of JNull: NIL
-          of JBool: value.getBool.to_value
-          of JInt: value.getInt.to_value
-          of JFloat: value.getFloat.to_value
-          of JString: value.getStr.to_value
-          of JArray:
-            var arr = new_seq[Value]()
-            for item in value:
-              arr.add(case item.kind
-              of JNull: NIL
-              of JBool: item.getBool.to_value
-              of JInt: item.getInt.to_value
-              of JFloat: item.getFloat.to_value
-              of JString: item.getStr.to_value
-              else: item.pretty.to_value)
-            new_array_value(arr)
-          of JObject:
-            var obj_map = initTable[Key, Value]()
-            for k, v in value:
-              obj_map[k.to_key()] = case v.kind
-              of JNull: NIL
-              of JBool: v.getBool.to_value
-              of JInt: v.getInt.to_value
-              of JFloat: v.getFloat.to_value
-              of JString: v.getStr.to_value
-              else: v.pretty.to_value
-            new_map_value(obj_map)
-          else: value.pretty.to_value
-        event_obj.instance_props["data".to_key()] = new_map_value(map)
-      else:
-        event_obj.instance_props["data".to_key()] = NIL
-
-      # Call the Gene callback
-      if callback.kind == VkNativeFn:
-        let args = [event_obj.to_ref_value()]
-        discard call_native_fn(callback.ref.native_fn, vm, args)
-      elif callback.kind == VkFunction:
-        # For Gene functions, we need to execute them through the VM
-        # For now, skip Gene function execution in streaming callbacks
-        discard
-
-    except system.Exception as e:
-      when defined(debug):
-        echo "DEBUG: Stream handler error: ", e.msg
-
-  return handler

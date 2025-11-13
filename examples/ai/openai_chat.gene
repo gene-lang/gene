@@ -1,0 +1,37 @@
+#!/usr/bin/env gene run
+
+# Example: call OpenAI-compatible chat endpoint using the native
+# `OpenAIClient` class registered by the VM. Reads API configuration
+# from environment variables and falls back to OpenAI defaults.
+
+(var api_key   ($env .get "OPENAI_API_KEY"))
+(var base_url  ($env .get "OPENAI_API_BASE" "https://api.openai.com/v1"))
+(var model     ($env .get "OPENAI_API_MODEL" "gpt5-mini"))
+
+(var client_config
+  (if api_key
+    then {^api_key api_key ^base_url base_url ^model model}
+    else {^base_url base_url ^model model}))
+
+(var client (new OpenAIClient client_config))
+
+(var messages
+  [{^role "system" ^content "You are Gene's friendly assistant."}
+   {^role "user"   ^content "Say hi in one short sentence."}])
+(var response (client .chat {^messages messages ^temperature 0.2}))
+
+(var rendered_error
+  (try
+    (response .to_s)
+  catch *
+    nil))
+
+(if rendered_error
+  then
+  (do
+    (println "Chat error:")
+    (println rendered_error))
+  else
+  (do
+    (println "Chat response:")
+    (println response)))

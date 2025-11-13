@@ -34,6 +34,7 @@ This directory contains example Gene programs demonstrating various language fea
 - `http_async.gene` - Asynchronous HTTP operations
 - `http_websocket.gene` - WebSocket example
 - `http_todo_app.gene` - Complete TODO app with HTTP API
+- `ai/openai_chat.gene` - Uses `genex/ai` to call an OpenAI-compatible chat endpoint; reads `OPENAI_API_KEY`, `OPENAI_API_BASE`, and `OPENAI_API_MODEL` (defaults to `https://api.openai.com/v1` + built-in model when unset)
 
 ## Database
 

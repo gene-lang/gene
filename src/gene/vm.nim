@@ -6078,48 +6078,58 @@ when not defined(noExtensions):
   import "../genex/sqlite"
   import "../genex/html"
   import "../genex/ai/bindings"
-  import "../genex/llm"
+  # import "../genex/llm"  # Temporarily disabled
 
-  # Register OpenAI API functions to avoid circular dependencies
   when not defined(noai):
-    # Create OpenAI namespace
-    let ai_ns = new_namespace("ai")
+    VmCreatedCallbacks.add proc() =
+      {.cast(gcsafe).}:
+        if App == NIL or App.kind != VkApplication:
+          return
+        if App.app.global_ns == NIL or App.app.global_ns.kind != VkNamespace:
+          return
+        if App.app.genex_ns == NIL or App.app.genex_ns.kind != VkNamespace:
+          return
 
-    # Create OpenAIClient class
-    let openai_client_class = new_class("OpenAIClient")
-    openai_client_class.parent = App.app.object_class
+        # Create OpenAI namespace
+        let ai_ns = new_namespace("ai")
 
-    # Create instance methods for OpenAIClient
-    var chat_fn = new_ref(VkNativeFn)
-    chat_fn.native_fn = vm_openai_client_chat
-    openai_client_class.def_native_method("chat", chat_fn.native_fn)
+        # Create OpenAIClient class and attach native constructor/methods
+        var base_parent: Class = nil
+        if App.app.object_class.kind == VkClass:
+          base_parent = App.app.object_class.ref.class
+        let openai_client_class = new_class("OpenAIClient", base_parent)
+        attach_openai_client_class(openai_client_class)
 
-    var embeddings_fn = new_ref(VkNativeFn)
-    embeddings_fn.native_fn = vm_openai_client_embeddings
-    openai_client_class.def_native_method("embeddings", embeddings_fn.native_fn)
+        # Register OpenAI client constructor helper
+        let global_ns = App.app.global_ns.ref.ns
+        ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
+        global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
 
-    var respond_fn = new_ref(VkNativeFn)
-    respond_fn.native_fn = vm_openai_client_respond
-    openai_client_class.def_native_method("respond", respond_fn.native_fn)
+        # Register the class in namespaces
+        let openai_class_ref = new_ref(VkClass)
+        openai_class_ref.class = openai_client_class
+        let openai_class_value = openai_class_ref.to_ref_value()
 
-    var stream_fn = new_ref(VkNativeFn)
-    stream_fn.native_fn = vm_openai_client_stream
-    openai_client_class.def_native_method("stream", stream_fn.native_fn)
+        ai_ns["OpenAIClient".to_key()] = openai_class_value
+        global_ns["OpenAIClient".to_key()] = openai_class_value
 
-    # Register OpenAI client constructor in ai namespace
-    ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
-    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
+        if not openai_error_class.isNil:
+          let error_class_ref = new_ref(VkClass)
+          error_class_ref.class = openai_error_class
+          let error_class_value = error_class_ref.to_ref_value()
+          ai_ns["OpenAIError".to_key()] = error_class_value
+          global_ns["OpenAIError".to_key()] = error_class_value
 
-    # Register the class in namespaces
-    ai_ns["OpenAIClient".to_key()] = openai_client_class.to_value()
-    global_ns["OpenAIClient".to_key()] = openai_client_class.to_value()
-    App.app.global_ns.ns["OpenAIClient".to_key()] = openai_client_class.to_value()
+        # Register the AI namespace in genex namespace
+        App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
 
-    # Register the AI namespace in genex namespace
-    App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
+        # Register convenience functions in ai namespace for direct access
+        ai_ns["chat".to_key()] = vm_openai_chat.to_value()
+        ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
+        ai_ns["respond".to_key()] = vm_openai_respond.to_value()
+        ai_ns["stream".to_key()] = vm_openai_stream.to_value()
 
-    # Register convenience functions in ai namespace for direct access
-    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
-    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
-    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
-    ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+        global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
+        global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
+        global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
+        global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()

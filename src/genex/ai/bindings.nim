@@ -1,9 +1,17 @@
 ## Gene VM bindings for OpenAI API
 ## Bridges the Nim OpenAI client to Gene's VM system
 
-import tables, json
+import tables, json, strutils
 import ../../gene/types
+import ../../gene/vm
 import openai_client, streaming
+
+var openai_client_class*: Class
+var openai_error_class*: Class
+var openai_clients: Table[int, OpenAIConfig] = initTable[int, OpenAIConfig]()
+var next_client_id: int = 1
+
+proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 
 # Helper to convert Gene Value to JsonNode
 proc geneValueToJson*(value: Value): JsonNode =
@@ -26,7 +34,8 @@ proc geneValueToJson*(value: Value): JsonNode =
   of VkMap:
     var obj = newJObject()
     for key, val in value.ref.map:
-      obj[get_symbol(int(key))] = geneValueToJson(val)
+      let symbol_value = cast[Value](key)
+      obj[symbol_value.str] = geneValueToJson(val)
     result = obj
   of VkGene:
     # Handle Gene expressions by evaluating them first
@@ -49,7 +58,7 @@ proc jsonToGeneValue*(json: JsonNode): Value =
   of JString:
     result = json.getStr.to_value
   of JArray:
-    var arr = new_seq[Value]()
+    var arr = newSeq[Value]()
     for item in json:
       arr.add(jsonToGeneValue(item))
     result = new_array_value(arr)
@@ -58,23 +67,79 @@ proc jsonToGeneValue*(json: JsonNode): Value =
     for key, value in json:
       map[key.to_key()] = jsonToGeneValue(value)
     result = new_map_value(map)
-  else:
-    result = json.pretty.to_value
 
 # Helper to create error objects
-proc new_error*(message: string): Value =
+proc attach_error_class(instance: ptr Reference) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if not openai_error_class.isNil:
+      instance.instance_class = openai_error_class
+
+proc new_error*(message: string): Value {.gcsafe.} =
   var error_obj = new_ref(VkInstance)
+  attach_error_class(error_obj)
   error_obj.instance_props = initTable[Key, Value]()
   error_obj.instance_props["message".to_key()] = message.to_value
   error_obj.instance_props["type".to_key()] = "error".to_value
   result = error_obj.to_ref_value()
 
-# OpenAI client class instance storage
-var openai_clients: Table[int, OpenAIConfig] = initTable[int, OpenAIConfig]()
-var next_client_id: int = 1
+proc openai_error_value*(err: OpenAIError): Value {.gcsafe.} =
+  var error_obj = new_ref(VkInstance)
+  attach_error_class(error_obj)
+  error_obj.instance_props = initTable[Key, Value]()
+  error_obj.instance_props["message".to_key()] = err.msg.to_value
+  error_obj.instance_props["status".to_key()] = err.status.to_value
+  if err.provider_error.len > 0:
+    error_obj.instance_props["provider_error".to_key()] = err.provider_error.to_value
+  if err.request_id.len > 0:
+    error_obj.instance_props["request_id".to_key()] = err.request_id.to_value
+  if err.retry_after != 0:
+    error_obj.instance_props["retry_after".to_key()] = err.retry_after.to_value
+  if err.metadata != nil:
+    error_obj.instance_props["metadata".to_key()] = jsonToGeneValue(err.metadata)
+  result = error_obj.to_ref_value()
+
+proc register_client(config: OpenAIConfig): Value {.gcsafe.} =
+  var cls: Class = nil
+  {.cast(gcsafe).}:
+    cls = openai_client_class
+
+  if cls.isNil:
+    raise new_exception(types.Exception, "OpenAIClient class is not registered")
+
+  let client_id = next_client_id
+  inc(next_client_id)
+  {.cast(gcsafe).}:
+    openai_clients[client_id] = config
+
+  let instance = new_ref(VkInstance)
+  {.cast(gcsafe).}:
+    instance.instance_class = cls
+  instance.instance_props = initTable[Key, Value]()
+  instance.instance_props["client_id".to_key()] = client_id.to_value
+  instance.instance_props["base_url".to_key()] = config.base_url.to_value
+  instance.instance_props["model".to_key()] = config.model.to_value
+  return instance.to_ref_value()
+
+proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Value] =
+  if client_val.kind != VkInstance:
+    return (nil, new_error("Invalid OpenAI client"))
+
+  if not client_val.ref.instance_props.has_key("client_id".to_key()):
+    return (nil, new_error("Invalid OpenAI client"))
+
+  let client_id = client_val.ref.instance_props["client_id".to_key()].int
+  var cfg: OpenAIConfig = nil
+  {.cast(gcsafe).}:
+    if openai_clients.hasKey(client_id):
+      cfg = openai_clients[client_id]
+
+  if cfg.isNil:
+    return (nil, new_error("OpenAI client not found"))
+
+  (cfg, NIL)
 
 # Native function: Create new OpenAI client
-proc vm_openai_new_client(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_openai_new_client*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   var options: JsonNode = newJNull()
 
   if get_positional_count(arg_count, has_keyword_args) > 0:
@@ -82,264 +147,182 @@ proc vm_openai_new_client(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
     options = geneValueToJson(options_val)
 
   let config = buildOpenAIConfig(options)
-  let client_id = next_client_id
-  inc(next_client_id)
+  return register_client(config)
 
-  openai_clients[client_id] = config
+proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  var options: JsonNode = newJNull()
+  if get_positional_count(arg_count, has_keyword_args) > 0:
+    options = geneValueToJson(get_positional_arg(args, 0, has_keyword_args))
+  let config = buildOpenAIConfig(options)
+  return register_client(config)
 
-  # Return a Gene object representing the client
-  var client_obj = new_ref(VkInstance)
-  client_obj.instance_props = initTable[Key, Value]()
-  client_obj.instance_props["client_id".to_key()] = client_id.to_value
-  client_obj.instance_props["api_key".to_key()] = config.api_key.to_value
-  client_obj.instance_props["base_url".to_key()] = config.base_url.to_value
-  client_obj.instance_props["model".to_key()] = config.model.to_value
+proc openai_error_result(err: OpenAIError): Value =
+  return openai_error_value(err)
 
-  result = client_obj.to_ref_value()
+proc call_openai_endpoint(config: OpenAIConfig, endpoint: string, payload: JsonNode): Value {.gcsafe.} =
+  try:
+    let response = performRequest(config, "POST", endpoint, payload)
+    return jsonToGeneValue(response)
+  except OpenAIError as e:
+    return openai_error_value(e)
+
+proc call_gene_callable(vm: VirtualMachine, callable: Value, args: seq[Value]) {.gcsafe.} =
+  case callable.kind
+  of VkNativeFn:
+    discard call_native_fn(callable.ref.native_fn, vm, args)
+  of VkFunction:
+    {.cast(gcsafe).}:
+      discard vm.exec_function(callable, args)
+  of VkClass:
+    if callable.ref.class.methods.hasKey("call".to_key()):
+      let call_method = callable.ref.class.methods["call".to_key()].callable
+      var new_args = @[callable]
+      new_args.add(args)
+      call_gene_callable(vm, call_method, new_args)
+  of VkInstance:
+    let inst = callable.ref
+    if not inst.instance_class.isNil and inst.instance_class.methods.hasKey("call".to_key()):
+      let call_method = inst.instance_class.methods["call".to_key()].callable
+      var new_args = @[callable]
+      new_args.add(args)
+      call_gene_callable(vm, call_method, new_args)
+  else:
+    discard
+
+proc createGeneStreamHandler(vm: VirtualMachine, callback: Value): StreamHandler =
+  proc handler(event: StreamEvent) {.gcsafe.} =
+    try:
+      var map = initTable[Key, Value]()
+      map["event".to_key()] = event.event.to_value
+      map["done".to_key()] = event.done.to_value
+      if event.data != nil:
+        map["data".to_key()] = jsonToGeneValue(event.data)
+      else:
+        map["data".to_key()] = NIL
+      let event_value = new_map_value(map)
+      call_gene_callable(vm, callback, @[event_value])
+    except system.Exception as e:
+      when defined(debug):
+        echo "DEBUG: Stream handler error: ", e.msg
+  return handler
+
+proc openai_error_to_s(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return "OpenAIError".to_value()
+
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  if self_val.kind != VkInstance:
+    return "OpenAIError".to_value()
+
+  let props = self_val.ref.instance_props
+  let message_key = "message".to_key()
+  var desc = "OpenAIError"
+  if props.hasKey(message_key) and props[message_key].kind == VkString:
+    desc &= ": " & props[message_key].str
+
+  var details: seq[string] = @[]
+  for key_name in ["status", "request_id", "provider_error"]:
+    let k = key_name.to_key()
+    if props.hasKey(k):
+      details.add(key_name & "=" & $props[k])
+  if props.hasKey("retry_after".to_key()):
+    details.add("retry_after=" & $props["retry_after".to_key()])
+
+  if details.len > 0:
+    desc &= " (" & details.join(", ") & ")"
+
+  return desc.to_value()
+
+proc start_openai_stream(vm: VirtualMachine, config: OpenAIConfig, options: JsonNode, handler: Value): Value =
+  if handler.kind notin {VkNativeFn, VkFunction, VkClass, VkInstance}:
+    return new_error("Callback must be callable")
+
+  var stream_opts = if options.kind == JNull: %*{} else: options
+  stream_opts["stream"] = %*true
+  let payload = buildChatPayload(config, stream_opts)
+
+  let future_val = new_future_value()
+  let future_obj = future_val.ref.future
+
+  try:
+    let stream_handler = createGeneStreamHandler(vm, handler)
+    performStreamingRequest(config, "/chat/completions", payload, stream_handler)
+    future_obj.complete("streaming completed".to_value)
+  except OpenAIError as e:
+    future_obj.fail(openai_error_value(e))
+  except system.Exception as e:
+    future_obj.fail(new_error("OpenAI stream failed: " & e.msg))
+
+  return future_val
 
 # Native function: Chat completion
-proc vm_openai_chat(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_openai_chat*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI chat requires client and options arguments")
 
   let client_val = get_positional_arg(args, 0, has_keyword_args)
   let options_val = get_positional_arg(args, 1, has_keyword_args)
 
-  if client_val.kind != VkInstance or not client_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
+  let (config, err) = fetch_client_config(client_val)
+  if err != NIL:
+    return err
 
-  let client_id = client_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
   let options = geneValueToJson(options_val)
-
-  try:
-    let payload = buildChatPayload(config, options)
-    let response = performRequest(config, "POST", "/chat/completions", payload)
-    result = jsonToGeneValue(response)
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    if e.request_id != "":
-      error_obj.instance_props["request_id".to_key()] = e.request_id.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI chat failed: " & e.msg)
+  let payload = buildChatPayload(config, options)
+  return call_openai_endpoint(config, "/chat/completions", payload)
 
 # Native function: Embeddings
-proc vm_openai_embeddings(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_openai_embeddings*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI embeddings requires client and options arguments")
 
   let client_val = get_positional_arg(args, 0, has_keyword_args)
   let options_val = get_positional_arg(args, 1, has_keyword_args)
 
-  if client_val.kind != VkInstance or not client_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
+  let (config, err) = fetch_client_config(client_val)
+  if err != NIL:
+    return err
 
-  let client_id = client_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
   let options = geneValueToJson(options_val)
-
-  try:
-    let payload = buildEmbeddingsPayload(config, options)
-    let response = performRequest(config, "POST", "/embeddings", payload)
-    result = jsonToGeneValue(response)
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI embeddings failed: " & e.msg)
+  let payload = buildEmbeddingsPayload(config, options)
+  return call_openai_endpoint(config, "/embeddings", payload)
 
 # Native function: Responses (for structured outputs)
-proc vm_openai_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_openai_respond*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI respond requires client and options arguments")
 
   let client_val = get_positional_arg(args, 0, has_keyword_args)
   let options_val = get_positional_arg(args, 1, has_keyword_args)
 
-  if client_val.kind != VkInstance or not client_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
+  let (config, err) = fetch_client_config(client_val)
+  if err != NIL:
+    return err
 
-  let client_id = client_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
   let options = geneValueToJson(options_val)
+  let payload = buildResponsesPayload(config, options)
+  return call_openai_endpoint(config, "/responses", payload)
 
-  try:
-    let payload = buildResponsesPayload(config, options)
-    let response = performRequest(config, "POST", "/responses", payload)
-    result = jsonToGeneValue(response)
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI respond failed: " & e.msg)
-
-# Instance methods for OpenAIClient class
-proc vm_openai_client_chat(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if get_positional_count(arg_count, has_keyword_args) < 1:
-    return new_error("OpenAI client chat requires self argument")
-
-  let self_val = get_positional_arg(args, 0, has_keyword_args)
-  if self_val.kind != VkInstance or not self_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
-
-  let client_id = self_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
-  let options = if get_positional_count(arg_count, has_keyword_args) > 1:
-    geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
-  else:
-    %*{}
-
-  try:
-    let payload = buildChatPayload(config, options)
-    let response = performRequest(config, "POST", "/chat/completions", payload)
-    result = jsonToGeneValue(response)
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    if e.request_id != "":
-      error_obj.instance_props["request_id".to_key()] = e.request_id.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI client chat failed: " & e.msg)
-
-proc vm_openai_client_embeddings(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if get_positional_count(arg_count, has_keyword_args) < 1:
-    return new_error("OpenAI client embeddings requires self argument")
-
-  let self_val = get_positional_arg(args, 0, has_keyword_args)
-  if self_val.kind != VkInstance or not self_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
-
-  let client_id = self_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
-  let options = if get_positional_count(arg_count, has_keyword_args) > 1:
-    geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
-  else:
-    %*{}
-
-  try:
-    let payload = buildEmbeddingsPayload(config, options)
-    let response = performRequest(config, "POST", "/embeddings", payload)
-    result = jsonToGeneValue(response)
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI client embeddings failed: " & e.msg)
-
-proc vm_openai_client_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if get_positional_count(arg_count, has_keyword_args) < 1:
-    return new_error("OpenAI client respond requires self argument")
-
-  let self_val = get_positional_arg(args, 0, has_keyword_args)
-  if self_val.kind != VkInstance or not self_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
-
-  let client_id = self_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
-  let options = if get_positional_count(arg_count, has_keyword_args) > 1:
-    geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
-  else:
-    %*{}
-
-  try:
-    let payload = buildResponsesPayload(config, options)
-    let response = performRequest(config, "POST", "/responses", payload)
-    result = jsonToGeneValue(response)
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI client respond failed: " & e.msg)
-
-proc vm_openai_client_stream(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+# Native function: Stream chat completion (instance method)
+proc vm_openai_client_stream*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI client stream requires self and callback arguments")
 
   let self_val = get_positional_arg(args, 0, has_keyword_args)
   let callback_val = get_positional_arg(args, 1, has_keyword_args)
 
-  if self_val.kind != VkInstance or not self_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
+  let (config, err) = fetch_client_config(self_val)
+  if err != NIL:
+    return err
 
-  if callback_val.kind != VkNativeFn and callback_val.kind != VkFunction:
-    return new_error("Callback must be a function")
-
-  let client_id = self_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
-
-  # Get optional options parameter
   var options = %*{}
   if get_positional_count(arg_count, has_keyword_args) > 2:
-    let options_val = get_positional_arg(args, 2, has_keyword_args)
-    options = geneValueToJson(options_val)
+    options = geneValueToJson(get_positional_arg(args, 2, has_keyword_args))
 
-  # Add stream option
-  options["stream"] = %*true
-  let payload = buildChatPayload(config, options)
+  return start_openai_stream(vm, config, options, callback_val)
 
-  try:
-    # Create stream handler from Gene callback
-    let handler = createGeneStreamHandler(vm, callback_val)
-
-    # Perform streaming request synchronously
-    performStreamingRequest(config, "/chat/completions", payload, handler)
-
-    # Return success
-    result = new_str_value("streaming completed")
-
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    if e.request_id != "":
-      error_obj.instance_props["request_id".to_key()] = e.request_id.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI client stream failed: " & e.msg)
-
-# Native function: Stream chat completion
-proc vm_openai_stream(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+# Native function: Stream chat completion (namespace/global)
+proc vm_openai_stream*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 3:
     return new_error("OpenAI stream requires client, options, and handler arguments")
 
@@ -347,40 +330,72 @@ proc vm_openai_stream(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   let options_val = get_positional_arg(args, 1, has_keyword_args)
   let handler_val = get_positional_arg(args, 2, has_keyword_args)
 
-  if client_val.kind != VkInstance or not client_val.ref.instance_props.has_key("client_id".to_key()):
-    return new_error("Invalid OpenAI client")
+  let (config, err) = fetch_client_config(client_val)
+  if err != NIL:
+    return err
 
-  if handler_val.kind != VkNativeFn and handler_val.kind != VkFunction:
-    return new_error("Handler must be a function")
-
-  let client_id = client_val.ref.instance_props["client_id".to_key()].int
-  if not openai_clients.hasKey(client_id):
-    return new_error("OpenAI client not found")
-
-  let config = openai_clients[client_id]
   let options = geneValueToJson(options_val)
+  return start_openai_stream(vm, config, options, handler_val)
 
-  try:
-    var stream_options = options
-    stream_options["stream"] = %*true
-    let payload = buildChatPayload(config, stream_options)
+# Native function: Chat completion as instance method
+proc vm_openai_client_chat*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return new_error("OpenAI client chat requires self argument")
 
-    # Create stream handler from Gene callback
-    let handler = createGeneStreamHandler(vm, handler_val)
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  let (config, err) = fetch_client_config(self_val)
+  if err != NIL:
+    return err
 
-    # Perform streaming request synchronously
-    performStreamingRequest(config, "/chat/completions", payload, handler)
+  var options = %*{}
+  if get_positional_count(arg_count, has_keyword_args) > 1:
+    options = geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
 
-    # Return success
-    result = new_str_value("streaming completed")
+  let payload = buildChatPayload(config, options)
+  return call_openai_endpoint(config, "/chat/completions", payload)
 
-  except OpenAIError as e:
-    var error_obj = new_ref(VkInstance)
-    error_obj.instance_props = initTable[Key, Value]()
-    error_obj.instance_props["message".to_key()] = e.msg.to_value
-    error_obj.instance_props["status".to_key()] = e.status.to_value
-    if e.request_id != "":
-      error_obj.instance_props["request_id".to_key()] = e.request_id.to_value
-    result = error_obj.to_ref_value()
-  except system.Exception as e:
-    result = new_error("OpenAI stream failed: " & e.msg)
+proc vm_openai_client_embeddings*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return new_error("OpenAI client embeddings requires self argument")
+
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  let (config, err) = fetch_client_config(self_val)
+  if err != NIL:
+    return err
+
+  var options = %*{}
+  if get_positional_count(arg_count, has_keyword_args) > 1:
+    options = geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
+
+  let payload = buildEmbeddingsPayload(config, options)
+  return call_openai_endpoint(config, "/embeddings", payload)
+
+proc vm_openai_client_respond*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return new_error("OpenAI client respond requires self argument")
+
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  let (config, err) = fetch_client_config(self_val)
+  if err != NIL:
+    return err
+
+  var options = %*{}
+  if get_positional_count(arg_count, has_keyword_args) > 1:
+    options = geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
+
+  let payload = buildResponsesPayload(config, options)
+  return call_openai_endpoint(config, "/responses", payload)
+
+proc attach_openai_client_class*(cls: Class) =
+  openai_client_class = cls
+  cls.def_native_constructor(openai_client_constructor)
+  cls.def_native_method("chat", vm_openai_client_chat)
+  cls.def_native_method("embeddings", vm_openai_client_embeddings)
+  cls.def_native_method("respond", vm_openai_client_respond)
+  cls.def_native_method("stream", vm_openai_client_stream)
+  if openai_error_class.isNil:
+    var parent_cls: Class = nil
+    if App.app.object_class.kind == VkClass:
+      parent_cls = App.app.object_class.ref.class
+    openai_error_class = new_class("OpenAIError", parent_cls)
+    openai_error_class.def_native_method("to_s", openai_error_to_s)

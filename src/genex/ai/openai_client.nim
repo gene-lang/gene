@@ -131,7 +131,8 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
       var error = OpenAIError(
         msg: "OpenAI API Error: " & errorMsg,
         status: parseInt(statusCode),
-        provider_error: errorType
+        provider_error: errorType,
+        metadata: errorBody
       )
 
       # Extract request ID if available
