@@ -317,6 +317,7 @@ when defined(GENE_LLM_MOCK):
         App.app.genex_ns.ref.ns["llm".to_key()] = llm_ns.to_ref_value()
 
   init_llm_module()
+
 else:
   const
     llmSourceDir = parentDir(currentSourcePath())
