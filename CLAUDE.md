@@ -128,6 +128,82 @@ When adding new instructions: extend the enum, teach the compiler (emit case), a
 - `docs/IMPLEMENTATION_STATUS.md` — parity tracking vs. the interpreter (update when shipping new language features).
 - `docs/implementation/*.md` — design notes for async, caller_eval, and current dev questions.
 
+## 🚨 CRITICAL: Gene Syntax Reference for AI Agents
+
+**AI AGENTS**: Before writing ANY Gene code, you MUST study the complete syntax reference in `examples/full.gene`. This file contains canonical, tested examples of ALL major Gene language features.
+
+### How to Use This Reference
+
+1. **First**: Read and internalize `examples/full.gene` - it's your primary syntax guide
+2. **Reference**: Keep it open while writing Gene code to avoid syntax errors
+3. **Test**: When uncertain, copy the canonical patterns from the reference
+
+### Key Syntax Patterns to Memorize
+
+```gene
+# Comments start with #
+
+# Variables & Assignment
+(var x 10)                    # Declaration
+(x = 20)                      # Assignment
+
+# Arithmetic & logic operators are infix
+(x + y)
+
+# Functions
+(fn add [a b] (a + b))        # Function with parameters
+(fn hello [] (print "Hi"))    # No parameters
+
+# Macros
+(fn debug! [a]
+  (println a "=" ($caller_eval a))
+)
+
+# Arrays & Maps
+(var arr [1 2 3])             # Array
+(var m {^key "value"})        # Map (use ^ prefix for keys)
+
+# Classes
+(class Point
+  (.ctor [x y]
+    (/x = x)                  # Use / for property access
+    (/y = y)
+  )
+  (.fn get_x _ /x)            # Method definition
+)
+
+# Method calls
+(var p (new Point 3 4))
+(p .get_x)                    # Regular method call
+p/.get_x                      # Use /. for method call that doesn't take arguments, do not use ().
+
+# Control flow
+(if (x > 5) then              # then is optional
+  ...
+  "big" 
+elif (x == 5)                 # elif means else if
+  ...
+  "equal"
+else
+  ...
+  "small")
+
+# Maps/Arrays access
+arr/0                         # Array access
+m/key                         # Map access
+```
+
+### Common Pitfalls to Avoid
+
+- **NEVER** use JavaScript/C syntax `{}` `;`
+- **ALWAYS** use parentheses `()` for expressions
+- **Maps**: Use `^` prefix for keys: `{^name "Alice"}`
+- **Arrays**: Use slash for access: `arr/0`
+- **Classes**: Use `/` for properties, `/.` for methods
+- **Variables**: Use `NIL` not `nil`
+
+**STUDY `examples/full.gene` BEFORE WRITING GENE CODE!**
+
 ## Contribution Tips
 
 - Align new behaviour with `gene-new/` unless intentionally diverging; port interpreter tests when possible.
