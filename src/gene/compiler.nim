@@ -344,6 +344,32 @@ proc compile_array(self: Compiler, input: Value) =
   # Collect all elements from call base into array
   self.emit(Instruction(kind: IkArrayEnd))
 
+proc compile_stream(self: Compiler, input: Value) =
+  self.emit(Instruction(kind: IkStreamStart))
+
+  var i = 0
+  let stream_values = input.ref.stream
+  while i < stream_values.len:
+    let child = stream_values[i]
+
+    if i + 1 < stream_values.len and stream_values[i + 1].kind == VkSymbol and stream_values[i + 1].str == "...":
+      self.compile(child)
+      self.emit(Instruction(kind: IkStreamAddSpread))
+      i += 2
+      continue
+
+    if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+      let base_symbol = child.str[0..^4].to_symbol_value()
+      self.compile(base_symbol)
+      self.emit(Instruction(kind: IkStreamAddSpread))
+      i += 1
+      continue
+
+    self.compile(child)
+    i += 1
+
+  self.emit(Instruction(kind: IkStreamEnd))
+
 proc compile_map(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkMapStart))
   for k, v in input.ref.map:
@@ -2429,7 +2455,7 @@ proc compile*(self: Compiler, input: Value) =
         self.compile(input.ref.quote)
         self.quote_level.dec()
       of VkStream:
-        self.compile(input.ref.stream)
+        self.compile_stream(input)
       of VkArray:
         self.compile_array(input)
       of VkMap:

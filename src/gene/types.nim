@@ -768,6 +768,9 @@ type
     IkArrayStart
     IkArrayAddSpread    # Spread add - pop array and push all elements onto stack
     IkArrayEnd
+    IkStreamStart
+    IkStreamAddSpread
+    IkStreamEnd
 
     IkGeneStart
     IkGeneStartDefault

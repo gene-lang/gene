@@ -2213,6 +2213,37 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.stack_index = base
         self.frame.push(arr)
 
+      of IkStreamStart:
+        self.frame.call_bases.push(self.frame.stack_index)
+
+      of IkStreamAddSpread:
+        let value = self.frame.pop()
+        var seq_to_spread: seq[Value]
+        case value.kind
+        of VkArray:
+          seq_to_spread = value.ref.arr
+        of VkStream:
+          seq_to_spread = value.ref.stream
+        else:
+          not_allowed("... can only spread arrays or streams in stream context, got " & $value.kind)
+
+        for item in seq_to_spread:
+          self.frame.push(item)
+
+      of IkStreamEnd:
+        let base = self.frame.pop_call_base()
+        let count = int(self.frame.stack_index) - int(base)
+
+        let stream_ref = new_ref(VkStream)
+        stream_ref.stream.setLen(count)
+        for i in 0..<count:
+          stream_ref.stream[i] = self.frame.stack[base + uint16(i)]
+        stream_ref.stream_index = 0
+        stream_ref.stream_ended = false
+
+        self.frame.stack_index = base
+        self.frame.push(stream_ref.to_ref_value())
+
       of IkMapStart:
         self.frame.push(new_map_value())
       of IkMapSetProp:

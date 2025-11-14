@@ -920,11 +920,12 @@ proc read_array(self: var Parser): Value {.gcsafe.} =
   r.arr = self.read_delimited_list(']', true).list
   result = r.to_ref_value()
 
-proc read_set(self: var Parser): Value =
-  let r = new_ref(VkSet)
+proc read_stream(self: var Parser): Value {.gcsafe.} =
+  let r = new_ref(VkStream)
   let list_result = self.read_delimited_list(']', true)
-  for item in list_result.list:
-    r.set.incl(item)
+  r.stream = list_result.list
+  r.stream_index = 0
+  r.stream_ended = false
   result = r.to_ref_value()
 
 proc read_regex(self: var Parser): Value =
@@ -1039,7 +1040,7 @@ proc init_macro_array() =
   macros['}'] = read_unmatched_delimiter
 
 proc init_dispatch_macro_array() =
-  dispatch_macros['['] = read_set
+  dispatch_macros['['] = read_stream
   dispatch_macros['/'] = read_regex
   dispatch_macros['@'] = read_decorator
   dispatch_macros['"'] = read_string_interpolation
