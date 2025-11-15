@@ -137,9 +137,41 @@ test_parser "[,]", @[]
 test_parser "[1 2]", new_array_value(to_value(1), to_value(2))
 test_parser "[1, 2]", new_array_value(to_value(1), to_value(2))
 
-test_parser "#[]", new_set_value()
-# This should work
-# test_parser "#[1 2]", new_gene_set(to_value(1), to_value(2))
+test_parser "#[]", proc(r: Value) =
+  check r.kind == VkStream
+  check r.ref.stream.len == 0
+  check r.ref.stream_index == 0
+  check not r.ref.stream_ended
+
+test_parser "#[1 2]", proc(r: Value) =
+  check r.kind == VkStream
+  check r.ref.stream.len == 2
+  check r.ref.stream[0].to_int() == 1
+  check r.ref.stream[1].to_int() == 2
+
+test_parser "#[\"hello\" 42 true]", proc(r: Value) =
+  check r.kind == VkStream
+  check r.ref.stream.len == 3
+  check r.ref.stream[0].kind == VkString
+  check r.ref.stream[0].str == "hello"
+  check r.ref.stream[1].to_int() == 42
+  check r.ref.stream[2] == TRUE
+
+test_parser "#[[1] [2]]", proc(r: Value) =
+  check r.kind == VkStream
+  check r.ref.stream.len == 2
+  for idx, item in r.ref.stream:
+    check item.kind == VkArray
+    check item.ref.arr.len == 1
+    check item.ref.arr[0].to_int() == idx + 1
+
+test_parser "#[1 2 3 4 5 6 7 8 9 10]", proc(r: Value) =
+  check r.kind == VkStream
+  check r.ref.stream.len == 10
+  for idx, item in r.ref.stream:
+    check item.to_int() == idx + 1
+
+test_parser_error "#[1 2"
 
 test_parser ",a", to_symbol_value("a")
 test_parser "a,", to_symbol_value("a")
