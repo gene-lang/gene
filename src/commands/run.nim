@@ -21,6 +21,7 @@ type
     profile: bool
     profile_instructions: bool
     no_gir_cache: bool  # Ignore GIR cache
+    force_compile: bool  # Force recompilation even if cache is up-to-date
     file: string
     args: seq[string]
 
@@ -39,6 +40,7 @@ let long_no_val = @[
   "profile",
   "profile-instructions",
   "no-gir-cache",
+  "force-compile",
 ]
 proc parse_options(args: seq[string]): Options =
   result = Options()
@@ -79,6 +81,8 @@ proc parse_options(args: seq[string]): Options =
           result.profile_instructions = true
         of "no-gir-cache":
           result.no_gir_cache = true
+        of "force-compile":
+          result.force_compile = true
         else:
           echo "Unknown option: ", key
           discard
@@ -168,7 +172,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         return failure("Loading GIR file: " & e.msg)
     
     # Regular .gene file - check for cached GIR
-    if not options.no_gir_cache:
+    if not options.no_gir_cache and not options.force_compile:
       let gir_path = get_gir_path(file, "build")
       if fileExists(gir_path) and is_gir_up_to_date(gir_path, file):
         # Use cached GIR
