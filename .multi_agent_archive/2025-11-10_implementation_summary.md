@@ -31,7 +31,7 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
 proc compile_ns(self: Compiler, gene: ptr Gene) =
   # Apply container splitting to handle complex symbols like app/models
   apply_container_to_child(gene, 0)
-  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  let container_expr = gene.props.getOrDefault(SYM_CONTAINER, NIL)
   let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
   
   # If we have a container, compile it first to push it onto the stack

@@ -9,7 +9,7 @@ index f7950fe..e8c0e4d 100644
 -  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0]))
 +  # Apply container splitting to handle complex symbols like app/models
 +  apply_container_to_child(gene, 0)
-+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
++  let container_expr = gene.props.getOrDefault(SYM_CONTAINER, NIL)
 +  let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
 +
 +  # If we have a container, compile it first to push it onto the stack
@@ -29,7 +29,7 @@ index f7950fe..e8c0e4d 100644
  
 -proc compile_class(self: Compiler, gene: ptr Gene) =
 -  apply_container_to_child(gene, 0)
--  let container_expr = gene.props.getOrDefault(container_key(), NIL)
+-  let container_expr = gene.props.getOrDefault(SYM_CONTAINER, NIL)
 -  let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
 +proc compile_class_with_container(self: Compiler, class_name: Value, parent_class: Value, container_expr: Value, body_start: int, gene: ptr Gene) =
 +  ## Helper to compile class with container handling
@@ -67,7 +67,7 @@ index f7950fe..e8c0e4d 100644
  
 +proc compile_class(self: Compiler, gene: ptr Gene) =
 +  apply_container_to_child(gene, 0)
-+  let container_expr = gene.props.getOrDefault(container_key(), NIL)
++  let container_expr = gene.props.getOrDefault(SYM_CONTAINER, NIL)
 +
 +  var body_start = 1
 +  var parent_class: Value = NIL

@@ -3797,12 +3797,14 @@ const SYM_UNDERSCORE* = SYMBOL_TAG or 0
 const SYM_SELF* = SYMBOL_TAG or 1
 const SYM_GENE* = SYMBOL_TAG or 2
 const SYM_NS* = SYMBOL_TAG or 3
+const SYM_CONTAINER* = SYMBOL_TAG or 4
 
 proc init_values*() =
   SYMBOLS = ManagedSymbols()
   discard "_".to_symbol_value()
   discard "self".to_symbol_value()
   discard "gene".to_symbol_value()
+  discard "container".to_symbol_value()
 
 init_values()
 

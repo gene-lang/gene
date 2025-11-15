@@ -114,6 +114,15 @@ proc compile_emit(self: Compiler, gene: ptr Gene)
 proc compile*(f: Function, eager_functions: bool)
 proc compile*(b: Block, eager_functions: bool)
 proc compile*(f: CompileFn, eager_functions: bool)
+proc compile_caller_eval(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_async(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_await(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_spawn(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_yield(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
 
 proc compile(self: Compiler, input: seq[Value]) =
   for i, v in input:
@@ -142,7 +151,7 @@ proc compile_unary_not(self: Compiler, operand: Value) {.inline.} =
   self.compile(operand)
   self.emit(Instruction(kind: IkNot))
 
-proc compileVarOpLiteral(self: Compiler, symbolVal: Value, literal: Value, opKind: InstructionKind): bool =
+proc compile_var_op_literal(self: Compiler, symbolVal: Value, literal: Value, opKind: InstructionKind): bool =
   ## Emit optimized instruction when a variable is operated with a literal.
   if symbolVal.kind != VkSymbol or not literal.is_literal():
     return false
@@ -195,7 +204,7 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
     if r.csymbol.len > 0 and r.csymbol[0].startsWith("@"):
       var segments: seq[Value] = @[]
 
-      proc addSegment(part: string) =
+      proc add_segment(part: string) =
         if part.len == 0:
           not_allowed("@ selector segment cannot be empty")
         try:
@@ -204,9 +213,9 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
         except ValueError:
           segments.add(part.to_value())
 
-      addSegment(r.csymbol[0][1..^1])
+      add_segment(r.csymbol[0][1..^1])
       for part in r.csymbol[1..^1]:
-        addSegment(part)
+        add_segment(part)
 
       if segments.len == 0:
         not_allowed("@ selector requires at least one segment")
@@ -461,16 +470,6 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkNoop, label: end_label))
 
   self.end_scope()
-
-proc compile_caller_eval(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_async(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_await(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_spawn(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_yield(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
 
 proc compile_var(self: Compiler, gene: ptr Gene) =
   if gene.children.len == 0:
@@ -2079,7 +2078,7 @@ proc compile_gene(self: Compiler, input: Value) =
           self.compile(gene.children[0])
           return
         elif gene.children.len == 2:
-          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarAddValue):
+          if self.compile_var_op_literal(gene.children[0], gene.children[1], IkVarAddValue):
             return
           # Fall through to regular compilation
         # Multi-arg addition
@@ -2097,7 +2096,7 @@ proc compile_gene(self: Compiler, input: Value) =
           self.emit(Instruction(kind: IkNeg))
           return
         elif gene.children.len == 2:
-          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarSubValue):
+          if self.compile_var_op_literal(gene.children[0], gene.children[1], IkVarSubValue):
             return
           # Fall through to regular compilation
         # Multi-arg subtraction
@@ -2116,7 +2115,7 @@ proc compile_gene(self: Compiler, input: Value) =
           self.compile(gene.children[0])
           return
         elif gene.children.len == 2:
-          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarMulValue):
+          if self.compile_var_op_literal(gene.children[0], gene.children[1], IkVarMulValue):
             return
           # Fall through to regular compilation
         # Multi-arg multiplication
@@ -2135,7 +2134,7 @@ proc compile_gene(self: Compiler, input: Value) =
           self.emit(Instruction(kind: IkDiv))
           return
         elif gene.children.len == 2:
-          if self.compileVarOpLiteral(gene.children[0], gene.children[1], IkVarDivValue):
+          if self.compile_var_op_literal(gene.children[0], gene.children[1], IkVarDivValue):
             return
           # Fall through to regular compilation
         # Multi-arg division
@@ -2150,7 +2149,7 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("< requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarLtValue):
+        if second.kind in {VkInt, VkFloat} and self.compile_var_op_literal(first, second, IkVarLtValue):
           return
         self.compile(first)
         self.compile(second)
@@ -2162,7 +2161,7 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("<= requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarLeValue):
+        if second.kind in {VkInt, VkFloat} and self.compile_var_op_literal(first, second, IkVarLeValue):
           return
         self.compile(first)
         self.compile(second)
@@ -2174,7 +2173,7 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("> requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarGtValue):
+        if second.kind in {VkInt, VkFloat} and self.compile_var_op_literal(first, second, IkVarGtValue):
           return
         self.compile(first)
         self.compile(second)
@@ -2186,7 +2185,7 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed(">= requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarGeValue):
+        if second.kind in {VkInt, VkFloat} and self.compile_var_op_literal(first, second, IkVarGeValue):
           return
         self.compile(first)
         self.compile(second)
@@ -2198,7 +2197,7 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("== requires exactly 2 arguments")
         let first = gene.children[0]
         let second = gene.children[1]
-        if second.kind in {VkInt, VkFloat} and self.compileVarOpLiteral(first, second, IkVarEqValue):
+        if second.kind in {VkInt, VkFloat} and self.compile_var_op_literal(first, second, IkVarEqValue):
           return
         self.compile(first)
         self.compile(second)
