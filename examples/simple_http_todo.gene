@@ -30,7 +30,7 @@
 
   (.fn to_html _
     (genex/html/tags/LI
-      ^class (if (.done) "completed" "pending")
+      ^class (if /.done "completed" else "pending")
       /description
     )
   )
@@ -111,7 +111,7 @@
     (if ((method == "GET") && (path == "/"))
       (/todo_controller .index request)
 
-    elif ((method == "POST") && (path && "/todos"))
+    elif ((method == "POST") && (path == "/todos"))
       (/todo_controller .create request)
 
     else

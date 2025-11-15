@@ -345,30 +345,31 @@ proc compile_array(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkArrayEnd))
 
 proc compile_stream(self: Compiler, input: Value) =
-  self.emit(Instruction(kind: IkStreamStart))
+  # For simple streams (used by if/elif/else branches), just compile the children directly
+  # Don't emit StreamStart/StreamEnd as they're not needed for control flow
+  let stream_values = input.ref.stream
+
+  if stream_values.len == 0:
+    self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+    return
 
   var i = 0
-  let stream_values = input.ref.stream
   while i < stream_values.len:
     let child = stream_values[i]
-
-    if i + 1 < stream_values.len and stream_values[i + 1].kind == VkSymbol and stream_values[i + 1].str == "...":
-      self.compile(child)
-      self.emit(Instruction(kind: IkStreamAddSpread))
-      i += 2
-      continue
-
-    if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-      let base_symbol = child.str[0..^4].to_symbol_value()
-      self.compile(base_symbol)
-      self.emit(Instruction(kind: IkStreamAddSpread))
-      i += 1
-      continue
+    let old_tail = self.tail_position
+    if i == stream_values.len - 1:
+      # Last expression preserves tail position
+      discard
+    else:
+      self.tail_position = false
 
     self.compile(child)
-    i += 1
 
-  self.emit(Instruction(kind: IkStreamEnd))
+    self.tail_position = old_tail
+    if i < stream_values.len - 1:
+      self.emit(Instruction(kind: IkPop))
+
+    i += 1
 
 proc compile_map(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkMapStart))
@@ -2895,22 +2896,41 @@ proc compile_tap(self: Compiler, gene: ptr Gene) =
 
 proc compile_if_main(self: Compiler, gene: ptr Gene) =
   let cond_symbol = @["$ns", "__is_main__"].to_complex_symbol()
-  let if_gene = new_gene("if".to_symbol_value())
-  if_gene.props[COND_KEY.to_key()] = cond_symbol
 
-  let then_stream = new_stream_value()
+  # Compile the condition
+  self.start_scope()
+  self.compile(cond_symbol)
+  let else_label = new_label()
+  let end_label = new_label()
+  self.emit(Instruction(kind: IkJumpIfFalse, arg0: else_label.to_value()))
+
+  # Compile then branch (the children of $if_main)
+  self.start_scope()
   if gene.children.len > 0:
-    for child in gene.children:
-      then_stream.ref.stream.add(child)
+    for i, child in gene.children:
+      let old_tail = self.tail_position
+      if i == gene.children.len - 1:
+        # Last expression preserves tail position
+        discard
+      else:
+        self.tail_position = false
+      self.compile(child)
+      self.tail_position = old_tail
+      if i < gene.children.len - 1:
+        self.emit(Instruction(kind: IkPop))
   else:
-    then_stream.ref.stream.add(NIL)
-  if_gene.props[THEN_KEY.to_key()] = then_stream
+    self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+  self.end_scope()
+  self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
 
-  let else_stream = new_stream_value()
-  else_stream.ref.stream.add(NIL)
-  if_gene.props[ELSE_KEY.to_key()] = else_stream
+  # Compile else branch (nil)
+  self.emit(Instruction(kind: IkNoop, label: else_label))
+  self.start_scope()
+  self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+  self.end_scope()
 
-  self.compile_if(if_gene)
+  self.emit(Instruction(kind: IkNoop, label: end_label))
+  self.end_scope()
 
 proc compile_parse(self: Compiler, gene: ptr Gene) =
   # ($parse string)
