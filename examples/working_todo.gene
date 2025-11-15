@@ -88,7 +88,7 @@
     (/routes = (/routes || []))
   )
 
-  (.fn handle [path]
+  (.fn call [path]
     (println "Handling request for:" path)
     (var controller (new TodoController))
     (controller .index path)

@@ -730,11 +730,7 @@ proc create_server_request(req: asynchttpserver.Request): Value =
   # Create ServerRequest instance
   let instance = new_ref(VkInstance)
   {.cast(gcsafe).}:
-    if server_request_class_global != nil:
-      instance.instance_class = server_request_class_global
-    else:
-      # Create a temporary class if not initialized
-      instance.instance_class = new_class("ServerRequest")
+    instance.instance_class = server_request_class_global
   
   # Set properties
   instance.instance_props["method".to_key()] = ($req.reqMethod).to_value()

@@ -45,42 +45,44 @@
     (var todo1 (new Todo 1 "Learn Gene programming" 0))
     (var todo2 (new Todo 2 "Build HTTP todo app" 0))
 
-    (genex/html/tags/HTML
-      (genex/html/tags/HEAD
-        (genex/html/tags/TITLE "Simple TODO App")
-        (genex/html/tags/LINK
-          ^href "https://cdn.jsdelivr.net/npm/tailwindcss/dist/tailwind.min.css"
-          ^rel "stylesheet"
-        )
-        (genex/html/tags/STYLE """
-          body { font-family: Arial, sans-serif; padding: 20px; background: #111; color: white; }
-          .completed { color: #666; text-decoration: line-through; }
-          .pending { color: #1dd1a1; }
-          li { margin: 10px 0; padding: 10px; border: 1px solid #333; border-radius: 4px; }
-        """)
-      )
-      (genex/html/tags/BODY
-        (genex/html/tags/DIV ^class "container mx-auto max-w-2xl"
-          (genex/html/tags/H1 "Simple TODO App" ^class "text-3xl font-bold mb-6")
-          (genex/html/tags/FORM
-            ^method "POST"
-            ^action "/todos"
-            ^class "mb-6"
-            (genex/html/tags/INPUT
-              ^type "text"
-              ^name "description"
-              ^placeholder "Add new todo..."
-              ^class "border rounded px-3 py-2 mr-2 bg-gray-800 text-white"
-            )
-            (genex/html/tags/BUTTON
-              ^type "submit"
-              ^class "bg-green-500 text-white px-4 py-2 rounded"
-              "Add Todo"
-            )
+    (respond 200
+      (genex/html/tags/HTML
+        (genex/html/tags/HEAD
+          (genex/html/tags/TITLE "Simple TODO App")
+          (genex/html/tags/LINK
+            ^href "https://cdn.jsdelivr.net/npm/tailwindcss/dist/tailwind.min.css"
+            ^rel "stylesheet"
           )
-          (genex/html/tags/UL ^class "list-none p-0"
-            (todo1 .to_html)
-            (todo2 .to_html)
+          (genex/html/tags/STYLE """
+            body { font-family: Arial, sans-serif; padding: 20px; background: #111; color: white; }
+            .completed { color: #666; text-decoration: line-through; }
+            .pending { color: #1dd1a1; }
+            li { margin: 10px 0; padding: 10px; border: 1px solid #333; border-radius: 4px; }
+          """)
+        )
+        (genex/html/tags/BODY
+          (genex/html/tags/DIV ^class "container mx-auto max-w-2xl"
+            (genex/html/tags/H1 "Simple TODO App" ^class "text-3xl font-bold mb-6")
+            (genex/html/tags/FORM
+              ^method "POST"
+              ^action "/todos"
+              ^class "mb-6"
+              (genex/html/tags/INPUT
+                ^type "text"
+                ^name "description"
+                ^placeholder "Add new todo..."
+                ^class "border rounded px-3 py-2 mr-2 bg-gray-800 text-white"
+              )
+              (genex/html/tags/BUTTON
+                ^type "submit"
+                ^class "bg-green-500 text-white px-4 py-2 rounded"
+                "Add Todo"
+              )
+            )
+            (genex/html/tags/UL ^class "list-none p-0"
+              (todo1 .to_html)
+              (todo2 .to_html)
+            )
           )
         )
       )
@@ -100,11 +102,11 @@
     (/todo_controller = (new TodoController))
   )
 
-  (.fn handle request
+  (.fn call request
     (var path request/path)
     (var method request/method)
 
-    (println (method & " " & path))
+    (println #"#{method} #{path}")
 
     (if ((method == "GET") && (path == "/"))
       (/todo_controller .index request)

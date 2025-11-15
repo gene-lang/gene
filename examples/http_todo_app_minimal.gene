@@ -5,7 +5,7 @@
 (println)
 
 # Open database
-(var db (gene/sqlite/open "/tmp/todo_minimal.db"))
+(var db (genex/sqlite/open "/tmp/todo_minimal.db"))
 
 # Initialize database table
 (println "Creating todos table...")

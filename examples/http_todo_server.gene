@@ -126,7 +126,7 @@
     (/controller = controller)
   )
 
-  (.fn handle [request]
+  (.fn call [request]
     (var path request/path)
     (var method request/method)
 
