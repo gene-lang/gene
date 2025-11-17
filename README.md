@@ -132,7 +132,3 @@ Latest fib(24) benchmarks (2025 measurements) place the optimised VM around **3.
 ## License
 
 [MIT License](LICENSE)
-
-## Credits
-
-Created by Yanfeng Liu (@gcao) with contributions from the Gene community.
