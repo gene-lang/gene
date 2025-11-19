@@ -993,9 +993,9 @@ type
     scope*: Scope
     target*: Value  # target of the invocation
     args*: Value
-    stack*: array[256, Value]
+    stack*: seq[Value]
     current_method*: Method  # Currently executing method (for super calls)
-    stack_index*: uint16
+    stack_index*: uint32
     call_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function
     is_generator*: bool  # Set when executing in generator context
@@ -3425,8 +3425,8 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.args = NIL
   self.current_method = nil
   self.stack_index = 0
+  self.stack.setLen(0)  # Clear the dynamic stack sequence to prevent data leakage
   self.call_bases.reset()
-  # Stack array will be overwritten as needed, no need to clear
 
 proc free*(self: var Frame) =
   {.push checks: off, optimization: speed.}
@@ -3456,6 +3456,7 @@ proc new_frame*(): Frame {.inline.} =
     FRAME_ALLOCS.inc()
   result.ref_count = 1
   result.stack_index = 0  # Reset stack index
+  result.stack = newSeq[Value]()  # Initialize dynamic stack
   result.call_bases.init()
   {.pop.}
 
@@ -3485,37 +3486,48 @@ proc update*(self: var Frame, f: Frame) {.inline.} =
   {.pop.}
 
 template current*(self: Frame): Value =
-  self.stack[self.stack_index - 1]
+  # Dynamic stack - bounds checking still needed for underflow
+  if self.stack.len == 0:
+    not_allowed("Stack underflow: attempted to access current value from empty frame stack")
+  self.stack[^1]  # Use ^ operator for last element in sequence
 
 proc replace*(self: var Frame, v: Value) {.inline.} =
   {.push boundChecks: off, overflowChecks: off.}
-  self.stack[self.stack_index - 1] = v
+  # Dynamic stack - bounds checking still needed for underflow
+  if self.stack.len == 0:
+    not_allowed("Stack underflow: attempted to replace top of empty frame stack")
+  self.stack[^1] = v  # Use ^ operator for last element in sequence
   {.pop.}
 
 template push*(self: var Frame, value: sink Value) =
   {.push boundChecks: off, overflowChecks: off.}
-  self.stack[self.stack_index] = value
+  # Dynamic stack - no bounds checking needed, sequence grows automatically
+  self.stack.add(value)
   self.stack_index.inc()
   {.pop.}
 
 proc pop*(self: var Frame): Value {.inline.} =
   {.push boundChecks: off, overflowChecks: off.}
+  # Dynamic stack - use built-in sequence pop operation
+  if self.stack.len == 0:
+    not_allowed("Stack underflow: attempted to pop from empty frame stack")
   self.stack_index.dec()
-  result = self.stack[self.stack_index]
-  self.stack[self.stack_index] = NIL
+  result = self.stack.pop()
   {.pop.}
 
 template pop2*(self: var Frame, to: var Value) =
   {.push boundChecks: off, overflowChecks: off.}
+  # Dynamic stack - use built-in sequence operations
+  if self.stack.len == 0:
+    not_allowed("Stack underflow: attempted to pop2 from empty frame stack")
   self.stack_index.dec()
-  copy_mem(to.addr, self.stack[self.stack_index].addr, 8)
-  self.stack[self.stack_index] = NIL
+  to = self.stack.pop()
   {.pop.}
 
 proc push_call_base*(self: Frame) {.inline.} =
   assert self.stack_index > 0, "Cannot push call base without callee on stack"
   let base = self.stack_index - 1
-  self.call_bases.push(base)
+  self.call_bases.push(base.uint16)
 
 proc peek_call_base*(self: Frame): uint16 {.inline.} =
   self.call_bases.peek()

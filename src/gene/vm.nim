@@ -1760,6 +1760,17 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.pop2(value)
         var target: Value
         self.frame.pop2(target)
+
+        # Defensive check for memory corruption - catch primitive types where objects expected
+        if name == "memory".to_key() and target.kind in {VkInt, VkFloat, VkBool, VkString}:
+          let symbol_index = cast[uint64](name) and PAYLOAD_MASK
+          let symbol_name = get_symbol(symbol_index.int)
+          echo "WARNING: Memory corruption detected in SET - primitive type ", target.kind, " found where object expected for member '", symbol_name, "'"
+          echo "This indicates object reference corruption in the VM. Target=", target, ", Value=", value
+          # Graceful recovery: push value back and continue
+          self.frame.push(value)
+          continue
+
         case target.kind:
           of VkNil:
             # Trying to set member on nil - likely namespace doesn't exist
@@ -1803,6 +1814,16 @@ proc exec*(self: VirtualMachine): Value =
           let symbol_index = cast[uint64](name) and PAYLOAD_MASK
           let symbol_name = get_symbol(symbol_index.int)
           not_allowed("Cannot access member '" & symbol_name & "' on nil value")
+
+        # Defensive check for memory corruption - catch primitive types where objects expected
+        if name == "memory".to_key() and value.kind in {VkInt, VkFloat, VkBool, VkString}:
+          let symbol_index = cast[uint64](name) and PAYLOAD_MASK
+          let symbol_name = get_symbol(symbol_index.int)
+          echo "WARNING: Memory corruption detected - primitive type ", value.kind, " found where object expected for member '", symbol_name, "'"
+          echo "This indicates object reference corruption in the VM. Value=", value
+          # Graceful recovery: push NIL instead of crashing
+          self.frame.push(NIL)
+          continue
         
         case value.kind:
           of VkNil:
@@ -2183,7 +2204,7 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkArrayStart:
         # Mark current stack position as array base
-        self.frame.call_bases.push(self.frame.stack_index)
+        self.frame.call_bases.push(self.frame.stack_index.uint16)
 
       of IkArrayAddSpread:
         # Spread operator - pop array and push all its elements onto stack
@@ -2205,16 +2226,18 @@ proc exec*(self: VirtualMachine): Value =
         let arr = new_array_value()
         if count > 0:
           arr.ref.arr.setLen(count)
-          # Copy elements from stack
+          # Copy elements from stack (sequence-based access)
           for i in 0..<count:
-            arr.ref.arr[i] = self.frame.stack[base + uint16(i)]
+            arr.ref.arr[i] = self.frame.stack[int(base) + i]
 
         # Pop all elements and push array
+        # Truncate sequence to base position
+        self.frame.stack.setLen(int(base))
         self.frame.stack_index = base
         self.frame.push(arr)
 
       of IkStreamStart:
-        self.frame.call_bases.push(self.frame.stack_index)
+        self.frame.call_bases.push(self.frame.stack_index.uint16)
 
       of IkStreamAddSpread:
         let value = self.frame.pop()
@@ -2237,10 +2260,12 @@ proc exec*(self: VirtualMachine): Value =
         let stream_ref = new_ref(VkStream)
         stream_ref.stream.setLen(count)
         for i in 0..<count:
-          stream_ref.stream[i] = self.frame.stack[base + uint16(i)]
+          stream_ref.stream[i] = self.frame.stack[int(base) + i]
         stream_ref.stream_index = 0
         stream_ref.stream_ended = false
 
+        # Truncate sequence to base position
+        self.frame.stack.setLen(int(base))
         self.frame.stack_index = base
         self.frame.push(stream_ref.to_ref_value())
 
@@ -2560,7 +2585,7 @@ proc exec*(self: VirtualMachine): Value =
           echo "  child = ", child
           echo "  v (stack top) = ", v
           echo "  Stack trace:"
-          for i in 0..<min(5, self.frame.stack_index.int):
+          for i in 0..<min(5, self.frame.stack.len):
             echo "    [", i, "] = ", self.frame.stack[i]
         case v.kind:
           of VkFrame:
@@ -3650,6 +3675,7 @@ proc exec*(self: VirtualMachine): Value =
 
         self.pc.inc()
         self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+        self.frame.scope = self.frame.caller_frame.scope  # Inherit scope from caller frame
         # Pass the class/namespace as args so methods can access it
         let args_gene = new_gene(NIL)
         args_gene.children.add(obj)

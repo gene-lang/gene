@@ -1088,12 +1088,12 @@ proc init_gene_namespace*() =
     else:
       return original
 
-  # append method
+  # append method - creates a NEW string instead of modifying in-place
   proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.append requires a value to append")
 
-    var self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
     let append_arg = get_positional_arg(args, 1, has_keyword_args)
 
     if self_arg.kind != VkString:
@@ -1105,13 +1105,10 @@ proc init_gene_namespace*() =
     else:
       addition = display_value(append_arg, true)
 
-    self_arg = ensure_mutable_string(vm, args, has_keyword_args)
-    let ptr_addr = cast[uint64](self_arg) and PAYLOAD_MASK
-    if ptr_addr == 0:
-      not_allowed("append must be called on a string")
-    let str_ref = cast[ptr String](ptr_addr)
-    str_ref.str.add(addition)
-    self_arg
+    # Create a NEW string by concatenating, don't modify the original
+    let original = self_arg.str
+    let new_string = original & addition
+    new_str_value(new_string)
   
   var append_fn = new_ref(VkNativeFn)
   append_fn.native_fn = string_append
