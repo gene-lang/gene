@@ -1179,7 +1179,11 @@ proc exec*(self: VirtualMachine): Value =
           if indent.len >= 2:
             indent.delete(indent.len-2..indent.len-1)
         # TODO: validate that there is only one value on the stack
-        let v = self.frame.current()
+        # For generators, the stack might be empty after yield
+        let v = if self.frame.stack.len > 0:
+          self.frame.current()
+        else:
+          NIL
         if self.frame.caller_frame == nil:
           # Before returning, if there are pending futures, poll with timeout to let them complete
           var max_iterations = 1000  # Prevent infinite loop
@@ -2142,7 +2146,12 @@ proc exec*(self: VirtualMachine): Value =
         {.pop.}
 
       of IkPushValue:
-        self.frame.push(inst.arg0)
+        if inst.arg0.kind == VkString:
+          # Create a fresh copy of the string literal to prevent in-place mutation
+          # of the instruction's operand by subsequent code.
+          self.frame.push(inst.arg0.str.to_value())
+        else:
+          self.frame.push(inst.arg0)
       of IkPushNil:
         self.frame.push(NIL)
       of IkPushSelf:
@@ -3923,12 +3932,18 @@ proc exec*(self: VirtualMachine): Value =
           # Skip past the yield instruction
           # Check if the next instruction is Pop and skip it too
           var next_pc = self.pc + 1
-          if next_pc < self.cu.instructions.len and 
+          if next_pc < self.cu.instructions.len and
              self.cu.instructions[next_pc].kind == IkPop:
             next_pc += 1  # Skip the Pop that follows yield
-          
-          
+
+
           gen.pc = next_pc
+          # Increment ref count when saving frame to generator
+          if self.frame != nil:
+            self.frame.ref_count.inc()
+          # Decrement ref count of old frame if it exists
+          if gen.frame != nil:
+            gen.frame.ref_count.dec()
           gen.frame = self.frame
           gen.cu = self.cu  # Save the compilation unit
           
@@ -6101,6 +6116,9 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   # Set up generator execution context
   self.cu = gen.cu  # Use saved compilation unit
   self.pc = gen.pc
+  # Increment ref count when using generator frame
+  if gen.frame != nil:
+    gen.frame.ref_count.inc()
   self.frame = gen.frame
   self.exception_handlers = @[]  # Clear exception handlers for generator
   
@@ -6140,6 +6158,9 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   # Restore original VM state
   self.cu = saved_cu
   self.pc = saved_pc
+  # Decrement ref count of generator frame before restoring
+  if gen.frame != nil:
+    gen.frame.ref_count.dec()
   self.frame = saved_frame
   self.exception_handlers = saved_exception_handlers
   self.current_generator = nil
