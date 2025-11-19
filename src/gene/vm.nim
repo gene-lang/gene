@@ -484,7 +484,7 @@ proc print_instruction_profile*(self: VirtualMachine) =
 
 #################### Unified Callable System ####################
 
-proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: bool, base: uint16, count: int] {.inline.} =
+proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: bool, base: uint32, count: int] {.inline.} =
   ## Retrieve call base metadata if present, otherwise fall back to expected count.
   if vm.frame.call_bases.is_empty():
     result.hasBase = false

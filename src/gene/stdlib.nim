@@ -1058,35 +1058,6 @@ proc init_gene_namespace*() =
   string_class.parent = object_class
   
   # Add String methods
-  proc ensure_mutable_string(vm: VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
-    ## Ensure the string value is backed by a mutable heap allocation
-    let self_index = if has_keyword_args: 1 else: 0
-    let original = args[self_index]
-    let raw = cast[uint64](original)
-    let tag = raw and 0xFFFF_0000_0000_0000u64
-
-    case tag
-    of LONG_STR_TAG:
-      return original
-    of SHORT_STR_TAG:
-      let converted = new_str_value(original.str)
-      args[self_index] = converted
-
-      # Update the active scope slot so future accesses see the heap-backed value
-      if vm.frame != nil:
-        var scope = vm.frame.scope
-        var updated = false
-        while scope != nil and not updated:
-          for i in 0..<scope.members.len:
-            if scope.members[i] == original:
-              scope.members[i] = converted
-              updated = true
-              break
-          if not updated:
-            scope = scope.parent
-      return converted
-    else:
-      return original
 
   # append method - creates a NEW string instead of modifying in-place
   proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -1103,12 +1074,12 @@ proc init_gene_namespace*() =
     if append_arg.kind == VkString:
       addition = append_arg.str
     else:
-      addition = display_value(append_arg, true)
+      addition = display_value(append_arg, false)
 
-    # Create a NEW string by concatenating, don't modify the original
-    let original = self_arg.str
-    let new_string = original & addition
-    new_str_value(new_string)
+    let u = cast[uint64](self_arg)
+    let s = cast[ptr String](u and PAYLOAD_MASK)
+    s.str.add(addition)
+    return self_arg
   
   var append_fn = new_ref(VkNativeFn)
   append_fn.native_fn = string_append

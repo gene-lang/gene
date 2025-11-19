@@ -21,11 +21,11 @@
 )
 
 # Multi-expression function with return
-(fn calc [x y]
-  (var sum (x + y))
-  (var product (x * y))
-  (println "Sum:" sum "Product:" product)
-  sum                          # Returns last expression
+(fn fib [n]
+  (if (n <= 1)
+    (return n)
+  )
+  ((fib (n - 1)) + (fib (n - 2)))
 )
 
 # Recursive function
@@ -43,7 +43,7 @@
   (println "If works")
 )
 
-# If-else
+# If-elif-else
 (if (x > 5)
   (println "x is greater than 5")
 elif (x == 5)
@@ -52,23 +52,46 @@ else
   (println "x is less than 5")
 )
 
-# Nested if with complex conditions
+# Nested if
 (var a 5)
 (var b 10)
-(if ((a < b) && (b > 0))
-  (println "Both conditions are true")
+(if (a >= 5)
+  (if (b <= 10)
+    (println "In range")
+  )
 )
 
 # Loop with break
 (var count 0)
 (loop
-  (count += 1)
   (if (count >= 3)
     (break)
   )
+  (count += 1)
 )
 
 # ===== 4. DATA STRUCTURES =====
+# Gene Objects - Native Gene data structure
+# Pattern: (type ^key1 val1 ^key2 val2 pos1 pos2 ...)
+(var point (:Point ^x 10 ^y 20))
+(println "Gene object:" point)
+
+# Gene with mixed properties and positional values
+(var mixed_gene (:Data ^name "test" ^id 123 "value1" "value2"))
+(println "Mixed gene:" mixed_gene)
+
+# Gene with only properties
+(var props_only (:Config ^host "localhost" ^port 8080))
+(println "Props only:" props_only)
+
+# Gene with only positional values
+(var pos_only (:List 1 2 3 4))
+(println "Positional only:" pos_only)
+
+# Nested Gene objects
+(var nested_gene (:Outer ^inner (:Inner ^value 42) ^name "test"))
+(println "Nested gene:" nested_gene)
+
 # Arrays
 (var arr [1 2 3 4 5])
 (println "Array:" arr)
@@ -240,7 +263,7 @@ catch *
 # (debug! (5 + 3))                # Prints "DEBUG: (5 + 3)", returns 8
 
 # ===== 13. COMPLEX NESTED STRUCTURES =====
-(var data =
+(var data
   [{^type "user" ^id 123 ^name "Alice" ^verified true}
    {^type "post" ^id 456 ^title "Introduction" ^comments 5}
    {^type "comment" ^id 789 ^author "Bob" ^text "Great post!"}]
@@ -266,7 +289,7 @@ catch *
 (println "Program:" $program)
 
 # ===== 15. COLLECTION PROCESSING =====
-(var items =
+(var items
   [{^name "apple" ^price 0.5 ^quantity 10}
    {^name "banana" ^price 0.3 ^quantity 5}])
 
@@ -314,7 +337,7 @@ catch *
     (/cache = {})
   )
   (.fn request [endpoint]
-    (var cached = /cache/endpoint)
+    (var cached /cache/endpoint)
     (if cached
       cached
     else
