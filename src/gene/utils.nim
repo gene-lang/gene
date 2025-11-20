@@ -1,3 +1,5 @@
+import strutils
+
 # "0123456789".abbrev(6) => "012...789"
 # "0123456789".abbrev(20) => "0123456789"
 proc abbrev*(s: string, len: int): string =

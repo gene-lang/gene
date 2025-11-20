@@ -422,9 +422,6 @@ proc class_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: in
     m.class = class
     fn.ns = class.ns
     class.methods[m.name.to_key()] = m
-  # of VkMixin:
-  #   fn.ns = x.mixin.ns
-  #   x.mixin.methods[m.name] = m
   else:
     not_allowed()
 

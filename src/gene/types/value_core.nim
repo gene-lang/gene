@@ -1,0 +1,2110 @@
+import math, hashes, tables, sets, re, bitops, unicode, strutils, strformat
+import random
+import times
+import os
+import asyncdispatch  # For async I/O support
+
+import ./type_defs
+export type_defs
+
+# NaN Boxing implementation
+# We use the negative quiet NaN space (0xFFF0-0xFFFF prefix) for non-float values
+# This allows all valid IEEE 754 floats to work correctly
+
+const NAN_MASK* = 0xFFF0_0000_0000_0000u64
+const PAYLOAD_MASK* = 0x0000_FFFF_FFFF_FFFFu64
+const TAG_SHIFT* = 48
+
+# Size limits for immediate integers (48-bit)
+const SMALL_INT_MIN* = -(1'i64 shl 47)
+const SMALL_INT_MAX* = (1'i64 shl 47) - 1
+
+# Legacy constants for compatibility
+const I64_MASK* = 0xC000_0000_0000_0000u64  # Will be removed
+
+
+# Primary type tags in NaN space
+# We use non-canonical quiet NaN values (0xFFF8-0xFFFF prefix with non-zero payload)
+const SMALL_INT_TAG* = 0xFFF8_0000_0000_0000u64   # 48-bit integers
+const POINTER_TAG* = 0xFFFC_0000_0000_0000u64     # Regular pointers
+const REF_TAG* = 0xFFFD_0000_0000_0000u64         # Reference objects
+const GENE_TAG* = 0xFFFA_0000_0000_0000u64        # Gene S-expressions
+const SYMBOL_TAG* = 0xFFF9_0000_0000_0000u64      # Symbols
+const SHORT_STR_TAG* = 0xFFFB_0000_0000_0000u64   # Short strings
+const LONG_STR_TAG* = 0xFFFE_0000_0000_0000u64    # Long string pointers
+const SPECIAL_TAG* = 0xFFF1_0000_0000_0000u64     # Special values (changed from 0xFFF0)
+
+# Special values (using SPECIAL_TAG)
+const NIL* = cast[Value](SPECIAL_TAG or 0)
+const TRUE* = cast[Value](SPECIAL_TAG or 1)
+const FALSE* = cast[Value](SPECIAL_TAG or 2)
+
+const VOID* = cast[Value](SPECIAL_TAG or 3)
+const PLACEHOLDER* = cast[Value](SPECIAL_TAG or 4)
+# Used when a key does not exist in a map
+const NOT_FOUND* = cast[Value](SPECIAL_TAG or 5)
+
+# Special variable used by the parser
+const PARSER_IGNORE* = cast[Value](SPECIAL_TAG or 6)
+
+# Character encoding in special values (using SPECIAL_TAG prefix)
+const CHAR_MASK = 0xFFF1_0000_0001_0000u64
+const CHAR2_MASK = 0xFFF1_0000_0002_0000u64
+const CHAR3_MASK = 0xFFF1_0000_0003_0000u64
+const CHAR4_MASK = 0xFFF1_0000_0004_0000u64
+
+const SHORT_STR_MASK = SHORT_STR_TAG
+const LONG_STR_MASK = LONG_STR_TAG
+
+const EMPTY_STRING = SHORT_STR_TAG
+
+const BIGGEST_INT = 2^61 - 1
+
+#################### Forward declarations #################
+# Value basics
+proc kind*(v: Value): ValueKind {.inline.}
+proc `==`*(a, b: Value): bool {.no_side_effect.}
+converter to_bool*(v: Value): bool {.inline.}
+proc `$`*(self: Value): string {.gcsafe.}
+proc `$`*(self: ptr Reference): string
+proc `$`*(self: ptr Gene): string
+template gene*(v: Value): ptr Gene =
+  if (cast[uint64](v) and 0xFFFF_0000_0000_0000u64) == GENE_TAG:
+    cast[ptr Gene](cast[uint64](v) and PAYLOAD_MASK)
+  else:
+    raise newException(ValueError, "Value is not a gene")
+
+# String/symbol helpers
+proc new_str*(s: string): ptr String
+proc new_str_value*(s: string): Value
+proc str*(v: Value): string {.inline.}
+converter to_value*(v: char): Value {.inline.}
+converter to_value*(v: Rune): Value {.inline.}
+
+# Scope/namespace helpers
+proc update*(self: var Scope, scope: Scope) {.inline.}
+proc `[]=`*(self: Namespace, key: Key, val: Value) {.inline.}
+
+#################### Runtime globals #################
+
+var VM* {.threadvar.}: VirtualMachine   # The current virtual machine (per-thread)
+
+# Application is shared across all threads (initialized once by main thread)
+# After initialization, it's read-only so no locking needed
+var App*: Value
+
+# Threading support
+const CHANNEL_LIMIT* = 1000  # Maximum messages in channel
+const MAX_THREADS* = 64      # Maximum number of threads in pool
+
+# Thread pool is shared across all threads (protected by thread_pool_lock in vm/thread.nim)
+var THREADS*: array[0..MAX_THREADS, ThreadMetadata]
+
+var VmCreatedCallbacks*: seq[VmCallback] = @[]
+
+# Flag to track if gene namespace has been initialized (thread-local for worker threads)
+var gene_namespace_initialized* {.threadvar.}: bool
+
+randomize()
+
+#################### Common ######################
+
+template `==`*(a, b: Key): bool =
+  cast[int64](a) == cast[int64](b)
+
+template hash*(v: Key): Hash =
+  cast[Hash](v)
+
+template `==`*(a, b: Id): bool =
+  cast[int64](a) == cast[int64](b)
+
+template hash*(v: Id): Hash =
+  cast[Hash](v)
+
+proc todo*() =
+  raise new_exception(type_defs.Exception, "TODO")
+
+proc todo*(message: string) =
+  raise new_exception(type_defs.Exception, "TODO: " & message)
+
+proc not_allowed*(message: string) =
+  raise new_exception(type_defs.Exception, message)
+
+proc not_allowed*() =
+  not_allowed("Error: should not arrive here.")
+
+proc to_binstr*(v: int64): string =
+  re.replacef(fmt"{v: 065b}", re.re"([01]{8})", "$1 ")
+
+proc new_id*(): Id =
+  cast[Id](rand(BIGGEST_INT))
+
+converter to_value*(k: Key): Value {.inline.} =
+  cast[Value](k)
+
+#################### Reference ###################
+
+# NOTE: Reference, Gene, and String are manually managed ptr types
+# They use manual ref counting, not Nim's ARC/ORC
+# The ref counting is handled when creating Values from these types
+
+# Memory pool for reference objects
+var REF_POOL* {.threadvar.}: seq[ptr Reference]
+const INITIAL_REF_POOL_SIZE* = 2048
+
+# Manual reference counting for Values
+proc retain*(v: Value) {.inline.} =
+  {.push checks: off.}
+  let u = cast[uint64](v)
+  if (u and NAN_MASK) == NAN_MASK:  # In NaN space
+    case u and 0xFFFF_0000_0000_0000u64:
+      of REF_TAG:
+        let x = cast[ptr Reference](u and PAYLOAD_MASK)
+        x.ref_count.inc()
+      of GENE_TAG:
+        let x = cast[ptr Gene](u and PAYLOAD_MASK)
+        x.ref_count.inc()
+      of LONG_STR_TAG:
+        let x = cast[ptr String](u and PAYLOAD_MASK)
+        x.ref_count.inc()
+      else:
+        discard  # No ref counting for other types
+  {.pop.}
+
+proc release*(v: Value) {.inline.} =
+  {.push checks: off.}
+  let u = cast[uint64](v)
+  if (u and NAN_MASK) == NAN_MASK:  # In NaN space
+    case u and 0xFFFF_0000_0000_0000u64:
+      of REF_TAG:
+        let x = cast[ptr Reference](u and PAYLOAD_MASK)
+        if x.ref_count == 1:
+          if REF_POOL.len < INITIAL_REF_POOL_SIZE * 2:
+            REF_POOL.add(x)
+          else:
+            dealloc(x)
+        else:
+          x.ref_count.dec()
+      of GENE_TAG:
+        let x = cast[ptr Gene](u and PAYLOAD_MASK)
+        if x.ref_count == 1:
+          dealloc(x)
+        else:
+          x.ref_count.dec()
+      of LONG_STR_TAG:
+        let x = cast[ptr String](u and PAYLOAD_MASK)
+        if x.ref_count == 1:
+          dealloc(x)
+        else:
+          x.ref_count.dec()
+      else:
+        discard  # No ref counting for other types
+  {.pop.}
+
+proc `==`*(a, b: ptr Reference): bool =
+  if a.is_nil:
+    return b.is_nil
+
+  if b.is_nil:
+    return false
+
+  if a.kind != b.kind:
+    return false
+
+  case a.kind:
+    of VkArray:
+      return a.arr == b.arr
+    of VkSet:
+      return a.set == b.set
+    of VkMap:
+      return a.map == b.map
+    of VkComplexSymbol:
+      return a.csymbol == b.csymbol
+    else:
+      todo()
+
+proc `$`*(self: ptr Reference): string =
+  $self.kind
+
+proc new_ref*(kind: ValueKind): ptr Reference {.inline.} =
+  if REF_POOL.len > 0:
+    result = REF_POOL.pop()
+    result[].reset()
+  else:
+    result = cast[ptr Reference](alloc0(sizeof(Reference)))
+  copy_mem(result, kind.addr, 2)
+  result.ref_count = 1
+
+proc `ref`*(v: Value): ptr Reference {.inline.} =
+  let u = cast[uint64](v)
+  if (u and 0xFFFF_0000_0000_0000u64) == REF_TAG:
+    cast[ptr Reference](u and PAYLOAD_MASK)
+  else:
+    raise newException(ValueError, "Value is not a reference")
+
+proc to_ref_value*(v: ptr Reference): Value {.inline.} =
+  v.ref_count.inc()
+  # Ensure pointer fits in 48 bits
+  let ptr_addr = cast[uint64](v)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Reference pointer too large for NaN boxing"
+  result = cast[Value](REF_TAG or ptr_addr)
+
+#################### Symbol #####################
+
+var SYMBOLS*: ManagedSymbols
+
+proc get_symbol*(i: int): string {.inline.} =
+  SYMBOLS.store[i]
+
+proc get_symbol_gcsafe*(i: int): string {.inline, gcsafe.} =
+  {.cast(gcsafe).}:
+    result = SYMBOLS.store[i]
+
+proc to_symbol_value*(s: string): Value =
+  {.cast(gcsafe).}:
+    let found = SYMBOLS.map.get_or_default(s, -1)
+    if found != -1:
+      let i = found.uint64
+      result = cast[Value](SYMBOL_TAG or i)
+    else:
+      let new_id = SYMBOLS.store.len.uint64
+      # Ensure symbol ID fits in 48 bits
+      assert new_id <= PAYLOAD_MASK, "Too many symbols for NaN boxing"
+      result = cast[Value](SYMBOL_TAG or new_id)
+      SYMBOLS.map[s] = SYMBOLS.store.len
+      SYMBOLS.store.add(s)
+
+proc to_key*(s: string): Key {.inline.} =
+  cast[Key](to_symbol_value(s))
+
+
+#################### Value ######################
+
+proc `==`*(a, b: Value): bool {.no_side_effect.} =
+  if cast[uint64](a) == cast[uint64](b):
+    return true
+
+  # Compare a NaN-boxed short string payload with a long string reference
+  proc short_equals_long(short_raw: uint64, long_ptr: ptr String): bool {.inline, noSideEffect.} =
+    if long_ptr == nil:
+      return false
+    let text = long_ptr.str
+    if text.len > 6:
+      return false
+    var payload = short_raw and PAYLOAD_MASK
+    for i in 0..<text.len:
+      let byte = char((payload and 0xFF'u64).int)
+      if byte != text[i]:
+        return false
+      payload = payload shr 8
+    payload == 0
+
+  {.cast(gcsafe).}:
+    let u1 = cast[uint64](a)
+    let u2 = cast[uint64](b)
+
+    # Check if both are strings (short or long) and compare them
+    let tag1 = u1 and 0xFFFF_0000_0000_0000u64
+    let tag2 = u2 and 0xFFFF_0000_0000_0000u64
+    if tag1 != tag2:
+      if tag1 == SHORT_STR_TAG and tag2 == LONG_STR_TAG:
+        let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+        return short_equals_long(u1, str2)
+      elif tag1 == LONG_STR_TAG and tag2 == SHORT_STR_TAG:
+        let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
+        return short_equals_long(u2, str1)
+      else:
+        return false
+
+    # Both short strings
+    if tag1 == SHORT_STR_TAG:
+      # For short strings, if they're not bit-identical (already checked above),
+      # they're not equal
+      return false
+    # Both long strings
+    elif tag1 == LONG_STR_TAG:
+      let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
+      let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+      return str1.str == str2.str
+    # Only references can be equal with different bit patterns
+    elif tag1 == REF_TAG:
+      return a.ref == b.ref
+
+  # Default to false
+  return false
+
+proc is_float*(v: Value): bool {.inline, noSideEffect.} =
+  let u = cast[uint64](v)
+  # A value is a float if it's NOT in our NaN boxing space (0xFFF0-0xFFFF prefix)
+  # The only exceptions are actual float NaN/infinity values
+  if (u and NAN_MASK) != NAN_MASK:
+    return true  # Regular float
+  # Check for positive/negative infinity which are valid floats
+  if (u and 0x7FFF_FFFF_FFFF_FFFF'u64) == 0x7FF0_0000_0000_0000'u64:
+    return true  # ±infinity (0x7FF0000000000000 or 0xFFF0000000000000)
+  # Everything else in NaN space is not a float
+  return false
+
+proc is_small_int*(v: Value): bool {.inline, noSideEffect.} =
+  (cast[uint64](v) and 0xFFFF_0000_0000_0000u64) == SMALL_INT_TAG
+
+# Forward declaration
+converter to_int*(v: Value): int64 {.inline, noSideEffect.}
+
+proc kind_slow(v: Value, u: uint64, tag: uint64): ValueKind {.noinline.} =
+  case tag:
+    of POINTER_TAG:
+      return VkPointer
+    of SPECIAL_TAG:
+      # Special values
+      case u:
+        of cast[uint64](NIL):
+          return VkNil
+        of cast[uint64](TRUE), cast[uint64](FALSE):
+          return VkBool
+        of cast[uint64](VOID):
+          return VkVoid
+        of cast[uint64](PLACEHOLDER):
+          return VkPlaceholder
+        else:
+          # Check for character values
+          let char_type = u and 0xFFFF_FFFF_0000_0000u64
+          if char_type == (CHAR_MASK and 0xFFFF_FFFF_0000_0000u64) or
+             char_type == (CHAR2_MASK and 0xFFFF_FFFF_0000_0000u64) or
+             char_type == (CHAR3_MASK and 0xFFFF_FFFF_0000_0000u64) or
+             char_type == (CHAR4_MASK and 0xFFFF_FFFF_0000_0000u64):
+            return VkChar
+          else:
+            todo($u)
+    else:
+      todo($u)
+
+proc kind*(v: Value): ValueKind {.inline.} =
+  {.cast(gcsafe).}:
+    let u = cast[uint64](v)
+
+    # Fast path: Check if it's a float first (most common case)
+    if (u and NAN_MASK) != NAN_MASK:
+      return VkFloat
+
+    # Fast path: Check most common NaN-boxed types with single comparisons
+    let tag = u and 0xFFFF_0000_0000_0000u64
+    case tag:
+      of SMALL_INT_TAG:
+        return VkInt
+      of REF_TAG:
+        return v.ref.kind  # Single pointer dereference
+      of SYMBOL_TAG:
+        return VkSymbol
+      of SHORT_STR_TAG, LONG_STR_TAG:
+        return VkString
+      of GENE_TAG:
+        return VkGene
+      else:
+        # Uncommon cases - delegate to separate function
+        return kind_slow(v, u, tag)
+
+proc is_literal*(self: Value): bool =
+  {.cast(gcsafe).}:
+    let u = cast[uint64](self)
+
+    # Floats and integers are literals
+    if not ((u and NAN_MASK) == NAN_MASK):
+      return true  # Regular float
+
+    # Check NaN-boxed values
+    case u and 0xFFFF_0000_0000_0000u64:
+      of SMALL_INT_TAG, SHORT_STR_TAG, LONG_STR_TAG:
+        result = true
+      of SPECIAL_TAG:
+        # nil, true, false, void, etc. are literals
+        result = true
+      of SYMBOL_TAG:
+        result = false
+      of POINTER_TAG:
+        result = false
+      of REF_TAG:
+        let r = self.ref
+        case r.kind:
+          of VkArray:
+            for v in r.arr:
+              if not is_literal(v):
+                return false
+            return true
+          of VkMap:
+            for v in r.map.values:
+              if not is_literal(v):
+                return false
+            return true
+          of VkSelector:
+            return true
+          else:
+            result = false
+      of GENE_TAG:
+        result = false
+      else:
+        result = false
+
+proc str_no_quotes*(self: Value): string {.gcsafe.} =
+  {.cast(gcsafe).}:
+    case self.kind:
+      of VkNil:
+        result = "nil"
+      of VkVoid:
+        result = "void"
+      of VkPlaceholder:
+        result = "_"
+      of VkBool:
+        result = $(self == TRUE)
+      of VkInt:
+        result = $(self.to_int())
+      of VkFloat:
+        result = $(cast[float64](self))
+      of VkChar:
+        # Check if it's the special NOT_FOUND value
+        if self == NOT_FOUND:
+          result = "not_found"
+        else:
+          result = $cast[char](cast[int64](self) and 0xFF)
+      of VkString:
+        result = $self.str
+      of VkSymbol:
+        result = $self.str
+      of VkComplexSymbol:
+        result = self.ref.csymbol.join("/")
+      of VkRatio:
+        result = $self.ref.ratio_num & "/" & $self.ref.ratio_denom
+      of VkArray, VkVector:
+        result = "["
+        for i, v in self.ref.arr:
+          if i > 0:
+            result &= " "
+          result &= v.str_no_quotes()
+        result &= "]"
+      of VkSet:
+        result = "#{"
+        var first = true
+        for v in self.ref.set:
+          if not first:
+            result &= " "
+          result &= v.str_no_quotes()
+          first = false
+        result &= "}"
+      of VkMap:
+        result = "{"
+        var first = true
+        for k, v in self.ref.map:
+          if not first:
+            result &= " "
+          # Key is a symbol value cast to int64, need to extract the symbol index
+          let symbol_value = cast[Value](k)
+          let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+          result &= "^" & get_symbol(symbol_index.int) & " " & v.str_no_quotes()
+          first = false
+        result &= "}"
+      of VkSelector:
+        result = "@(" & self.ref.selector_pattern & ")"
+      of VkGene:
+        result = $self.gene
+      of VkRange:
+        result = $self.ref.range_start & ".." & $self.ref.range_end
+        if self.ref.range_step != NIL:
+          result &= " step " & $self.ref.range_step
+      of VkRegex:
+        result = "/" & self.ref.regex_pattern & "/"
+      of VkDate:
+        result = $self.ref.date_year & "-" & $self.ref.date_month & "-" & $self.ref.date_day
+      of VkDateTime:
+        result = $self.ref.dt_year & "-" & $self.ref.dt_month & "-" & $self.ref.dt_day &
+                 " " & $self.ref.dt_hour & ":" & $self.ref.dt_minute & ":" & $self.ref.dt_second
+      of VkTime:
+        result = $self.ref.time_hour & ":" & $self.ref.time_minute & ":" & $self.ref.time_second
+      of VkFuture:
+        result = "<Future " & $self.ref.future.state & ">"
+      else:
+        result = $self.kind
+
+proc `$`*(self: Value): string {.gcsafe.} =
+  {.cast(gcsafe).}:
+    case self.kind:
+      of VkNil:
+        result = "nil"
+      of VkVoid:
+        result = "void"
+      of VkPlaceholder:
+        result = "_"
+      of VkBool:
+        result = $(self == TRUE)
+      of VkInt:
+        result = $(to_int(self))
+      of VkFloat:
+        result = $(cast[float64](self))
+      of VkChar:
+        # Check if it's the special NOT_FOUND value
+        if self == NOT_FOUND:
+          result = "not_found"
+        else:
+          result = "'" & $cast[char](cast[int64](self) and 0xFF) & "'"
+      of VkString:
+        result = "\"" & $self.str & "\""
+      of VkSymbol:
+        result = $self.str
+      of VkComplexSymbol:
+        result = self.ref.csymbol.join("/")
+      of VkRatio:
+        result = $self.ref.ratio_num & "/" & $self.ref.ratio_denom
+      of VkArray, VkVector:
+        result = "["
+        for i, v in self.ref.arr:
+          if i > 0:
+            result &= " "
+          result &= $v
+        result &= "]"
+      of VkSet:
+        result = "#{"
+        var first = true
+        for v in self.ref.set:
+          if not first:
+            result &= " "
+          result &= $v
+          first = false
+        result &= "}"
+      of VkMap:
+        result = "{"
+        var first = true
+        for k, v in self.ref.map:
+          if not first:
+            result &= " "
+          # Key is a symbol value cast to int64, need to extract the symbol index
+          let symbol_value = cast[Value](k)
+          let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+          result &= "^" & get_symbol(symbol_index.int) & " " & $v
+          first = false
+        result &= "}"
+      of VkSelector:
+        result = "@(" & self.ref.selector_pattern & ")"
+      of VkGene:
+        result = $self.gene
+      of VkRange:
+        result = $self.ref.range_start & ".." & $self.ref.range_end
+        if self.ref.range_step != NIL:
+          result &= " step " & $self.ref.range_step
+      of VkRegex:
+        result = "/" & self.ref.regex_pattern & "/"
+      of VkDate:
+        result = $self.ref.date_year & "-" & $self.ref.date_month & "-" & $self.ref.date_day
+      of VkDateTime:
+        result = $self.ref.dt_year & "-" & $self.ref.dt_month & "-" & $self.ref.dt_day &
+                 " " & $self.ref.dt_hour & ":" & $self.ref.dt_minute & ":" & $self.ref.dt_second
+      of VkTime:
+        result = $self.ref.time_hour & ":" & $self.ref.time_minute & ":" & $self.ref.time_second
+      of VkFuture:
+        result = "<Future " & $self.ref.future.state & ">"
+      else:
+        result = $self.kind
+
+proc is_nil*(v: Value): bool {.inline.} =
+  v == NIL
+
+proc to_float*(v: Value): float64 {.inline.} =
+  if is_float(v):
+    return cast[float64](v)
+  elif is_small_int(v):
+    # Convert integer to float
+    return to_int(v).float64
+  else:
+    raise newException(ValueError, "Value is not a number")
+
+template float*(v: Value): float64 =
+  to_float(v)
+
+template float64*(v: Value): float64 =
+  to_float(v)
+
+converter to_value*(v: float64): Value {.inline.} =
+  # In NaN boxing, floats are stored directly
+  # Only NaN-boxed values (0xFFF0-0xFFFF prefix) are non-floats
+  result = cast[Value](v)
+
+converter to_bool*(v: Value): bool {.inline.} =
+  not (v == FALSE or v == NIL)
+
+converter to_value*(v: bool): Value {.inline.} =
+  if v:
+    return TRUE
+  else:
+    return FALSE
+
+proc to_pointer*(v: Value): pointer {.inline.} =
+  if (cast[uint64](v) and 0xFFFF_0000_0000_0000u64) == POINTER_TAG:
+    result = cast[pointer](cast[uint64](v) and PAYLOAD_MASK)
+  else:
+    raise newException(ValueError, "Value is not a pointer")
+
+converter to_value*(v: pointer): Value {.inline.} =
+  if v.is_nil:
+    return NIL
+  else:
+    # Ensure pointer fits in 48 bits (true on x86-64, ARM64)
+    let ptr_addr = cast[uint64](v)
+    assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Pointer too large for NaN boxing"
+    result = cast[Value](POINTER_TAG or ptr_addr)
+
+# Applicable to array, vector, string, symbol, gene etc
+proc `[]`*(self: Value, i: int): Value =
+  let u = cast[uint64](self)
+
+  # Check for special values first
+  if u == cast[uint64](NIL):
+    return NIL
+
+  # Check if it's in NaN space
+  if (u and NAN_MASK) == NAN_MASK:
+    case u and 0xFFFF_0000_0000_0000u64:
+      of REF_TAG:
+        let r = self.ref
+        case r.kind:
+          of VkArray, VkVector:
+            if i >= r.arr.len:
+              return NIL
+            else:
+              return r.arr[i]
+          of VkString:
+            var j = 0
+            for rune in r.str.runes:
+              if i == j:
+                return rune
+              j.inc()
+            return NIL
+          of VkBytes:
+            if i >= r.bytes_data.len:
+              return NIL
+            else:
+              return r.bytes_data[i].Value
+          of VkRange:
+            # Calculate the i-th element in the range
+            let start_int = r.range_start.int64
+            let step_int = if r.range_step == NIL: 1.int64 else: r.range_step.int64
+            let end_int = r.range_end.int64
+
+            let value = start_int + (i.int64 * step_int)
+
+            # Check if the value is within the range bounds
+            if step_int > 0:
+              if value >= start_int and value < end_int:
+                return value.Value
+              else:
+                return NIL
+            else:  # step_int < 0
+              if value <= start_int and value > end_int:
+                return value.Value
+              else:
+                return NIL
+          else:
+            todo($r.kind)
+      of GENE_TAG:
+        let g = self.gene
+        if i >= g.children.len:
+          return NIL
+        else:
+          return g.children[i]
+      of SHORT_STR_TAG, LONG_STR_TAG:
+        var j = 0
+        for rune in self.str().runes:
+          if i == j:
+            return rune
+          j.inc()
+        return NIL
+      of SYMBOL_TAG:
+        var j = 0
+        for rune in self.str().runes:
+          if i == j:
+            return rune
+          j.inc()
+        return NIL
+      else:
+        todo($u)
+  else:
+    # Not in NaN space - must be a float
+    todo($u)
+
+# Applicable to array, vector, string, symbol, gene etc
+proc size*(self: Value): int =
+  let u = cast[uint64](self)
+
+  # Check for special values first
+  if u == cast[uint64](NIL):
+    return 0
+
+  # Check if it's in NaN space
+  if (u and NAN_MASK) == NAN_MASK:
+    case u and 0xFFFF_0000_0000_0000u64:
+      of REF_TAG:
+        let r = self.ref
+        case r.kind:
+          of VkArray, VkVector:
+            return r.arr.len
+          of VkSet:
+            return r.set.len
+          of VkMap:
+            return r.map.len
+          of VkString:
+            return r.str.to_runes().len
+          of VkBytes:
+            return r.bytes_data.len
+          of VkRange:
+            # Calculate range size based on start, end, and step
+            let start_int = r.range_start.int64
+            let end_int = r.range_end.int64
+            let step_int = if r.range_step == NIL: 1.int64 else: r.range_step.int64
+            if step_int == 0:
+              return 0
+            elif step_int > 0:
+              if start_int <= end_int:
+                return int((end_int - start_int) div step_int) + 1
+              else:
+                return 0
+            else:  # step_int < 0
+              if start_int >= end_int:
+                return int((start_int - end_int) div (-step_int)) + 1
+              else:
+                return 0
+          else:
+            todo($r.kind)
+      of GENE_TAG:
+        return self.gene.children.len
+      of SHORT_STR_TAG, LONG_STR_TAG:
+        return self.str().to_runes().len
+      of SYMBOL_TAG:
+        return self.str().to_runes().len
+      else:
+        return 0
+  else:
+    # Not in NaN space - must be a float
+    return 0
+
+#################### Int ########################
+
+# NaN boxing for integers - supports 48-bit immediate values
+
+converter to_value*(v: int): Value {.inline, noSideEffect.} =
+  let i = v.int64
+  if i >= SMALL_INT_MIN and i <= SMALL_INT_MAX:
+    # Fits in 48 bits - use NaN boxing
+    result = cast[Value](SMALL_INT_TAG or (cast[uint64](i) and PAYLOAD_MASK))
+  else:
+    # TODO: Allocate BigInt for values outside 48-bit range
+    raise newException(OverflowDefect, "Integer " & $i & " outside supported range")
+
+converter to_value*(v: int16): Value {.inline, noSideEffect.} =
+  # int16 always fits in 48 bits
+  result = cast[Value](SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
+
+converter to_value*(v: int32): Value {.inline, noSideEffect.} =
+  # int32 always fits in 48 bits
+  result = cast[Value](SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
+
+converter to_value*(v: int64): Value {.inline, noSideEffect.} =
+  if v >= SMALL_INT_MIN and v <= SMALL_INT_MAX:
+    # Fits in 48 bits - use NaN boxing
+    result = cast[Value](SMALL_INT_TAG or (cast[uint64](v) and PAYLOAD_MASK))
+  else:
+    # TODO: Allocate BigInt for values outside 48-bit range
+    raise newException(OverflowDefect, "Integer " & $v & " outside supported range")
+
+converter to_int*(v: Value): int64 {.inline, noSideEffect.} =
+  if is_small_int(v):
+    # Extract and sign-extend from 48 bits
+    let raw = cast[uint64](v) and PAYLOAD_MASK
+    if (raw and 0x8000_0000_0000u64) != 0:
+      # Negative - sign extend
+      result = cast[int64](raw or 0xFFFF_0000_0000_0000u64)
+    else:
+      result = cast[int64](raw)
+  else:
+    # TODO: Handle BigInt conversion
+    raise newException(ValueError, "Value is not an integer")
+
+template int64*(v: Value): int64 =
+  to_int(v)
+
+#################### String #####################
+
+proc new_str*(s: string): ptr String =
+  result = cast[ptr String](alloc0(sizeof(String)))
+  result.ref_count = 1
+  result.str = s
+
+proc new_str_value*(s: string): Value =
+  let str_ptr = new_str(s)
+  let ptr_addr = cast[uint64](str_ptr)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "String pointer too large for NaN boxing"
+  result = cast[Value](LONG_STR_TAG or ptr_addr)
+
+converter to_value*(v: char): Value {.inline.} =
+  {.cast(gcsafe).}:
+    # Encode char in special value space
+    result = cast[Value](CHAR_MASK or v.ord.uint64)
+
+proc str*(v: Value): string =
+  {.cast(gcsafe).}:
+    let u = cast[uint64](v)
+
+    # Check if it's in NaN space
+    if (u and NAN_MASK) == NAN_MASK:
+      case u and 0xFFFF_0000_0000_0000u64:
+        of SHORT_STR_TAG:
+          let x = cast[int64](u and PAYLOAD_MASK)
+          # echo x.to_binstr
+          {.push checks: off}
+          if x > 0xFF_FFFF:
+            if x > 0xFFFF_FFFF:
+              if x > 0xFF_FFFF_FFFF: # 6 chars
+                result = new_string(6)
+                copy_mem(result[0].addr, x.addr, 6)
+              else: # 5 chars
+                result = new_string(5)
+                copy_mem(result[0].addr, x.addr, 5)
+            else: # 4 chars
+              result = new_string(4)
+              copy_mem(result[0].addr, x.addr, 4)
+          else:
+            if x > 0xFF:
+              if x > 0xFFFF: # 3 chars
+                result = new_string(3)
+                copy_mem(result[0].addr, x.addr, 3)
+              else: # 2 chars
+                result = new_string(2)
+                copy_mem(result[0].addr, x.addr, 2)
+            else:
+              if x > 0: # 1 chars
+                result = new_string(1)
+                copy_mem(result[0].addr, x.addr, 1)
+              else: # 0 char
+                result = ""
+          {.pop.}
+
+        of LONG_STR_TAG:
+          let x = cast[ptr String](u and PAYLOAD_MASK)
+          result = x.str
+
+        of SYMBOL_TAG:
+          let x = cast[int64](u and PAYLOAD_MASK)
+          result = get_symbol(x)
+
+        else:
+          not_allowed(fmt"{v} is not a string.")
+    else:
+      not_allowed(fmt"{v} is not a string.")
+
+converter to_value*(v: string): Value =
+  {.push checks: off}
+  case v.len:
+    of 0:
+      return cast[Value](EMPTY_STRING)
+    of 1:
+      return cast[Value](bitor(SHORT_STR_MASK,
+        v[0].ord.uint64))
+    of 2:
+      return cast[Value](bitor(SHORT_STR_MASK,
+        v[0].ord.uint64, v[1].ord.shl(8).uint64))
+    of 3:
+      return cast[Value](bitor(SHORT_STR_MASK,
+        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64))
+    of 4:
+      return cast[Value](bitor(SHORT_STR_MASK,
+        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64, v[3].ord.shl(24).uint64))
+    of 5:
+      return cast[Value](bitor(SHORT_STR_MASK,
+        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64, v[3].ord.shl(24).uint64, v[4].ord.shl(32).uint64))
+    of 6:
+      return cast[Value](bitor(SHORT_STR_MASK,
+        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64, v[3].ord.shl(24).uint64, v[4].ord.shl(32).uint64, v[5].ord.shl(40).uint64))
+    else:
+      let s = cast[ptr String](alloc0(sizeof(String)))
+      s.ref_count = 1
+      s.str = v
+      result = cast[Value](bitor(LONG_STR_MASK, cast[uint64](s)))
+  {.pop.}
+
+converter to_value*(v: Rune): Value =
+  let rune_value = v.ord.uint64
+  if rune_value > 0xFF_FFFF:
+    return cast[Value](bitor(CHAR4_MASK, rune_value))
+  elif rune_value > 0xFFFF:
+    return cast[Value](bitor(CHAR3_MASK, rune_value))
+  elif rune_value > 0xFF:
+    return cast[Value](bitor(CHAR2_MASK, rune_value))
+  else:
+    return cast[Value](bitor(CHAR_MASK, rune_value))
+
+#################### ComplexSymbol ###############
+
+proc to_complex_symbol*(parts: seq[string]): Value {.inline.} =
+  let r = new_ref(VkComplexSymbol)
+  r.csymbol = parts
+  result = r.to_ref_value()
+
+#################### Array #######################
+
+proc new_array_value*(v: varargs[Value]): Value =
+  let r = new_ref(VkArray)
+  r.arr = @v
+  result = r.to_ref_value()
+
+proc len*(self: Value): int =
+  case self.kind
+  of VkString:
+    return self.str.len
+  of VkArray, VkVector:
+    return self.ref.arr.len
+  of VkMap:
+    return self.ref.map.len
+  of VkSet:
+    return self.ref.set.len
+  of VkGene:
+    return self.gene.children.len
+  of VkRange:
+    # Calculate range length: (end - start) / step + 1
+    let start = self.ref.range_start.int
+    let endVal = self.ref.range_end.int
+    let step = if self.ref.range_step == NIL: 1 else: self.ref.range_step.int
+    if step == 0:
+      return 0
+    return ((endVal - start) div step) + 1
+  else:
+    return 0
+
+#################### Stream ######################
+
+proc new_stream_value*(v: varargs[Value]): Value =
+  let r = new_ref(VkStream)
+  r.stream = @v
+  result = r.to_ref_value()
+
+#################### Set #########################
+
+proc new_set_value*(): Value =
+  let r = new_ref(VkSet)
+  result = r.to_ref_value()
+
+#################### Map #########################
+
+proc new_map_value*(): Value =
+  let r = new_ref(VkMap)
+  result = r.to_ref_value()
+
+proc new_map_value*(map: Table[Key, Value]): Value =
+  let r = new_ref(VkMap)
+  r.map = map
+  result = r.to_ref_value()
+
+#################### Range ######################
+
+proc new_range_value*(start: Value, `end`: Value, step: Value): Value =
+  let r = new_ref(VkRange)
+  r.range_start = start
+  r.range_end = `end`
+  r.range_step = step
+  result = r.to_ref_value()
+
+proc new_regex_value*(pattern: string, flags: uint8 = 0'u8): Value =
+  let r = new_ref(VkRegex)
+  r.regex_pattern = pattern
+  r.regex_flags = flags
+  result = r.to_ref_value()
+
+proc new_date_value*(year: int, month: int, day: int): Value =
+  let r = new_ref(VkDate)
+  r.date_year = year.int16
+  r.date_month = month.int8
+  r.date_day = day.int8
+  result = r.to_ref_value()
+
+proc new_datetime_value*(dt: DateTime): Value =
+  let r = new_ref(VkDateTime)
+  r.dt_year = dt.year.int16
+  r.dt_month = ord(dt.month).int8
+  r.dt_day = dt.monthday.int8
+  r.dt_hour = dt.hour.int8
+  r.dt_minute = dt.minute.int8
+  r.dt_second = dt.second.int8
+  r.dt_timezone = (dt.utcOffset div 60).int16
+  result = r.to_ref_value()
+
+proc new_time_value*(hour: int, minute: int, second: int, microsecond: int = 0): Value =
+  let r = new_ref(VkTime)
+  r.time_hour = hour.int8
+  r.time_minute = minute.int8
+  r.time_second = second.int8
+  r.time_microsecond = microsecond.int32
+  result = r.to_ref_value()
+
+proc new_selector_value*(segments: openArray[Value]): Value =
+  if segments.len == 0:
+    not_allowed("Selector requires at least one segment")
+
+  let r = new_ref(VkSelector)
+  r.selector_path = @[]
+
+  var pattern_parts: seq[string] = @[]
+  for seg in segments:
+    case seg.kind:
+      of VkString, VkSymbol:
+        pattern_parts.add(seg.str)
+        r.selector_path.add(seg)
+      of VkInt:
+        pattern_parts.add($seg.int64)
+        r.selector_path.add(seg)
+      else:
+        not_allowed("Invalid selector segment: " & $seg.kind)
+
+  r.selector_pattern = pattern_parts.join("/")
+  result = r.to_ref_value()
+
+#################### SourceTrace ##################
+
+proc new_source_trace*(filename: string, line, column: int): SourceTrace =
+  SourceTrace(
+    filename: filename,
+    line: line,
+    column: column,
+    children: @[],
+    child_index: -1,
+  )
+
+proc attach_child*(parent: SourceTrace, child: SourceTrace) =
+  if parent.is_nil or child.is_nil:
+    return
+  child.parent = parent
+  child.child_index = parent.children.len
+  parent.children.add(child)
+
+proc trace_location*(trace: SourceTrace): string =
+  if trace.is_nil:
+    return ""
+  if trace.filename.len > 0:
+    result = trace.filename & ":" & $trace.line & ":" & $trace.column
+  else:
+    result = $trace.line & ":" & $trace.column
+
+#################### Gene ########################
+
+proc to_gene_value*(v: ptr Gene): Value {.inline.} =
+  v.ref_count.inc()
+  # Ensure pointer fits in 48 bits
+  let ptr_addr = cast[uint64](v)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Gene pointer too large for NaN boxing"
+  result = cast[Value](GENE_TAG or ptr_addr)
+
+proc `$`*(self: ptr Gene): string =
+  result = "(" & $self.type
+  for k, v in self.props:
+    result &= " ^" & get_symbol(k.int64) & " " & $v
+  for child in self.children:
+    result &= " " & $child
+  result &= ")"
+
+proc new_gene*(): ptr Gene =
+  result = cast[ptr Gene](alloc0(sizeof(Gene)))
+  result.ref_count = 1
+  result.type = NIL
+  result.trace = nil
+  result.props = Table[Key, Value]()
+  result.children = @[]
+
+proc new_gene*(`type`: Value): ptr Gene =
+  result = cast[ptr Gene](alloc0(sizeof(Gene)))
+  result.ref_count = 1
+  result.type = `type`
+  result.trace = nil
+  result.props = Table[Key, Value]()
+  result.children = @[]
+
+proc new_gene_value*(): Value {.inline.} =
+  new_gene().to_gene_value()
+
+proc new_gene_value*(`type`: Value): Value {.inline.} =
+  new_gene(`type`).to_gene_value()
+
+# proc args_are_literal(self: ptr Gene): bool =
+#   for k, v in self.props:
+#     if not v.is_literal():
+#       return false
+#   for v in self.children:
+#     if not v.is_literal():
+#       return false
+#   true
+
+#################### Application #################
+
+# Forward decls for namespace helpers used here
+proc new_namespace*(): Namespace {.gcsafe.}
+proc new_namespace*(name: string): Namespace {.gcsafe.}
+proc new_namespace*(parent: Namespace): Namespace {.gcsafe.}
+
+proc app*(self: Value): Application {.inline.} =
+  self.ref.app
+
+proc new_app*(): Application =
+  result = Application()
+  let global = new_namespace("global")
+  result.ns = global
+
+#################### Namespace ###################
+
+proc ns*(self: Value): Namespace {.inline.} =
+  self.ref.ns
+
+proc to_value*(self: Namespace): Value {.inline.} =
+  let r = new_ref(VkNamespace)
+  r.ns = self
+  result = r.to_ref_value()
+
+proc new_namespace*(): Namespace =
+  return Namespace(
+    name: "<root>",
+    members: Table[Key, Value](),
+  )
+
+proc new_namespace*(parent: Namespace): Namespace =
+  return Namespace(
+    parent: parent,
+    name: "<root>",
+    members: Table[Key, Value](),
+  )
+
+proc new_namespace*(name: string): Namespace =
+  return Namespace(
+    name: name,
+    members: Table[Key, Value](),
+  )
+
+proc new_namespace*(parent: Namespace, name: string): Namespace =
+  return Namespace(
+    parent: parent,
+    name: name,
+    members: Table[Key, Value](),
+  )
+
+proc root*(self: Namespace): Namespace =
+  if self.name == "<root>":
+    return self
+  else:
+    return self.parent.root
+
+proc get_module*(self: Namespace): Module =
+  if self.module == nil:
+    if self.parent != nil:
+      return self.parent.get_module()
+    else:
+      return
+  else:
+    return self.module
+
+proc package*(self: Namespace): Package =
+  self.get_module().pkg
+
+proc has_key*(self: Namespace, key: Key): bool {.inline.} =
+  return self.members.has_key(key) or (self.parent != nil and self.parent.has_key(key))
+
+proc `[]`*(self: Namespace, key: Key): Value =
+  let found = self.members.get_or_default(key, NOT_FOUND)
+  if found != NOT_FOUND:
+    return found
+  elif not self.stop_inheritance and self.parent != nil:
+    return self.parent[key]
+  else:
+    return NIL
+    # return NOT_FOUND
+    # raise new_exception(NotDefinedException, get_symbol(key.int64) & " is not defined")
+
+proc locate*(self: Namespace, key: Key): (Value, Namespace) =
+  let found = self.members.get_or_default(key, NOT_FOUND)
+  if found != NOT_FOUND:
+    result = (found, self)
+  elif not self.stop_inheritance and self.parent != nil:
+    result = self.parent.locate(key)
+  else:
+    not_allowed()
+
+proc `[]=`*(self: Namespace, key: Key, val: Value) {.inline.} =
+  self.members[key] = val
+  self.version.inc()  # Invalidate caches on mutation
+
+proc get_members*(self: Namespace): Value =
+  todo()
+  # result = new_gene_map()
+  # for k, v in self.members:
+  #   result.map[k] = v
+
+proc member_names*(self: Namespace): Value =
+  todo()
+  # result = new_gene_vec()
+  # for k, _ in self.members:
+  #   result.vec.add(k)
+
+# proc on_member_missing*(frame: Frame, self: Value, args: Value): Value =
+proc on_member_missing*(vm_data: VirtualMachine, args: Value): Value =
+  todo()
+  # let self = args.gene_type
+  # case self.kind
+  # of VkNamespace:
+  #   self.ns.on_member_missing.add(args.gene_children[0])
+  # of VkClass:
+  #   self.class.ns.on_member_missing.add(args.gene_children[0])
+  # else:
+  #   todo("member_missing " & $self.kind)
+
+#################### Scope #######################
+
+
+
+proc free*(self: Scope) =
+  {.push checks: off, optimization: speed.}
+  self.ref_count.dec()
+  if self.ref_count == 0:
+    if self.parent != nil:
+      # When this scope is destroyed, release the reference to parent
+      self.parent.free()  # This will decrement parent's ref_count and free if needed
+    dealloc(self)
+  {.pop.}
+
+proc update*(self: var Scope, scope: Scope) {.inline.} =
+  {.push checks: off, optimization: speed.}
+  if scope != nil:
+    scope.ref_count.inc()
+  if self != nil:
+    self.free()
+  self = scope
+  {.pop.}
+
+proc max*(self: Scope): int16 {.inline.} =
+  return self.members.len.int16
+
+proc set_parent*(self: Scope, parent: Scope) {.inline.} =
+  parent.ref_count.inc()
+  self.parent = parent
+
+proc new_scope*(tracker: ScopeTracker): Scope =
+  result = cast[Scope](alloc0(sizeof(ScopeObj)))
+  result.ref_count = 1
+  result.tracker = tracker
+  result.members = newSeq[Value]()  # Initialize members sequence explicitly
+  result.parent = nil  # Explicitly initialize parent
+
+proc new_scope*(tracker: ScopeTracker, parent: Scope): Scope =
+  result = new_scope(tracker)
+  if not parent.is_nil():
+    result.set_parent(parent)
+
+proc locate(self: ScopeTracker, key: Key, max: int): VarIndex =
+  let found = self.mappings.get_or_default(key, -1)
+  if found >= 0 and found < max:
+    return VarIndex(parent_index: 0, local_index: found)
+  elif self.parent.is_nil():
+    return VarIndex(parent_index: 0, local_index: -1)
+  else:
+    result = self.parent.locate(key, self.parent_index_max.int)
+    if self.next_index > 0: # if current scope is not empty
+      result.parent_index.inc()
+
+proc locate*(self: ScopeTracker, key: Key): VarIndex =
+  let found = self.mappings.get_or_default(key, -1)
+  if found >= 0:
+    return VarIndex(parent_index: 0, local_index: found)
+  elif self.parent.is_nil():
+    return VarIndex(parent_index: 0, local_index: -1)
+  else:
+    result = self.parent.locate(key, self.parent_index_max.int)
+    # Only increment parent_index if we actually created a runtime scope
+    # (indicated by scope_started flag or having variables)
+    if self.next_index > 0 or self.scope_started:
+      result.parent_index.inc()
+
+#################### ScopeTracker ################
+
+proc new_scope_tracker*(): ScopeTracker =
+  ScopeTracker()
+
+proc new_scope_tracker*(parent: ScopeTracker): ScopeTracker =
+  result = ScopeTracker()
+  var p = parent
+  while p != nil:
+    if p.next_index > 0:
+      result.parent = p
+      result.parent_index_max = p.next_index
+      return
+    p = p.parent
+
+proc copy_scope_tracker*(source: ScopeTracker): ScopeTracker =
+  result = ScopeTracker()
+  result.next_index = source.next_index
+  result.parent_index_max = source.parent_index_max
+  result.parent = source.parent
+  # Copy the mappings table
+  for key, value in source.mappings:
+    result.mappings[key] = value
+
+proc add*(self: var ScopeTracker, name: Key) =
+  self.mappings[name] = self.next_index
+  self.next_index.inc()
+
+proc snapshot_scope_tracker*(tracker: ScopeTracker): ScopeTrackerSnapshot =
+  if tracker == nil:
+    return nil
+
+  result = ScopeTrackerSnapshot(
+    next_index: tracker.next_index,
+    parent_index_max: tracker.parent_index_max,
+    scope_started: tracker.scope_started,
+    mappings: @[],
+    parent: snapshot_scope_tracker(tracker.parent)
+  )
+
+  for key, value in tracker.mappings:
+    result.mappings.add((key, value))
+
+proc materialize_scope_tracker*(snapshot: ScopeTrackerSnapshot): ScopeTracker =
+  if snapshot == nil:
+    return nil
+
+  result = ScopeTracker(
+    next_index: snapshot.next_index,
+    parent_index_max: snapshot.parent_index_max,
+    scope_started: snapshot.scope_started,
+    parent: materialize_scope_tracker(snapshot.parent)
+  )
+
+  for pair in snapshot.mappings:
+    result.mappings[pair[0]] = pair[1]
+
+proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil): FunctionDefInfo =
+  var body_value = NIL
+  if body != nil:
+    let cu_ref = new_ref(VkCompiledUnit)
+    cu_ref.cu = body
+    body_value = cu_ref.to_ref_value()
+
+  result = FunctionDefInfo(
+    scope_tracker: tracker,
+    compiled_body: body_value
+  )
+
+proc to_value*(info: FunctionDefInfo): Value =
+  let r = new_ref(VkFunctionDef)
+  r.function_def = info
+  result = r.to_ref_value()
+
+proc to_function_def_info*(value: Value): FunctionDefInfo =
+  if value.kind != VkFunctionDef:
+    not_allowed("Expected FunctionDef info value")
+  result = value.ref.function_def
+
+#################### Pattern Matching ############
+
+proc new_match_matcher*(): RootMatcher =
+  result = RootMatcher(
+    mode: MatchExpression,
+  )
+
+proc new_arg_matcher*(): RootMatcher =
+  result = RootMatcher(
+    mode: MatchArguments,
+  )
+
+proc new_matcher*(root: RootMatcher, kind: MatcherKind): Matcher =
+  result = Matcher(
+    root: root,
+    kind: kind,
+  )
+
+proc is_empty*(self: RootMatcher): bool =
+  self.children.len == 0
+
+proc required*(self: Matcher): bool =
+  # return self.default_value_expr == nil and not self.is_splat
+  return not self.is_splat
+
+proc check_hint*(self: RootMatcher) =
+  if self.children.len == 0:
+    self.hint_mode = MhNone
+  else:
+    self.hint_mode = MhSimpleData
+    for item in self.children:
+      if item.kind != MatchData or not item.required:
+        self.hint_mode = MhDefault
+        return
+
+# proc hint*(self: RootMatcher): MatchingHint =
+#   if self.children.len == 0:
+#     result.mode = MhNone
+#   else:
+#     result.mode = MhSimpleData
+#     for item in self.children:
+#       if item.kind != MatchData or not item.required:
+#         result.mode = MhDefault
+#         return
+
+# proc new_matched_field*(name: string, value: Value): MatchedField =
+#   result = MatchedField(
+#     name: name,
+#     value: value,
+#   )
+
+proc props*(self: seq[Matcher]): HashSet[Key] =
+  for m in self:
+    if m.kind == MatchProp and not m.is_splat:
+      result.incl(m.name_key)
+
+proc prop_splat*(self: seq[Matcher]): Key =
+  for m in self:
+    if m.kind == MatchProp and m.is_splat:
+      return m.name_key
+
+proc parse*(self: RootMatcher, v: Value)
+
+proc calc_next*(self: Matcher) =
+  var last: Matcher = nil
+  for m in self.children.mitems:
+    m.calc_next()
+    if m.kind in @[MatchData, MatchLiteral]:
+      if last != nil:
+        last.next = m
+      last = m
+
+proc calc_next*(self: RootMatcher) =
+  var last: Matcher = nil
+  for m in self.children.mitems:
+    m.calc_next()
+    if m.kind in @[MatchData, MatchLiteral]:
+      if last != nil:
+        last.next = m
+      last = m
+
+proc calc_min_left*(self: Matcher) =
+  {.push checks: off}
+  var min_left = 0
+  var i = self.children.len
+  while i > 0:
+    i -= 1
+    let m = self.children[i]
+    m.calc_min_left()
+    m.min_left = min_left
+    if m.required:
+      min_left += 1
+  {.pop.}
+
+proc calc_min_left*(self: RootMatcher) =
+  {.push checks: off}
+  var min_left = 0
+  var i = self.children.len
+  while i > 0:
+    i -= 1
+    let m = self.children[i]
+    m.calc_min_left()
+    m.min_left = min_left
+    if m.required:
+      min_left += 1
+  {.pop.}
+
+proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
+  {.push checks: off}
+  case v.kind:
+    of VkSymbol:
+      if v.str[0] == '^':
+        let m = new_matcher(self, MatchProp)
+        if v.str.ends_with("..."):
+          m.is_splat = true
+          if v.str[1] == '^':
+            m.name_key = v.str[2..^4].to_key()
+            m.is_prop = true
+          else:
+            m.name_key = v.str[1..^4].to_key()
+            m.is_prop = true  # Named parameters always have is_prop = true
+        else:
+          if v.str[1] == '^':
+            m.name_key = v.str[2..^1].to_key()
+            m.is_prop = true
+          else:
+            m.name_key = v.str[1..^1].to_key()
+            m.is_prop = true  # Named parameters always have is_prop = true
+        group.add(m)
+      else:
+        let m = new_matcher(self, MatchData)
+        group.add(m)
+        if v.str != "_":
+          if v.str.ends_with("..."):
+            m.is_splat = true
+            if v.str[0] == '^':
+              m.name_key = v.str[1..^4].to_key()
+              m.is_prop = true
+            else:
+              m.name_key = v.str[0..^4].to_key()
+          else:
+            if v.str[0] == '^':
+              m.name_key = v.str[1..^1].to_key()
+              m.is_prop = true
+            else:
+              m.name_key = v.str.to_key()
+    of VkComplexSymbol:
+      if v.ref.csymbol[0] == "^":
+        todo("parse " & $v)
+      else:
+        var m = new_matcher(self, MatchData)
+        group.add(m)
+        m.is_prop = true
+        let name = v.ref.csymbol[1]
+        if name.ends_with("..."):
+          m.is_splat = true
+          m.name_key = name[0..^4].to_key()
+        else:
+          m.name_key = name.to_key()
+    of VkArray:
+      var i = 0
+      while i < v.ref.arr.len:
+        let item = v.ref.arr[i]
+        i += 1
+        if item.kind == VkArray:
+          let m = new_matcher(self, MatchData)
+          group.add(m)
+          self.parse(m.children, item)
+        else:
+          self.parse(group, item)
+          if i < v.ref.arr.len and v.ref.arr[i] == "=".to_symbol_value():
+            i += 1
+            let last_matcher = group[^1]
+            let value = v.ref.arr[i]
+            i += 1
+            last_matcher.default_value = value
+    of VkQuote:
+      todo($VkQuote)
+      # var m = new_matcher(self, MatchLiteral)
+      # m.literal = v.quote
+      # m.name = "<literal>"
+      # group.add(m)
+    else:
+      todo("parse " & $v.kind)
+  {.pop.}
+
+proc parse*(self: RootMatcher, v: Value) =
+  if v == nil or v == to_symbol_value("_"):
+    return
+  self.parse(self.children, v)
+  self.calc_min_left()
+  self.calc_next()
+
+proc new_arg_matcher*(value: Value): RootMatcher =
+  result = new_arg_matcher()
+  result.parse(value)
+  result.check_hint()
+
+#################### Function ####################
+
+proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Function =
+  return Function(
+    name: name,
+    matcher: matcher,
+    # matching_hint: matcher.hint,
+    body: body,
+  )
+
+proc to_function*(node: Value): Function {.gcsafe.} =
+  if node.kind != VkGene:
+    raise new_exception(type_defs.Exception, "Expected Gene for function definition, got " & $node.kind)
+
+  if node.gene == nil:
+    raise new_exception(type_defs.Exception, "Gene pointer is nil")
+
+  var name: string
+  let matcher = new_arg_matcher()
+  var body_start: int
+  var is_generator = false
+  var is_macro_like = false
+
+  # Check if defined with fn! type
+  if node.gene.type != NIL and node.gene.type == "fn!".to_symbol_value():
+    is_macro_like = true
+
+  if node.gene.type != NIL and node.gene.type == "fnx".to_symbol_value():
+    matcher.parse(node.gene.children[0])
+    name = "<unnamed>"
+    body_start = 1
+  elif node.gene.type != NIL and node.gene.type == "fnxx".to_symbol_value():
+    name = "<unnamed>"
+    body_start = 0
+  else:
+    if node.gene.children.len == 0:
+      raise new_exception(type_defs.Exception, "Invalid function definition: expected function name")
+    let first = node.gene.children[0]
+    case first.kind:
+      of VkSymbol, VkString:
+        name = first.str
+        # Check if function name ends with ! (macro-like function)
+        if name.len > 0 and name[^1] == '!':
+          is_macro_like = true
+        # Check if function name ends with * (generator function)
+        elif name.len > 0 and name[^1] == '*':
+          is_generator = true
+      of VkComplexSymbol:
+        name = first.ref.csymbol[^1]
+        # Check if function name ends with ! (macro-like function)
+        if name.len > 0 and name[^1] == '!':
+          is_macro_like = true
+        # Check if function name ends with * (generator function)
+        elif name.len > 0 and name[^1] == '*':
+          is_generator = true
+      else:
+        todo($first.kind)
+
+    matcher.parse(node.gene.children[1])
+    body_start = 2
+
+  matcher.check_hint()
+  var body: seq[Value] = @[]
+  for i in body_start..<node.gene.children.len:
+    body.add node.gene.children[i]
+
+  # Check if function has async attribute from properties
+  var is_async = false
+  let async_key = "async".to_key()
+  if node.gene.props.has_key(async_key) and node.gene.props[async_key] == TRUE:
+    is_async = true
+    discard  # Function is async
+
+  # Check if function has generator flag from properties (^^generator syntax)
+  let generator_key = "generator".to_key()
+  if node.gene.props.has_key(generator_key) and node.gene.props[generator_key] == TRUE:
+    is_generator = true
+
+  # body = wrap_with_try(body)
+  result = new_fn(name, matcher, body)
+  result.async = is_async
+  result.is_generator = is_generator
+  result.is_macro_like = is_macro_like
+
+# compile method is defined in compiler.nim
+
+#################### CompileFn ###################
+
+proc new_compile_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): CompileFn =
+  return CompileFn(
+    name: name,
+    matcher: matcher,
+    # matching_hint: matcher.hint,
+    body: body,
+  )
+
+proc to_compile_fn*(node: Value): CompileFn {.gcsafe.} =
+  let first = node.gene.children[0]
+  var name: string
+  if first.kind == VkSymbol:
+    name = first.str
+  elif first.kind == VkComplexSymbol:
+    name = first.ref.csymbol[^1]
+
+  let matcher = new_arg_matcher()
+  matcher.parse(node.gene.children[1])
+  matcher.check_hint()
+
+  var body: seq[Value] = @[]
+  for i in 2..<node.gene.children.len:
+    body.add node.gene.children[i]
+
+  # body = wrap_with_try(body)
+  result = new_compile_fn(name, matcher, body)
+
+# compile method needs to be defined - see compiler.nim
+
+#################### Block #######################
+
+proc new_block*(matcher: RootMatcher,  body: sink seq[Value]): Block =
+  return Block(
+    matcher: matcher,
+    # matching_hint: matcher.hint,
+    body: body,
+  )
+
+proc to_block*(node: Value): Block {.gcsafe.} =
+  let matcher = new_arg_matcher()
+  var body_start: int
+  if node.gene.type == "->".to_symbol_value():
+    body_start = 0
+  else:
+    matcher.parse(node.gene.type)
+    body_start = 1
+
+  matcher.check_hint()
+  var body: seq[Value] = @[]
+  for i in body_start..<node.gene.children.len:
+    body.add node.gene.children[i]
+
+  # body = wrap_with_try(body)
+  result = new_block(matcher, body)
+
+# compile method needs to be defined - see compiler.nim
+
+#################### Future ######################
+
+proc new_future*(): FutureObj =
+  result = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nil  # Synchronous future by default
+  )
+
+proc new_future*(nim_fut: Future[Value]): FutureObj =
+  ## Create a FutureObj that wraps a Nim async future
+  result = FutureObj(
+    state: FsPending,
+    value: NIL,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nim_fut
+  )
+
+proc new_future_value*(): Value =
+  let r = new_ref(VkFuture)
+  r.future = new_future()
+  return r.to_ref_value()
+
+proc complete*(f: FutureObj, value: Value) =
+  if f.state != FsPending:
+    not_allowed("Future already completed")
+  f.state = FsSuccess
+  f.value = value
+  # Execute success callbacks
+  # Note: Callbacks are executed immediately when future completes
+  # In real async, these would be scheduled on the event loop
+  for callback in f.success_callbacks:
+    if callback.kind == VkFunction:
+      # Execute Gene function with value as argument
+      # We need a VM instance to execute, but we don't have one here
+      # This will be handled by update_from_nim_future which has VM access
+      discard
+    # For now, callbacks are stored but not executed here
+    # They will be executed by update_from_nim_future or by explicit VM call
+
+proc fail*(f: FutureObj, error: Value) =
+  if f.state != FsPending:
+    not_allowed("Future already completed")
+  f.state = FsFailure
+  f.value = error
+  # Execute failure callbacks
+  for callback in f.failure_callbacks:
+    if callback.kind == VkFunction:
+      # Execute Gene function with error as argument
+      # We need a VM instance to execute, but we don't have one here
+      # This will be handled by update_from_nim_future which has VM access
+      discard
+    # For now, callbacks are stored but not executed here
+    # They will be executed by update_from_nim_future or by explicit VM call
+
+proc update_from_nim_future*(f: FutureObj) =
+  ## Check if the underlying Nim future has completed and update our state
+  ## This should be called during event loop polling
+  ## NOTE: This version doesn't execute callbacks - use update_future_from_nim in vm/async.nim for that
+  if f.nim_future.isNil or f.state != FsPending:
+    return  # No Nim future to check, or already completed
+
+  if finished(f.nim_future):
+    # Nim future has completed - copy its result
+    if failed(f.nim_future):
+      # Future failed with exception
+      # TODO: Wrap exception properly when exception handling is ready
+      f.state = FsFailure
+      f.value = new_str_value("Async operation failed")
+    else:
+      # Future succeeded
+      f.state = FsSuccess
+      f.value = read(f.nim_future)
+
+    # Execute appropriate callbacks
+    if f.state == FsSuccess:
+      for callback in f.success_callbacks:
+        # TODO: Execute callback with value
+        discard
+    else:
+      for callback in f.failure_callbacks:
+        # TODO: Execute callback with error
+        discard
+
+#################### Enum ########################
+
+proc new_enum*(name: string): EnumDef =
+  return EnumDef(
+    name: name,
+    members: initTable[string, EnumMember]()
+  )
+
+proc new_enum_member*(parent: Value, name: string, value: int): EnumMember =
+  return EnumMember(
+    parent: parent,
+    name: name,
+    value: value
+  )
+
+proc to_value*(e: EnumDef): Value =
+  let r = new_ref(VkEnum)
+  r.enum_def = e
+  return r.to_ref_value()
+
+proc to_value*(m: EnumMember): Value =
+  let r = new_ref(VkEnumMember)
+  r.enum_member = m
+  return r.to_ref_value()
+
+proc add_member*(self: Value, name: string, value: int) =
+  if self.kind != VkEnum:
+    not_allowed("add_member can only be called on enums")
+  let member = new_enum_member(self, name, value)
+  self.ref.enum_def.members[name] = member
+
+proc `[]`*(self: Value, name: string): Value =
+  if self.kind != VkEnum:
+    not_allowed("enum member access can only be used on enums")
+  if name in self.ref.enum_def.members:
+    return self.ref.enum_def.members[name].to_value()
+  else:
+    not_allowed("enum " & self.ref.enum_def.name & " has no member " & name)
+
+#################### Native ######################
+
+converter to_value*(f: NativeFn): Value {.inline.} =
+  let r = new_ref(VkNativeFn)
+  r.native_fn = f
+  result = r.to_ref_value()
+
+converter to_value*(t: type_defs.Thread): Value {.inline.} =
+  let r = new_ref(VkThread)
+  r.thread = t
+  return r.to_ref_value()
+
+converter to_value*(m: type_defs.ThreadMessage): Value {.inline.} =
+  let r = new_ref(VkThreadMessage)
+  r.thread_message = m
+  return r.to_ref_value()
+
+# Helper functions for new NativeFn signature
+proc get_positional_arg*(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value {.inline.} =
+  ## Get positional argument (handles keyword offset automatically)
+  let offset = if has_keyword_args: 1 else: 0
+  return args[offset + index]
+
+proc get_keyword_arg*(args: ptr UncheckedArray[Value], name: string): Value {.inline.} =
+  ## Get keyword argument by name
+  if args[0].kind == VkMap:
+    return args[0].ref.map.get_or_default(name.to_key(), NIL)
+  else:
+    return NIL
+
+proc has_keyword_arg*(args: ptr UncheckedArray[Value], name: string): bool {.inline.} =
+  ## Check if keyword argument exists
+  if args[0].kind == VkMap:
+    return args[0].ref.map.hasKey(name.to_key())
+  else:
+    return false
+
+proc get_positional_count*(arg_count: int, has_keyword_args: bool): int {.inline.} =
+  ## Get the number of positional arguments
+  if has_keyword_args: arg_count - 1 else: arg_count
+
+# Helper functions specifically for native methods
+proc get_self*(args: ptr UncheckedArray[Value], has_keyword_args: bool): Value {.inline.} =
+  ## Get self object for native methods (always first positional argument)
+  return get_positional_arg(args, 0, has_keyword_args)
+
+proc get_method_arg*(args: ptr UncheckedArray[Value], index: int, has_keyword_args: bool): Value {.inline.} =
+  ## Get method argument by index (index 0 = first argument after self)
+  return get_positional_arg(args, index + 1, has_keyword_args)
+
+proc get_method_arg_count*(arg_count: int, has_keyword_args: bool): int {.inline.} =
+  ## Get the number of method arguments (excluding self)
+  let positional_count = get_positional_count(arg_count, has_keyword_args)
+  if positional_count > 0: positional_count - 1 else: 0
+
+# Migration helpers
+proc get_legacy_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): seq[Value] =
+  ## Helper to convert to seq[Value] for easier migration
+  result = newSeq[Value]()
+  let offset = if has_keyword_args: 1 else: 0
+  for i in offset..<arg_count:
+    result.add(args[i])
+
+proc create_gene_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  ## For functions that need Gene object temporarily during migration
+  var gene_args = new_gene_value()
+  let offset = if has_keyword_args: 1 else: 0
+  for i in offset..<arg_count:
+    gene_args.gene.children.add(args[i])
+  return gene_args
+
+# Helper for calling native functions with proper casting
+proc call_native_fn*(fn: NativeFn, vm: VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
+  ## Helper to call native function with proper array casting
+  if args.len == 0:
+    return fn(vm, nil, 0, has_keyword_args)
+  else:
+    return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
+
+#################### Frame #######################
+const INITIAL_FRAME_POOL_SIZE* = 1024
+
+var FRAMES* {.threadvar.}: seq[Frame]
+
+proc init*(self: var CallBaseStack) {.inline.} =
+  self.data = newSeq[uint16](0)
+
+proc reset*(self: var CallBaseStack) {.inline.} =
+  if self.data.len > 0:
+    self.data.setLen(0)
+
+proc push*(self: var CallBaseStack, base: uint16) {.inline.} =
+  self.data.add(base)
+
+proc pop*(self: var CallBaseStack): uint16 {.inline.} =
+  assert self.data.len > 0, "Call base stack underflow"
+  let idx = self.data.len - 1
+  result = self.data[idx]
+  self.data.setLen(idx)
+
+proc peek*(self: CallBaseStack): uint16 {.inline.} =
+  assert self.data.len > 0, "Call base stack is empty"
+  result = self.data[self.data.len - 1]
+
+proc is_empty*(self: CallBaseStack): bool {.inline.} =
+  self.data.len == 0
+
+proc reset_frame*(self: Frame) {.inline.} =
+  # Reset only necessary fields, avoiding full memory clear
+  self.kind = FkFunction
+  self.caller_frame = nil
+  self.caller_address = Address()
+  self.caller_context = nil
+  self.ns = nil
+  self.scope = nil
+  self.target = NIL
+  # self field removed - self is now the first argument
+  self.args = NIL
+  self.current_method = nil
+  self.stack_index = 0
+  self.call_bases.reset()
+  # Stack array will be overwritten as needed, no need to clear
+
+proc free*(self: var Frame) =
+  {.push checks: off, optimization: speed.}
+  self.ref_count.dec()
+  if self.ref_count <= 0:
+    if self.caller_frame != nil:
+      self.caller_frame.free()
+    # Only free scope if frame owns it (functions without parameters borrow parent scope)
+    # For now, we rely on IkScopeEnd to manage scopes properly
+    # TODO: Track whether frame owns or borrows its scope
+    if self.scope != nil and false:  # Disabled for now - IkScopeEnd handles it
+      self.scope.free()
+    self.reset_frame()
+    FRAMES.add(self)
+  {.pop.}
+
+var FRAME_ALLOCS* {.threadvar.}: int
+var FRAME_REUSES* = 0
+
+proc new_frame*(): Frame {.inline.} =
+  {.push boundChecks: off, overflowChecks: off.}
+  if FRAMES.len > 0:
+    result = FRAMES.pop()
+    FRAME_REUSES.inc()
+  else:
+    result = cast[Frame](alloc0(sizeof(FrameObj)))
+    FRAME_ALLOCS.inc()
+  result.ref_count = 1
+  result.stack_index = 0  # Reset stack index
+  result.call_bases.init()
+  {.pop.}
+
+proc new_frame*(ns: Namespace): Frame {.inline.} =
+  result = new_frame()
+  result.ns = ns
+
+proc new_frame*(caller_frame: Frame, caller_address: Address): Frame {.inline.} =
+  result = new_frame()
+  caller_frame.ref_count.inc()
+  result.caller_frame = caller_frame
+  result.caller_address = caller_address
+
+proc new_frame*(caller_frame: Frame, caller_address: Address, scope: Scope): Frame {.inline.} =
+  result = new_frame()
+  caller_frame.ref_count.inc()
+  result.caller_frame = caller_frame
+  result.caller_address = caller_address
+  result.scope = scope
+
+proc update*(self: var Frame, f: Frame) {.inline.} =
+  {.push checks: off, optimization: speed.}
+  f.ref_count.inc()
+  if self != nil:
+    self.free()
+  self = f
+  {.pop.}
+
+template current*(self: Frame): Value =
+  self.stack[self.stack_index - 1]
+
+proc replace*(self: var Frame, v: Value) {.inline.} =
+  {.push boundChecks: off, overflowChecks: off.}
+  self.stack[self.stack_index - 1] = v
+  {.pop.}
+
+template push*(self: var Frame, value: sink Value) =
+  {.push boundChecks: off, overflowChecks: off.}
+  if self.stack_index >= self.stack.len.uint16:
+    var detail = ""
+    if not VM.isNil and not VM.cu.is_nil:
+      let pc = VM.pc
+      detail = " at pc " & $pc
+      if pc >= 0 and pc < VM.cu.instructions.len:
+        detail &= " (" & $VM.cu.instructions[pc].kind & ")"
+    raise new_exception(type_defs.Exception, "Stack overflow: frame stack exceeded " & $self.stack.len & detail)
+  self.stack[self.stack_index] = value
+  self.stack_index.inc()
+  {.pop.}
+
+proc pop*(self: var Frame): Value {.inline.} =
+  {.push boundChecks: off, overflowChecks: off.}
+  self.stack_index.dec()
+  result = self.stack[self.stack_index]
+  self.stack[self.stack_index] = NIL
+  {.pop.}
+
+template pop2*(self: var Frame, to: var Value) =
+  {.push boundChecks: off, overflowChecks: off.}
+  self.stack_index.dec()
+  copy_mem(to.addr, self.stack[self.stack_index].addr, 8)
+  self.stack[self.stack_index] = NIL
+  {.pop.}
+
+proc push_call_base*(self: Frame) {.inline.} =
+  assert self.stack_index > 0, "Cannot push call base without callee on stack"
+  let base = self.stack_index - 1
+  self.call_bases.push(base)
+
+proc peek_call_base*(self: Frame): uint16 {.inline.} =
+  self.call_bases.peek()
+
+proc pop_call_base*(self: Frame): uint16 {.inline.} =
+  self.call_bases.pop()
+
+proc call_arg_count_from*(self: Frame, base: uint16): int {.inline.} =
+  let stack_top = int(self.stack_index)
+  let base_index = int(base)
+  assert stack_top >= base_index + 1, "Call base exceeds stack height"
+  stack_top - (base_index + 1)
+
+proc call_arg_count*(self: Frame): int {.inline.} =
+  self.call_arg_count_from(self.stack_index)
+
+proc pop_call_arg_count*(self: Frame): int {.inline.} =
+  let base = self.pop_call_base()
+  self.call_arg_count_from(base)
