@@ -5,104 +5,6 @@ import ./parser
 import "./compiler/if"
 
 const DEBUG = false
-
-proc container_key(): Key {.inline.} =
-  "container".to_key()
-
-proc build_container_value(parts: seq[string]): Value =
-  if parts.len == 0:
-    return NIL
-  if parts.len == 1:
-    return parts[0].to_symbol_value()
-  parts.to_complex_symbol()
-
-proc split_container_name(name: Value): tuple[base: Value, container: Value] =
-  result.base = name
-  result.container = NIL
-
-  proc normalize_prefix(prefix: seq[string]): seq[string] =
-    result = @[]
-    if prefix.len == 0:
-      return
-    result = prefix
-    if result.len > 0 and result[0].len == 0:
-      result[0] = "self"
-
-  case name.kind
-  of VkComplexSymbol:
-    let cs = name.ref.csymbol
-    if cs.len < 2:
-      return
-    if cs[0] == "$ns":
-      return
-    let prefix = cs[0..^2]
-    if prefix.len == 0:
-      return
-    let normalized = normalize_prefix(prefix)
-    let container_value = build_container_value(normalized)
-    if container_value == NIL:
-      return
-    result.base = cs[^1].to_symbol_value()
-    result.container = container_value
-  of VkSymbol:
-    let s = name.str
-    if s.contains("/") and s != "$ns":
-      let parts = s.split("/")
-      if parts.len < 2:
-        return
-      if parts[0] == "$ns":
-        return
-      var prefix = parts[0..^2]
-      let normalized = normalize_prefix(prefix)
-      let container_value = build_container_value(normalized)
-      if container_value == NIL:
-        return
-      result.base = parts[^1].to_symbol_value()
-      result.container = container_value
-  else:
-    discard
-
-proc apply_container_to_child(gene: ptr Gene, child_index: int) =
-  if gene.children.len <= child_index:
-    return
-  if gene.props.hasKey(container_key()):
-    return
-  let (base, container_value) = split_container_name(gene.children[child_index])
-  if container_value == NIL:
-    return
-  gene.props[container_key()] = container_value
-  gene.children[child_index] = base
-
-proc apply_container_to_type(gene: ptr Gene) =
-  if gene.props.hasKey(container_key()):
-    return
-  let (base, container_value) = split_container_name(gene.type)
-  if container_value == NIL:
-    return
-  gene.props[container_key()] = container_value
-  gene.type = base
-
-#################### Trace Helpers #################
-
-proc current_trace(self: Compiler): SourceTrace =
-  if self.trace_stack.len == 0:
-    return nil
-  self.trace_stack[^1]
-
-proc push_trace(self: Compiler, trace: SourceTrace) =
-  if trace.is_nil:
-    return
-  self.trace_stack.add(trace)
-
-proc pop_trace(self: Compiler) =
-  if self.trace_stack.len > 0:
-    self.trace_stack.setLen(self.trace_stack.len - 1)
-
-proc emit(self: Compiler, instr: Instruction) =
-  if self.output.is_nil:
-    return
-  self.output.add_instruction(instr, self.current_trace())
-
 #################### Definitions #################
 proc compile*(self: Compiler, input: Value)
 proc compile_with(self: Compiler, gene: ptr Gene)
@@ -124,6 +26,9 @@ proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
 
+include ./compiler/helpers
+include ./compiler/collections
+
 proc compile(self: Compiler, input: seq[Value]) =
   for i, v in input:
     # Set tail position for the last expression
@@ -142,258 +47,6 @@ proc compile(self: Compiler, input: seq[Value]) =
     
     if i < input.len - 1:
       self.emit(Instruction(kind: IkPop))
-
-proc compile_literal(self: Compiler, input: Value) =
-  self.emit(Instruction(kind: IkPushValue, arg0: input))
-
-proc compile_unary_not(self: Compiler, operand: Value) {.inline.} =
-  ## Emit bytecode for a logical not.
-  self.compile(operand)
-  self.emit(Instruction(kind: IkNot))
-
-proc compile_var_op_literal(self: Compiler, symbolVal: Value, literal: Value, opKind: InstructionKind): bool =
-  ## Emit optimized instruction when a variable is operated with a literal.
-  if symbolVal.kind != VkSymbol or not literal.is_literal():
-    return false
-
-  let key = symbolVal.str.to_key()
-  let found = self.scope_tracker.locate(key)
-  if found.local_index >= 0:
-    self.emit(Instruction(
-      kind: opKind,
-      arg0: found.local_index.to_value(),
-      arg1: found.parent_index.int32
-    ))
-    self.emit(Instruction(kind: IkData, arg0: literal))
-    return true
-  false
-
-# Translate $x to gene/x and $x/y to gene/x/y
-proc translate_symbol(input: Value): Value =
-  case input.kind:
-    of VkSymbol:
-      let s = input.str
-      if s.starts_with("$") and s.len > 1:
-        # Special case for $ns - translate to special symbol
-        if s == "$ns":
-          result = cast[Value](SYM_NS)
-        else:
-          result = @["gene", s[1..^1]].to_complex_symbol()
-      else:
-        result = input
-    of VkComplexSymbol:
-      result = input
-      let r = input.ref
-      if r.csymbol[0] == "":
-        r.csymbol[0] = "self"
-      elif r.csymbol[0].starts_with("$"):
-        # Special case for $ns - translate first part to special symbol  
-        if r.csymbol[0] == "$ns":
-          r.csymbol[0] = "SPECIAL_NS"
-        else:
-          r.csymbol.insert("gene", 0)
-          r.csymbol[1] = r.csymbol[1][1..^1]
-    else:
-      not_allowed($input)
-
-proc compile_complex_symbol(self: Compiler, input: Value) =
-  if self.quote_level > 0:
-    self.emit(Instruction(kind: IkPushValue, arg0: input))
-  else:
-    let r = translate_symbol(input).ref
-    if r.csymbol.len > 0 and r.csymbol[0].startsWith("@"):
-      var segments: seq[Value] = @[]
-
-      proc add_segment(part: string) =
-        if part.len == 0:
-          not_allowed("@ selector segment cannot be empty")
-        try:
-          let index = parseInt(part)
-          segments.add(index.to_value())
-        except ValueError:
-          segments.add(part.to_value())
-
-      add_segment(r.csymbol[0][1..^1])
-      for part in r.csymbol[1..^1]:
-        add_segment(part)
-
-      if segments.len == 0:
-        not_allowed("@ selector requires at least one segment")
-
-      let selector_value = new_selector_value(segments)
-      self.emit(Instruction(kind: IkPushValue, arg0: selector_value))
-      return
-
-    let key = r.csymbol[0].to_key()
-    if r.csymbol[0] == "SPECIAL_NS":
-      # Handle $ns/... specially
-      self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](SYM_NS)))
-    else:
-      # Use locate to check parent scopes too
-      let found = self.scope_tracker.locate(key)
-      if found.local_index >= 0:
-        if found.parent_index == 0:
-          self.emit(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
-        else:
-          self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
-      else:
-        self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
-    for s in r.csymbol[1..^1]:
-      let (is_int, i) = to_int(s)
-      if is_int:
-        self.emit(Instruction(kind: IkGetChild, arg0: i))
-      elif s.starts_with("."):
-        let method_value = s[1..^1].to_symbol_value()
-        if self.method_access_mode == MamReference:
-          # Preserve legacy behavior when compiling method references
-          self.emit(Instruction(kind: IkResolveMethod, arg0: method_value))
-        else:
-          # Default: immediately invoke zero-arg method via dot notation
-          self.emit(Instruction(kind: IkUnifiedMethodCall0, arg0: method_value))
-      elif s == "...":
-        # Spread operator in complex symbols - not yet implemented
-        # This would handle cases like a/.../b but is an edge case
-        # For now, just treat it as a regular member access
-        not_allowed("Spread operator (...) in complex symbols not supported")
-      else:
-        let key = s.to_key()
-        self.emit(Instruction(kind: IkGetMember, arg0: cast[Value](key)))
-
-proc compile_symbol(self: Compiler, input: Value) =
-  if self.quote_level > 0:
-    self.emit(Instruction(kind: IkPushValue, arg0: input))
-  else:
-    let input = translate_symbol(input)
-    if input.kind == VkSymbol:
-      let symbol_str = input.str
-      if symbol_str == "self":
-        # Check if self is a local variable (in methods compiled as functions)
-        let key = symbol_str.to_key()
-        let found = self.scope_tracker.locate(key)
-        if found.local_index >= 0:
-          # self is a parameter - resolve it as a variable
-          if found.parent_index == 0:
-            self.emit(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
-          else:
-            self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
-        else:
-          # Fall back to IkPushSelf for non-method contexts
-          self.emit(Instruction(kind: IkPushSelf))
-        return
-      elif symbol_str == "super":
-        # Push runtime super proxy (handled by IkSuper at execution time)
-        self.emit(Instruction(kind: IkSuper))
-        return
-      elif symbol_str.startsWith("@") and symbol_str.len > 1:
-        # Handle @shorthand syntax: @test -> (@ "test"), @0 -> (@ 0)
-        let prop_name = symbol_str[1..^1]
-
-        var segments: seq[Value] = @[]
-        for part in prop_name.split("/"):
-          if part.len == 0:
-            not_allowed("@ selector segment cannot be empty")
-          try:
-            let index = parseInt(part)
-            segments.add(index.to_value())
-          except ValueError:
-            segments.add(part.to_value())
-
-        if segments.len == 0:
-          not_allowed("@ selector requires at least one segment")
-
-        let selector_value = new_selector_value(segments)
-        self.emit(Instruction(kind: IkPushValue, arg0: selector_value))
-        return
-      elif symbol_str.endsWith("..."):
-        # Spread suffix like "a..." - this should be handled by compile_array/compile_gene
-        # If we get here, it's being used outside of those contexts which is an error
-        not_allowed("Spread operator (...) can only be used in arrays, maps, or gene expressions")
-      let key = input.str.to_key()
-      let found = self.scope_tracker.locate(key)
-      if found.local_index >= 0:
-        if found.parent_index == 0:
-          self.emit(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
-        else:
-          self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
-      else:
-        self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
-    elif input.kind == VkComplexSymbol:
-      self.compile_complex_symbol(input)
-
-proc compile_array(self: Compiler, input: Value) =
-  # Use call base approach: push base, compile elements onto stack, collect at end
-  self.emit(Instruction(kind: IkArrayStart))
-
-  var i = 0
-  let arr = input.ref.arr
-  while i < arr.len:
-    let child = arr[i]
-
-    # Check for standalone postfix spread: expr ...
-    if i + 1 < arr.len and arr[i + 1].kind == VkSymbol and arr[i + 1].str == "...":
-      # Compile the expression and spread its elements
-      self.compile(child)
-      self.emit(Instruction(kind: IkArrayAddSpread))
-      i += 2  # Skip both the expr and the ... symbol
-      continue
-
-    # Check for suffix spread: a...
-    if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-      # Compile the base symbol and spread its elements
-      let base_symbol = child.str[0..^4].to_symbol_value()  # Remove "..."
-      self.compile(base_symbol)
-      self.emit(Instruction(kind: IkArrayAddSpread))
-      i += 1
-      continue
-
-    # Normal element - just compile it (pushes to stack)
-    self.compile(child)
-    i += 1
-
-  # Collect all elements from call base into array
-  self.emit(Instruction(kind: IkArrayEnd))
-
-proc compile_stream(self: Compiler, input: Value) =
-  # For simple streams (used by if/elif/else branches), just compile the children directly
-  # Don't emit StreamStart/StreamEnd as they're not needed for control flow
-  let stream_values = input.ref.stream
-
-  if stream_values.len == 0:
-    self.emit(Instruction(kind: IkPushValue, arg0: NIL))
-    return
-
-  var i = 0
-  while i < stream_values.len:
-    let child = stream_values[i]
-    let old_tail = self.tail_position
-    if i == stream_values.len - 1:
-      # Last expression preserves tail position
-      discard
-    else:
-      self.tail_position = false
-
-    self.compile(child)
-
-    self.tail_position = old_tail
-    if i < stream_values.len - 1:
-      self.emit(Instruction(kind: IkPop))
-
-    i += 1
-
-proc compile_map(self: Compiler, input: Value) =
-  self.emit(Instruction(kind: IkMapStart))
-  for k, v in input.ref.map:
-    let key_str = $k
-    # Check for spread key: ^..., ^...1, ^...2, etc.
-    if key_str.startsWith("..."):
-      # Spread map into current map
-      self.compile(v)
-      self.emit(Instruction(kind: IkMapSpread))
-    else:
-      # Normal key-value pair
-      self.compile(v)
-      self.emit(Instruction(kind: IkMapSetProp, arg0: k))
-  self.emit(Instruction(kind: IkMapEnd))
 
 proc compile_do(self: Compiler, gene: ptr Gene) =
   self.compile(gene.children)
@@ -428,9 +81,7 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
 
   # Compile then branch (preserves tail position)
   self.start_scope()
-  let old_tail = self.tail_position
-  self.compile(gene.props[THEN_KEY.to_key()])
-  self.tail_position = old_tail
+  self.compile_branch_value(gene.props[THEN_KEY.to_key()])
   self.end_scope()
   self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
 
@@ -449,22 +100,18 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
             next_label = new_label()
             self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
             
-            # Compile elif body (preserves tail position)
-            self.start_scope()
-            let old_tail_elif = self.tail_position
-            self.compile(elifs.ref.arr[i + 1])
-            self.tail_position = old_tail_elif
-            self.end_scope()
-            self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
+          # Compile elif body (preserves tail position)
+          self.start_scope()
+          self.compile_branch_value(elifs.ref.arr[i + 1])
+          self.end_scope()
+          self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
       else:
         discard
 
   # Compile else branch (preserves tail position)
   self.emit(Instruction(kind: IkNoop, label: next_label))
   self.start_scope()
-  let old_tail_else = self.tail_position
-  self.compile(gene.props[ELSE_KEY.to_key()])
-  self.tail_position = old_tail_else
+  self.compile_branch_value(gene.props[ELSE_KEY.to_key()])
   self.end_scope()
 
   self.emit(Instruction(kind: IkNoop, label: end_label))
@@ -3218,7 +2865,10 @@ proc compile_init*(input: Value): CompilationUnit =
 
   self.last_error_trace = nil
   try:
-    self.compile(input)
+    if input.kind == VkStream:
+      self.compile_stream_block(input)
+    else:
+      self.compile(input)
   except CatchableError as e:
     var trace = self.last_error_trace
     if trace.is_nil and input.kind == VkGene:
