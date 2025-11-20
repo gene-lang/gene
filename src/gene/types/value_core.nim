@@ -30,8 +30,7 @@ const POINTER_TAG* = 0xFFFC_0000_0000_0000u64     # Regular pointers
 const REF_TAG* = 0xFFFD_0000_0000_0000u64         # Reference objects
 const GENE_TAG* = 0xFFFA_0000_0000_0000u64        # Gene S-expressions
 const SYMBOL_TAG* = 0xFFF9_0000_0000_0000u64      # Symbols
-# Short string optimization removed - all strings now use LONG_STR_TAG for mutability
-const LONG_STR_TAG* = 0xFFFE_0000_0000_0000u64    # Long string pointers
+const STRING_TAG* = 0xFFFE_0000_0000_0000u64    # String pointers
 const SPECIAL_TAG* = 0xFFF1_0000_0000_0000u64     # Special values (changed from 0xFFF0)
 
 # Special values (using SPECIAL_TAG)
@@ -53,9 +52,9 @@ const CHAR2_MASK = 0xFFF1_0000_0002_0000u64
 const CHAR3_MASK = 0xFFF1_0000_0003_0000u64
 const CHAR4_MASK = 0xFFF1_0000_0004_0000u64
 
-# Short string mask removed - LONG_STR_MASK no longer needed
+# String constants
 
-const EMPTY_STRING* = cast[Value](LONG_STR_TAG)  # Empty string is now a null pointer with LONG_STR_TAG
+const EMPTY_STRING* = cast[Value](STRING_TAG)  # Empty string is a null pointer with STRING_TAG
 
 const BIGGEST_INT = 2^61 - 1
 
@@ -163,7 +162,7 @@ proc retain*(v: Value) {.inline.} =
       of GENE_TAG:
         let x = cast[ptr Gene](u and PAYLOAD_MASK)
         x.ref_count.inc()
-      of LONG_STR_TAG:
+      of STRING_TAG:
         let x = cast[ptr String](u and PAYLOAD_MASK)
         x.ref_count.inc()
       else:
@@ -190,7 +189,7 @@ proc release*(v: Value) {.inline.} =
           dealloc(x)
         else:
           x.ref_count.dec()
-      of LONG_STR_TAG:
+      of STRING_TAG:
         let x = cast[ptr String](u and PAYLOAD_MASK)
         if x.ref_count == 1:
           dealloc(x)
@@ -292,7 +291,7 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
     let tag2 = u2 and 0xFFFF_0000_0000_0000u64
 
     # Both strings - compare their content
-    if tag1 == LONG_STR_TAG and tag2 == LONG_STR_TAG:
+    if tag1 == STRING_TAG and tag2 == STRING_TAG:
       let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
       let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
 
@@ -373,7 +372,7 @@ proc kind*(v: Value): ValueKind {.inline.} =
         return v.ref.kind  # Single pointer dereference
       of SYMBOL_TAG:
         return VkSymbol
-      of LONG_STR_TAG:
+      of STRING_TAG:
         return VkString
       of GENE_TAG:
         return VkGene
@@ -391,7 +390,7 @@ proc is_literal*(self: Value): bool =
 
     # Check NaN-boxed values
     case u and 0xFFFF_0000_0000_0000u64:
-      of SMALL_INT_TAG, LONG_STR_TAG:
+      of SMALL_INT_TAG, STRING_TAG:
         result = true
       of SPECIAL_TAG:
         # nil, true, false, void, etc. are literals
@@ -685,7 +684,7 @@ proc `[]`*(self: Value, i: int): Value =
           return NIL
         else:
           return g.children[i]
-      of LONG_STR_TAG:
+      of STRING_TAG:
         var j = 0
         for rune in self.str().runes:
           if i == j:
@@ -750,7 +749,7 @@ proc size*(self: Value): int =
             todo($r.kind)
       of GENE_TAG:
         return self.gene.children.len
-      of LONG_STR_TAG:
+      of STRING_TAG:
         return self.str().to_runes().len
       of SYMBOL_TAG:
         return self.str().to_runes().len
@@ -816,7 +815,7 @@ proc new_str_value*(s: string): Value =
   let str_ptr = new_str(s)
   let ptr_addr = cast[uint64](str_ptr)
   assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "String pointer too large for NaN boxing"
-  result = cast[Value](LONG_STR_TAG or ptr_addr)
+  result = cast[Value](STRING_TAG or ptr_addr)
 
 converter to_value*(v: char): Value {.inline.} =
   {.cast(gcsafe).}:
@@ -830,7 +829,7 @@ proc str*(v: Value): string =
     # Check if it's in NaN space
     if (u and NAN_MASK) == NAN_MASK:
       case u and 0xFFFF_0000_0000_0000u64:
-        of LONG_STR_TAG:
+        of STRING_TAG:
           let x = cast[ptr String](u and PAYLOAD_MASK)
           if x.is_nil:
             result = ""  # Empty string
@@ -855,7 +854,7 @@ converter to_value*(v: string): Value =
     s.str = v
     let ptr_addr = cast[uint64](s)
     assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "String pointer too large for NaN boxing"
-    result = cast[Value](LONG_STR_TAG or ptr_addr)
+    result = cast[Value](STRING_TAG or ptr_addr)
 
 converter to_value*(v: Rune): Value =
   let rune_value = v.ord.uint64

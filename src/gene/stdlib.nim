@@ -1056,15 +1056,15 @@ proc init_gene_namespace*() =
   
   # Add String methods
   proc ensure_mutable_string(vm: VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
-    ## Ensure the string value is backed by a mutable heap allocation
+    ## Return the string value (all strings are now mutable heap allocations)
     let self_index = if has_keyword_args: 1 else: 0
     let original = args[self_index]
     let raw = cast[uint64](original)
     let tag = raw and 0xFFFF_0000_0000_0000u64
 
     case tag
-    of LONG_STR_TAG:
-      return original  # All strings are now long strings, no conversion needed
+    of STRING_TAG:
+      return original  # All strings use the same representation, no conversion needed
     else:
       return original
 
