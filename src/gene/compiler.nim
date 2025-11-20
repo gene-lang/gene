@@ -850,6 +850,8 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   self.add_scope_start()
   self.scope_tracker.next_index.inc()
   self.emit(Instruction(kind: IkVar, arg0: collection_index.to_value()))
+  # Drop the pushed collection value; we only need it in scope
+  self.emit(Instruction(kind: IkPop))
   
   # Store index in a temporary variable, initialized to 0
   self.emit(Instruction(kind: IkPushValue, arg0: 0.to_value()))
@@ -857,6 +859,8 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   self.scope_tracker.mappings["$for_index".to_key()] = index_var
   self.scope_tracker.next_index.inc()
   self.emit(Instruction(kind: IkVar, arg0: index_var.to_value()))
+  # Drop the pushed index initial value
+  self.emit(Instruction(kind: IkPop))
   
   let start_label = new_label()
   let end_label = new_label()
@@ -895,6 +899,8 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   self.add_scope_start()
   self.scope_tracker.next_index.inc()
   self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+  # Remove the element value that IkVar leaves on the stack
+  self.emit(Instruction(kind: IkPop))
   
   # Compile body (remaining children after 'in' and collection)
   if gene.children.len > 3:
@@ -3263,7 +3269,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
       if node != PARSER_IGNORE:
         # Pop previous result before compiling next item (except for first)
         if not is_first:
-          self.emit(Instruction(kind: IkPop))
+          self.emit(Instruction(kind: IkClearStack))
 
         self.last_error_trace = nil
         try:
@@ -3320,7 +3326,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
       if node != PARSER_IGNORE:
         # Pop previous result before compiling next item (except for first)
         if not is_first:
-          self.output.instructions.add(Instruction(kind: IkPop))
+          self.output.instructions.add(Instruction(kind: IkClearStack))
 
         self.last_error_trace = nil
         try:

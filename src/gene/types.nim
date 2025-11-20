@@ -660,6 +660,7 @@ type
     IkPushNil
     IkPushSelf    # push the current frame's self value
     IkPop
+    IkClearStack  # reset the frame stack
     IkDup         # duplicate top stack element
     IkDup2        # duplicate top two stack elements
     IkDupSecond   # duplicate second element (under top)
@@ -3445,6 +3446,7 @@ proc free*(self: var Frame) =
 
 var FRAME_ALLOCS* {.threadvar.}: int
 var FRAME_REUSES* = 0
+var LABEL_COUNTER {.threadvar.}: int16
 
 proc new_frame*(): Frame {.inline.} =
   {.push boundChecks: off, overflowChecks: off.}
@@ -3494,6 +3496,14 @@ proc replace*(self: var Frame, v: Value) {.inline.} =
 
 template push*(self: var Frame, value: sink Value) =
   {.push boundChecks: off, overflowChecks: off.}
+  if self.stack_index >= self.stack.len.uint16:
+    var detail = ""
+    if not VM.isNil and not VM.cu.is_nil:
+      let pc = VM.pc
+      detail = " at pc " & $pc
+      if pc >= 0 and pc < VM.cu.instructions.len:
+        detail &= " (" & $VM.cu.instructions[pc].kind & ")"
+    raise new_exception(Exception, "Stack overflow: frame stack exceeded " & $self.stack.len & detail)
   self.stack[self.stack_index] = value
   self.stack_index.inc()
   {.pop.}
@@ -3541,6 +3551,7 @@ proc to_value*(self: ScopeTracker): Value =
   result = r.to_ref_value()
 
 proc new_compilation_unit*(): CompilationUnit =
+  LABEL_COUNTER = 0
   CompilationUnit(
     id: new_id(),
     trace_root: nil,
@@ -3627,7 +3638,10 @@ proc `$`*(self: CompilationUnit): string =
   "CompilationUnit " & $(cast[uint64](self.id)) & "\n" & $self.instructions
 
 proc new_label*(): Label =
-  result = rand(int16.high).Label
+  LABEL_COUNTER.inc()
+  if LABEL_COUNTER == 0:
+    LABEL_COUNTER.inc()
+  result = LABEL_COUNTER
 
 proc find_label*(self: CompilationUnit, label: Label): int =
   var i = 0
