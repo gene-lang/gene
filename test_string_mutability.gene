@@ -1,0 +1,15 @@
+# Test that strings are now mutable (not using short string optimization)
+(var s "hello")
+(println "Original string:" s)
+(println "String class:" (s .class))
+(println "String size:" (s .size))
+
+# Test string append which should now work on all strings
+(s .append " world")
+(println "After append:" s)
+
+# Test that empty strings work
+(var empty "")
+(println "Empty string:" empty)
+(empty .append "not empty")
+(println "Empty after append:" empty)

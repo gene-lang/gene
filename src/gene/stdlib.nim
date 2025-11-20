@@ -1064,24 +1064,7 @@ proc init_gene_namespace*() =
 
     case tag
     of LONG_STR_TAG:
-      return original
-    of SHORT_STR_TAG:
-      let converted = new_str_value(original.str)
-      args[self_index] = converted
-
-      # Update the active scope slot so future accesses see the heap-backed value
-      if vm.frame != nil:
-        var scope = vm.frame.scope
-        var updated = false
-        while scope != nil and not updated:
-          for i in 0..<scope.members.len:
-            if scope.members[i] == original:
-              scope.members[i] = converted
-              updated = true
-              break
-          if not updated:
-            scope = scope.parent
-      return converted
+      return original  # All strings are now long strings, no conversion needed
     else:
       return original
 

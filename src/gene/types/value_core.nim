@@ -30,7 +30,7 @@ const POINTER_TAG* = 0xFFFC_0000_0000_0000u64     # Regular pointers
 const REF_TAG* = 0xFFFD_0000_0000_0000u64         # Reference objects
 const GENE_TAG* = 0xFFFA_0000_0000_0000u64        # Gene S-expressions
 const SYMBOL_TAG* = 0xFFF9_0000_0000_0000u64      # Symbols
-const SHORT_STR_TAG* = 0xFFFB_0000_0000_0000u64   # Short strings
+# Short string optimization removed - all strings now use LONG_STR_TAG for mutability
 const LONG_STR_TAG* = 0xFFFE_0000_0000_0000u64    # Long string pointers
 const SPECIAL_TAG* = 0xFFF1_0000_0000_0000u64     # Special values (changed from 0xFFF0)
 
@@ -53,10 +53,9 @@ const CHAR2_MASK = 0xFFF1_0000_0002_0000u64
 const CHAR3_MASK = 0xFFF1_0000_0003_0000u64
 const CHAR4_MASK = 0xFFF1_0000_0004_0000u64
 
-const SHORT_STR_MASK = SHORT_STR_TAG
-const LONG_STR_MASK = LONG_STR_TAG
+# Short string mask removed - LONG_STR_MASK no longer needed
 
-const EMPTY_STRING = SHORT_STR_TAG
+const EMPTY_STRING* = cast[Value](LONG_STR_TAG)  # Empty string is now a null pointer with LONG_STR_TAG
 
 const BIGGEST_INT = 2^61 - 1
 
@@ -284,50 +283,28 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
   if cast[uint64](a) == cast[uint64](b):
     return true
 
-  # Compare a NaN-boxed short string payload with a long string reference
-  proc short_equals_long(short_raw: uint64, long_ptr: ptr String): bool {.inline, noSideEffect.} =
-    if long_ptr == nil:
-      return false
-    let text = long_ptr.str
-    if text.len > 6:
-      return false
-    var payload = short_raw and PAYLOAD_MASK
-    for i in 0..<text.len:
-      let byte = char((payload and 0xFF'u64).int)
-      if byte != text[i]:
-        return false
-      payload = payload shr 8
-    payload == 0
-
   {.cast(gcsafe).}:
     let u1 = cast[uint64](a)
     let u2 = cast[uint64](b)
 
-    # Check if both are strings (short or long) and compare them
+    # Check if both are strings and compare them
     let tag1 = u1 and 0xFFFF_0000_0000_0000u64
     let tag2 = u2 and 0xFFFF_0000_0000_0000u64
-    if tag1 != tag2:
-      if tag1 == SHORT_STR_TAG and tag2 == LONG_STR_TAG:
-        let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
-        return short_equals_long(u1, str2)
-      elif tag1 == LONG_STR_TAG and tag2 == SHORT_STR_TAG:
-        let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
-        return short_equals_long(u2, str1)
-      else:
-        return false
 
-    # Both short strings
-    if tag1 == SHORT_STR_TAG:
-      # For short strings, if they're not bit-identical (already checked above),
-      # they're not equal
-      return false
-    # Both long strings
-    elif tag1 == LONG_STR_TAG:
+    # Both strings - compare their content
+    if tag1 == LONG_STR_TAG and tag2 == LONG_STR_TAG:
       let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
       let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
-      return str1.str == str2.str
+
+      # Handle empty string case
+      if str1.is_nil and str2.is_nil:
+        return true
+      elif str1.is_nil or str2.is_nil:
+        return false
+      else:
+        return str1.str == str2.str
     # Only references can be equal with different bit patterns
-    elif tag1 == REF_TAG:
+    elif tag1 == REF_TAG and tag2 == REF_TAG:
       return a.ref == b.ref
 
   # Default to false
@@ -396,7 +373,7 @@ proc kind*(v: Value): ValueKind {.inline.} =
         return v.ref.kind  # Single pointer dereference
       of SYMBOL_TAG:
         return VkSymbol
-      of SHORT_STR_TAG, LONG_STR_TAG:
+      of LONG_STR_TAG:
         return VkString
       of GENE_TAG:
         return VkGene
@@ -414,7 +391,7 @@ proc is_literal*(self: Value): bool =
 
     # Check NaN-boxed values
     case u and 0xFFFF_0000_0000_0000u64:
-      of SMALL_INT_TAG, SHORT_STR_TAG, LONG_STR_TAG:
+      of SMALL_INT_TAG, LONG_STR_TAG:
         result = true
       of SPECIAL_TAG:
         # nil, true, false, void, etc. are literals
@@ -708,7 +685,7 @@ proc `[]`*(self: Value, i: int): Value =
           return NIL
         else:
           return g.children[i]
-      of SHORT_STR_TAG, LONG_STR_TAG:
+      of LONG_STR_TAG:
         var j = 0
         for rune in self.str().runes:
           if i == j:
@@ -773,7 +750,7 @@ proc size*(self: Value): int =
             todo($r.kind)
       of GENE_TAG:
         return self.gene.children.len
-      of SHORT_STR_TAG, LONG_STR_TAG:
+      of LONG_STR_TAG:
         return self.str().to_runes().len
       of SYMBOL_TAG:
         return self.str().to_runes().len
@@ -853,40 +830,12 @@ proc str*(v: Value): string =
     # Check if it's in NaN space
     if (u and NAN_MASK) == NAN_MASK:
       case u and 0xFFFF_0000_0000_0000u64:
-        of SHORT_STR_TAG:
-          let x = cast[int64](u and PAYLOAD_MASK)
-          # echo x.to_binstr
-          {.push checks: off}
-          if x > 0xFF_FFFF:
-            if x > 0xFFFF_FFFF:
-              if x > 0xFF_FFFF_FFFF: # 6 chars
-                result = new_string(6)
-                copy_mem(result[0].addr, x.addr, 6)
-              else: # 5 chars
-                result = new_string(5)
-                copy_mem(result[0].addr, x.addr, 5)
-            else: # 4 chars
-              result = new_string(4)
-              copy_mem(result[0].addr, x.addr, 4)
-          else:
-            if x > 0xFF:
-              if x > 0xFFFF: # 3 chars
-                result = new_string(3)
-                copy_mem(result[0].addr, x.addr, 3)
-              else: # 2 chars
-                result = new_string(2)
-                copy_mem(result[0].addr, x.addr, 2)
-            else:
-              if x > 0: # 1 chars
-                result = new_string(1)
-                copy_mem(result[0].addr, x.addr, 1)
-              else: # 0 char
-                result = ""
-          {.pop.}
-
         of LONG_STR_TAG:
           let x = cast[ptr String](u and PAYLOAD_MASK)
-          result = x.str
+          if x.is_nil:
+            result = ""  # Empty string
+          else:
+            result = x.str
 
         of SYMBOL_TAG:
           let x = cast[int64](u and PAYLOAD_MASK)
@@ -898,34 +847,15 @@ proc str*(v: Value): string =
       not_allowed(fmt"{v} is not a string.")
 
 converter to_value*(v: string): Value =
-  {.push checks: off}
-  case v.len:
-    of 0:
-      return cast[Value](EMPTY_STRING)
-    of 1:
-      return cast[Value](bitor(SHORT_STR_MASK,
-        v[0].ord.uint64))
-    of 2:
-      return cast[Value](bitor(SHORT_STR_MASK,
-        v[0].ord.uint64, v[1].ord.shl(8).uint64))
-    of 3:
-      return cast[Value](bitor(SHORT_STR_MASK,
-        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64))
-    of 4:
-      return cast[Value](bitor(SHORT_STR_MASK,
-        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64, v[3].ord.shl(24).uint64))
-    of 5:
-      return cast[Value](bitor(SHORT_STR_MASK,
-        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64, v[3].ord.shl(24).uint64, v[4].ord.shl(32).uint64))
-    of 6:
-      return cast[Value](bitor(SHORT_STR_MASK,
-        v[0].ord.uint64, v[1].ord.shl(8).uint64, v[2].ord.shl(16).uint64, v[3].ord.shl(24).uint64, v[4].ord.shl(32).uint64, v[5].ord.shl(40).uint64))
-    else:
-      let s = cast[ptr String](alloc0(sizeof(String)))
-      s.ref_count = 1
-      s.str = v
-      result = cast[Value](bitor(LONG_STR_MASK, cast[uint64](s)))
-  {.pop.}
+  if v.len == 0:
+    return EMPTY_STRING
+  else:
+    let s = cast[ptr String](alloc0(sizeof(String)))
+    s.ref_count = 1
+    s.str = v
+    let ptr_addr = cast[uint64](s)
+    assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "String pointer too large for NaN boxing"
+    result = cast[Value](LONG_STR_TAG or ptr_addr)
 
 converter to_value*(v: Rune): Value =
   let rune_value = v.ord.uint64
