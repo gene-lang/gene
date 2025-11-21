@@ -26,91 +26,43 @@ template get_value_class(val: Value): Class =
   of VkInstance:
     types.ref(val).instance_class
   of VkNil:
-    if App.app.nil_class.kind == VkClass:
-      types.ref(App.app.nil_class).class
-    else:
-      nil
+    types.ref(App.app.nil_class).class
   of VkBool:
-    if App.app.bool_class.kind == VkClass:
-      types.ref(App.app.bool_class).class
-    else:
-      nil
+    types.ref(App.app.bool_class).class
   of VkInt:
-    if App.app.int_class.kind == VkClass:
-      types.ref(App.app.int_class).class
-    else:
-      nil
+    types.ref(App.app.int_class).class
   of VkFloat:
-    if App.app.float_class.kind == VkClass:
-      types.ref(App.app.float_class).class
-    else:
-      nil
+    types.ref(App.app.float_class).class
   of VkChar:
-    if App.app.char_class.kind == VkClass:
-      types.ref(App.app.char_class).class
-    else:
-      nil
+    types.ref(App.app.char_class).class
   of VkString:
     types.ref(App.app.string_class).class
   of VkSymbol:
-    if App.app.symbol_class.kind == VkClass:
-      types.ref(App.app.symbol_class).class
-    else:
-      nil
+    types.ref(App.app.symbol_class).class
   of VkComplexSymbol:
-    if App.app.complex_symbol_class.kind == VkClass:
-      types.ref(App.app.complex_symbol_class).class
-    else:
-      nil
+    types.ref(App.app.complex_symbol_class).class
   of VkArray:
     types.ref(App.app.array_class).class
   of VkMap:
     types.ref(App.app.map_class).class
   of VkGene:
-    if App.app.gene_class.kind == VkClass:
-      types.ref(App.app.gene_class).class
-    else:
-      nil
+    types.ref(App.app.gene_class).class
   of VkDate:
-    if App.app.date_class.kind == VkClass:
-      types.ref(App.app.date_class).class
-    else:
-      nil
+    types.ref(App.app.date_class).class
   of VkDateTime:
-    if App.app.datetime_class.kind == VkClass:
-      types.ref(App.app.datetime_class).class
-    else:
-      nil
+    types.ref(App.app.datetime_class).class
   of VkSet:
-    if App.app.set_class.kind == VkClass:
-      types.ref(App.app.set_class).class
-    else:
-      nil
+    types.ref(App.app.set_class).class
   of VkSelector:
-    if App.app.selector_class.kind == VkClass:
-      types.ref(App.app.selector_class).class
-    else:
-      nil
+    types.ref(App.app.selector_class).class
   of VkFuture:
-    if App.app.future_class.kind == VkClass:
-      types.ref(App.app.future_class).class
-    else:
-      nil
+    types.ref(App.app.future_class).class
   of VkGenerator:
-    if App.app.generator_class.kind == VkClass:
-      types.ref(App.app.generator_class).class
-    else:
-      nil
+    types.ref(App.app.generator_class).class
   of VkClass:
-    if App.app.class_class.kind == VkClass:
-      types.ref(App.app.class_class).class
-    else:
-      nil
+    types.ref(App.app.class_class).class
   else:
-    if App.app.object_class.kind == VkClass:
-      types.ref(App.app.object_class).class
-    else:
-      nil
+    types.ref(App.app.object_class).class
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:
