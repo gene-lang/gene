@@ -82,7 +82,7 @@ var THREAD_DATA*: array[0..MAX_THREADS, ThreadDataObj]  # Shared across threads 
 
 # Thread pool management
 var thread_pool_lock: Lock
-var next_message_id {.threadvar.}: int
+var next_message_id* {.threadvar.}: int
 
 proc init_thread_pool*() =
   ## Initialize the thread pool (call once from main thread)
