@@ -8,6 +8,10 @@ from ./parser import read, read_all
 import ./vm/args
 import ./vm/module
 const DEBUG_VM = false
+const
+  CATCH_PC_ASYNC_BLOCK = -2
+  CATCH_PC_ASYNC_FUNCTION = -3
+  EVENT_LOOP_POLL_INTERVAL = 100
 
 import ./vm/arithmetic
 import ./vm/generator
@@ -536,7 +540,7 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
-        catch_pc: -3,
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
         cu: self.cu,
@@ -628,7 +632,7 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
-        catch_pc: -3,
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
         cu: self.cu,
@@ -704,7 +708,7 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
-        catch_pc: -3,
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
         cu: self.cu,
@@ -773,9 +777,9 @@ proc exec*(self: VirtualMachine): Value =
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
     # Event loop polling for async support
-    # Poll every 100 instructions to allow async I/O to progress
+    # Poll every EVENT_LOOP_POLL_INTERVAL instructions to allow async I/O to progress
     self.event_loop_counter.inc()
-    if self.event_loop_counter >= 100:
+    if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
       self.event_loop_counter = 0
       try:
         poll(0)  # Non-blocking poll - check for completed async operations
@@ -1569,7 +1573,8 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(NIL)
           else:
-            echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
+            when not defined(release):
+              echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
             todo($value.kind)
 
       of IkGetMemberOrNil:
@@ -2269,14 +2274,15 @@ proc exec*(self: VirtualMachine): Value =
         let v = self.frame.current()
         when DEBUG_VM:
           echo "IkGeneAddChild: v.kind = ", v.kind, ", child = ", child
-        # Debug: print stack state when error occurs
-        if v.kind == VkSymbol:
-          echo "ERROR: IkGeneAddChild with Symbol on stack!"
-          echo "  child = ", child
-          echo "  v (stack top) = ", v
-          echo "  Stack trace:"
-          for i in 0..<min(5, self.frame.stack_index.int):
-            echo "    [", i, "] = ", self.frame.stack[i]
+        when not defined(release):
+          # Debug: print stack state when error occurs
+          if v.kind == VkSymbol:
+            echo "ERROR: IkGeneAddChild with Symbol on stack!"
+            echo "  child = ", child
+            echo "  v (stack top) = ", v
+            echo "  Stack trace:"
+            for i in 0..<min(5, self.frame.stack_index.int):
+              echo "    [", i, "] = ", self.frame.stack[i]
         case v.kind:
           of VkFrame:
             # For function calls, we need to set up the args gene with children
@@ -2524,7 +2530,7 @@ proc exec*(self: VirtualMachine): Value =
                 # If this is an async function, set up exception handler
                 if f.async:
                   self.exception_handlers.add(ExceptionHandler(
-                    catch_pc: -3,  # Special marker for async function
+                    catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                     finally_pc: -1,
                     frame: self.frame,
                     cu: self.cu,
@@ -3569,7 +3575,7 @@ proc exec*(self: VirtualMachine): Value =
             let f = self.frame.target.ref.fn
             if f.async:
               # Remove the async function exception handler
-              if self.exception_handlers.len > 0 and self.exception_handlers[^1].catch_pc == -3:
+              if self.exception_handlers.len > 0 and self.exception_handlers[^1].catch_pc == CATCH_PC_ASYNC_FUNCTION:
                 discard self.exception_handlers.pop()
               
               # Wrap the return value in a future
@@ -3976,7 +3982,7 @@ proc exec*(self: VirtualMachine): Value =
           let handler = self.exception_handlers[^1]
           
           # Check if this is an async block or async function handler
-          if handler.catch_pc == -2:
+          if handler.catch_pc == CATCH_PC_ASYNC_BLOCK:
             # This is an async block - create a failed future
             discard self.exception_handlers.pop()
             
@@ -3995,7 +4001,7 @@ proc exec*(self: VirtualMachine): Value =
               self.pc.inc()  # Skip past IkAsyncEnd
               inst = self.cu.instructions[self.pc].addr
               continue
-          elif handler.catch_pc == -3:
+          elif handler.catch_pc == CATCH_PC_ASYNC_FUNCTION:
             # This is an async function - create a failed future and return it
             discard self.exception_handlers.pop()
             
@@ -4357,7 +4363,7 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         # Add an exception handler that will catch exceptions for the async block
         self.exception_handlers.add(ExceptionHandler(
-          catch_pc: -2,  # Special marker for async
+          catch_pc: CATCH_PC_ASYNC_BLOCK,  # Special marker for async
           finally_pc: -1,
           frame: self.frame,
           cu: self.cu,
@@ -4653,7 +4659,7 @@ proc exec*(self: VirtualMachine): Value =
             # If this is an async function, set up exception handler
             if f.async:
               self.exception_handlers.add(ExceptionHandler(
-                catch_pc: -3,  # Special marker for async function
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
                 cu: self.cu,
@@ -4822,7 +4828,7 @@ proc exec*(self: VirtualMachine): Value =
             # If this is an async function, set up exception handler
             if f.async:
               self.exception_handlers.add(ExceptionHandler(
-                catch_pc: -3,  # Special marker for async function
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
                 cu: self.cu,
@@ -4997,7 +5003,7 @@ proc exec*(self: VirtualMachine): Value =
             # If this is an async function, set up exception handler
             if f.async:
               self.exception_handlers.add(ExceptionHandler(
-                catch_pc: -3,  # Special marker for async function
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
                 cu: self.cu,
@@ -5123,7 +5129,7 @@ proc exec*(self: VirtualMachine): Value =
               # If this is an async function, set up exception handler
               if f.async:
                 self.exception_handlers.add(ExceptionHandler(
-                  catch_pc: -3,  # Special marker for async function
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                   finally_pc: -1,
                   frame: self.frame,
                   cu: self.cu,
@@ -5267,7 +5273,7 @@ proc exec*(self: VirtualMachine): Value =
               # If this is an async function, set up exception handler
               if f.async:
                 self.exception_handlers.add(ExceptionHandler(
-                  catch_pc: -3,  # Special marker for async function
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                   finally_pc: -1,
                   frame: self.frame,
                   cu: self.cu,
@@ -5421,7 +5427,7 @@ proc exec*(self: VirtualMachine): Value =
               # If this is an async function, set up exception handler
               if f.async:
                 self.exception_handlers.add(ExceptionHandler(
-                  catch_pc: -3,
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,
                   finally_pc: -1,
                   frame: self.frame,
                   cu: self.cu,
