@@ -16,10 +16,31 @@ This is the **current focus** - a bytecode VM implementation for better performa
 - ✅ Functions, closures, and macro-like functions (`fn!`, `$caller_eval`)
 - ✅ Basic control flow (if/else, loops, try/catch/finally)
 - ✅ CLI commands (`run`, `eval`, `repl`, `parse`, `compile`)
-- ✅ Async/await via synchronous futures (pseudo-async)
+### 3. Async/Await
+- **Status**: ✅ Implemented
+- **Details**:
+  - `async`/`await` keywords are supported.
+  - VM has an event loop that polls `asyncdispatch.poll(0)` every 100 instructions.
+  - `IkAwait` instruction handles future completion and suspension.
+  - `IkAsyncStart`/`IkAsyncEnd` handle async block execution and exception wrapping.
+  - Threading support via `spawn` and `IkSpawnThread`.
+
+### 4. Classes & OOP
+- **Status**: ✅ Implemented
+- **Details**:
+  - Class definition (`class` keyword) supported via `IkClass`.
+  - Inheritance supported via `IkSubClass`.
+  - Method definition and unified call dispatch implemented.
+  - `new` keyword and `IkNew` instruction for instantiation.
+
+### 5. Pattern Matching
+- **Status**: ⚠️ Partially Implemented
+- **Details**:
+  - Basic variable binding supported: `(match a [1])`.
+  - Simple array destructuring supported: `(match [a b] [1 2])`.
+  - `IkJumpIfMatchSuccess` instruction exists for runtime matching.
+  - Complex patterns and deep destructuring are still work in progress.
 - ✅ Scope lifetime management with proper ref-counting (async-safe)
-- 🚧 Classes/OOP: constructors, inheritance, and method dispatch coverage still limited
-- 🚧 Pattern matching: argument binders work; general `match` forms incomplete
 - 🚧 Module/import system and package tooling
 
 ### Performance
