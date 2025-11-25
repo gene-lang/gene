@@ -2,6 +2,7 @@ import tables, strutils, hashes, os, streams
 
 import ../types
 import ../compiler
+import ../parser
 import ../gir
 when not defined(noExtensions):
   import ./extension
@@ -59,6 +60,9 @@ proc resolve_package_entrypoint(root: string): tuple[path: string, is_gir: bool]
   let idx = joinPath(root, "index.gene")
   if fileExists(idx):
     return (absolutePath(idx), false)
+  let srcIdx = joinPath(root, "src", "index.gene")
+  if fileExists(srcIdx):
+    return (absolutePath(srcIdx), false)
   let libIdx = joinPath(root, "lib", "index.gene")
   if fileExists(libIdx):
     return (absolutePath(libIdx), false)
@@ -81,8 +85,24 @@ proc try_resolve_path(base: string, module_path: string): tuple[path: string, is
       return (absolutePath(candidate), candidate.endsWith(".gir"))
   return ("", false)
 
-proc resolve_module_path(module_path: string, importer_dir: string, package_root: string): tuple[path: string, is_gir: bool] =
+proc native_ext_suffix(): string =
+  when defined(windows):
+    return ".dll"
+  elif defined(macosx):
+    return ".dylib"
+  else:
+    return ".so"
+
+proc resolve_module_path(module_path: string, importer_dir: string, package_root: string, package_name: string): tuple[path: string, is_gir: bool] =
   ## Resolve a module path relative to importer dir and package root fallbacks.
+  var normalized = module_path
+  if package_name.len > 0:
+    let pkg_last = package_name.split("/")[^1]
+    if normalized.startsWith(package_name & "/"):
+      normalized = normalized[package_name.len + 1 .. ^1]
+    elif normalized.startsWith(pkg_last & "/"):
+      normalized = normalized[pkg_last.len + 1 .. ^1]
+
   let base_dir = if importer_dir.len > 0: importer_dir else: getCurrentDir()
   let pkg_dir = if package_root.len > 0: package_root else: base_dir
   let candidates = @[
@@ -93,9 +113,18 @@ proc resolve_module_path(module_path: string, importer_dir: string, package_root
     joinPath(pkg_dir, "build")
   ]
   for base in candidates:
-    let (p, isGir) = try_resolve_path(base, module_path)
+    let (p, isGir) = try_resolve_path(base, normalized)
     if p.len > 0:
       return (p, isGir)
+  if package_root.len > 0:
+    let base = splitFile(normalized).name
+    let build_base = joinPath(package_root, "build", base)
+    let build_gir = build_base & ".gir"
+    if fileExists(build_gir):
+      return (absolutePath(build_gir), true)
+    let build_native = build_base & native_ext_suffix()
+    if fileExists(build_native):
+      return (build_base, false)  # treat as native; caller will mark is_native
   not_allowed("Module '" & module_path & "' not found under package root '" & pkg_dir & "'")
 
 proc package_search_paths(importer_dir: string): seq[string] =
@@ -112,15 +141,47 @@ proc package_search_paths(importer_dir: string): seq[string] =
 
 proc locate_package_root(package_name, importer_dir: string, override_path: string): string =
   ## Locate package root by name or explicit override.
+  let importer_root = find_package_root(importer_dir)
+
   if override_path.len > 0:
-    return find_package_root(override_path)
+    let base_path =
+      if override_path.isAbsolute:
+        override_path
+      elif importer_root.len > 0:
+        joinPath(importer_root, override_path)
+      else:
+        joinPath(importer_dir, override_path)
+    let root = find_package_root(base_path)
+    if root.len == 0:
+      not_allowed("Package path override '" & override_path & "' does not contain package.gene")
+    return root
 
   let name_path = package_name.replace("/", $DirSep)
   for base in package_search_paths(importer_dir):
     let candidate = joinPath(base, name_path)
+    if not dirExists(candidate) and not fileExists(candidate):
+      continue
     let root = find_package_root(candidate)
     if root.len > 0:
       return root
+  # Fallback: try sibling of the current package root using the final segment.
+  if importer_root.len > 0:
+    let last_part = package_name.split("/")[^1]
+    let sibling = joinPath(parentDir(importer_root), last_part)
+    let root = find_package_root(sibling)
+    if root.len > 0:
+      return root
+  return ""
+
+proc find_native_build(pkg_root: string, resolved_path: string): string =
+  ## Look for a compiled native module under build/ matching the module basename.
+  let base = splitFile(resolved_path).name
+  if pkg_root.len == 0 or base.len == 0:
+    return ""
+  let candidate = joinPath(pkg_root, "build", base)
+  let extPath = candidate & native_ext_suffix()
+  if fileExists(extPath):
+    return candidate  # load_extension will append the suffix
   return ""
 
 proc current_module_path(vm: VirtualMachine): string =
@@ -400,29 +461,18 @@ proc compile_module*(path: string): CompilationUnit =
   if abs_path.endsWith(".gir"):
     return load_gir(abs_path)
 
-  var code: string
   var actual_path = abs_path
-
-  # Try with .gene extension if not present
   if not path.endsWith(".gene"):
     actual_path = abs_path & ".gene"
-
-  # Try to open the file as a stream
-  var stream = newFileStream(actual_path, fmRead)
-  if stream.isNil:
-    # Try without extension if .gene failed
-    if actual_path != path:
-      stream = newFileStream(abs_path, fmRead)
-      if stream.isNil:
-        not_allowed("Failed to open module '" & path & "'")
+  if not fileExists(actual_path):
+    if actual_path != abs_path and fileExists(abs_path):
       actual_path = abs_path
     else:
       not_allowed("Failed to open module '" & path & "'")
 
-  defer: stream.close()
-
-  # Use streaming compilation for better memory efficiency
-  return parse_and_compile(stream, actual_path)
+  let code = readFile(actual_path)
+  let parsed = read_all(code)
+  return compile(parsed)
 
 proc load_module*(vm: VirtualMachine, path: string): Namespace =
   ## Load a module from file and return its namespace
@@ -509,24 +559,32 @@ proc handle_import*(vm: VirtualMachine, import_gene: ptr Gene): tuple[path: stri
   var resolved_path = raw_module_path
   var is_gir = false
 
+  var package_root = ""
+
   if package_name.len > 0:
     validate_package_name(package_name)
-    let pkg_root = locate_package_root(package_name, importer_dir, package_path_override)
-    if pkg_root.len == 0:
+    package_root = locate_package_root(package_name, importer_dir, package_path_override)
+    if package_root.len == 0:
       not_allowed("Package '" & package_name & "' not found")
     if raw_module_path == "index":
-      let entry = resolve_package_entrypoint(pkg_root)
+      let entry = resolve_package_entrypoint(package_root)
       resolved_path = entry.path
       is_gir = entry.is_gir
     else:
-      let (p, girFlag) = resolve_module_path(raw_module_path, pkg_root, pkg_root)
+      let (p, girFlag) = resolve_module_path(raw_module_path, package_root, package_root, package_name)
       resolved_path = p
       is_gir = girFlag
   else:
-    let pkg_root = find_package_root(importer_dir)
-    let (p, girFlag) = resolve_module_path(raw_module_path, importer_dir, pkg_root)
+    package_root = find_package_root(importer_dir)
+    let (p, girFlag) = resolve_module_path(raw_module_path, importer_dir, package_root, "")
     resolved_path = p
     is_gir = girFlag
+
+  if not is_native:
+    let native_candidate = find_native_build(package_root, resolved_path)
+    if native_candidate.len > 0:
+      resolved_path = native_candidate
+      is_native = true
 
   # Check cache first
   if ModuleCache.hasKey(resolved_path):

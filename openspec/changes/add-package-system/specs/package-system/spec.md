@@ -12,7 +12,7 @@ The loader SHALL treat the nearest ancestor directory containing `package.gene` 
 - **THEN** the loader fails with a package resolution error before executing the import
 
 ### Requirement: Package Entrypoint Resolution
-From a resolved package root, the loader SHALL select the entrypoint in the following order: `index.gene`, then `lib/index.gene`, then a prebuilt `build/index.gir` relative to the package root.
+From a resolved package root, the loader SHALL select the entrypoint in the following order: `index.gene`, then `src/index.gene`, then `lib/index.gene`, then a prebuilt `build/index.gir` relative to the package root.
 
 #### Scenario: Source entrypoint preferred
 - **WHEN** both `index.gene` and `build/index.gir` exist under a package root

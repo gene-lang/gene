@@ -1,5 +1,1 @@
-(import upcase from "index" ^^native)
-
-(fn x _
-  1
-)
+(import upcase from "my_lib/libindex.dylib" ^native true)
