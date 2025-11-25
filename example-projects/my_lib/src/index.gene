@@ -1,0 +1,5 @@
+(import upcase from "index" ^^native)
+
+(fn x _
+  1
+)

@@ -1,0 +1,8 @@
+^name "x/my_lib"
+^version "0.1.0"
+^dependencies [
+]
+^globals ["MyLib"]  # This lib will create/overwrite a global variable called "MyLib"
+^auto_load [
+  "init"            # Modules that are loaded if the package is auto loaded
+]

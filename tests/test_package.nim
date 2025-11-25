@@ -28,7 +28,7 @@ test_vm """
 """, "gene"
 
 test_vm """
-  ($dep "my-lib" ^path "example-projects/my-lib")
-  (import x from "index" ^pkg "my-lib")
+  ($dep "my_lib" ^path "example-projects/my_lib")
+  (import x from "index" ^pkg "my_lib")
   (x)
 """, 1

@@ -2,6 +2,7 @@ import tables, strutils, hashes, os, streams
 
 import ../types
 import ../compiler
+import ../gir
 when not defined(noExtensions):
   import ./extension
 
@@ -13,6 +14,124 @@ type
 
 # Global module cache
 var ModuleCache* = initTable[string, Namespace]()
+
+const
+  PackageNameAllowedChars = {'a'..'z', '0'..'9', '-', '_', '+', '&'}
+
+proc validate_package_name(name: string) =
+  ## Validate package name against `[a-z][a-z0-9-_+&]*[a-z0-9](/[a-z][a-z0-9-_+&]*[a-z0-9])+`
+  let parts = name.split("/")
+  if parts.len < 2:
+    not_allowed("Package name must have at least two segments")
+
+  let top = parts[0]
+  if top == "gene" or top == "genex" or top.startsWith("gene"):
+    not_allowed("Package name '" & name & "' uses a reserved namespace")
+  if top.len == 1 and (top == "x" or top == "y" or top == "z"):
+    discard  # Open namespaces; still validate characters below
+
+  for part in parts:
+    if part[0] notin {'a'..'z'}:
+      not_allowed("Package segments must start with a lowercase letter: " & part)
+    if part[^1] notin {'a'..'z', '0'..'9'}:
+      not_allowed("Package segments must end with a letter or digit: " & part)
+    for ch in part:
+      if ch notin PackageNameAllowedChars:
+        not_allowed("Invalid character '" & $ch & "' in package name '" & name & "'")
+
+proc find_package_root*(start_path: string): string =
+  ## Walk ancestors starting at a file or directory to find `package.gene`.
+  var dir = if fileExists(start_path): parentDir(start_path) else: start_path
+  if dir.len == 0:
+    return ""
+  dir = absolutePath(dir)
+  while true:
+    if fileExists(joinPath(dir, "package.gene")):
+      return dir
+    let parent = parentDir(dir)
+    if parent.len == 0 or parent == dir:
+      break
+    dir = parent
+  return ""
+
+proc resolve_package_entrypoint(root: string): tuple[path: string, is_gir: bool] =
+  ## Choose package entrypoint in priority order.
+  let idx = joinPath(root, "index.gene")
+  if fileExists(idx):
+    return (absolutePath(idx), false)
+  let libIdx = joinPath(root, "lib", "index.gene")
+  if fileExists(libIdx):
+    return (absolutePath(libIdx), false)
+  let girIdx = joinPath(root, "build", "index.gir")
+  if fileExists(girIdx):
+    return (absolutePath(girIdx), true)
+  not_allowed("Package entrypoint not found under " & root)
+
+proc try_resolve_path(base: string, module_path: string): tuple[path: string, is_gir: bool] =
+  ## Attempt to resolve a module path under a base directory.
+  var candidate = joinPath(base, module_path)
+  if module_path.endsWith(".gir") or module_path.endsWith(".gene"):
+    if fileExists(candidate):
+      return (absolutePath(candidate), module_path.endsWith(".gir"))
+  else:
+    let withGene = candidate & ".gene"
+    if fileExists(withGene):
+      return (absolutePath(withGene), false)
+    if fileExists(candidate):
+      return (absolutePath(candidate), candidate.endsWith(".gir"))
+  return ("", false)
+
+proc resolve_module_path(module_path: string, importer_dir: string, package_root: string): tuple[path: string, is_gir: bool] =
+  ## Resolve a module path relative to importer dir and package root fallbacks.
+  let base_dir = if importer_dir.len > 0: importer_dir else: getCurrentDir()
+  let pkg_dir = if package_root.len > 0: package_root else: base_dir
+  let candidates = @[
+    base_dir,
+    pkg_dir,
+    joinPath(pkg_dir, "src"),
+    joinPath(pkg_dir, "lib"),
+    joinPath(pkg_dir, "build")
+  ]
+  for base in candidates:
+    let (p, isGir) = try_resolve_path(base, module_path)
+    if p.len > 0:
+      return (p, isGir)
+  not_allowed("Module '" & module_path & "' not found under package root '" & pkg_dir & "'")
+
+proc package_search_paths(importer_dir: string): seq[string] =
+  ## Build package search paths (minimal MVP).
+  result = @[]
+  if importer_dir.len > 0:
+    result.add(importer_dir)
+    result.add(joinPath(importer_dir, "packages"))
+  let env_paths = getEnv("GENE_PACKAGE_PATH")
+  if env_paths.len > 0:
+    for part in env_paths.split(PathSep):
+      if part.len > 0:
+        result.add(absolutePath(part))
+
+proc locate_package_root(package_name, importer_dir: string, override_path: string): string =
+  ## Locate package root by name or explicit override.
+  if override_path.len > 0:
+    return find_package_root(override_path)
+
+  let name_path = package_name.replace("/", $DirSep)
+  for base in package_search_paths(importer_dir):
+    let candidate = joinPath(base, name_path)
+    let root = find_package_root(candidate)
+    if root.len > 0:
+      return root
+  return ""
+
+proc current_module_path(vm: VirtualMachine): string =
+  ## Best-effort retrieval of current module filename.
+  if vm.frame != nil and vm.frame.ns != nil:
+    let key = "__module_name__".to_key()
+    if vm.frame.ns.members.hasKey(key):
+      let v = vm.frame.ns.members[key]
+      if v.kind == VkString:
+        return v.str
+  return ""
 
 proc split_import_path(name: string): seq[string] =
   ## Split an import path like "genex/http/*" into parts.
@@ -131,9 +250,10 @@ proc import_from_namespace(vm: VirtualMachine, items: seq[ImportItem]): bool =
 
   return handled
 
-proc parse_import_statement*(gene: ptr Gene): tuple[module_path: string, imports: seq[ImportItem]] =
+proc parse_import_statement*(gene: ptr Gene): tuple[module_path: string, package_name: string, imports: seq[ImportItem]] =
   ## Parse import statement into module path and list of imports
   var module_path = ""
+  var package_name = ""
   var imports: seq[ImportItem] = @[]
   var i = 0
   
@@ -148,6 +268,14 @@ proc parse_import_statement*(gene: ptr Gene): tuple[module_path: string, imports
         continue
       else:
         not_allowed("'from' must be followed by a string module path")
+    if child.kind == VkSymbol and child.str == "of":
+      # Handle "of package" syntax
+      if i + 1 < gene.children.len and gene.children[i + 1].kind == VkString:
+        package_name = gene.children[i + 1].str
+        i += 2
+        continue
+      else:
+        not_allowed("'of' must be followed by a string package name")
     
     # Parse import items
     case child.kind:
@@ -263,27 +391,31 @@ proc parse_import_statement*(gene: ptr Gene): tuple[module_path: string, imports
     
     i += 1
   
-  return (module_path, imports)
+  return (module_path, package_name, imports)
 
 proc compile_module*(path: string): CompilationUnit =
   ## Compile a module from file and return its compilation unit
   # Read module file
+  let abs_path = absolutePath(path)
+  if abs_path.endsWith(".gir"):
+    return load_gir(abs_path)
+
   var code: string
-  var actual_path = path
+  var actual_path = abs_path
 
   # Try with .gene extension if not present
   if not path.endsWith(".gene"):
-    actual_path = path & ".gene"
+    actual_path = abs_path & ".gene"
 
   # Try to open the file as a stream
   var stream = newFileStream(actual_path, fmRead)
   if stream.isNil:
     # Try without extension if .gene failed
     if actual_path != path:
-      stream = newFileStream(path, fmRead)
+      stream = newFileStream(abs_path, fmRead)
       if stream.isNil:
         not_allowed("Failed to open module '" & path & "'")
-      actual_path = path
+      actual_path = abs_path
     else:
       not_allowed("Failed to open module '" & path & "'")
 
@@ -346,40 +478,73 @@ proc execute_module*(vm: VirtualMachine, path: string, module_ns: Namespace): Va
 
 proc handle_import*(vm: VirtualMachine, import_gene: ptr Gene): tuple[path: string, imports: seq[ImportItem], ns: Namespace, is_native: bool, handled: bool] =
   ## Parse import statement and prepare for execution
-  let (module_path, imports) = parse_import_statement(import_gene)
+  let (raw_module_path, package_from_stmt, imports) = parse_import_statement(import_gene)
   
-  if module_path == "":
+  if raw_module_path.len == 0:
     if import_from_namespace(vm, imports):
       return ("", @[], nil, false, true)
     else:
       not_allowed("Module path not specified in import statement")
   
+  var package_name = package_from_stmt
+  if "pkg".to_key() in import_gene.props and package_name.len == 0:
+    let pkg_val = import_gene.props["pkg".to_key()]
+    if pkg_val.kind == VkString or pkg_val.kind == VkSymbol:
+      package_name = pkg_val.str
+  var package_path_override = ""
+  if "path".to_key() in import_gene.props:
+    let path_val = import_gene.props["path".to_key()]
+    if path_val.kind == VkString or path_val.kind == VkSymbol:
+      package_path_override = path_val.str
+  
   # Check if this is a native extension
   var is_native = false
   if "native".to_key() in import_gene.props:
     is_native = import_gene.props["native".to_key()].to_bool()
-  
+
+  # Determine importer directory
+  let importer_module = current_module_path(vm)
+  let importer_dir = if importer_module.len > 0: parentDir(importer_module) else: getCurrentDir()
+
+  var resolved_path = raw_module_path
+  var is_gir = false
+
+  if package_name.len > 0:
+    validate_package_name(package_name)
+    let pkg_root = locate_package_root(package_name, importer_dir, package_path_override)
+    if pkg_root.len == 0:
+      not_allowed("Package '" & package_name & "' not found")
+    if raw_module_path == "index":
+      let entry = resolve_package_entrypoint(pkg_root)
+      resolved_path = entry.path
+      is_gir = entry.is_gir
+    else:
+      let (p, girFlag) = resolve_module_path(raw_module_path, pkg_root, pkg_root)
+      resolved_path = p
+      is_gir = girFlag
+  else:
+    let pkg_root = find_package_root(importer_dir)
+    let (p, girFlag) = resolve_module_path(raw_module_path, importer_dir, pkg_root)
+    resolved_path = p
+    is_gir = girFlag
+
   # Check cache first
-  if ModuleCache.hasKey(module_path):
-    let module_ns = ModuleCache[module_path]
-    # Import requested symbols
+  if ModuleCache.hasKey(resolved_path):
+    let module_ns = ModuleCache[resolved_path]
     for item in imports:
       let value = resolve_import_value(module_ns, item.name)
-      
-      # Determine the name to import as
-      let import_name = if item.alias != "": 
-        item.alias 
+      let import_name = if item.alias.len > 0:
+        item.alias
       else:
-        # Use the last part of the path
         let parts = item.name.split("/")
         parts[^1]
-      
-      # Add to current namespace
       vm.frame.ns.members[import_name.to_key()] = value
-    return (module_path, imports, module_ns, is_native, false)
+    return (resolved_path, imports, module_ns, is_native, false)
   
   # Module not cached, need to compile and execute it (or load as native)
-  let module_ns = new_namespace(module_path)
+  let module_ns = new_namespace(resolved_path)
   module_ns.members["__is_main__".to_key()] = FALSE
-  module_ns.members["__module_name__".to_key()] = module_path.to_value()
-  return (module_path, imports, module_ns, is_native, false)
+  module_ns.members["__module_name__".to_key()] = resolved_path.to_value()
+  if is_gir:
+    module_ns.members["__compiled__".to_key()] = TRUE
+  return (resolved_path, imports, module_ns, is_native, false)

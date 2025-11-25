@@ -1,0 +1,13 @@
+#!/usr/bin/env gene
+
+(import genex/tests/[test skip_test])
+
+(import mungle from "index")
+
+(test "($pkg .name)"
+  (assert (($pkg .name) == "my_app"))
+)
+
+(test "mungle"
+  (assert ((mungle "ab") == "ab:AB"))
+)
