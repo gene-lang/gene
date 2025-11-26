@@ -1460,7 +1460,7 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
 
   # Use unified IkNew instruction for both regular and macro constructors
   # Runtime validation will handle the differences
-  self.emit(Instruction(kind: IkNew))
+  self.emit(Instruction(kind: IkNew, arg1: (if is_macro_new: 1 else: 0)))
 
 proc compile_super(self: Compiler, gene: ptr Gene) =
   # Super: returns the parent class
@@ -1766,10 +1766,6 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   var definitely_not_macro = false
   if gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    # Functions not ending with '!' are regular functions (not macro-like)
-    if not func_name.ends_with("!"):
-      definitely_not_macro = true
-    # Exception: control flow keywords might still need special handling
     if func_name in ["return", "break", "continue", "throw"]:
       definitely_not_macro = false
   elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
@@ -2293,7 +2289,7 @@ proc compile_gene(self: Compiler, input: Value) =
       of "continue":
         self.compile_continue(gene)
         return
-      of "fn", "fn!", "fnx", "fnxx":
+      of "fn", "fn!", "fnx", "fnx!", "fnxx":
         self.compile_fn(input)
         return
       of "->":

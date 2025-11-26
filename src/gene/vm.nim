@@ -3308,6 +3308,14 @@ proc exec*(self: VirtualMachine): Value =
         
         # Access the class
         let class = class_value.ref.class
+
+        let is_macro_ctor = fn_value.ref.fn.is_macro_like
+
+        if class.constructor != NIL:
+          if class.has_macro_constructor != is_macro_ctor:
+            not_allowed("Class '" & class.name & "' cannot define both ctor and ctor!")
+          else:
+            not_allowed("Class '" & class.name & "' already has a constructor")
         
         # Set the constructor
         class.constructor = fn_value
@@ -3316,7 +3324,7 @@ proc exec*(self: VirtualMachine): Value =
         fn_value.ref.fn.ns = class.ns
 
         # Set has_macro_constructor flag based on function type
-        class.has_macro_constructor = fn_value.ref.fn.is_macro_like
+        class.has_macro_constructor = is_macro_ctor
         
         # Return the function
         self.frame.push(fn_value)
@@ -3827,21 +3835,11 @@ proc exec*(self: VirtualMachine): Value =
               echo "  Gene type = ", class_val.gene.type
           raise new_exception(types.Exception, "new requires a class, got " & $class_val.kind)
 
-        # Runtime validation for constructor type mismatches
-        # Check if we have unevaluated arguments (symbols) in the Gene
-        var has_unevaluated_args = false
-        if args.kind == VkGene and args.gene.children.len > 0:
-          # Check if any arguments are symbols (indicating unevaluated)
-          for child in args.gene.children:
-            if child.kind == VkSymbol:
-              has_unevaluated_args = true
-              break
-
-        if class.has_macro_constructor and not has_unevaluated_args:
-          raise new_exception(types.Exception, "Cannot instantiate macro constructor '" & class.name & "' with evaluated arguments, use 'new!' instead of 'new'")
-
-        if not class.has_macro_constructor and has_unevaluated_args:
-          raise new_exception(types.Exception, "Cannot instantiate regular constructor '" & class.name & "' with unevaluated arguments, use 'new' instead of 'new!'")
+        let is_macro_call = inst.arg1 != 0
+        if is_macro_call and not class.has_macro_constructor:
+          not_allowed("Class '" & class.name & "' defines ctor, use 'new' instead of 'new!'")
+        if (not is_macro_call) and class.has_macro_constructor:
+          not_allowed("Class '" & class.name & "' defines ctor!, use 'new!' instead of 'new'")
         
         # Check constructor type
         case class.constructor.kind:

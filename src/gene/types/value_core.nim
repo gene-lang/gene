@@ -1559,6 +1559,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"
     body_start = 1
+  elif node.gene.type != NIL and node.gene.type == "fnx!".to_symbol_value():
+    matcher.parse(node.gene.children[0])
+    name = "<unnamed>"
+    body_start = 1
+    is_macro_like = true
   elif node.gene.type != NIL and node.gene.type == "fnxx".to_symbol_value():
     name = "<unnamed>"
     body_start = 0
