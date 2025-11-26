@@ -24,7 +24,7 @@ source.gene ──► Parser ──► AST ──► Compiler ──► Compilat
 
 ### Compiler (`src/gene/compiler.nim`)
 - Walks the parsed form and emits instructions defined in `InstructionKind`.
-- Handles special forms (conditionals, loops, namespaces, class definitions, `fn!`, `$caller_eval`).
+- Handles special forms (conditionals, loops, namespaces, class definitions, `$caller_eval`).
 - Builds argument matchers so functions, macros, and methods can destructure their inputs.
 - Produces a `CompilationUnit` (instruction stream + constant table + metadata) consumed by the VM or the GIR serializer.
 

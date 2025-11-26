@@ -13,7 +13,7 @@ This is the **current focus** - a bytecode VM implementation for better performa
 - ✅ Bytecode compiler + GIR serializer
 - ✅ Stack-based VM with computed-goto dispatch
 - ✅ Core data types (ints, floats, strings, arrays, maps, sets, futures, classes)
-- ✅ Functions, closures, and macro-like functions (`fn!`, `$caller_eval`)
+- ✅ Functions, closures, and macro-like functions
 - ✅ Basic control flow (if/else, loops, try/catch/finally)
 - ✅ CLI commands (`run`, `eval`, `repl`, `parse`, `compile`)
 - ✅ Async/await via synchronous futures (pseudo-async)

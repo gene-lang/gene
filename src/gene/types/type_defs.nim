@@ -353,7 +353,7 @@ type
   Function* = ref object
     async*: bool
     is_generator*: bool  # True for generator functions
-    is_macro_like*: bool  # True for macro-like functions (defined with fn!)
+    is_macro_like*: bool  # True for macro-like functions (defined with (fn f!))
     name*: string
     ns*: Namespace  # the namespace of the module wherein this is defined.
     scope_tracker*: ScopeTracker  # the root scope tracker of the function

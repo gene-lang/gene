@@ -47,7 +47,7 @@ Key modules:
 
 ## Feature Status
 
-- ✅ Macros and macro-like functions (`fn!`, `$caller_eval`) with unevaluated arguments.
+- ✅ Macros and macro-like functions with unevaluated arguments.
 - ✅ Basic classes (`class`, `new`, nested classes) and namespace plumbing.
 - ✅ Futures run synchronously; `async` wraps expressions and `await` unwraps results.
 - ✅ Scope lifetime management: `IkScopeEnd` correctly uses ref-counting to prevent premature freeing when async blocks capture scopes.

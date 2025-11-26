@@ -1551,10 +1551,6 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var is_generator = false
   var is_macro_like = false
 
-  # Check if defined with fn! type
-  if node.gene.type != NIL and node.gene.type == "fn!".to_symbol_value():
-    is_macro_like = true
-
   if node.gene.type != NIL and node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"

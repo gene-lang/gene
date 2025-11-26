@@ -1294,12 +1294,8 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   # Create a function from the constructor definition
   # The constructor is similar to (fn new args body...) but bound to the class
   var fn_value = new_gene_value()
-  if is_macro_ctor:
-    fn_value.gene.type = "fn!".to_symbol_value()  # Create macro-like function
-  else:
-    fn_value.gene.type = "fn".to_symbol_value()
-  # Add "new" as the function name
-  fn_value.gene.children.add("new".to_symbol_value())
+  fn_value.gene.type = "fn".to_symbol_value()
+  fn_value.gene.children.add(gene.type.str[1..^1].to_symbol_value())
   
   # Handle args - if it's not an array and there's more than 1 child (arg, body+),
   # wrap the single arg in an array (unless it's _ which means no args)
@@ -1460,7 +1456,7 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
 
   # Use unified IkNew instruction for both regular and macro constructors
   # Runtime validation will handle the differences
-  self.emit(Instruction(kind: IkNew, arg1: (if is_macro_new: 1 else: 0)))
+  self.emit(Instruction(kind: IkNew, arg1: is_macro_new.int32))
 
 proc compile_super(self: Compiler, gene: ptr Gene) =
   # Super: returns the parent class
@@ -1766,6 +1762,10 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   var definitely_not_macro = false
   if gene.type.kind == VkSymbol:
     let func_name = gene.type.str
+    # Functions not ending with '!' are regular functions (not macro-like)
+    if not func_name.ends_with("!"):
+      definitely_not_macro = true
+    # Exception: control flow keywords might still need special handling
     if func_name in ["return", "break", "continue", "throw"]:
       definitely_not_macro = false
   elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
@@ -2289,7 +2289,7 @@ proc compile_gene(self: Compiler, input: Value) =
       of "continue":
         self.compile_continue(gene)
         return
-      of "fn", "fn!", "fnx", "fnx!", "fnxx":
+      of "fn", "fnx", "fnx!", "fnxx":
         self.compile_fn(input)
         return
       of "->":
@@ -3263,10 +3263,9 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
     while true:
       let node = parser.read()
       if node != PARSER_IGNORE:
-        # Pop previous result before compiling next item (except for first),
-        # and emit before compiling to keep multi-instruction emits adjacent.
+        # Pop previous result before compiling next item (except for first)
         if not is_first:
-          self.emit(Instruction(kind: IkPop))
+          self.emit(Instruction(kind: IkClearStack))
 
         self.last_error_trace = nil
         try:
@@ -3321,10 +3320,9 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
     while true:
       let node = parser.read()
       if node != PARSER_IGNORE:
-        # Pop previous result before compiling next item (except for first),
-        # and emit before compiling to keep multi-instruction emits adjacent.
+        # Pop previous result before compiling next item (except for first)
         if not is_first:
-          self.output.instructions.add(Instruction(kind: IkPop))
+          self.output.instructions.add(Instruction(kind: IkClearStack))
 
         self.last_error_trace = nil
         try:
