@@ -93,6 +93,43 @@ proc native_ext_suffix(): string =
   else:
     return ".so"
 
+proc resolve_native_module(module_path: string, importer_dir: string, package_root: string, package_name: string): string =
+  ## Resolve a native module path, honoring package roots and common build locations.
+  var normalized = module_path
+  if package_name.len > 0:
+    let pkg_last = package_name.split("/")[^1]
+    if normalized.startsWith(package_name & "/"):
+      normalized = normalized[package_name.len + 1 .. ^1]
+    elif normalized.startsWith(pkg_last & "/"):
+      normalized = normalized[pkg_last.len + 1 .. ^1]
+
+  let base_dir = if importer_dir.len > 0: importer_dir else: getCurrentDir()
+  let pkg_dir = if package_root.len > 0: package_root else: base_dir
+  let bases = @[
+    base_dir,
+    pkg_dir,
+    joinPath(pkg_dir, "src"),
+    joinPath(pkg_dir, "lib"),
+    joinPath(pkg_dir, "build")
+  ]
+
+  for base in bases:
+    let candidate = absolutePath(joinPath(base, normalized))
+    if fileExists(candidate):
+      return candidate
+    let native_candidate = candidate & native_ext_suffix()
+    if fileExists(native_candidate):
+      return native_candidate
+
+  if package_root.len > 0:
+    let base = splitFile(normalized).name
+    let build_base = joinPath(package_root, "build", base)
+    let build_native = build_base & native_ext_suffix()
+    if fileExists(build_native):
+      return build_native
+
+  return ""
+
 proc resolve_module_path(module_path: string, importer_dir: string, package_root: string, package_name: string): tuple[path: string, is_gir: bool] =
   ## Resolve a module path relative to importer dir and package root fallbacks.
   var normalized = module_path
@@ -157,13 +194,31 @@ proc locate_package_root(package_name, importer_dir: string, override_path: stri
     return root
 
   let name_path = package_name.replace("/", $DirSep)
-  for base in package_search_paths(importer_dir):
-    let candidate = joinPath(base, name_path)
-    if not dirExists(candidate) and not fileExists(candidate):
-      continue
-    let root = find_package_root(candidate)
-    if root.len > 0:
-      return root
+  # Walk search paths from importer_dir plus ancestors.
+  var bases = package_search_paths(importer_dir)
+  var walk_dir = importer_dir
+  while walk_dir.len > 0:
+    let parent = parentDir(walk_dir)
+    if parent.len == 0 or parent == walk_dir:
+      break
+    bases.add(parent)
+    walk_dir = parent
+
+  for base in bases:
+    let base_abs = absolutePath(base)
+    let candidate_full = joinPath(base_abs, name_path)
+    if dirExists(candidate_full) or fileExists(candidate_full):
+      let root = find_package_root(candidate_full)
+      if root.len > 0:
+        return root
+
+    let last_part = package_name.split("/")[^1]
+    let candidate_short = joinPath(base_abs, last_part)
+    if dirExists(candidate_short) or fileExists(candidate_short):
+      let root = find_package_root(candidate_short)
+      if root.len > 0:
+        return root
+
   # Fallback: try sibling of the current package root using the final segment.
   if importer_root.len > 0:
     let last_part = package_name.split("/")[^1]
@@ -171,6 +226,8 @@ proc locate_package_root(package_name, importer_dir: string, override_path: stri
     let root = find_package_root(sibling)
     if root.len > 0:
       return root
+  when not defined(release):
+    echo "locate_package_root failed for ", package_name, " (importer_dir=", importer_dir, ")"
   return ""
 
 proc find_native_build(pkg_root: string, resolved_path: string): string =
@@ -192,6 +249,8 @@ proc current_module_path(vm: VirtualMachine): string =
       let v = vm.frame.ns.members[key]
       if v.kind == VkString:
         return v.str
+    if vm.frame.ns.name.len > 0:
+      return vm.frame.ns.name
   return ""
 
 proc split_import_path(name: string): seq[string] =
@@ -576,9 +635,23 @@ proc handle_import*(vm: VirtualMachine, import_gene: ptr Gene): tuple[path: stri
       is_gir = girFlag
   else:
     package_root = find_package_root(importer_dir)
-    let (p, girFlag) = resolve_module_path(raw_module_path, importer_dir, package_root, "")
-    resolved_path = p
-    is_gir = girFlag
+    if is_native:
+      let native_path = resolve_native_module(raw_module_path, importer_dir, package_root, "")
+      if native_path.len == 0:
+        not_allowed("Native module '" & raw_module_path & "' not found")
+      resolved_path = native_path
+      is_gir = false
+    else:
+      let (p, girFlag) = resolve_module_path(raw_module_path, importer_dir, package_root, "")
+      resolved_path = p
+      is_gir = girFlag
+
+  if is_native and resolved_path.len == 0:
+    let native_path = resolve_native_module(raw_module_path, importer_dir, package_root, package_name)
+    if native_path.len == 0:
+      not_allowed("Native module '" & raw_module_path & "' not found")
+    resolved_path = native_path
+    is_gir = false
 
   if not is_native:
     let native_candidate = find_native_build(package_root, resolved_path)

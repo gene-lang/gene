@@ -136,9 +136,7 @@ proc write_value(stream: Stream, v: Value) =
   of VkFunctionDef:
     writeFunctionDef(stream, v.ref.function_def)
   else:
-    # Complex types stored as indices into constant pool
-    # or serialized separately
-    stream.write(cast[uint64](v))
+    not_allowed("GIR serialization not implemented for kind " & $v.kind)
 
 proc read_value(stream: Stream): Value =
   let kind = cast[ValueKind](stream.readUint16())
@@ -166,8 +164,7 @@ proc read_value(stream: Stream): Value =
     let info = readFunctionDef(stream)
     result = info.to_value()
   else:
-    # Complex types - read raw value for now
-    result = cast[Value](stream.readUint64())
+    not_allowed("GIR read not implemented for kind " & $kind)
 
 proc collect_trace_nodes(node: SourceTrace, buffer: var seq[SourceTrace])
 proc build_trace_index(nodes: seq[SourceTrace]): Table[pointer, int]

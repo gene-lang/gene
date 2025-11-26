@@ -3701,6 +3701,7 @@ proc exec*(self: VirtualMachine): Value =
             # Save current state
             let saved_cu = self.cu
             let saved_frame = self.frame
+            let saved_pc = self.pc
           
             # Create a new frame for module execution
             self.frame = new_frame()
@@ -3714,6 +3715,7 @@ proc exec*(self: VirtualMachine): Value =
             # Restore the original state
             self.cu = saved_cu
             self.frame = saved_frame
+            self.pc = saved_pc
             
             # Cache the module
             ModuleCache[module_path] = module_ns
