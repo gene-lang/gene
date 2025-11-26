@@ -56,6 +56,8 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_function_optimization.nim"
   exec "nim c -r tests/test_namespace.nim"
   exec "nim c -r tests/test_oop.nim"
+  exec "nim c -r tests/test_super.nim"
+  exec "nim c -r tests/test_oop.nim"
   # exec "nim c -r tests/test_cast.nim"
   exec "nim c -r tests/test_pattern_matching.nim"
   exec "nim c -r tests/test_macro.nim"

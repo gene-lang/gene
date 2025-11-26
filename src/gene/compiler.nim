@@ -1762,9 +1762,6 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   var definitely_not_macro = false
   if gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    # Functions not ending with '!' are regular functions (not macro-like)
-    if not func_name.ends_with("!"):
-      definitely_not_macro = true
     # Exception: control flow keywords might still need special handling
     if func_name in ["return", "break", "continue", "throw"]:
       definitely_not_macro = false
@@ -2025,6 +2022,47 @@ proc compile_gene(self: Compiler, input: Value) =
     self.compile_literal(gene.type)
     return
   
+  # Special case: super calls
+  if gene.type.kind == VkSymbol and gene.type.str == "super":
+    if gene.children.len == 0:
+      not_allowed("super requires a member")
+    let member = gene.children[0]
+    if member.kind != VkSymbol or not member.str.starts_with("."):
+      not_allowed("super requires a method or constructor symbol (e.g., .m or .ctor!)")
+    let member_name = member.str[1..^1]  # strip leading dot
+    let is_ctor = member.str == ".ctor" or member.str == ".ctor!"
+    let is_macro = member.str.ends_with("!")
+    let arg_start = 1
+    let arg_count = gene.children.len - arg_start
+
+    let old_tail = self.tail_position
+    self.tail_position = false
+    for i in arg_start..<gene.children.len:
+      let arg = gene.children[i]
+      # For macro super calls, forward plain symbols as-is (already unevaluated)
+      let needs_quote = is_macro and arg.kind != VkSymbol
+      if needs_quote:
+        self.quote_level.inc()
+      self.compile(arg)
+      if needs_quote:
+        self.quote_level.dec()
+    self.tail_position = old_tail
+
+    let inst_kind =
+      if is_ctor:
+        if is_macro: IkCallSuperCtorMacro else: IkCallSuperCtor
+      else:
+        if is_macro: IkCallSuperMethodMacro else: IkCallSuperMethod
+
+    self.emit(
+      Instruction(
+        kind: inst_kind,
+        arg0: member_name.to_symbol_value(),
+        arg1: arg_count.int32,
+      )
+    )
+    return
+
   let is_quoted_symbol_method_call = gene.type.kind == VkQuote and gene.type.ref.quote.kind == VkSymbol and
     gene.children.len >= 1 and gene.children[0].kind == VkSymbol and gene.children[0].str.starts_with(".")
 

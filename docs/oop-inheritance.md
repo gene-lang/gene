@@ -6,6 +6,7 @@ This document captures the planned semantics for invoking superclass methods and
 - Allow calling a parent method or constructor from inside a subclass implementation.
 - Support both eager and macro variants (`.m` vs `.m!`, `.ctor` vs `.ctor!`).
 - Keep invocation syntax minimal and uniform with existing call forms.
+- Avoid runtime allocation overhead for `super` dispatch.
 
 ## Target Syntax
 
@@ -24,9 +25,7 @@ This document captures the planned semantics for invoking superclass methods and
 ```
 
 ## Semantics
-- **Receiver**: `super` is only valid inside a method or constructor. It resolves to a proxy that carries:
-  - the current instance (or custom value), and
-  - the parent class (nearest ancestor).
+- **Receiver**: `super` is only valid inside a method or constructor.
 - **Method lookup**:
   - `(super .m ...)` resolves `m` on the parent class. Fails if missing.
   - `(super .m! ...)` resolves the macro-method variant. Fails if missing or if only eager exists.
@@ -42,18 +41,19 @@ This document captures the planned semantics for invoking superclass methods and
   - Missing method/constructor on parent → runtime error (“Superclass has no method m”).
   - Macro/eager mismatch → runtime error (e.g., calling `.m!` when only eager exists).
 
-## VM Model (planned)
-- Introduce a `VkSuperProxy` that stores `{instance, parentClass}` pushed by `IkSuper`.
-- Method/ctor dispatch detects the proxy:
-  - Use `parentClass` for lookup.
-  - Pass `instance` as `self` to the resolved method.
-  - For macro-methods, reuse existing macro call path (quoted args).
-  - For constructors, reuse ctor dispatch but with the existing instance (no allocation) and honor ctor vs ctor!.
-- `IkSuper` is only emitted within compiled class bodies; elsewhere, the compiler emits an error.
+## VM Model (allocation-free)
+- Introduce dedicated opcodes instead of a heap proxy:
+  - `IkCallSuperMethod` / `IkCallSuperMethodMacro` (carry method key)
+  - `IkCallSuperCtor` / `IkCallSuperCtorMacro` (constructor call intent)
+- At dispatch time:
+  - Derive `instance` from the current scope (`self` binding or ctor frame arg0).
+  - Derive `parentClass` from `frame.current_method.class.parent` (or `frame.current_class.parent` during ctor).
+  - Look up the target on `parentClass` method/ctor tables. Use existing macro vs eager call paths: macro variants run with quoted args, eager variants evaluate args first. Constructor calls reuse ctor dispatch but skip allocation and use the existing instance as arg0.
+- No super proxy allocation; failure paths raise as described above.
 
 ## Compiler Notes
-- Track “in class method/ctor” during class body compilation to allow `super`.
-- `super` call sites compile like normal method calls; VM adjusts dispatch based on the receiver kind (super proxy).
+- Track “in class method/ctor” during class body compilation; emit a compile-time error if `super` appears elsewhere.
+- Lower `(super .m …)`, `(super .m! …)`, `(super .ctor …)`, `(super .ctor! …)` into the dedicated super-call instructions with the member key baked in. The call shape stays identical to normal method calls at the surface.
 
 ## Testing Plan
 - Happy paths:
@@ -65,4 +65,4 @@ This document captures the planned semantics for invoking superclass methods and
   - Missing parent or missing method/ctor on parent.
   - Calling `.m!` when parent only defines eager `.m` (and vice versa).
 
-This design keeps the `!` contract consistent, reuses existing macro vs eager dispatch machinery, and introduces a minimal `super` proxy to route calls to the parent class.
+This design keeps the `!` contract consistent, reuses existing macro vs eager dispatch machinery, and routes calls directly to the parent class without per-call allocations.

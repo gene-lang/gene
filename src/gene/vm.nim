@@ -533,6 +533,13 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     new_frame.target = meth.callable
     new_frame.scope = scope
     new_frame.current_method = meth
+    new_frame.current_class = meth.class
+    new_frame.current_self = instance
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(instance)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
     new_frame.caller_frame = self.frame
     self.frame.ref_count.inc()
     new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -568,21 +575,15 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     not_allowed("call method must be a function or native function")
     return false
 
-proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
-  ## Helper for invoking a method on the superclass of the current method context.
-  if super_value.kind != VkSuper:
-    return false
-
-  let super_ref = super_value.ref
-  let instance = super_ref.super_instance
-  var class = super_ref.super_class
-
-  if class == nil:
-    not_allowed("super has no parent class")
-  if instance.kind != VkInstance:
+proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, instance: Value, method_name: string, args: openArray[Value], expect_macro: bool): bool =
+  ## Invoke a superclass method without allocating a proxy.
+  if parent_class == nil:
+    not_allowed("No parent class available for super")
+  if instance.kind notin {VkInstance, VkCustom}:
     not_allowed("super requires an instance context")
 
   let method_key = method_name.to_key()
+  var class = parent_class
   var meth: Method = nil
 
   while class != nil and meth.is_nil:
@@ -597,6 +598,11 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
   case meth.callable.kind:
   of VkFunction:
     let f = meth.callable.ref.fn
+    if expect_macro and not f.is_macro_like:
+      not_allowed("Superclass method '" & method_name & "' is not macro-like")
+    if (not expect_macro) and f.is_macro_like:
+      not_allowed("Superclass method '" & method_name & "' is macro-like; use .m!")
+
     if f.body_compiled == nil:
       f.compile()
 
@@ -619,16 +625,17 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
     new_frame.target = meth.callable
     new_frame.scope = scope
     new_frame.current_method = meth
-    new_frame.caller_frame = self.frame
-    self.frame.ref_count.inc()
-    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-    new_frame.ns = f.ns
-
+    new_frame.current_class = meth.class
+    new_frame.current_self = instance
     let args_gene = new_gene_value()
     args_gene.gene.children.add(instance)
     for arg in args:
       args_gene.gene.children.add(arg)
     new_frame.args = args_gene
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
@@ -647,6 +654,8 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
     return true
 
   of VkNativeFn:
+    if expect_macro:
+      not_allowed("Superclass method '" & method_name & "' is not macro-like")
     var all_args = newSeq[Value](args.len + 1)
     all_args[0] = instance
     for i in 0..<args.len:
@@ -658,6 +667,13 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
   else:
     not_allowed("Super method must be a function or native function")
     return false
+
+proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
+  ## Legacy helper that accepts a VkSuper proxy.
+  if super_value.kind != VkSuper:
+    return false
+  let super_ref = super_value.ref
+  return self.call_super_method_resolved(super_ref.super_class, super_ref.super_instance, method_name, args, method_name.ends_with("!"))
 
 proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
@@ -701,6 +717,13 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
     new_frame.target = meth.callable
     new_frame.scope = scope
     new_frame.current_method = meth
+    new_frame.current_class = meth.class
+    new_frame.current_self = value
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(value)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
     new_frame.caller_frame = self.frame
     self.frame.ref_count.inc()
     new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -733,6 +756,117 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
 
   else:
     not_allowed("Method must be a function or native function")
+    return false
+
+proc resolve_current_instance_and_parent(self: VirtualMachine): tuple[instance: Value, parent_class: Class] =
+  ## Retrieve the current instance and parent class for super calls.
+  var instance = NIL
+  if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
+    instance = self.frame.args.gene.children[0]
+
+  var parent_class: Class = nil
+  if self.frame.current_method != nil:
+    parent_class = self.frame.current_method.class.parent
+  elif self.frame.current_class != nil:
+    parent_class = self.frame.current_class.parent
+  if instance.kind notin {VkInstance, VkCustom} and self.frame.current_self.kind in {VkInstance, VkCustom}:
+    instance = self.frame.current_self
+  if instance.kind notin {VkInstance, VkCustom}:
+    when not defined(release):
+      echo "DEBUG super resolve: instance.kind=", instance.kind, " args kind=", self.frame.args.kind
+      if self.frame.args.kind == VkGene:
+        echo "DEBUG super resolve: args children len=", self.frame.args.gene.children.len
+    not_allowed("super requires an instance context")
+  if parent_class == nil:
+    not_allowed("No parent class available for super")
+
+  (instance, parent_class)
+
+proc call_super_constructor(self: VirtualMachine, parent_class: Class, instance: Value, args: openArray[Value], expect_macro: bool): bool =
+  ## Invoke a superclass constructor without allocation.
+  if parent_class == nil:
+    not_allowed("No parent class available for super")
+  if instance.kind notin {VkInstance, VkCustom}:
+    not_allowed("super requires an instance context")
+
+  if parent_class.has_macro_constructor and not expect_macro:
+    not_allowed("Superclass defines ctor!, use super .ctor! instead of super .ctor")
+  if (not parent_class.has_macro_constructor) and expect_macro:
+    not_allowed("Superclass defines ctor, use super .ctor instead of super .ctor!")
+
+  let ctor = parent_class.get_constructor()
+  if ctor.is_nil:
+    not_allowed("Superclass has no constructor")
+
+  case ctor.kind:
+  of VkFunction:
+    let f = ctor.ref.fn
+    if expect_macro and not f.is_macro_like:
+      not_allowed("Superclass constructor is not macro-like")
+    if (not expect_macro) and f.is_macro_like:
+      not_allowed("Superclass constructor is macro-like; use super .ctor!")
+
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      if args.len > 0:
+        var user_args = newSeq[Value](args.len)
+        for i in 0..<args.len:
+          user_args[i] = args[i]
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](user_args[0].addr), user_args.len, false, scope)
+      assign_property_params(f.matcher, scope, instance)
+
+    var new_frame = new_frame()
+    new_frame.kind = if expect_macro: FkMacro else: FkFunction
+    new_frame.target = ctor
+    new_frame.scope = scope
+    new_frame.current_class = parent_class
+    new_frame.current_self = instance
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+    if expect_macro:
+      new_frame.caller_context = self.frame
+
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(instance)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    if expect_macro:
+      not_allowed("Superclass constructor is not macro-like")
+    let result = call_native_fn(ctor.ref.native_fn, self, args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("Superclass constructor must be a function or native function")
     return false
 
 proc ensure_namespace_path(root: Namespace, parts: seq[string], uptoExclusive: int): Namespace =
@@ -3872,6 +4006,8 @@ proc exec*(self: VirtualMachine): Value =
             self.pc.inc()
             self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
             self.frame.scope = scope  # Set the scope
+            self.frame.current_class = class
+            self.frame.current_self = instance.to_ref_value()
             # Pass instance as first argument for constructor
             let args_gene = new_gene(NIL)
             args_gene.children.add(instance.to_ref_value())
@@ -5042,6 +5178,44 @@ proc exec*(self: VirtualMachine): Value =
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
         {.pop}
 
+      of IkCallSuperMethod, IkCallSuperMethodMacro:
+        {.push checks: off}
+        let expected = inst.arg1.int
+        let call_info = self.pop_call_base_info(expected)
+        let arg_count = call_info.count
+        var args: seq[Value] = @[]
+        if arg_count > 0:
+          args = newSeq[Value](arg_count)
+          for i in countdown(arg_count - 1, 0):
+            args[i] = self.frame.pop()
+        let (instance, parent_class) = self.resolve_current_instance_and_parent()
+        let saved_frame = self.frame
+        if self.call_super_method_resolved(parent_class, instance, inst.arg0.str, args, inst.kind == IkCallSuperMethodMacro):
+          if self.frame == saved_frame:
+            self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+        {.pop.}
+
+      of IkCallSuperCtor, IkCallSuperCtorMacro:
+        {.push checks: off}
+        let expected = inst.arg1.int
+        let call_info = self.pop_call_base_info(expected)
+        let arg_count = call_info.count
+        var args: seq[Value] = @[]
+        if arg_count > 0:
+          args = newSeq[Value](arg_count)
+          for i in countdown(arg_count - 1, 0):
+            args[i] = self.frame.pop()
+        let (instance, parent_class) = self.resolve_current_instance_and_parent()
+        let saved_frame = self.frame
+        if self.call_super_constructor(parent_class, instance, args, inst.kind == IkCallSuperCtorMacro):
+          if self.frame == saved_frame:
+            self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+        {.pop.}
+
       of IkUnifiedMethodCall0:
         {.push checks: off}
         # Zero-argument unified method call
@@ -5052,7 +5226,10 @@ proc exec*(self: VirtualMachine): Value =
         let method_name = inst.arg0.str
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, @[]):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
         if call_value_method(self, obj, method_name, []):
@@ -5117,6 +5294,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5185,7 +5364,10 @@ proc exec*(self: VirtualMachine): Value =
         let arg = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, [arg]):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -5260,6 +5442,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5331,7 +5515,10 @@ proc exec*(self: VirtualMachine): Value =
         let arg1 = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, [arg1, arg2]):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -5413,6 +5600,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5484,7 +5673,10 @@ proc exec*(self: VirtualMachine): Value =
           args[i] = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, args):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -5519,6 +5711,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(obj)  # Add self as first argument
               for arg in args:
