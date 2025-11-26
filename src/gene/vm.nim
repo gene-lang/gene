@@ -8,6 +8,10 @@ from ./parser import read, read_all
 import ./vm/args
 import ./vm/module
 const DEBUG_VM = false
+const
+  CATCH_PC_ASYNC_BLOCK = -2
+  CATCH_PC_ASYNC_FUNCTION = -3
+  EVENT_LOOP_POLL_INTERVAL = 100
 
 import ./vm/arithmetic
 import ./vm/generator
@@ -529,6 +533,13 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     new_frame.target = meth.callable
     new_frame.scope = scope
     new_frame.current_method = meth
+    new_frame.current_class = meth.class
+    new_frame.current_self = instance
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(instance)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
     new_frame.caller_frame = self.frame
     self.frame.ref_count.inc()
     new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -536,7 +547,7 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
-        catch_pc: -3,
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
         cu: self.cu,
@@ -564,21 +575,15 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     not_allowed("call method must be a function or native function")
     return false
 
-proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
-  ## Helper for invoking a method on the superclass of the current method context.
-  if super_value.kind != VkSuper:
-    return false
-
-  let super_ref = super_value.ref
-  let instance = super_ref.super_instance
-  var class = super_ref.super_class
-
-  if class == nil:
-    not_allowed("super has no parent class")
-  if instance.kind != VkInstance:
+proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, instance: Value, method_name: string, args: openArray[Value], expect_macro: bool): bool =
+  ## Invoke a superclass method without allocating a proxy.
+  if parent_class == nil:
+    not_allowed("No parent class available for super")
+  if instance.kind notin {VkInstance, VkCustom}:
     not_allowed("super requires an instance context")
 
   let method_key = method_name.to_key()
+  var class = parent_class
   var meth: Method = nil
 
   while class != nil and meth.is_nil:
@@ -593,6 +598,11 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
   case meth.callable.kind:
   of VkFunction:
     let f = meth.callable.ref.fn
+    if expect_macro and not f.is_macro_like:
+      not_allowed("Superclass method '" & method_name & "' is not macro-like")
+    if (not expect_macro) and f.is_macro_like:
+      not_allowed("Superclass method '" & method_name & "' is macro-like; use .m!")
+
     if f.body_compiled == nil:
       f.compile()
 
@@ -615,20 +625,21 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
     new_frame.target = meth.callable
     new_frame.scope = scope
     new_frame.current_method = meth
-    new_frame.caller_frame = self.frame
-    self.frame.ref_count.inc()
-    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-    new_frame.ns = f.ns
-
+    new_frame.current_class = meth.class
+    new_frame.current_self = instance
     let args_gene = new_gene_value()
     args_gene.gene.children.add(instance)
     for arg in args:
       args_gene.gene.children.add(arg)
     new_frame.args = args_gene
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
-        catch_pc: -3,
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
         cu: self.cu,
@@ -643,6 +654,8 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
     return true
 
   of VkNativeFn:
+    if expect_macro:
+      not_allowed("Superclass method '" & method_name & "' is not macro-like")
     var all_args = newSeq[Value](args.len + 1)
     all_args[0] = instance
     for i in 0..<args.len:
@@ -654,6 +667,13 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
   else:
     not_allowed("Super method must be a function or native function")
     return false
+
+proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
+  ## Legacy helper that accepts a VkSuper proxy.
+  if super_value.kind != VkSuper:
+    return false
+  let super_ref = super_value.ref
+  return self.call_super_method_resolved(super_ref.super_class, super_ref.super_instance, method_name, args, method_name.ends_with("!"))
 
 proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
@@ -697,6 +717,13 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
     new_frame.target = meth.callable
     new_frame.scope = scope
     new_frame.current_method = meth
+    new_frame.current_class = meth.class
+    new_frame.current_self = value
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(value)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
     new_frame.caller_frame = self.frame
     self.frame.ref_count.inc()
     new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -704,7 +731,7 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
 
     if f.async:
       self.exception_handlers.add(ExceptionHandler(
-        catch_pc: -3,
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
         cu: self.cu,
@@ -729,6 +756,117 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
 
   else:
     not_allowed("Method must be a function or native function")
+    return false
+
+proc resolve_current_instance_and_parent(self: VirtualMachine): tuple[instance: Value, parent_class: Class] =
+  ## Retrieve the current instance and parent class for super calls.
+  var instance = NIL
+  if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
+    instance = self.frame.args.gene.children[0]
+
+  var parent_class: Class = nil
+  if self.frame.current_method != nil:
+    parent_class = self.frame.current_method.class.parent
+  elif self.frame.current_class != nil:
+    parent_class = self.frame.current_class.parent
+  if instance.kind notin {VkInstance, VkCustom} and self.frame.current_self.kind in {VkInstance, VkCustom}:
+    instance = self.frame.current_self
+  if instance.kind notin {VkInstance, VkCustom}:
+    when not defined(release):
+      echo "DEBUG super resolve: instance.kind=", instance.kind, " args kind=", self.frame.args.kind
+      if self.frame.args.kind == VkGene:
+        echo "DEBUG super resolve: args children len=", self.frame.args.gene.children.len
+    not_allowed("super requires an instance context")
+  if parent_class == nil:
+    not_allowed("No parent class available for super")
+
+  (instance, parent_class)
+
+proc call_super_constructor(self: VirtualMachine, parent_class: Class, instance: Value, args: openArray[Value], expect_macro: bool): bool =
+  ## Invoke a superclass constructor without allocation.
+  if parent_class == nil:
+    not_allowed("No parent class available for super")
+  if instance.kind notin {VkInstance, VkCustom}:
+    not_allowed("super requires an instance context")
+
+  if parent_class.has_macro_constructor and not expect_macro:
+    not_allowed("Superclass defines ctor!, use super .ctor! instead of super .ctor")
+  if (not parent_class.has_macro_constructor) and expect_macro:
+    not_allowed("Superclass defines ctor, use super .ctor instead of super .ctor!")
+
+  let ctor = parent_class.get_constructor()
+  if ctor.is_nil:
+    not_allowed("Superclass has no constructor")
+
+  case ctor.kind:
+  of VkFunction:
+    let f = ctor.ref.fn
+    if expect_macro and not f.is_macro_like:
+      not_allowed("Superclass constructor is not macro-like")
+    if (not expect_macro) and f.is_macro_like:
+      not_allowed("Superclass constructor is macro-like; use super .ctor!")
+
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      if args.len > 0:
+        var user_args = newSeq[Value](args.len)
+        for i in 0..<args.len:
+          user_args[i] = args[i]
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](user_args[0].addr), user_args.len, false, scope)
+      assign_property_params(f.matcher, scope, instance)
+
+    var new_frame = new_frame()
+    new_frame.kind = if expect_macro: FkMacro else: FkFunction
+    new_frame.target = ctor
+    new_frame.scope = scope
+    new_frame.current_class = parent_class
+    new_frame.current_self = instance
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+    if expect_macro:
+      new_frame.caller_context = self.frame
+
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(instance)
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
+        finally_pc: -1,
+        frame: self.frame,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    if expect_macro:
+      not_allowed("Superclass constructor is not macro-like")
+    let result = call_native_fn(ctor.ref.native_fn, self, args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("Superclass constructor must be a function or native function")
     return false
 
 proc ensure_namespace_path(root: Namespace, parts: seq[string], uptoExclusive: int): Namespace =
@@ -773,9 +911,9 @@ proc exec*(self: VirtualMachine): Value =
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
     # Event loop polling for async support
-    # Poll every 100 instructions to allow async I/O to progress
+    # Poll every EVENT_LOOP_POLL_INTERVAL instructions to allow async I/O to progress
     self.event_loop_counter.inc()
-    if self.event_loop_counter >= 100:
+    if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
       self.event_loop_counter = 0
       try:
         poll(0)  # Non-blocking poll - check for completed async operations
@@ -1569,7 +1707,8 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(NIL)
           else:
-            echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
+            when not defined(release):
+              echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
             todo($value.kind)
 
       of IkGetMemberOrNil:
@@ -2269,14 +2408,15 @@ proc exec*(self: VirtualMachine): Value =
         let v = self.frame.current()
         when DEBUG_VM:
           echo "IkGeneAddChild: v.kind = ", v.kind, ", child = ", child
-        # Debug: print stack state when error occurs
-        if v.kind == VkSymbol:
-          echo "ERROR: IkGeneAddChild with Symbol on stack!"
-          echo "  child = ", child
-          echo "  v (stack top) = ", v
-          echo "  Stack trace:"
-          for i in 0..<min(5, self.frame.stack_index.int):
-            echo "    [", i, "] = ", self.frame.stack[i]
+        when not defined(release):
+          # Debug: print stack state when error occurs
+          if v.kind == VkSymbol:
+            echo "ERROR: IkGeneAddChild with Symbol on stack!"
+            echo "  child = ", child
+            echo "  v (stack top) = ", v
+            echo "  Stack trace:"
+            for i in 0..<min(5, self.frame.stack_index.int):
+              echo "    [", i, "] = ", self.frame.stack[i]
         case v.kind:
           of VkFrame:
             # For function calls, we need to set up the args gene with children
@@ -2524,7 +2664,7 @@ proc exec*(self: VirtualMachine): Value =
                 # If this is an async function, set up exception handler
                 if f.async:
                   self.exception_handlers.add(ExceptionHandler(
-                    catch_pc: -3,  # Special marker for async function
+                    catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                     finally_pc: -1,
                     frame: self.frame,
                     cu: self.cu,
@@ -3302,6 +3442,14 @@ proc exec*(self: VirtualMachine): Value =
         
         # Access the class
         let class = class_value.ref.class
+
+        let is_macro_ctor = fn_value.ref.fn.is_macro_like
+
+        if class.constructor != NIL:
+          if class.has_macro_constructor != is_macro_ctor:
+            not_allowed("Class '" & class.name & "' cannot define both ctor and ctor!")
+          else:
+            not_allowed("Class '" & class.name & "' already has a constructor")
         
         # Set the constructor
         class.constructor = fn_value
@@ -3310,7 +3458,7 @@ proc exec*(self: VirtualMachine): Value =
         fn_value.ref.fn.ns = class.ns
 
         # Set has_macro_constructor flag based on function type
-        class.has_macro_constructor = fn_value.ref.fn.is_macro_like
+        class.has_macro_constructor = is_macro_ctor
         
         # Return the function
         self.frame.push(fn_value)
@@ -3569,7 +3717,7 @@ proc exec*(self: VirtualMachine): Value =
             let f = self.frame.target.ref.fn
             if f.async:
               # Remove the async function exception handler
-              if self.exception_handlers.len > 0 and self.exception_handlers[^1].catch_pc == -3:
+              if self.exception_handlers.len > 0 and self.exception_handlers[^1].catch_pc == CATCH_PC_ASYNC_FUNCTION:
                 discard self.exception_handlers.pop()
               
               # Wrap the return value in a future
@@ -3695,6 +3843,7 @@ proc exec*(self: VirtualMachine): Value =
             # Save current state
             let saved_cu = self.cu
             let saved_frame = self.frame
+            let saved_pc = self.pc
           
             # Create a new frame for module execution
             self.frame = new_frame()
@@ -3708,6 +3857,7 @@ proc exec*(self: VirtualMachine): Value =
             # Restore the original state
             self.cu = saved_cu
             self.frame = saved_frame
+            self.pc = saved_pc
             
             # Cache the module
             ModuleCache[module_path] = module_ns
@@ -3819,21 +3969,11 @@ proc exec*(self: VirtualMachine): Value =
               echo "  Gene type = ", class_val.gene.type
           raise new_exception(types.Exception, "new requires a class, got " & $class_val.kind)
 
-        # Runtime validation for constructor type mismatches
-        # Check if we have unevaluated arguments (symbols) in the Gene
-        var has_unevaluated_args = false
-        if args.kind == VkGene and args.gene.children.len > 0:
-          # Check if any arguments are symbols (indicating unevaluated)
-          for child in args.gene.children:
-            if child.kind == VkSymbol:
-              has_unevaluated_args = true
-              break
-
-        if class.has_macro_constructor and not has_unevaluated_args:
-          raise new_exception(types.Exception, "Cannot instantiate macro constructor '" & class.name & "' with evaluated arguments, use 'new!' instead of 'new'")
-
-        if not class.has_macro_constructor and has_unevaluated_args:
-          raise new_exception(types.Exception, "Cannot instantiate regular constructor '" & class.name & "' with unevaluated arguments, use 'new' instead of 'new!'")
+        let is_macro_call = inst.arg1 != 0
+        if is_macro_call and not class.has_macro_constructor:
+          not_allowed("Class '" & class.name & "' defines ctor, use 'new' instead of 'new!'")
+        if (not is_macro_call) and class.has_macro_constructor:
+          not_allowed("Class '" & class.name & "' defines ctor!, use 'new!' instead of 'new'")
         
         # Check constructor type
         case class.constructor.kind:
@@ -3866,6 +4006,8 @@ proc exec*(self: VirtualMachine): Value =
             self.pc.inc()
             self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
             self.frame.scope = scope  # Set the scope
+            self.frame.current_class = class
+            self.frame.current_self = instance.to_ref_value()
             # Pass instance as first argument for constructor
             let args_gene = new_gene(NIL)
             args_gene.children.add(instance.to_ref_value())
@@ -3976,7 +4118,7 @@ proc exec*(self: VirtualMachine): Value =
           let handler = self.exception_handlers[^1]
           
           # Check if this is an async block or async function handler
-          if handler.catch_pc == -2:
+          if handler.catch_pc == CATCH_PC_ASYNC_BLOCK:
             # This is an async block - create a failed future
             discard self.exception_handlers.pop()
             
@@ -3995,7 +4137,7 @@ proc exec*(self: VirtualMachine): Value =
               self.pc.inc()  # Skip past IkAsyncEnd
               inst = self.cu.instructions[self.pc].addr
               continue
-          elif handler.catch_pc == -3:
+          elif handler.catch_pc == CATCH_PC_ASYNC_FUNCTION:
             # This is an async function - create a failed future and return it
             discard self.exception_handlers.pop()
             
@@ -4357,7 +4499,7 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         # Add an exception handler that will catch exceptions for the async block
         self.exception_handlers.add(ExceptionHandler(
-          catch_pc: -2,  # Special marker for async
+          catch_pc: CATCH_PC_ASYNC_BLOCK,  # Special marker for async
           finally_pc: -1,
           frame: self.frame,
           cu: self.cu,
@@ -4653,7 +4795,7 @@ proc exec*(self: VirtualMachine): Value =
             # If this is an async function, set up exception handler
             if f.async:
               self.exception_handlers.add(ExceptionHandler(
-                catch_pc: -3,  # Special marker for async function
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
                 cu: self.cu,
@@ -4822,7 +4964,7 @@ proc exec*(self: VirtualMachine): Value =
             # If this is an async function, set up exception handler
             if f.async:
               self.exception_handlers.add(ExceptionHandler(
-                catch_pc: -3,  # Special marker for async function
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
                 cu: self.cu,
@@ -4997,7 +5139,7 @@ proc exec*(self: VirtualMachine): Value =
             # If this is an async function, set up exception handler
             if f.async:
               self.exception_handlers.add(ExceptionHandler(
-                catch_pc: -3,  # Special marker for async function
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
                 cu: self.cu,
@@ -5036,6 +5178,44 @@ proc exec*(self: VirtualMachine): Value =
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
         {.pop}
 
+      of IkCallSuperMethod, IkCallSuperMethodMacro:
+        {.push checks: off}
+        let expected = inst.arg1.int
+        let call_info = self.pop_call_base_info(expected)
+        let arg_count = call_info.count
+        var args: seq[Value] = @[]
+        if arg_count > 0:
+          args = newSeq[Value](arg_count)
+          for i in countdown(arg_count - 1, 0):
+            args[i] = self.frame.pop()
+        let (instance, parent_class) = self.resolve_current_instance_and_parent()
+        let saved_frame = self.frame
+        if self.call_super_method_resolved(parent_class, instance, inst.arg0.str, args, inst.kind == IkCallSuperMethodMacro):
+          if self.frame == saved_frame:
+            self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+        {.pop.}
+
+      of IkCallSuperCtor, IkCallSuperCtorMacro:
+        {.push checks: off}
+        let expected = inst.arg1.int
+        let call_info = self.pop_call_base_info(expected)
+        let arg_count = call_info.count
+        var args: seq[Value] = @[]
+        if arg_count > 0:
+          args = newSeq[Value](arg_count)
+          for i in countdown(arg_count - 1, 0):
+            args[i] = self.frame.pop()
+        let (instance, parent_class) = self.resolve_current_instance_and_parent()
+        let saved_frame = self.frame
+        if self.call_super_constructor(parent_class, instance, args, inst.kind == IkCallSuperCtorMacro):
+          if self.frame == saved_frame:
+            self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+        {.pop.}
+
       of IkUnifiedMethodCall0:
         {.push checks: off}
         # Zero-argument unified method call
@@ -5046,7 +5226,10 @@ proc exec*(self: VirtualMachine): Value =
         let method_name = inst.arg0.str
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, @[]):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
         if call_value_method(self, obj, method_name, []):
@@ -5111,6 +5294,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5123,7 +5308,7 @@ proc exec*(self: VirtualMachine): Value =
               # If this is an async function, set up exception handler
               if f.async:
                 self.exception_handlers.add(ExceptionHandler(
-                  catch_pc: -3,  # Special marker for async function
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                   finally_pc: -1,
                   frame: self.frame,
                   cu: self.cu,
@@ -5179,7 +5364,10 @@ proc exec*(self: VirtualMachine): Value =
         let arg = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, [arg]):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -5254,6 +5442,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5267,7 +5457,7 @@ proc exec*(self: VirtualMachine): Value =
               # If this is an async function, set up exception handler
               if f.async:
                 self.exception_handlers.add(ExceptionHandler(
-                  catch_pc: -3,  # Special marker for async function
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                   finally_pc: -1,
                   frame: self.frame,
                   cu: self.cu,
@@ -5325,7 +5515,10 @@ proc exec*(self: VirtualMachine): Value =
         let arg1 = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, [arg1, arg2]):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -5407,6 +5600,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5421,7 +5616,7 @@ proc exec*(self: VirtualMachine): Value =
               # If this is an async function, set up exception handler
               if f.async:
                 self.exception_handlers.add(ExceptionHandler(
-                  catch_pc: -3,
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,
                   finally_pc: -1,
                   frame: self.frame,
                   cu: self.cu,
@@ -5478,7 +5673,10 @@ proc exec*(self: VirtualMachine): Value =
           args[i] = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
+          let saved_frame = self.frame
           if call_super_method(self, obj, method_name, args):
+            if self.frame == saved_frame:
+              self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
@@ -5513,6 +5711,8 @@ proc exec*(self: VirtualMachine): Value =
               new_frame.target = meth.callable
               new_frame.scope = scope
               new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(obj)  # Add self as first argument
               for arg in args:

@@ -20,7 +20,7 @@ The original tree-walking interpreter lives in `gene-new/` and serves as the lan
 - **Available today**
   - Bytecode compiler + stack-based VM with computed-goto dispatch
   - S-expression parser compatible with the reference interpreter
-  - Macro system (`fn!`, `$caller_eval`) with unevaluated argument support
+  - Macro system with unevaluated argument support
   - Basic class system (`class`, `new`, nested classes) and namespaces
   - Pseudo-async primitives (`async`, `await`) backed by futures
   - Command-line toolchain (`run`, `eval`, `repl`, `parse`, `compile`)

@@ -1,0 +1,1 @@
+(import upcase from "my_lib/libindex.dylib" ^native true)

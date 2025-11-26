@@ -248,7 +248,19 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     VM.trace = true
     # Initialize frame if needed
     if VM.frame == nil:
-      VM.frame = new_frame(new_namespace(file))
+      let ns = new_namespace(file)
+      ns["__module_name__".to_key()] = file.to_value()
+      ns["__is_main__".to_key()] = TRUE
+      ns["gene".to_key()] = App.app.gene_ns
+      App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
+      VM.frame = new_frame(ns)
+    else:
+      let ns = new_namespace(file)
+      ns["__module_name__".to_key()] = file.to_value()
+      ns["__is_main__".to_key()] = TRUE
+      ns["gene".to_key()] = App.app.gene_ns
+      App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
+      VM.frame.update(new_frame(ns))
     VM.cu = compiled
     value = VM.exec()
   elif options.compile or options.debugging:

@@ -353,7 +353,7 @@ type
   Function* = ref object
     async*: bool
     is_generator*: bool  # True for generator functions
-    is_macro_like*: bool  # True for macro-like functions (defined with fn!)
+    is_macro_like*: bool  # True for macro-like functions (defined with (fn f!))
     name*: string
     ns*: Namespace  # the namespace of the module wherein this is defined.
     scope_tracker*: ScopeTracker  # the root scope tracker of the function
@@ -566,7 +566,11 @@ type
     IkCallInit
     IkDefineMethod      # Define a method on a class
     IkDefineConstructor # Define a constructor on a class
-    IkSuper             # Push the parent method as a bound method
+    IkCallSuperMethod   # Call superclass eager method
+    IkCallSuperMethodMacro # Call superclass macro method
+    IkCallSuperCtor     # Call superclass constructor (eager)
+    IkCallSuperCtorMacro # Call superclass constructor (macro)
+    IkSuper             # Push the parent method as a bound method (legacy proxy)
 
     IkMapStart
     IkMapSetProp        # args: key
@@ -798,6 +802,8 @@ type
     args*: Value
     stack*: array[256, Value]
     current_method*: Method  # Currently executing method (for super calls)
+    current_class*: Class    # Current class context (constructors)
+    current_self*: Value     # Cached self/instance for super calls
     stack_index*: uint16
     call_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function

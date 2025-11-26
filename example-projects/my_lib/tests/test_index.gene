@@ -1,0 +1,13 @@
+#!/usr/bin/env gene
+
+(import genex/tests/[test skip_test])
+
+(import upcase from "index")
+
+(test "$pkg/.name"
+  (assert ($pkg/.name == "my_lib"))
+)
+
+(test "native: upcase"
+  (assert ((upcase "ab") == "AB"))
+)

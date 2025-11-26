@@ -1551,14 +1551,15 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var is_generator = false
   var is_macro_like = false
 
-  # Check if defined with fn! type
-  if node.gene.type != NIL and node.gene.type == "fn!".to_symbol_value():
-    is_macro_like = true
-
   if node.gene.type != NIL and node.gene.type == "fnx".to_symbol_value():
     matcher.parse(node.gene.children[0])
     name = "<unnamed>"
     body_start = 1
+  elif node.gene.type != NIL and node.gene.type == "fnx!".to_symbol_value():
+    matcher.parse(node.gene.children[0])
+    name = "<unnamed>"
+    body_start = 1
+    is_macro_like = true
   elif node.gene.type != NIL and node.gene.type == "fnxx".to_symbol_value():
     name = "<unnamed>"
     body_start = 0
@@ -1949,6 +1950,17 @@ proc new_frame*(): Frame {.inline.} =
     result = cast[Frame](alloc0(sizeof(FrameObj)))
     FRAME_ALLOCS.inc()
   result.ref_count = 1
+  result.kind = FkFunction
+  result.caller_frame = nil
+  result.caller_address = Address(cu: nil, pc: 0)
+  result.caller_context = nil
+  result.ns = nil
+  result.scope = nil
+  result.target = NIL
+  result.args = NIL
+  result.current_method = nil
+  result.current_class = nil
+  result.current_self = NIL
   result.stack_index = 0  # Reset stack index
   result.call_bases.init()
   {.pop.}
