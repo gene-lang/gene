@@ -112,6 +112,84 @@ proc exit_function(self: VirtualMachine) {.inline.} =
     
     self.profile_data[name] = profile
 
+proc poll_event_loop(self: VirtualMachine) =
+  ## Periodically poll async/thread events; caller decides when to invoke.
+  self.event_loop_counter.inc()
+  if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
+    self.event_loop_counter = 0
+    try:
+      poll(0)  # Non-blocking poll - check for completed async operations
+
+      # Check for thread replies (non-blocking)
+      # Only check if we're the main thread (thread 0)
+      if THREADS[0].in_use:
+        while true:
+          let msg_opt = THREAD_DATA[0].channel.try_recv()
+          if msg_opt.isNone():
+            break
+
+          let msg = msg_opt.get()
+          if msg.msg_type == MtReply:
+            # Complete the future with the reply payload
+            if self.thread_futures.hasKey(msg.from_message_id):
+              let future_obj = self.thread_futures[msg.from_message_id]
+              future_obj.state = FsSuccess
+              future_obj.value = msg.payload
+              self.thread_futures.del(msg.from_message_id)
+
+      # Update all pending futures from their Nim futures
+      var i = 0
+      while i < self.pending_futures.len:
+        let future_obj = self.pending_futures[i]
+        let old_state = future_obj.state
+        update_future_from_nim(self, future_obj)
+
+        # If future just completed, execute callbacks
+        if old_state == FsPending and future_obj.state != FsPending:
+          if future_obj.state == FsSuccess:
+            # Execute success callbacks
+            for callback in future_obj.success_callbacks:
+              try:
+                case callback.kind:
+                  of VkFunction, VkBlock:
+                    discard self.exec_function(callback, @[future_obj.value])
+                  of VkNativeFn:
+                    var args_arr = [future_obj.value]
+                    discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                  else:
+                    discard
+              except:
+                # If callback throws, mark future as failed
+                future_obj.state = FsFailure
+                future_obj.value = self.current_exception
+                break
+          else:
+            # Execute failure callbacks
+            for callback in future_obj.failure_callbacks:
+              try:
+                case callback.kind:
+                  of VkFunction, VkBlock:
+                    discard self.exec_function(callback, @[future_obj.value])
+                  of VkNativeFn:
+                    var args_arr = [future_obj.value]
+                    discard call_native_fn(callback.ref.native_fn, self, args_arr)
+                  else:
+                    discard
+              except:
+                # If callback throws, keep failure state but replace value
+                future_obj.value = self.current_exception
+                break
+
+          # Remove completed futures
+          if future_obj.state != FsPending:
+            self.pending_futures.delete(i)
+            continue
+
+        i.inc()
+    except:
+      # If polling fails, ignore the error to keep the VM running
+      discard
+
 proc print_profile*(self: VirtualMachine) =
   if not self.profiling or self.profile_data.len == 0:
     echo "No profiling data available"
@@ -910,82 +988,6 @@ proc exec*(self: VirtualMachine): Value =
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
-    # Event loop polling for async support
-    # Poll every EVENT_LOOP_POLL_INTERVAL instructions to allow async I/O to progress
-    self.event_loop_counter.inc()
-    if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
-      self.event_loop_counter = 0
-      try:
-        poll(0)  # Non-blocking poll - check for completed async operations
-
-        # Check for thread replies (non-blocking)
-        # Only check if we're the main thread (thread 0)
-        if THREADS[0].in_use:
-          while true:
-            let msg_opt = THREAD_DATA[0].channel.try_recv()
-            if msg_opt.isNone():
-              break
-
-            let msg = msg_opt.get()
-            if msg.msg_type == MtReply:
-              # Complete the future with the reply payload
-              if self.thread_futures.hasKey(msg.from_message_id):
-                let future_obj = self.thread_futures[msg.from_message_id]
-                future_obj.state = FsSuccess
-                future_obj.value = msg.payload
-                self.thread_futures.del(msg.from_message_id)
-
-        # Update all pending futures from their Nim futures
-        var i = 0
-        while i < self.pending_futures.len:
-          let future_obj = self.pending_futures[i]
-          let old_state = future_obj.state
-          update_future_from_nim(self, future_obj)
-
-          # If future just completed, execute callbacks
-          if old_state == FsPending and future_obj.state != FsPending:
-            if future_obj.state == FsSuccess:
-              # Execute success callbacks
-              for callback in future_obj.success_callbacks:
-                try:
-                  case callback.kind:
-                    of VkFunction:
-                      discard self.exec_function(callback, @[future_obj.value])
-                    of VkNativeFn:
-                      var args_arr = [future_obj.value]
-                      discard call_native_fn(callback.ref.native_fn, self, args_arr)
-                    of VkBlock:
-                      # Blocks don't take arguments, just execute
-                      discard self.exec_function(callback, @[])
-                    else:
-                      discard
-                except:
-                  discard  # Ignore callback errors for now
-            elif future_obj.state == FsFailure:
-              # Execute failure callbacks
-              for callback in future_obj.failure_callbacks:
-                try:
-                  case callback.kind:
-                    of VkFunction:
-                      discard self.exec_function(callback, @[future_obj.value])
-                    of VkNativeFn:
-                      var args_arr = [future_obj.value]
-                      discard call_native_fn(callback.ref.native_fn, self, args_arr)
-                    of VkBlock:
-                      discard self.exec_function(callback, @[])
-                    else:
-                      discard
-                except:
-                  discard  # Ignore callback errors for now
-
-          # If future completed, remove from pending list
-          if future_obj.state != FsPending:
-            self.pending_futures.delete(i)
-          else:
-            i.inc()
-      except ValueError:
-        discard  # No async operations pending, this is normal
-
     when not defined(release):
       if self.trace:
         if inst.kind == IkStart: # This is part of INDENT_LOGIC
@@ -1889,7 +1891,10 @@ proc exec*(self: VirtualMachine): Value =
 
       of IkJump:
         {.push checks: off}
-        self.pc = inst.arg0.int64.int
+        let target = inst.arg0.int64.int
+        if target < self.pc:
+          self.poll_event_loop()
+        self.pc = target
         inst = self.cu.instructions[self.pc].addr
         continue
         {.pop.}
@@ -1898,7 +1903,10 @@ proc exec*(self: VirtualMachine): Value =
         var value: Value
         self.frame.pop2(value)
         if not value.to_bool():
-          self.pc = inst.arg0.int64.int
+          let target = inst.arg0.int64.int
+          if target < self.pc:
+            self.poll_event_loop()
+          self.pc = target
           inst = self.cu.instructions[self.pc].addr
           continue
         {.pop.}
@@ -1908,7 +1916,10 @@ proc exec*(self: VirtualMachine): Value =
         # if self.frame.match_result.fields[inst.arg0.int64] == MfSuccess:
         let index = inst.arg0.int
         if self.frame.scope.members.len > index:
-          self.pc = inst.arg1.int32.int
+          let target = inst.arg1.int32.int
+          if target < self.pc:
+            self.poll_event_loop()
+          self.pc = target
           inst = self.cu.instructions[self.pc].addr
           continue
         {.pop.}
@@ -1939,6 +1950,8 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("continue used outside of a loop")
         else:
           # Normal continue - jump to the start label
+          if label < self.pc:
+            self.poll_event_loop()
           self.pc = label
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -1967,6 +1980,8 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("break used outside of a loop")
         else:
           # Normal break - jump to the end label
+          if label < self.pc:
+            self.poll_event_loop()
           self.pc = label
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -4648,10 +4663,9 @@ proc exec*(self: VirtualMachine): Value =
       # Superinstructions for performance
       of IkPushCallPop:
         # Combined PUSH; CALL; POP for void function calls
-        # This is a placeholder - needs proper implementation
-        self.frame.push(inst.arg0)
-        # TODO: Implement actual call logic
-        discard self.frame.pop()
+        if inst.arg0.kind != VkNativeFn:
+          not_allowed("IkPushCallPop currently supports native functions only")
+        discard call_native_fn(inst.arg0.ref.native_fn, self, [])
       
       of IkLoadCallPop:
         # Combined LOADK; CALL1; POP

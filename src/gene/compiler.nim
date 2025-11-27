@@ -2635,6 +2635,18 @@ proc peephole_optimize(self: CompilationUnit) =
             new_traces.add(trace)
             i += 3
             continue
+
+      # Pattern: PUSH const; UNIFIEDCALL0; POP -> IkPushCallPop
+      if inst.kind == IkPushValue and inst.arg0.kind == VkNativeFn and next1.kind == IkUnifiedCall0:
+        if i + 2 < self.instructions.len and self.instructions[i + 2].kind == IkPop:
+          new_instructions.add(Instruction(
+            kind: IkPushCallPop,
+            arg0: inst.arg0,
+            label: inst.label
+          ))
+          new_traces.add(trace)
+          i += 3
+          continue
       
       # Pattern: RETURN NIL
       if inst.kind == IkPushNil and next1.kind == IkEnd:
