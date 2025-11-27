@@ -72,6 +72,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_custom_value.nim"
   # exec "nim c -d:GENE_LLM_MOCK -r tests/test_llm_mock.nim"
   exec "nim c -r tests/test_thread.nim"
+  exec "nim c -r tests/test_thread_msg.nim"
   # exec "nim c -r tests/test_metaprogramming.nim"
   # exec "nim c -r tests/test_array_like.nim"
   # exec "nim c -r tests/test_map_like.nim"

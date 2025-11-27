@@ -1,5 +1,6 @@
 import locks, random, options, tables, os
 import ../types
+import ../serdes
 
 # Simple channel implementation for MVP
 type
@@ -77,6 +78,13 @@ type
   ThreadDataObj* = object
     thread*: system.Thread[int]
     channel*: ThreadChannel
+
+proc string_to_bytes(s: string): seq[byte] =
+  result = newSeq[byte](s.len)
+  var i = 0
+  for c in s:
+    result[i] = byte(ord(c))
+    inc i
 
 var THREAD_DATA*: array[0..MAX_THREADS, ThreadDataObj]  # Shared across threads (channels are thread-safe)
 
@@ -184,7 +192,7 @@ proc init_thread_class*() =
   thread_class.def_native_constructor(thread_constructor)
 
   # Add .send method
-  proc thread_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc thread_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     # Send message to thread
     # Usage: (.send thread message) or (.send thread message ^reply true)
     if arg_count < 2:
@@ -220,7 +228,13 @@ proc init_thread_class*() =
     new(msg)
     msg.id = next_message_id
     msg.msg_type = if reply_requested: MtSendWithReply else: MtSend
-    msg.payload = message_arg
+    msg.payload = NIL
+    # Serialize payload to isolate across threads; only literal values are allowed
+    let ser = serialize_literal(message_arg)
+    let ser_str = block:
+      {.cast(gcsafe).}:
+        ser.to_s()
+    msg.payload_bytes.bytes = string_to_bytes(ser_str)
     msg.code = NIL
     msg.from_thread_id = 0  # TODO: Track current thread ID
     msg.from_thread_secret = THREADS[0].secret
@@ -304,7 +318,7 @@ proc init_thread_class*() =
   thread_message_class.def_native_method("payload", thread_message_payload)
 
   # Add .reply method
-  proc thread_message_reply(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc thread_message_reply(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if arg_count < 2:
       raise new_exception(types.Exception, "ThreadMessage.reply requires a message and a value")
 
@@ -321,7 +335,12 @@ proc init_thread_class*() =
     new(reply)
     reply.id = next_message_id
     reply.msg_type = MtReply
-    reply.payload = value_arg
+    reply.payload = NIL
+    let ser = serialize_literal(value_arg)
+    let ser_str = block:
+      {.cast(gcsafe).}:
+        ser.to_s()
+    reply.payload_bytes.bytes = string_to_bytes(ser_str)
     reply.from_message_id = msg.id
     reply.from_thread_id = 0  # TODO: Track current thread ID
     reply.from_thread_secret = THREADS[0].secret
@@ -354,12 +373,8 @@ proc keep_alive_fn*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   ## Usage: (keep_alive) or (keep_alive timeout_ms)
 
   # TODO: Implement timeout support
-  # For now, just sleep forever
-  # The thread will continue to receive messages via the thread_handler message loop
-  # This is a placeholder - the actual message loop is in thread_handler
-
-  # Sleep for a very long time (effectively forever)
+  # For now, just poll periodically
   while true:
-    sleep(1000000)  # Sleep for ~11 days
+    sleep(10)  # Yield briefly
 
   return NIL

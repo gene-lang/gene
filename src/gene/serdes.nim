@@ -1,4 +1,4 @@
-import tables, strutils
+import tables, strutils, sets
 
 import ./types
 import ./parser
@@ -11,6 +11,10 @@ type
 proc serialize*(self: Serialization, value: Value): Value {.gcsafe.}
 proc to_path*(self: Value): string {.gcsafe.}
 proc to_path*(self: Class): string {.gcsafe.}
+proc is_literal_value*(v: Value): bool {.inline, gcsafe.}
+proc serialize_literal*(value: Value): Serialization {.gcsafe.}
+proc deserialize*(s: string): Value {.gcsafe.}
+proc deserialize_literal*(s: string): Value {.gcsafe.}
 
 proc new_gene_ref(path: string): Value =
   # Create (gene/ref "path")
@@ -67,6 +71,51 @@ proc serialize*(self: Serialization, value: Value): Value =
     return gene.to_gene_value()
   else:
     todo("serialize " & $value.kind)
+
+# Fast literal checker: primitives, strings/symbols, arrays/maps/genes with literal children
+proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
+  var stack: seq[Value] = @[v]
+  var seen_arrays: HashSet[ptr Reference]
+  var seen_maps: HashSet[ptr Reference]
+  var seen_genes: HashSet[ptr Gene]
+
+  while stack.len > 0:
+    let cur = stack.pop()
+    case cur.kind:
+    of VkNil, VkBool, VkInt, VkFloat, VkChar, VkString, VkSymbol, VkComplexSymbol:
+      continue
+    of VkArray:
+      let r = cur.ref
+      if seen_arrays.contains(r): continue
+      seen_arrays.incl(r)
+      for item in r.arr: stack.add(item)
+    of VkMap:
+      let r = cur.ref
+      if seen_maps.contains(r): continue
+      seen_maps.incl(r)
+      for _, val in r.map: stack.add(val)
+    of VkGene:
+      # Only allow gene literals (no type); function/macro genes are not treated as literals
+      if cur.gene.type != NIL:
+        return false
+      let gptr = cur.gene
+      if seen_genes.contains(gptr): continue
+      seen_genes.incl(gptr)
+      if cur.gene.type != NIL: stack.add(cur.gene.type)
+      for _, val in cur.gene.props: stack.add(val)
+      for child in cur.gene.children: stack.add(child)
+    else:
+      return false
+  true
+
+# Serialize only literal values; reject unsupported kinds early.
+proc serialize_literal*(value: Value): Serialization {.gcsafe.} =
+  if not is_literal_value(value):
+    not_allowed("Only literal values can be serialized for thread messages")
+  serialize(value)
+
+proc deserialize_literal*(s: string): Value {.gcsafe.} =
+  deserialize(s)
 
 proc to_path*(self: Class): string =
   # For now, just return the class name

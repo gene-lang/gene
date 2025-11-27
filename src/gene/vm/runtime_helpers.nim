@@ -1,10 +1,5 @@
 # ========== Threading Support ==========
 
-# Forward declarations
-proc exec*(self: VirtualMachine): Value
-proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
-proc init_stdlib*()
-
 proc current_trace(self: VirtualMachine): SourceTrace =
   if self.cu.is_nil:
     return nil
@@ -121,10 +116,12 @@ proc thread_handler(thread_id: int) {.thread.} =
 
           # Send reply if requested
           if msg.msg_type == MtRunWithReply:
+            let ser = serialize_literal(result)
             let reply = ThreadMessage(
               id: next_message_id,
               msg_type: MtReply,
-              payload: result,
+              payload: NIL,
+              payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
               from_message_id: msg.id,
               from_thread_id: thread_id,
               from_thread_secret: THREADS[thread_id].secret
@@ -134,7 +131,15 @@ proc thread_handler(thread_id: int) {.thread.} =
 
         of MtSend, MtSendWithReply:
           # User message - invoke callbacks
+          # Deserialize payload if present
+          var payload = msg.payload
+          if msg.payload_bytes.bytes.len > 0:
+            try:
+              payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+            except:
+              payload = NIL
           let msg_value = msg.to_value()
+          msg_value.ref.thread_message.payload = payload
 
           # Invoke all registered message callbacks
           for callback in VM.message_callbacks:
@@ -158,6 +163,7 @@ proc thread_handler(thread_id: int) {.thread.} =
             reply.id = next_message_id
             reply.msg_type = MtReply
             reply.payload = NIL
+            reply.payload_bytes = ThreadPayload(bytes: @[])
             reply.from_message_id = msg.id
             reply.from_thread_id = thread_id
             reply.from_thread_secret = THREADS[thread_id].secret
@@ -197,6 +203,7 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
   msg.id = next_message_id
   msg.msg_type = if return_value: MtRunWithReply else: MtRun
   msg.payload = NIL
+  msg.payload_bytes = ThreadPayload(bytes: @[])
   msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)
   msg.from_thread_id = 0  # TODO: Track current thread ID
   msg.from_thread_secret = THREADS[0].secret

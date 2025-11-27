@@ -53,10 +53,14 @@ type
     id*: int              # Thread ID (index in THREADS array)
     secret*: int          # Secret for validation
 
+  ThreadPayload* = object
+    bytes*: seq[byte]
+
   ThreadMessage* = ref object
     id*: int                    # Unique message ID
     msg_type*: ThreadMessageType    # Type of message (renamed to avoid 'type' keyword)
     payload*: Value             # Data payload
+    payload_bytes*: ThreadPayload  # Serialized payload for cross-thread isolation
     code*: Value                # Gene AST to compile and execute (not bytecode!)
     from_message_id*: int       # For MtReply
     from_thread_id*: int        # Sender thread ID

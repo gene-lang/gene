@@ -1567,6 +1567,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     if node.gene.children.len == 0:
       raise new_exception(type_defs.Exception, "Invalid function definition: expected function name")
     let first = node.gene.children[0]
+    var parsed_args = false
     case first.kind:
       of VkSymbol, VkString:
         name = first.str
@@ -1576,6 +1577,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         # Check if function name ends with * (generator function)
         elif name.len > 0 and name[^1] == '*':
           is_generator = true
+      of VkArray:
+        name = "<unnamed>"
+        matcher.parse(first)
+        parsed_args = true
+        body_start = 1
       of VkComplexSymbol:
         name = first.ref.csymbol[^1]
         # Check if function name ends with ! (macro-like function)
@@ -1587,8 +1593,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
       else:
         todo($first.kind)
 
-    matcher.parse(node.gene.children[1])
-    body_start = 2
+    if not parsed_args:
+      if node.gene.children.len < 2:
+        raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list")
+      matcher.parse(node.gene.children[1])
+      body_start = 2
 
   matcher.check_hint()
   var body: seq[Value] = @[]

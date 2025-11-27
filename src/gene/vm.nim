@@ -7,6 +7,7 @@ import ./compiler
 from ./parser import read, read_all
 import ./vm/args
 import ./vm/module
+import ./serdes
 const DEBUG_VM = false
 const
   CATCH_PC_ASYNC_BLOCK = -2
@@ -17,10 +18,14 @@ import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
 import ./vm/async
-include "./vm/runtime_helpers"
 
 when not defined(noExtensions):
   import ./vm/extension
+
+proc exec*(self: VirtualMachine): Value
+proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
+proc format_runtime_exception(self: VirtualMachine, value: Value): string
+proc spawn_thread(code: ptr Gene, return_value: bool): Value
 
 # Template to get the class of a value for unified method calls
 template get_value_class(val: Value): Class =
@@ -112,6 +117,20 @@ proc exit_function(self: VirtualMachine) {.inline.} =
     
     self.profile_data[name] = profile
 
+proc string_to_bytes*(s: string): seq[byte] {.inline.} =
+  result = newSeq[byte](s.len)
+  var i = 0
+  for c in s:
+    result[i] = byte(ord(c))
+    inc i
+
+proc bytes_to_string*(b: seq[byte]): string {.inline.} =
+  result = newString(b.len)
+  var i = 0
+  for v in b:
+    result[i] = char(v)
+    inc i
+
 proc poll_event_loop(self: VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
   self.event_loop_counter.inc()
@@ -133,8 +152,14 @@ proc poll_event_loop(self: VirtualMachine) =
             # Complete the future with the reply payload
             if self.thread_futures.hasKey(msg.from_message_id):
               let future_obj = self.thread_futures[msg.from_message_id]
+              var payload = msg.payload
+              if msg.payload_bytes.bytes.len > 0:
+                try:
+                  payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+                except:
+                  payload = NIL
               future_obj.state = FsSuccess
-              future_obj.value = msg.payload
+              future_obj.value = payload
               self.thread_futures.del(msg.from_message_id)
 
       # Update all pending futures from their Nim futures
@@ -4606,8 +4631,14 @@ proc exec*(self: VirtualMachine): Value =
                     # Complete the future with the reply payload
                     if self.thread_futures.hasKey(msg.from_message_id):
                       let future_obj = self.thread_futures[msg.from_message_id]
+                      var payload = msg.payload
+                      if msg.payload_bytes.bytes.len > 0:
+                        try:
+                          payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+                        except:
+                          payload = NIL
                       future_obj.state = FsSuccess
-                      future_obj.value = msg.payload
+                      future_obj.value = payload
                       self.thread_futures.del(msg.from_message_id)
 
               # Poll the event loop to process async operations and fire callbacks
@@ -6050,6 +6081,7 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.expo
   return result
 
 include "./stdlib"
+include "./vm/runtime_helpers"
 
 # Temporarily import http and sqlite modules until extension loading is fixed
 when not defined(noExtensions):
