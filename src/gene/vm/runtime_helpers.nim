@@ -25,6 +25,9 @@ proc init_vm_for_thread(thread_id: int) =
   ## Initialize VM for a worker thread
   ## Note: App is shared from main thread, only VM is thread-local
 
+  # Set current thread ID (thread-local variable)
+  current_thread_id = thread_id
+
   # Initialize thread-local VM (but NOT App - App is shared)
   VM = VirtualMachine(
     exception_handlers: @[],
@@ -199,7 +202,7 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
     raise newException(ValueError, "Thread pool exhausted (max " & $MAX_THREADS & " threads)")
 
   # Initialize thread
-  let parent_id = 0  # TODO: Track current thread ID
+  let parent_id = current_thread_id
   init_thread(thread_id, parent_id)
 
   # Create thread
@@ -213,8 +216,8 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
   msg.payload = NIL
   msg.payload_bytes = ThreadPayload(bytes: @[])
   msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)
-  msg.from_thread_id = 0  # TODO: Track current thread ID
-  msg.from_thread_secret = THREADS[0].secret
+  msg.from_thread_id = current_thread_id
+  msg.from_thread_secret = THREADS[current_thread_id].secret
   let message_id = next_message_id
   next_message_id += 1
 

@@ -1,6 +1,7 @@
 import locks, random, options, tables, os
 import ../types
 import ../serdes
+import ./utils
 
 # Simple channel implementation for MVP
 type
@@ -78,13 +79,6 @@ type
   ThreadDataObj* = object
     thread*: system.Thread[int]
     channel*: ThreadChannel
-
-proc string_to_bytes(s: string): seq[byte] =
-  result = newSeq[byte](s.len)
-  var i = 0
-  for c in s:
-    result[i] = byte(ord(c))
-    inc i
 
 var THREAD_DATA*: array[0..MAX_THREADS, ThreadDataObj]  # Shared across threads (channels are thread-safe)
 var THREAD_CLASS_VALUE*: Value  # Cached thread class value for quick access across threads
@@ -235,8 +229,8 @@ proc init_thread_class*() =
         ser.to_s()
     msg.payload_bytes.bytes = string_to_bytes(ser_str)
     msg.code = NIL
-    msg.from_thread_id = 0  # TODO: Track current thread ID
-    msg.from_thread_secret = THREADS[0].secret
+    msg.from_thread_id = current_thread_id
+    msg.from_thread_secret = THREADS[current_thread_id].secret
     let message_id = next_message_id
     next_message_id += 1
 
@@ -347,8 +341,8 @@ proc init_thread_class*() =
         ser.to_s()
     reply.payload_bytes.bytes = string_to_bytes(ser_str)
     reply.from_message_id = msg.id
-    reply.from_thread_id = 0  # TODO: Track current thread ID
-    reply.from_thread_secret = THREADS[0].secret
+    reply.from_thread_id = current_thread_id
+    reply.from_thread_secret = THREADS[current_thread_id].secret
     next_message_id += 1
 
     # Send reply to sender

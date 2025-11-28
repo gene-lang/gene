@@ -7,6 +7,7 @@ import ./compiler
 from ./parser import read, read_all
 import ./vm/args
 import ./vm/module
+import ./vm/utils
 import ./serdes
 const DEBUG_VM = false
 const
@@ -118,22 +119,8 @@ proc exit_function(self: VirtualMachine) {.inline.} =
         break
       # This is a simplification - proper self time calculation is more complex
     profile.self_time = profile.total_time  # For now, just use total
-    
+
     self.profile_data[name] = profile
-
-proc string_to_bytes*(s: string): seq[byte] {.inline.} =
-  result = newSeq[byte](s.len)
-  var i = 0
-  for c in s:
-    result[i] = byte(ord(c))
-    inc i
-
-proc bytes_to_string*(b: seq[byte]): string {.inline.} =
-  result = newString(b.len)
-  var i = 0
-  for v in b:
-    result[i] = char(v)
-    inc i
 
 proc poll_event_loop(self: VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.

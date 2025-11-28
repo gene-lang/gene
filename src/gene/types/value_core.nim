@@ -103,6 +103,9 @@ var VmCreatedCallbacks*: seq[VmCallback] = @[]
 # Flag to track if gene namespace has been initialized (thread-local for worker threads)
 var gene_namespace_initialized* {.threadvar.}: bool
 
+# Current thread ID (thread-local, 0 for main thread)
+var current_thread_id* {.threadvar.}: int
+
 randomize()
 
 #################### Common ######################
