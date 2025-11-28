@@ -99,7 +99,6 @@ suite "Threading Support":
     VM.frame.stack_index = 0
     VM.frame.scope = new_scope(new_scope_tracker())
     VM.frame.ns = App.app.gene_ns.ref.ns
-    VM.trace = true
 
     let result = VM.exec()
     check to_int(result) == 3
