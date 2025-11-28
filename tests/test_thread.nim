@@ -164,9 +164,9 @@ suite "Threading Support":
   # test "spawn_return with args - pass arguments to thread":
   #   let code = """
   #     (await
-  #       (spawn_return return: args: {first: 1 second: 2}
+  #       (spawn_return ^first 1 ^second 2
   #         (sleep 100)
-  #         (+ first second)
+  #         (first + second)
   #       )
   #     )
   #   """
@@ -263,7 +263,7 @@ suite "Threading Support":
   #       (global/test = x)
   #     )
   #     (var result
-  #       (thread .run return:
+  #       (thread .run ^^return
   #         global/test
   #       )
   #     )

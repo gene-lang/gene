@@ -2404,11 +2404,12 @@ proc compile_gene(self: Compiler, input: Value) =
         self.compile_spawn(gene)
         return
       of "spawn_return":
-        # spawn_return is an alias for (spawn return: expr)
-        # Transform it by adding return: as first child
+        # spawn_return is an alias for (spawn ^return true expr) / (spawn ^^return expr)
+        # Transform by setting the ^return prop
         var modified_gene = new_gene(gene.type)
         modified_gene.props = gene.props
-        modified_gene.children = @["return:".to_symbol_value()] & gene.children
+        modified_gene.props["return".to_key()] = TRUE
+        modified_gene.children = gene.children
         self.compile_spawn(modified_gene)
         return
       of "yield":
@@ -3097,21 +3098,19 @@ proc compile_await(self: Compiler, gene: ptr Gene) =
 
 proc compile_spawn(self: Compiler, gene: ptr Gene) =
   # (spawn expr) - spawn thread to execute expression
-  # (spawn return: expr) - spawn and return future
+  # (spawn ^return true expr) or (spawn ^^return expr) - spawn and return future
   if gene.children.len == 0:
     not_allowed("spawn expects at least 1 argument")
 
   var return_value = false
-  var expr_idx = 0
+  # Use ^return / ^^return on props
+  let return_key = "return".to_key()
+  if gene.props.has_key(return_key):
+    let v = gene.props[return_key]
+    # Treat presence with NIL/placeholder as true, otherwise use bool value
+    return_value = (v == NIL or v == PLACEHOLDER) or v.to_bool()
 
-  # Check for return: keyword argument
-  if gene.children.len == 2:
-    let first = gene.children[0]
-    if first.kind == VkSymbol and first.str == "return:":
-      return_value = true
-      expr_idx = 1
-
-  let expr = gene.children[expr_idx]
+  let expr = gene.children[0]
 
   # Pass the Gene AST as-is to the thread (it will compile locally)
   # This avoids sharing CompilationUnit refs across threads
