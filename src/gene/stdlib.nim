@@ -1,4 +1,4 @@
-import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile
+import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile, tables
 import ./types
 import ./parser
 import ./compiler

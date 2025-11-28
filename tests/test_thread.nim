@@ -104,29 +104,31 @@ suite "Threading Support":
     let result = VM.exec()
     check to_int(result) == 3
 
-  # test "Thread.send with reply returns payload":
-  #   let code = """
-  #     (var worker (spawn (do
-  #       (thread .on_message (fn [msg]
-  #         (msg .reply (msg .payload))
-  #       ))
-  #     )))
-  #     (await (send_expect_reply worker {^a 1 ^b 2}))
-  #   """
-  #   let ast = read(code)
-  #   let cu = compile_init(ast)
+  test "Thread.send with reply returns payload":
+    let code = """
+      (do
+        (var worker (spawn (do
+          (thread .on_message (fn [msg]
+            (msg .reply (msg .payload))
+          ))
+        )))
+        (await (send_expect_reply worker {^a 1 ^b 2}))
+      )
+    """
+    let ast = read(code)
+    let cu = compile_init(ast)
 
-  #   VM.cu = cu
-  #   VM.pc = 0
-  #   VM.frame = new_frame()
-  #   VM.frame.stack_index = 0
-  #   VM.frame.scope = new_scope(new_scope_tracker())
-  #   VM.frame.ns = App.app.gene_ns.ref.ns
+    VM.cu = cu
+    VM.pc = 0
+    VM.frame = new_frame()
+    VM.frame.stack_index = 0
+    VM.frame.scope = new_scope(new_scope_tracker())
+    VM.frame.ns = App.app.gene_ns.ref.ns
 
-  #   let result = VM.exec()
-  #   check result.kind == VkMap
-  #   check result.ref.map["a".to_key()].int64 == 1
-  #   check result.ref.map["b".to_key()].int64 == 2
+    let result = VM.exec()
+    check result.kind == VkMap
+    check result.ref.map["a".to_key()].int64 == 1
+    check result.ref.map["b".to_key()].int64 == 2
 
   test "Thread.send - send message with callback":
     let code = """

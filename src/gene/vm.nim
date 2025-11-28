@@ -4601,9 +4601,7 @@ proc exec*(self: VirtualMachine): Value =
         # Wait for a Future to complete
         {.push checks: off}
         let future_val = self.frame.pop()
-        when not defined(release):
-          echo "DEBUG IkAwait got kind=", future_val.kind
-        
+
         if future_val.kind != VkFuture:
           not_allowed("await expects a Future, got: " & $future_val.kind)
         
