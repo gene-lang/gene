@@ -1,5 +1,7 @@
 # ========== Threading Support ==========
 
+import times
+
 proc current_trace(self: VirtualMachine): SourceTrace =
   if self.cu.is_nil:
     return nil
@@ -87,7 +89,13 @@ proc thread_handler(thread_id: int) {.thread.} =
   {.cast(gcsafe).}:
     try:
       # Initialize VM for this thread
+      let spawn_start = THREADS[thread_id].spawn_start
+      let start_ts = if spawn_start > 0: spawn_start else: epochTime()
       init_vm_for_thread(thread_id)
+      THREADS[thread_id].last_init_ms = (epochTime() - start_ts) * 1000.0
+      when not defined(release):
+        let ms = THREADS[thread_id].last_init_ms
+        echo "THREAD_INIT_MS thread=" & $thread_id & " ms=" & $ms
 
       # Message loop
       when DEBUG_VM:
@@ -204,6 +212,7 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
   # Initialize thread
   let parent_id = current_thread_id
   init_thread(thread_id, parent_id)
+  THREADS[thread_id].spawn_start = epochTime()
 
   # Create thread
   createThread(THREAD_DATA[thread_id].thread, thread_handler, thread_id)

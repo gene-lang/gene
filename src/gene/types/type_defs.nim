@@ -741,6 +741,8 @@ type
     in_use*: bool
     parent_id*: int           # Parent thread ID
     parent_secret*: int       # Parent thread secret
+    spawn_start*: float       # Wall clock when spawn was requested (epochTime seconds)
+    last_init_ms*: float      # Last measured VM init time in milliseconds
     # Note: thread and channel fields will be added in vm/thread.nim module
     # which will properly import std/channels and std/locks with --threads:on
 

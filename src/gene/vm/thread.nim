@@ -141,6 +141,8 @@ proc cleanup_thread*(thread_id: int) =
   THREADS[thread_id].state = TsFree
   THREADS[thread_id].in_use = false
   THREADS[thread_id].secret = rand(int.high)  # Rotate secret
+  THREADS[thread_id].spawn_start = 0
+  THREADS[thread_id].last_init_ms = 0
 
   # Close channel
   THREAD_DATA[thread_id].channel.close()
