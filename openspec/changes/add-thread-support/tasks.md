@@ -27,7 +27,7 @@
 ## Phase 1: Thread Infrastructure (2 weeks)
 
 ### 1.1 Type Definitions
-- [ ] 1.1.1 Add ThreadMessageType enum to types.nim (MtSend, MtSendWithReply, MtRun, MtRunWithReply, MtReply)
+- [ ] 1.1.1 Add ThreadMessageType enum to types.nim (MtSend, MtSendExpectReply, MtRun, MtRunExpectReply, MtReply)
 - [ ] 1.1.2 Add ThreadMessage object (id, type, payload, from_message_id, from_thread_id, from_thread_secret, handled)
 - [ ] 1.1.3 Add ThreadState enum (TsUninitialized, TsFree, TsBusy)
 - [ ] 1.1.4 Add ThreadMetadata object (id, secret, state, in_use, parent_id, parent_secret, thread, channel)
@@ -100,12 +100,12 @@
 - [ ] 2.3.4 Discard result (no reply)
 - [ ] 2.3.5 Test MtRun execution with simple bytecode
 
-### 2.5 MtRunWithReply Handler
+### 2.5 MtRunExpectReply Handler
 - [ ] 2.4.1 Execute bytecode (same as MtRun)
 - [ ] 2.4.2 Capture result value
 - [ ] 2.4.3 Create reply message (MtReply)
 - [ ] 2.4.4 Send reply to parent thread channel
-- [ ] 2.4.5 Test MtRunWithReply with result verification
+- [ ] 2.4.5 Test MtRunExpectReply with result verification
 
 ### 2.6 MtReply Handler
 - [ ] 2.5.1 Lookup future by from_message_id
@@ -138,7 +138,7 @@
 - [ ] 3.3.2 Get free thread from pool
 - [ ] 3.3.3 Initialize thread metadata (secret, parent_id)
 - [ ] 3.3.4 Create Nim thread with createThread()
-- [ ] 3.3.5 Send ThreadMessage with MtRun or MtRunWithReply
+- [ ] 3.3.5 Send ThreadMessage with MtRun or MtRunExpectReply
 - [ ] 3.3.6 Return thread reference or future
 
 ### 3.4 Instruction Handler
@@ -168,7 +168,7 @@
 - [ ] 4.2.1 Add IkCheckChannel to InstructionKind
 - [ ] 4.2.2 Implement non-blocking channel poll
 - [ ] 4.2.3 Handle MtSend messages (invoke callbacks)
-- [ ] 4.2.4 Handle MtSendWithReply messages
+- [ ] 4.2.4 Handle MtSendExpectReply messages
 - [ ] 4.2.5 Handle MtReply messages (complete futures)
 
 ### 4.3 Channel Polling Integration
@@ -179,7 +179,7 @@
 
 ### 4.4 Future Integration
 - [ ] 4.4.1 Add VM.futures table (message_id → Future)
-- [ ] 4.4.2 Store future when sending MtRunWithReply or MtSendWithReply
+- [ ] 4.4.2 Store future when sending MtRunExpectReply or MtSendExpectReply
 - [ ] 4.4.3 Complete future when MtReply received
 - [ ] 4.4.4 Clean up future from table after completion
 - [ ] 4.4.5 Test future lifecycle

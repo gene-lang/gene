@@ -82,7 +82,9 @@ proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
   while stack.len > 0:
     let cur = stack.pop()
     case cur.kind:
-    of VkNil, VkBool, VkInt, VkFloat, VkChar, VkString, VkSymbol, VkComplexSymbol:
+    of VkVoid, VkNil, VkPlaceholder, VkBool, VkInt, VkFloat, VkChar,
+       VkString, VkSymbol, VkComplexSymbol, VkByte, VkBytes, VkBin, VkBin64,
+       VkDate, VkDateTime:
       continue
     of VkArray:
       let r = cur.ref
@@ -95,15 +97,13 @@ proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
       seen_maps.incl(r)
       for _, val in r.map: stack.add(val)
     of VkGene:
-      # Only allow gene literals (no type); function/macro genes are not treated as literals
-      if cur.gene.type != NIL:
-        return false
       let gptr = cur.gene
       if seen_genes.contains(gptr): continue
       seen_genes.incl(gptr)
-      if cur.gene.type != NIL: stack.add(cur.gene.type)
-      for _, val in cur.gene.props: stack.add(val)
-      for child in cur.gene.children: stack.add(child)
+      if gptr.type != NIL:
+        stack.add(gptr.type)
+      for _, val in gptr.props: stack.add(val)
+      for child in gptr.children: stack.add(child)
     else:
       return false
   true

@@ -374,7 +374,7 @@ proc thread_handler(thread_id: int) {.gcsafe.} =
 
     # Execute message with clean state
     case msg.type:
-    of MtRun, MtRunWithReply:
+    of MtRun, MtRunExpectReply:
       VM.frame = get_frame()
       VM.frame.stack_index = 0
       VM.frame.scope = new_scope()
@@ -384,10 +384,10 @@ proc thread_handler(thread_id: int) {.gcsafe.} =
 
       let result = VM.run()
 
-      if msg.type == MtRunWithReply:
+      if msg.type == MtRunExpectReply:
         send_reply(msg.id, result)
 
-    of MtSend, MtSendWithReply:
+    of MtSend, MtSendExpectReply:
       handle_user_message(msg)
 
     # State automatically reset on next loop iteration
@@ -567,9 +567,9 @@ proc get_frame*(): Frame =
 ```nim
 ThreadMessageType* = enum
   MtSend          # Send data, no reply
-  MtSendWithReply # Send data, expect reply
+  MtSendExpectReply # Send data, expect reply
   MtRun           # Run code, no reply
-  MtRunWithReply  # Run code, expect reply
+  MtRunExpectReply  # Run code, expect reply
   MtReply         # Reply to previous message
 
 ThreadMessage* = object
@@ -730,7 +730,7 @@ Main Thread            Worker Thread 1        Worker Thread 2
 
 3. Main Thread: Send bytecode to worker
    msg = ThreadMessage(
-     type: MtRunWithReply,
+     type: MtRunExpectReply,
      payload: compilation_unit,
      id: 123,
      from_thread_id: 0
@@ -833,7 +833,7 @@ Main Thread            Worker Thread 1        Worker Thread 2
 1. Create vm/thread.nim module
 2. Implement thread_handler(thread_id) with message loop
 3. Handle MtRun: execute bytecode, no reply
-4. Handle MtRunWithReply: execute bytecode, send result
+4. Handle MtRunExpectReply: execute bytecode, send result
 5. Handle MtReply: complete future
 6. Test basic message receive/send
 
@@ -852,7 +852,7 @@ Main Thread            Worker Thread 1        Worker Thread 2
 1. Add IkSendMessage, IkCheckChannel, IkThreadJoin instructions
 2. Implement message sending to thread
 3. Implement channel polling in main VM loop
-4. Handle MtSend, MtSendWithReply message types
+4. Handle MtSend, MtSendExpectReply message types
 5. Integrate Future completion with channel replies
 6. Test send/receive patterns
 

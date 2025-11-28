@@ -87,6 +87,8 @@ proc string_to_bytes(s: string): seq[byte] =
     inc i
 
 var THREAD_DATA*: array[0..MAX_THREADS, ThreadDataObj]  # Shared across threads (channels are thread-safe)
+var THREAD_CLASS_VALUE*: Value  # Cached thread class value for quick access across threads
+var THREAD_MESSAGE_CLASS_VALUE*: Value
 
 # Thread pool management
 var thread_pool_lock: Lock
@@ -191,10 +193,8 @@ proc init_thread_class*() =
 
   thread_class.def_native_constructor(thread_constructor)
 
-  # Add .send method
-  proc thread_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    # Send message to thread
-    # Usage: (.send thread message) or (.send thread message ^reply true)
+  # Add .send methods
+  proc thread_send_internal(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, force_reply: bool): Value {.gcsafe.} =
     if arg_count < 2:
       raise new_exception(types.Exception, "Thread.send requires a thread and a message")
 
@@ -205,13 +205,12 @@ proc init_thread_class*() =
       raise new_exception(types.Exception, "send can only be called on a Thread")
 
     # Check if reply is requested
-    var reply_requested = false
-    if has_keyword_args:
-      for i in 0..<arg_count:
-        if args[i].kind == VkSymbol and args[i].str == "reply":
-          if i + 1 < arg_count:
-            reply_requested = args[i + 1].to_bool()
-          break
+    let reply_val =
+      if force_reply: TRUE
+      elif has_keyword_args: get_keyword_arg(args, "reply")
+      elif arg_count > 2: args[2]
+      else: NIL
+    let reply_requested = reply_val != NIL and reply_val.to_bool()
 
     # Get thread info
     let thread_id = thread_arg.ref.thread.id
@@ -227,7 +226,7 @@ proc init_thread_class*() =
     var msg: ThreadMessage
     new(msg)
     msg.id = next_message_id
-    msg.msg_type = if reply_requested: MtSendWithReply else: MtSend
+    msg.msg_type = if reply_requested: MtSendExpectReply else: MtSend
     msg.payload = NIL
     # Serialize payload to isolate across threads; only literal values are allowed
     let ser = serialize_literal(message_arg)
@@ -265,7 +264,8 @@ proc init_thread_class*() =
     else:
       return NIL
 
-  thread_class.def_native_method("send", thread_send)
+  thread_class.def_native_method("send", (proc (vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = thread_send_internal(vm, args, arg_count, has_keyword_args, false)))
+  thread_class.def_native_method("send_expect_reply", (proc (vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = thread_send_internal(vm, args, arg_count, has_keyword_args, true)))
 
   # Add .on_message method
   proc thread_on_message(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -295,11 +295,16 @@ proc init_thread_class*() =
   let thread_class_ref = new_ref(VkClass)
   thread_class_ref.class = thread_class
   App.app.thread_class = thread_class_ref.to_ref_value()
+  THREAD_CLASS_VALUE = App.app.thread_class
 
   # Add to gene namespace if it exists
   if App.app.gene_ns.kind == VkNamespace:
     let thread_key = "Thread".to_key()
     App.app.gene_ns.ref.ns[thread_key] = App.app.thread_class
+    # Global helper to force reply expectation
+    proc thread_send_expect_reply_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      thread_send_internal(vm, args, arg_count, has_keyword_args, true)
+    App.app.gene_ns.ref.ns["send_expect_reply".to_key()] = (cast[NativeFn](thread_send_expect_reply_fn)).to_value()
 
   # Create ThreadMessage class
   let thread_message_class = new_class("ThreadMessage")
@@ -360,6 +365,7 @@ proc init_thread_class*() =
   let thread_message_class_ref = new_ref(VkClass)
   thread_message_class_ref.class = thread_message_class
   App.app.thread_message_class = thread_message_class_ref.to_ref_value()
+  THREAD_MESSAGE_CLASS_VALUE = App.app.thread_message_class
 
   # Add to gene namespace if it exists
   if App.app.gene_ns.kind == VkNamespace:

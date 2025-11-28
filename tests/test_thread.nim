@@ -1,5 +1,6 @@
 import std/unittest
 import std/strutils
+import std/tables
 
 import gene/types except Exception  # Avoid collision with system.Exception
 import gene/compiler
@@ -98,15 +99,40 @@ suite "Threading Support":
     VM.frame.stack_index = 0
     VM.frame.scope = new_scope(new_scope_tracker())
     VM.frame.ns = App.app.gene_ns.ref.ns
+    VM.trace = true
 
     let result = VM.exec()
     check to_int(result) == 3
+
+  # test "Thread.send with reply returns payload":
+  #   let code = """
+  #     (var worker (spawn (do
+  #       (thread .on_message (fn [msg]
+  #         (msg .reply (msg .payload))
+  #       ))
+  #     )))
+  #     (await (send_expect_reply worker {^a 1 ^b 2}))
+  #   """
+  #   let ast = read(code)
+  #   let cu = compile_init(ast)
+
+  #   VM.cu = cu
+  #   VM.pc = 0
+  #   VM.frame = new_frame()
+  #   VM.frame.stack_index = 0
+  #   VM.frame.scope = new_scope(new_scope_tracker())
+  #   VM.frame.ns = App.app.gene_ns.ref.ns
+
+  #   let result = VM.exec()
+  #   check result.kind == VkMap
+  #   check result.ref.map["a".to_key()].int64 == 1
+  #   check result.ref.map["b".to_key()].int64 == 2
 
   test "Thread.send - send message with callback":
     let code = """
       (var received nil)
       (var thread (spawn (do
-        (.on_message $thread (fn [msg]
+        (thread .on_message (fn [msg]
           (var received (.payload msg))
         ))
         (keep_alive)

@@ -61,6 +61,7 @@ proc init_vm_for_thread(thread_id: int) =
     secret: THREADS[0].secret
   )
   thread_ns["$main_thread".to_key()] = main_thread_ref.to_value()
+  thread_ns["main_thread".to_key()] = main_thread_ref.to_value()
 
   # Add $thread variable to refer to current thread
   let current_thread_ref = types.Thread(
@@ -68,6 +69,11 @@ proc init_vm_for_thread(thread_id: int) =
     secret: THREADS[thread_id].secret
   )
   thread_ns["$thread".to_key()] = current_thread_ref.to_value()
+  thread_ns["thread".to_key()] = current_thread_ref.to_value()
+
+  # Mark gene namespace as initialized for this worker thread and ensure thread classes are available
+  gene_namespace_initialized = true
+  init_thread_class()
 
   # Store thread-local namespace in VM
   VM.thread_local_ns = thread_ns
@@ -96,7 +102,7 @@ proc thread_handler(thread_id: int) {.thread.} =
 
         # Execute based on message type
         case msg.msg_type:
-        of MtRun, MtRunWithReply:
+        of MtRun, MtRunExpectReply:
           # Compile the Gene AST locally (thread-safe, no shared refs)
           when DEBUG_VM:
             echo "DEBUG thread_handler: Compiling code: ", msg.code
@@ -115,7 +121,7 @@ proc thread_handler(thread_id: int) {.thread.} =
           let result = VM.exec()
 
           # Send reply if requested
-          if msg.msg_type == MtRunWithReply:
+          if msg.msg_type == MtRunExpectReply:
             let ser = serialize_literal(result)
             let reply = ThreadMessage(
               id: next_message_id,
@@ -129,7 +135,7 @@ proc thread_handler(thread_id: int) {.thread.} =
             next_message_id += 1
             THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
-        of MtSend, MtSendWithReply:
+        of MtSend, MtSendExpectReply:
           # User message - invoke callbacks
           # Deserialize payload if present
           var payload = msg.payload
@@ -157,7 +163,7 @@ proc thread_handler(thread_id: int) {.thread.} =
               discard  # Ignore callback errors for now
 
           # If message requests reply and wasn't handled, send NIL reply
-          if msg.msg_type == MtSendWithReply and not msg.handled:
+          if msg.msg_type == MtSendExpectReply and not msg.handled:
             var reply: ThreadMessage
             new(reply)
             reply.id = next_message_id
@@ -180,6 +186,8 @@ proc thread_handler(thread_id: int) {.thread.} =
       cleanup_thread(thread_id)
     except CatchableError as e:
       echo "Thread ", thread_id, " crashed: ", e.msg
+      when not defined(release):
+        echo e.getStackTrace()
 
 # Spawn functions
 proc spawn_thread(code: ptr Gene, return_value: bool): Value =
@@ -201,7 +209,7 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
   var msg: ThreadMessage
   new(msg)
   msg.id = next_message_id
-  msg.msg_type = if return_value: MtRunWithReply else: MtRun
+  msg.msg_type = if return_value: MtRunExpectReply else: MtRun
   msg.payload = NIL
   msg.payload_bytes = ThreadPayload(bytes: @[])
   msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)

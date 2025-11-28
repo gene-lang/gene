@@ -19,6 +19,14 @@ suite "Thread message serialization":
     check roundtripped.ref.map["b".to_key()].str == "ok"
 
   test "non-literal payload is rejected":
-    let non_literal = read("(fn [] 1)")
+    var r = new_ref(VkFuture)
+    r.future = FutureObj(
+      state: FsPending,
+      value: NIL,
+      success_callbacks: @[],
+      failure_callbacks: @[],
+      nim_future: nil
+    )
+    let non_literal = r.to_ref_value()
     expect type_defs.Exception:
       discard serialize_literal(non_literal)

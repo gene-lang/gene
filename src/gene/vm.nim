@@ -68,6 +68,10 @@ template get_value_class(val: Value): Class =
     types.ref(App.app.future_class).class
   of VkGenerator:
     types.ref(App.app.generator_class).class
+  of VkThread:
+    types.ref(THREAD_CLASS_VALUE).class
+  of VkThreadMessage:
+    types.ref(THREAD_MESSAGE_CLASS_VALUE).class
   of VkClass:
     types.ref(App.app.class_class).class
   else:
@@ -1466,6 +1470,13 @@ proc exec*(self: VirtualMachine): Value =
                 var value = self.frame.ns[name]
                 var found_ns = self.frame.ns
                 if value == NIL:
+                  # Try thread-local namespace first (for $thread, $main_thread, etc.)
+                  if self.thread_local_ns != nil:
+                    value = self.thread_local_ns[name]
+                    if value != NIL:
+                      found_ns = self.thread_local_ns
+                
+                if value == NIL:
                   # Try global namespace
                   value = App.app.global_ns.ref.ns[name]
                   if value != NIL:
@@ -2811,6 +2822,9 @@ proc exec*(self: VirtualMachine): Value =
                 self.frame.replace(gen_value)
               else:
                 discard
+            elif value.kind == VkGene and value.gene.type.kind == VkNativeFn:
+              let f = value.gene.type.ref.native_fn
+              self.frame.replace(call_native_fn(f, self, value.gene.children))
             else:
               discard
           
@@ -4587,6 +4601,8 @@ proc exec*(self: VirtualMachine): Value =
         # Wait for a Future to complete
         {.push checks: off}
         let future_val = self.frame.pop()
+        when not defined(release):
+          echo "DEBUG IkAwait got kind=", future_val.kind
         
         if future_val.kind != VkFuture:
           not_allowed("await expects a Future, got: " & $future_val.kind)

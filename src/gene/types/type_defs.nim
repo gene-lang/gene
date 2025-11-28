@@ -38,9 +38,9 @@ type
   # Threading support types
   ThreadMessageType* = enum
     MtSend          # Send data, no reply expected
-    MtSendWithReply # Send data, expect reply
+    MtSendExpectReply # Send data, expect reply
     MtRun           # Run code, no reply expected
-    MtRunWithReply  # Run code, expect reply
+    MtRunExpectReply  # Run code, expect reply
     MtReply         # Reply to previous message
     MtTerminate     # Terminate thread
 

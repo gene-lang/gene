@@ -85,6 +85,8 @@ proc init_app_and_vm*() =
   )
   VM.thread_local_ns["$thread".to_key()] = main_thread_ref.to_value()
   VM.thread_local_ns["$main_thread".to_key()] = main_thread_ref.to_value()
+  VM.thread_local_ns["thread".to_key()] = main_thread_ref.to_value()
+  VM.thread_local_ns["main_thread".to_key()] = main_thread_ref.to_value()
 
   for callback in VmCreatedCallbacks:
     callback()

@@ -157,7 +157,7 @@ Threads SHALL communicate exclusively through message passing using Nim channels
 - **AND** no return value SHALL be provided
 
 #### Scenario: Send message with reply
-- **WHEN** a thread sends a message with type MtSendWithReply
+- **WHEN** a thread sends a message with type MtSendExpectReply
 - **THEN** a Future SHALL be created and returned to the sender
 - **AND** the message SHALL be sent to the recipient
 - **AND** the Future SHALL complete when a reply is received
@@ -168,7 +168,7 @@ Threads SHALL communicate exclusively through message passing using Nim channels
 - **AND** no result SHALL be sent back to the sender
 
 #### Scenario: Run code with reply
-- **WHEN** a thread sends code to execute with type MtRunWithReply
+- **WHEN** a thread sends code to execute with type MtRunExpectReply
 - **THEN** the recipient thread SHALL execute the bytecode
 - **AND** send the result back via MtReply message
 - **AND** the sender's Future SHALL complete with the result
@@ -212,11 +212,11 @@ The system SHALL support spawning threads with or without return values using sp
 - **WHEN** `(spawn_return expr)` is executed
 - **THEN** a new thread SHALL be allocated from the pool
 - **AND** the expression SHALL be compiled to bytecode
-- **AND** the bytecode SHALL be sent to the thread via MtRunWithReply message
+- **AND** the bytecode SHALL be sent to the thread via MtRunExpectReply message
 - **AND** a Future SHALL be returned to the caller
 
 #### Scenario: Thread execution
-- **WHEN** a worker thread receives a MtRun or MtRunWithReply message
+- **WHEN** a worker thread receives a MtRun or MtRunExpectReply message
 - **THEN** it SHALL initialize a new VM instance if needed
 - **AND** set VM.cu to the received CompilationUnit
 - **AND** execute the bytecode from pc = 0
@@ -269,7 +269,7 @@ Thread values SHALL support methods for communication and lifecycle management.
 
 #### Scenario: Send method with reply
 - **WHEN** `.send(thread, message, ^reply true)` is called
-- **THEN** the message SHALL be sent with type MtSendWithReply
+- **THEN** the message SHALL be sent with type MtSendExpectReply
 - **AND** a Future SHALL be returned
 - **AND** the Future SHALL complete when a reply is received
 
@@ -289,10 +289,10 @@ Threads SHALL support user-defined callbacks for handling incoming messages.
 #### Scenario: Register message callback
 - **WHEN** `.on_message(callback)` is called
 - **THEN** the callback SHALL be added to the thread's callback list
-- **AND** the callback SHALL be invoked for MtSend and MtSendWithReply messages
+- **AND** the callback SHALL be invoked for MtSend and MtSendExpectReply messages
 
 #### Scenario: Callback invocation
-- **WHEN** a MtSend or MtSendWithReply message is received
+- **WHEN** a MtSend or MtSendExpectReply message is received
 - **THEN** all registered callbacks SHALL be invoked in order
 - **AND** each callback SHALL receive a ThreadMessage value
 
@@ -302,7 +302,7 @@ Threads SHALL support user-defined callbacks for handling incoming messages.
 - **AND** subsequent callbacks SHALL NOT be invoked for that message
 
 #### Scenario: Reply from callback
-- **WHEN** a callback calls `.reply(value)` on a MtSendWithReply message
+- **WHEN** a callback calls `.reply(value)` on a MtSendExpectReply message
 - **THEN** a MtReply message SHALL be sent to the sender
 - **AND** the sender's Future SHALL complete with the reply value
 
