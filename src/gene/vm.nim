@@ -303,7 +303,7 @@ proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: 
     result.count = expected
   else:
     result.hasBase = true
-    result.base = vm.frame.pop_call_base()
+    result.base = vm.frame.call_bases.pop()
     result.count = vm.frame.call_arg_count_from(result.base)
     when not defined(release):
       if expected >= 0 and result.count != expected:
@@ -5036,10 +5036,142 @@ proc exec*(self: VirtualMachine): Value =
           not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
         {.pop}
 
+      of IkCallArgsStart:
+        # Mark current stack position (callee already on stack) for dynamic arg counting
+        self.frame.push_call_base()
+
+      of IkCallArgSpread:
+        # Pop a spreadable value and push its elements onto the stack
+        let value = self.frame.pop()
+        case value.kind:
+          of VkArray:
+            for item in value.ref.arr:
+              self.frame.push(item)
+          of VkStream:
+            for item in value.ref.stream:
+              self.frame.push(item)
+          else:
+            not_allowed("... can only spread arrays or streams in call context, got " & $value.kind)
+
       of IkUnifiedCall:
         {.push checks: off}
-        # Multi-argument unified call
+        # Multi-argument unified call with known arity
         let call_info = self.pop_call_base_info(inst.arg1.int)
+        let arg_count = call_info.count
+        var args = newSeq[Value](arg_count)
+        for i in countdown(arg_count - 1, 0):
+          args[i] = self.frame.pop()
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, args))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+
+            # OPTIMIZATION: Direct multi-argument processing without Gene objects
+            if not f.matcher.is_empty():
+              if args.len > 0:
+                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+              else:
+                process_args_zero(f.matcher, scope)
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            # If this is an async function, set up exception handler
+            if f.async:
+              self.exception_handlers.add(ExceptionHandler(
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
+                finally_pc: -1,
+                frame: self.frame,
+                cu: self.cu,
+                saved_value: NIL,
+                has_saved_value: false,
+                in_finally: false
+              ))
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          let result = call_native_fn(target.ref.native_fn, self, args)
+          self.frame.push(result)
+
+        of VkInstance, VkCustom:
+          # Forward to 'call' method if it exists
+          if call_instance_method(self, target, "call", args):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.object_class_name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          for arg in args:
+            new_frame.args.gene.children.add(arg)
+          if not b.matcher.is_empty():
+            process_args_direct(b.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        else:
+          not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedCallDynamic:
+        {.push checks: off}
+        # Dynamic-arity unified call (arg count determined at runtime)
+        let call_info = self.pop_call_base_info(-1)
         let arg_count = call_info.count
         var args = newSeq[Value](arg_count)
         for i in countdown(arg_count - 1, 0):
@@ -5152,7 +5284,7 @@ proc exec*(self: VirtualMachine): Value =
           continue
 
         else:
-          not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
+          not_allowed("IkUnifiedCallDynamic requires a callable, got " & $target.kind)
         {.pop}
 
       of IkCallSuperMethod, IkCallSuperMethodMacro:

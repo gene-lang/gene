@@ -598,10 +598,13 @@ type
     IkUnifiedCall0      # Zero-argument unified call
     IkUnifiedCall1      # Single-argument unified call
     IkUnifiedCall       # Multi-argument unified call
+    IkUnifiedCallDynamic # dynamic-arity unified call (when spreads present)
     IkUnifiedMethodCall0 # Zero-argument method call
     IkUnifiedMethodCall1 # Single-argument method call
     IkUnifiedMethodCall2 # Two-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
+    IkCallArgsStart      # mark start of call arguments (for dynamic arg counting)
+    IkCallArgSpread      # spread argument values onto the stack for calls
 
     IkResolveSymbol
     IkSetMember

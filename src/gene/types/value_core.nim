@@ -2028,5 +2028,5 @@ proc call_arg_count*(self: Frame): int {.inline.} =
   self.call_arg_count_from(self.stack_index)
 
 proc pop_call_arg_count*(self: Frame): int {.inline.} =
-  let base = self.pop_call_base()
+  let base = self.call_bases.pop()
   self.call_arg_count_from(base)
