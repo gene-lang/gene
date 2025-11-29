@@ -394,6 +394,11 @@ proc compile_map(self: Compiler, input: Value) =
       self.emit(Instruction(kind: IkMapSetProp, arg0: k))
   self.emit(Instruction(kind: IkMapEnd))
 
+# Forward declarations for scope helpers used below
+proc start_scope(self: Compiler)
+proc add_scope_start(self: Compiler)
+proc end_scope(self: Compiler)
+
 proc compile_do(self: Compiler, gene: ptr Gene) =
   self.compile(gene.children)
 

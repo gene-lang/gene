@@ -4778,7 +4778,7 @@ proc exec*(self: VirtualMachine): Value =
           new_frame.scope = scope
           new_frame.args = new_gene_value()
           if not b.matcher.is_empty():
-            process_args(b.matcher, new_frame.args, scope)
+            process_args_zero(b.matcher, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()
           new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -4948,7 +4948,7 @@ proc exec*(self: VirtualMachine): Value =
           new_frame.args = new_gene_value()
           new_frame.args.gene.children.add(arg)
           if not b.matcher.is_empty():
-            process_args(b.matcher, new_frame.args, scope)
+            process_args_one(b.matcher, arg, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()
           new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5119,6 +5119,37 @@ proc exec*(self: VirtualMachine): Value =
             continue
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          for arg in args:
+            new_frame.args.gene.children.add(arg)
+          if not b.matcher.is_empty():
+            process_args_direct(b.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)

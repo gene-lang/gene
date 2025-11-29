@@ -32,52 +32,6 @@ proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instan
 # Forward declaration for original process_args function
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)
 
-# Fast path: Direct stack-to-scope argument passing without Gene objects
-proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
-                         arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
-  ## Process function arguments directly from stack to scope
-  ## Eliminates Gene object creation for better performance
-
-  # Ensure scope.members has enough slots for all parameters
-  while scope.members.len < matcher.children.len:
-    scope.members.add(NIL)
-
-  if arg_count == 0:
-    # No arguments provided, use defaults where available
-    for i, param in matcher.children:
-      if param.default_value.kind != VkNil:
-        scope.members[i] = param.default_value
-    assign_property_params(matcher, scope)
-    return
-
-  # For now, handle only positional arguments (most common case)
-  # TODO: Add keyword argument support later
-  if not has_keyword_args:
-    # Fast path: positional arguments only
-    var pos_index = 0
-    for i, param in matcher.children:
-      if param.is_splat:
-        # Rest parameter - collect all remaining arguments into an array
-        let rest_array = new_array_value()
-        while pos_index < arg_count:
-          rest_array.ref.arr.add(args[pos_index])
-          pos_index.inc()
-        scope.members[i] = rest_array
-      elif pos_index < arg_count:
-        scope.members[i] = args[pos_index]
-        pos_index.inc()
-      elif param.default_value.kind != VkNil:
-        scope.members[i] = param.default_value
-  else:
-    # Fallback to Gene-based processing for keyword arguments
-    # TODO: Optimize this path later
-    var args_gene = new_gene_value()
-    for i in 0..<arg_count:
-      args_gene.gene.children.add(args[i])
-    process_args(matcher, args_gene, scope)
-    return
-
-  assign_property_params(matcher, scope)
 # Optimized version for zero arguments
 proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
   ## Ultra-fast path for zero-argument functions
@@ -123,6 +77,49 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.
           scope.members[i] = new_array_value()
         elif param.default_value.kind != VkNil:
           scope.members[i] = param.default_value
+  assign_property_params(matcher, scope)
+
+proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
+                         arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
+  ## Process arguments directly from stack to scope
+  ## Supports positional and keyword (property) arguments.
+
+  # Build a lightweight Gene view when keywords present to reuse the main path
+  if has_keyword_args:
+    var args_gene = new_gene_value()
+    # positional
+    for i in 0..<arg_count:
+      args_gene.gene.children.add(args[i])
+    process_args(matcher, args_gene, scope)
+    return
+
+  # Pure positional fast path
+  while scope.members.len < matcher.children.len:
+    scope.members.add(NIL)
+
+  if arg_count == 0:
+    for i, param in matcher.children:
+      if param.is_splat:
+        scope.members[i] = new_array_value()
+      elif param.default_value.kind != VkNil:
+        scope.members[i] = param.default_value
+    assign_property_params(matcher, scope)
+    return
+
+  var pos_index = 0
+  for i, param in matcher.children:
+    if param.is_splat:
+      let rest_array = new_array_value()
+      while pos_index < arg_count:
+        rest_array.ref.arr.add(args[pos_index])
+        pos_index.inc()
+      scope.members[i] = rest_array
+    elif pos_index < arg_count:
+      scope.members[i] = args[pos_index]
+      pos_index.inc()
+    elif param.default_value.kind != VkNil:
+      scope.members[i] = param.default_value
+
   assign_property_params(matcher, scope)
 
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
