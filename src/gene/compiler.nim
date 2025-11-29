@@ -113,7 +113,6 @@ proc compile_render(self: Compiler, gene: ptr Gene)
 proc compile_emit(self: Compiler, gene: ptr Gene)
 proc compile*(f: Function, eager_functions: bool)
 proc compile*(b: Block, eager_functions: bool)
-proc compile*(f: CompileFn, eager_functions: bool)
 proc compile_caller_eval(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_async(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_await(self: Compiler, gene: ptr Gene)  # Forward declaration
@@ -1193,12 +1192,6 @@ proc compile_return(self: Compiler, gene: ptr Gene) =
 
 proc compile_block(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkBlock, arg0: input))
-  var r = new_ref(VkScopeTracker)
-  r.scope_tracker = self.scope_tracker
-  self.emit(Instruction(kind: IkData, arg0: r.to_ref_value()))
-
-proc compile_compile(self: Compiler, input: Value) =
-  self.emit(Instruction(kind: IkCompileFn, arg0: input))
   var r = new_ref(VkScopeTracker)
   r.scope_tracker = self.scope_tracker
   self.emit(Instruction(kind: IkData, arg0: r.to_ref_value()))
@@ -2361,9 +2354,6 @@ proc compile_gene(self: Compiler, input: Value) =
       of "->":
         self.compile_block(input)
         return
-      of "compile":
-        self.compile_compile(input)
-        return
       of "return":
         self.compile_return(gene)
         return
@@ -2840,54 +2830,6 @@ proc compile*(b: Block, eager_functions: bool) =
 
 proc compile*(b: Block) =
   compile(b, false)
-
-proc compile*(f: CompileFn, eager_functions: bool) =
-  if f.body_compiled != nil:
-    return
-
-  let self = Compiler(
-    output: new_compilation_unit(),
-    tail_position: false,
-    eager_functions: eager_functions,
-    trace_stack: @[],
-    method_access_mode: MamAutoCall
-  )
-  self.emit(Instruction(kind: IkStart))
-  self.scope_trackers.add(f.scope_tracker)
-
-  # generate code for arguments
-  for i, m in f.matcher.children:
-    self.scope_tracker.mappings[m.name_key] = i.int16
-    let label = new_label()
-    self.emit(Instruction(
-      kind: IkJumpIfMatchSuccess,
-      arg0: i.to_value(),
-      arg1: label,
-    ))
-    if m.default_value != nil:
-      self.compile(m.default_value)
-      self.add_scope_start()
-      self.emit(Instruction(kind: IkVar, arg0: m.name_key.to_value()))
-      self.emit(Instruction(kind: IkPop))
-    else:
-      self.emit(Instruction(kind: IkThrow))
-    self.emit(Instruction(kind: IkNoop, label: label))
-
-  # Mark that we're in tail position for the function body
-  self.tail_position = true
-  self.compile(f.body)
-  self.tail_position = false
-
-  self.end_scope()
-  self.emit(Instruction(kind: IkEnd))
-  self.output.optimize_noops()  # Optimize BEFORE resolving jumps
-  self.output.update_jumps()
-  f.body_compiled = self.output
-  f.body_compiled.kind = CkCompileFn
-  f.body_compiled.matcher = f.matcher
-
-proc compile*(f: CompileFn) =
-  compile(f, false)
 
 proc compile_with(self: Compiler, gene: ptr Gene) =
   # ($with value body...)
@@ -3428,4 +3370,4 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   return self.output
 
 
-# Compile methods for Function, Macro, Block, and CompileFn are defined above
+# Compile methods for Function, Macro, and Block are defined above

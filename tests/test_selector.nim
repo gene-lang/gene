@@ -1,4 +1,4 @@
-import unittest, tables
+import unittest
 
 import gene/types except Exception
 

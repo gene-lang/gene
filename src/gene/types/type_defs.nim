@@ -138,7 +138,6 @@ type
     VkModule
     VkNamespace
     VkFunction
-    VkCompileFn
     VkBlock
     VkClass
     VkMethod
@@ -368,16 +367,6 @@ type
     body_compiled*: CompilationUnit
     # ret*: Expr
 
-  CompileFn* = ref object
-    ns*: Namespace
-    name*: string
-    scope_tracker*: ScopeTracker
-    parent_scope*: Scope
-    matcher*: RootMatcher
-    # matching_hint*: MatchingHint
-    body*: seq[Value]
-    body_compiled*: CompilationUnit
-
   Block* = ref object
     frame*: Frame # The frame wherein the block is defined
     ns*: Namespace
@@ -556,8 +545,6 @@ type
     IkReturn
     IkYield        # Suspend generator and yield value
 
-    IkCompileFn
-
     IkMacro
 
     IkBlock
@@ -671,7 +658,6 @@ type
   CompilationUnitKind* {.size: sizeof(int8).} = enum
     CkDefault
     CkFunction
-    CkCompileFn
     CkBlock
     CkModule
     CkInit      # namespace / class / object initialization
@@ -778,7 +764,6 @@ type
     FkFunction
     FkMacro
     FkBlock
-    FkCompileFn
     # FkNativeFn
     # FkNativeMacro
     FkNew
@@ -830,7 +815,6 @@ type
   NativeFrameKind* {.size: sizeof(int16).} = enum
     NfFunction
     NfMacro
-    NfCompileFn
     NfMethod
     NfMacroMethod
 
@@ -845,7 +829,6 @@ type
   #   IvFunction
   #   IvMacro
   #   IvBlock
-  #   IvCompileFn
   #   IvNativeFn
   #   IvNew
   #   IvMethod
@@ -863,7 +846,6 @@ type
   #     of IvBlock:
   #       `block`*: Value
   #       block_scope*: Scope
-  #     of IvCompileFn:
   #       compile_fn*: Value
   #       compile_fn_scope*: Scope
   #     of IvNativeFn:
@@ -1037,8 +1019,6 @@ type
         ns*: Namespace
       of VkFunction:
         fn*: Function
-      of VkCompileFn:
-        `compile_fn`*: CompileFn
       of VkBlock:
         `block`*: Block
       of VkClass:

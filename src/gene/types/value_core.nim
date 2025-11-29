@@ -1627,37 +1627,6 @@ proc to_function*(node: Value): Function {.gcsafe.} =
 
 # compile method is defined in compiler.nim
 
-#################### CompileFn ###################
-
-proc new_compile_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): CompileFn =
-  return CompileFn(
-    name: name,
-    matcher: matcher,
-    # matching_hint: matcher.hint,
-    body: body,
-  )
-
-proc to_compile_fn*(node: Value): CompileFn {.gcsafe.} =
-  let first = node.gene.children[0]
-  var name: string
-  if first.kind == VkSymbol:
-    name = first.str
-  elif first.kind == VkComplexSymbol:
-    name = first.ref.csymbol[^1]
-
-  let matcher = new_arg_matcher()
-  matcher.parse(node.gene.children[1])
-  matcher.check_hint()
-
-  var body: seq[Value] = @[]
-  for i in 2..<node.gene.children.len:
-    body.add node.gene.children[i]
-
-  # body = wrap_with_try(body)
-  result = new_compile_fn(name, matcher, body)
-
-# compile method needs to be defined - see compiler.nim
-
 #################### Block #######################
 
 proc new_block*(matcher: RootMatcher,  body: sink seq[Value]): Block =

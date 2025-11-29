@@ -1108,31 +1108,6 @@ proc exec*(self: VirtualMachine): Value =
 
           return v
         else:
-          if self.cu.kind == CkCompileFn:
-            # Replace the caller's instructions with what's returned
-            # Point the caller's self.pc to the first of the new instructions
-            var cu = self.frame.caller_address.cu
-            let end_pos = self.frame.caller_address.pc
-            let caller_instr = self.frame.caller_address.cu.instructions[end_pos]
-            let start_pos = caller_instr.arg0.int64.int
-            var new_instructions: seq[Instruction] = @[]
-            for item in v.ref.arr:
-              case item.kind:
-                of VkInstruction:
-                  new_instructions.add(item.ref.instr)
-                of VkArray:
-                  for item2 in item.ref.arr:
-                    new_instructions.add(item2.ref.instr)
-                else:
-                  todo($item.kind)
-            cu.replace_chunk(start_pos, end_pos, new_instructions)
-            self.cu = self.frame.caller_address.cu
-            self.pc = start_pos
-            inst = self.cu.instructions[self.pc].addr
-            self.frame.update(self.frame.caller_frame)
-            self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
-            continue
-
           let skip_return = self.cu.skip_return
           # Check if we're ending a function called by exec_function
           let ending_exec_function = self.frame.from_exec_function
@@ -2250,31 +2225,6 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
 
-          of VkCompileFn:
-            # if inst.arg1 == 1:
-            #   not_allowed("Macro expected here")
-            # inst.arg1 = 2
-
-            var scope: Scope
-            let f = gene_type.ref.compile_fn
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              # Increment ref_count since the frame will own this reference
-              if scope != nil:
-                scope.ref_count.inc()
-            else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
-
-            var r = new_ref(VkFrame)
-            r.frame = new_frame()
-            r.frame.kind = FkCompileFn
-            r.frame.target = gene_type
-            r.frame.scope = scope
-            self.frame.replace(r.to_ref_value())
-            self.pc.inc()
-            inst = self.cu.instructions[self.pc].addr
-            continue
-
           of VkNativeFn:
             var r = new_ref(VkNativeFrame)
             r.native_frame = NativeFrame(
@@ -2755,28 +2705,6 @@ proc exec*(self: VirtualMachine): Value =
                 # Process arguments if matcher exists
                 if not b.matcher.is_empty():
                   process_args(b.matcher, frame.args, frame.scope)
-                
-                self.pc = 0
-                inst = self.cu.instructions[self.pc].addr
-                continue
-
-              of FkCompileFn:
-                let f = frame.target.ref.compile_fn
-                if f.body_compiled == nil:
-                  f.compile()
-
-                # pc.inc() # Do not increment self.pc, the callee will use self.pc to find current instruction
-                frame.caller_frame.update(self.frame)
-                frame.caller_address = Address(cu: self.cu, pc: self.pc)
-                frame.ns = f.ns
-                # Pop the frame from the stack before switching context
-                discard self.frame.pop()
-                self.frame.update(frame)
-                self.cu = f.body_compiled
-                
-                # Process arguments if matcher exists
-                if not f.matcher.is_empty():
-                  process_args(f.matcher, frame.args, frame.scope)
                 
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
@@ -3699,34 +3627,6 @@ proc exec*(self: VirtualMachine): Value =
         let r = new_ref(VkBlock)
         r.block = b
         let v = r.to_ref_value()
-        self.frame.push(v)
-        {.pop.}
-
-      of IkCompileFn:
-        {.push checks: off}
-        let f = to_compile_fn(inst.arg0)
-        f.ns = self.frame.ns
-        # More data are stored in the next instruction slot
-        self.pc.inc()
-        inst = self.cu.instructions[self.pc].addr
-        when not defined(release):
-          if inst.kind != IkData:
-            raise new_exception(types.Exception, fmt"Expected IkData after IkCompileFn, got {inst.kind}")
-        # Capture parent scope with proper reference counting
-        if self.frame.scope != nil:
-          self.frame.scope.ref_count.inc()
-          # Function captured scope, ref_count incremented
-        f.parent_scope = self.frame.scope
-        f.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
-
-        if not f.matcher.is_empty():
-          for child in f.matcher.children:
-            f.scope_tracker.add(child.name_key)
-
-        let r = new_ref(VkCompileFn)
-        r.compile_fn = f
-        let v = r.to_ref_value()
-        f.ns[f.name.to_key()] = v
         self.frame.push(v)
         {.pop.}
 

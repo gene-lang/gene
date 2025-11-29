@@ -51,7 +51,7 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
     of IkPushValue, IkScopeStart, IkVar, IkVarResolve, IkVarAssign,
        IkResolveSymbol, IkJump, IkJumpIfFalse, IkContinue, IkBreak,
        IkGeneStartDefault, IkSubValue, IkAddValue, IkLtValue, IkFunction,
-       IkMacro, IkBlock, IkCompileFn, IkNamespace, IkNamespaceStore,
+       IkMacro, IkBlock, IkNamespace, IkNamespaceStore,
        IkClass, IkSubClass, IkDefineMethod, IkResolveMethod,
        IkAssign, IkData:
       result &= " " & $inst.arg0
@@ -147,7 +147,7 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
       result &= formatValue(inst.arg0)
     of IkLtValue:
       result &= "< " & formatValue(inst.arg0)
-    of IkFunction, IkMacro, IkBlock, IkCompileFn:
+    of IkFunction, IkMacro, IkBlock:
       if inst.arg0.kind != VkNil:
         result &= formatValue(inst.arg0)
     of IkNamespace:
