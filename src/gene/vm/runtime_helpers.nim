@@ -20,16 +20,24 @@ proc format_runtime_exception(self: VirtualMachine, value: Value): string =
   else:
     "Gene exception: " & $value
 
-# VM initialization for worker threads
-proc init_vm_for_thread(thread_id: int) =
-  ## Initialize VM for a worker thread
-  ## Note: App is shared from main thread, only VM is thread-local
+proc ensure_frame_pool() =
+  ## Lazily allocate the shared frame pool for this thread.
+  if FRAMES.len == 0:
+    FRAMES = newSeqOfCap[Frame](INITIAL_FRAME_POOL_SIZE)
+    for i in 0..<INITIAL_FRAME_POOL_SIZE:
+      FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
+      FRAME_ALLOCS.inc()
 
-  # Set current thread ID (thread-local variable)
-  current_thread_id = thread_id
+proc ensure_ref_pool() =
+  ## Lazily allocate the shared reference pool for this thread.
+  if REF_POOL.len == 0:
+    REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
+    for i in 0..<INITIAL_REF_POOL_SIZE:
+      REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
 
-  # Initialize thread-local VM (but NOT App - App is shared)
-  VM = VirtualMachine(
+proc new_thread_vm(): VirtualMachine =
+  ## Create a VM instance for a worker thread (App/shared bits are populated elsewhere).
+  VirtualMachine(
     exception_handlers: @[],
     current_exception: NIL,
     symbols: addr SYMBOLS,
@@ -38,27 +46,10 @@ proc init_vm_for_thread(thread_id: int) =
     message_callbacks: @[],
   )
 
-  # Initialize thread-local frame pool
-  if FRAMES.len == 0:
-    FRAMES = newSeqOfCap[Frame](INITIAL_FRAME_POOL_SIZE)
-    for i in 0..<INITIAL_FRAME_POOL_SIZE:
-      FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
-      FRAME_ALLOCS.inc()
-
-  # Initialize thread-local ref pool
-  if REF_POOL.len == 0:
-    REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
-    for i in 0..<INITIAL_REF_POOL_SIZE:
-      REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
-
-  # App is already initialized by main thread - we just reference it
-  # No need to call init_stdlib() since App already has all the functions
-
-  # Create thread-local namespace for thread-specific variables
-  # This avoids race conditions when multiple threads access $thread
+proc create_thread_namespace(thread_id: int): Namespace =
+  ## Build the thread-local namespace with thread metadata.
   let thread_ns = new_namespace("thread_local")
 
-  # Add $main_thread variable to thread-local namespace
   let main_thread_ref = types.Thread(
     id: 0,
     secret: THREADS[0].secret
@@ -66,7 +57,6 @@ proc init_vm_for_thread(thread_id: int) =
   thread_ns["$main_thread".to_key()] = main_thread_ref.to_value()
   thread_ns["main_thread".to_key()] = main_thread_ref.to_value()
 
-  # Add $thread variable to refer to current thread
   let current_thread_ref = types.Thread(
     id: thread_id,
     secret: THREADS[thread_id].secret
@@ -74,12 +64,28 @@ proc init_vm_for_thread(thread_id: int) =
   thread_ns["$thread".to_key()] = current_thread_ref.to_value()
   thread_ns["thread".to_key()] = current_thread_ref.to_value()
 
-  # Mark gene namespace as initialized for this worker thread and ensure thread classes are available
+  thread_ns
+
+proc setup_thread_vm(thread_id: int) =
+  ## Centralized per-thread VM initialization (no App mutations).
+  current_thread_id = thread_id
+  VM = new_thread_vm()
+  ensure_frame_pool()
+  ensure_ref_pool()
+  VM.thread_local_ns = create_thread_namespace(thread_id)
   gene_namespace_initialized = true
   init_thread_class()
 
-  # Store thread-local namespace in VM
-  VM.thread_local_ns = thread_ns
+proc reset_thread_vm_state() =
+  ## Reset VM state between jobs (reuse allocations/pools).
+  reset_vm_state()
+
+# VM initialization for worker threads
+proc init_vm_for_thread(thread_id: int) =
+  ## Initialize VM for a worker thread
+  ## Note: App is shared from main thread, only VM is thread-local
+
+  setup_thread_vm(thread_id)
 
 # Thread handler
 proc thread_handler(thread_id: int) {.thread.} =
@@ -101,7 +107,7 @@ proc thread_handler(thread_id: int) {.thread.} =
           break
 
         # Reset VM state from previous execution
-        reset_vm_state()
+        reset_thread_vm_state()
 
         # Execute based on message type
         case msg.msg_type:
