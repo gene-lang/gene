@@ -231,6 +231,14 @@ test_vm """
   [1 [2 3]... 4]
 """, new_array_value(1, 2, 3, 4)
 
+# Keyword argument binding fast path
+test_vm """
+  (fn f [x ^y]
+    y
+  )
+  (f 1 ^y 42)
+""", 42
+
 # Advanced loop control with continue
 # Note: remove noisy echo from original test
 test_vm """

@@ -598,6 +598,7 @@ type
     IkUnifiedCall0      # Zero-argument unified call
     IkUnifiedCall1      # Single-argument unified call
     IkUnifiedCall       # Multi-argument unified call
+    IkUnifiedCallKw     # Multi-argument unified call with keyword args (arg0=kwCount, arg1=total items)
     IkUnifiedCallDynamic # dynamic-arity unified call (when spreads present)
     IkUnifiedMethodCall0 # Zero-argument method call
     IkUnifiedMethodCall1 # Single-argument method call

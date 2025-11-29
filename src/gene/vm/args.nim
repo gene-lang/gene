@@ -84,15 +84,6 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
   ## Process arguments directly from stack to scope
   ## Supports positional and keyword (property) arguments.
 
-  # Build a lightweight Gene view when keywords present to reuse the main path
-  if has_keyword_args:
-    var args_gene = new_gene_value()
-    # positional
-    for i in 0..<arg_count:
-      args_gene.gene.children.add(args[i])
-    process_args(matcher, args_gene, scope)
-    return
-
   # Pure positional fast path
   while scope.members.len < matcher.children.len:
     scope.members.add(NIL)
@@ -116,6 +107,42 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
       scope.members[i] = rest_array
     elif pos_index < arg_count:
       scope.members[i] = args[pos_index]
+      pos_index.inc()
+    elif param.default_value.kind != VkNil:
+      scope.members[i] = param.default_value
+
+  assign_property_params(matcher, scope)
+
+proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
+                            pos_count: int, keywords: seq[(Key, Value)],
+                            scope: Scope) {.inline.} =
+  ## Optimized processing when keyword arguments are provided separately.
+  while scope.members.len < matcher.children.len:
+    scope.members.add(NIL)
+
+  var used_indices = initHashSet[int]()
+  if keywords.len > 0:
+    var kw_table = initTable[Key, Value]()
+    for (k, v) in keywords:
+      kw_table[k] = v
+
+    for i, param in matcher.children:
+      if param.is_prop and kw_table.hasKey(param.name_key):
+        scope.members[i] = kw_table[param.name_key]
+        used_indices.incl(i)
+
+  var pos_index = 0
+  for i, param in matcher.children:
+    if i in used_indices:
+      continue
+    if param.is_splat:
+      let rest_array = new_array_value()
+      while pos_index < pos_count:
+        rest_array.ref.arr.add(positional[pos_index])
+        pos_index.inc()
+      scope.members[i] = rest_array
+    elif pos_index < pos_count:
+      scope.members[i] = positional[pos_index]
       pos_index.inc()
     elif param.default_value.kind != VkNil:
       scope.members[i] = param.default_value

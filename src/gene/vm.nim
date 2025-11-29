@@ -588,7 +588,8 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
       # Other values pass through unchanged
       return tpl
 
-proc call_instance_method(self: VirtualMachine, instance: Value, method_name: string, args: openArray[Value]): bool =
+proc call_instance_method(self: VirtualMachine, instance: Value, method_name: string,
+                          args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Helper to forward instance calls to 'call' method
   ## Returns true if method was found and call was initiated (via continue), false otherwise
   ## When returns true, the VM state has been set up for the call and caller should continue execution
@@ -620,7 +621,11 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
 
       # Process arguments using the direct method
       if all_args.len > 0:
-        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+        let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
+        if kw_pairs.len > 0:
+          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+        else:
+          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
 
     var new_frame = new_frame()
     new_frame.kind = FkFunction
@@ -657,11 +662,20 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
 
   of VkNativeFn:
     # Call native 'call' method with instance as first argument
-    var all_args = newSeq[Value](args.len + 1)
-    all_args[0] = instance
+    let has_kw = kw_pairs.len > 0
+    var kw_map = new_map_value()
+    if has_kw:
+      for (k, v) in kw_pairs:
+        kw_map.ref.map[k] = v
+
+    let offset = if has_kw: 1 else: 0
+    var all_args = newSeq[Value](args.len + 1 + offset)
+    if has_kw:
+      all_args[0] = kw_map
+    all_args[offset] = instance
     for i in 0..<args.len:
-      all_args[i + 1] = args[i]
-    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+      all_args[i + offset + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args, has_kw)
     self.frame.push(result)
     return true
 
@@ -769,7 +783,8 @@ proc call_super_method(self: VirtualMachine, super_value: Value, method_name: st
   let super_ref = super_value.ref
   return self.call_super_method_resolved(super_ref.super_class, super_ref.super_instance, method_name, args, method_name.ends_with("!"))
 
-proc call_value_method(self: VirtualMachine, value: Value, method_name: string, args: openArray[Value]): bool =
+proc call_value_method(self: VirtualMachine, value: Value, method_name: string,
+                       args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
   let value_class = get_value_class(value)
   if value_class == nil:
@@ -804,7 +819,11 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
         all_args[i + 1] = args[i]
 
       if all_args.len > 0:
-        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+        let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
+        if kw_pairs.len > 0:
+          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+        else:
+          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
 
     var new_frame = new_frame()
     new_frame.kind = FkFunction
@@ -840,11 +859,20 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string, 
     return true
 
   of VkNativeFn:
-    var all_args = newSeq[Value](args.len + 1)
-    all_args[0] = value
+    let has_kw = kw_pairs.len > 0
+    var kw_map = new_map_value()
+    if has_kw:
+      for (k, v) in kw_pairs:
+        kw_map.ref.map[k] = v
+
+    let offset = if has_kw: 1 else: 0
+    var all_args = newSeq[Value](args.len + 1 + offset)
+    if has_kw:
+      all_args[0] = kw_map
+    all_args[offset] = value
     for i in 0..<args.len:
-      all_args[i + 1] = args[i]
-    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+      all_args[i + offset + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args, has_kw)
     self.frame.push(result)
     return true
 
@@ -5166,6 +5194,146 @@ proc exec*(self: VirtualMachine): Value =
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
+        {.pop}
+
+      of IkUnifiedCallKw:
+        {.push checks: off}
+        # Multi-argument unified call with keyword arguments (no spreads)
+        let kw_count = inst.arg0.int64.int
+        let expected = inst.arg1.int
+        let call_info = self.pop_call_base_info(expected)
+        let total_items = call_info.count
+        let keyword_items = kw_count * 2
+        if total_items < keyword_items:
+          not_allowed("IkUnifiedCallKw expected at least " & $(keyword_items) & " stack args, got " & $total_items)
+        let pos_count = total_items - keyword_items
+
+        var args = newSeq[Value](pos_count)
+        for i in countdown(pos_count - 1, 0):
+          args[i] = self.frame.pop()
+
+        var kw_pairs = newSeq[(Key, Value)](kw_count)
+        for i in countdown(kw_count - 1, 0):
+          let value = self.frame.pop()
+          let key_val = self.frame.pop()
+          kw_pairs[i] = (cast[Key](key_val), value)
+
+        let target = self.frame.pop()
+
+        case target.kind:
+        of VkFunction:
+          let f = target.ref.fn
+          if f.is_generator:
+            self.frame.push(new_generator_value(f, args))
+          else:
+            if f.body_compiled == nil:
+              f.compile()
+
+            var scope: Scope
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+
+            var new_frame = new_frame()
+            new_frame.kind = FkFunction
+            new_frame.target = target
+            new_frame.scope = scope
+
+            if not f.matcher.is_empty():
+              let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
+              if args.len > 0 or kw_pairs.len > 0:
+                process_args_direct_kw(f.matcher, args_ptr, args.len, kw_pairs, scope)
+              else:
+                process_args_zero(f.matcher, scope)
+            new_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()
+            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+            new_frame.ns = f.ns
+
+            if f.async:
+              self.exception_handlers.add(ExceptionHandler(
+                catch_pc: CATCH_PC_ASYNC_FUNCTION,
+                finally_pc: -1,
+                frame: self.frame,
+                cu: self.cu,
+                saved_value: NIL,
+                has_saved_value: false,
+                in_finally: false
+              ))
+
+            self.frame = new_frame
+            self.cu = f.body_compiled
+            self.pc = 0
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        of VkNativeFn:
+          var native_args = newSeq[Value](args.len + 1)
+          let kw_map =
+            if kw_pairs.len == 0:
+              new_map_value()
+            else:
+              var m = new_map_value()
+              for (k, v) in kw_pairs:
+                m.ref.map[k] = v
+              m
+          native_args[0] = kw_map
+          for i, arg in args:
+            native_args[i + 1] = arg
+          let result = call_native_fn(target.ref.native_fn, self, native_args, kw_pairs.len > 0)
+          self.frame.push(result)
+
+        of VkInstance, VkCustom:
+          if call_instance_method(self, target, "call", args, kw_pairs):
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Instance of " & target.object_class_name & " is not callable (no 'call' method)")
+        of VkSelector:
+          if call_value_method(self, target, "call", args, kw_pairs):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Selector value is not callable (no 'call' method)")
+
+        of VkBlock:
+          let b = target.ref.block
+          if b.body_compiled == nil:
+            b.compile()
+
+          var scope: Scope
+          if b.matcher.is_empty():
+            scope = b.frame.scope
+          else:
+            scope = new_scope(b.scope_tracker, b.frame.scope)
+
+          var new_frame = new_frame()
+          new_frame.kind = FkBlock
+          new_frame.target = target
+          new_frame.scope = scope
+          new_frame.args = new_gene_value()
+          for arg in args:
+            new_frame.args.gene.children.add(arg)
+          if not b.matcher.is_empty():
+            let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
+            process_args_direct_kw(b.matcher, args_ptr, args.len, kw_pairs, scope)
+          new_frame.caller_frame = self.frame
+          self.frame.ref_count.inc()
+          new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+          new_frame.ns = b.ns
+
+          self.frame = new_frame
+          self.cu = b.body_compiled
+          self.pc = 0
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        else:
+          not_allowed("IkUnifiedCallKw requires a callable, got " & $target.kind)
         {.pop}
 
       of IkUnifiedCallDynamic:

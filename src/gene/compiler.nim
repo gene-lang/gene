@@ -1800,7 +1800,24 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       # Selector results are not macros
       definitely_not_macro = true
 
-  # Fast path optimizations for regular function calls (no properties)
+  # Detect spreads across properties and children
+  var has_spread = false
+  if not has_spread:
+    for k, _ in gene.props:
+      if ($k).startsWith("..."):
+        has_spread = true
+        break
+  if not has_spread:
+    var i_spread = 0
+    let children_spread = gene.children
+    while i_spread < children_spread.len:
+      let child = children_spread[i_spread]
+      if (i_spread + 1 < children_spread.len and children_spread[i_spread + 1].kind == VkSymbol and children_spread[i_spread + 1].str == "...") or
+         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
+        has_spread = true
+        break
+      i_spread.inc()
+  # Fast path optimizations for regular function calls
   if definitely_not_macro and gene.props.len == 0:
     # Zero-argument optimization
     if gene.children.len == 0:
@@ -1852,6 +1869,20 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
         i += 1
       self.emit(Instruction(kind: IkUnifiedCallDynamic))
       return
+  elif gene.props.len > 0 and not has_spread and gene.type.kind == VkSymbol and not gene.type.str.ends_with("!"):
+    # Keyword argument fast path for eager functions (no spreads)
+    # Preserve evaluation order: properties first, then positional children
+    for k, v in gene.props:
+      self.emit(Instruction(kind: IkPushValue, arg0: cast[Value](k)))
+      self.compile(v)
+
+    for child in gene.children:
+      self.compile(child)
+
+    let kw_count = gene.props.len.int32
+    let total_items = (gene.children.len + gene.props.len * 2).int32
+    self.emit(Instruction(kind: IkUnifiedCallKw, arg0: kw_count.to_value(), arg1: total_items))
+    return
 
   # Dual-branch compilation:
   # - Macro branch (quoted args): for VkFunction with is_macro_like=true - continues to next instruction
