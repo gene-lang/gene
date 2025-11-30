@@ -683,7 +683,7 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     not_allowed("call method must be a function or native function")
     return false
 
-proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, instance: Value, method_name: string, args: openArray[Value], expect_macro: bool): bool =
+proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, instance: Value, method_name: string, args: openArray[Value], expect_macro: bool, kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Invoke a superclass method without allocating a proxy.
   if parent_class == nil:
     not_allowed("No parent class available for super")
@@ -764,11 +764,18 @@ proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, insta
   of VkNativeFn:
     if expect_macro:
       not_allowed("Superclass method '" & method_name & "' is not macro-like")
-    var all_args = newSeq[Value](args.len + 1)
-    all_args[0] = instance
+    let has_kw = kw_pairs.len > 0
+    let offset = if has_kw: 1 else: 0
+    var all_args = newSeq[Value](args.len + 1 + offset)
+    if has_kw:
+      var kw_map = new_map_value()
+      for (k, v) in kw_pairs:
+        kw_map.ref.map[k] = v
+      all_args[0] = kw_map
+    all_args[offset] = instance
     for i in 0..<args.len:
-      all_args[i + 1] = args[i]
-    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args)
+      all_args[i + offset + 1] = args[i]
+    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args, has_kw)
     self.frame.push(result)
     return true
 
@@ -776,12 +783,12 @@ proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, insta
     not_allowed("Super method must be a function or native function")
     return false
 
-proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value]): bool =
+proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Legacy helper that accepts a VkSuper proxy.
   if super_value.kind != VkSuper:
     return false
   let super_ref = super_value.ref
-  return self.call_super_method_resolved(super_ref.super_class, super_ref.super_instance, method_name, args, method_name.ends_with("!"))
+  return self.call_super_method_resolved(super_ref.super_class, super_ref.super_instance, method_name, args, method_name.ends_with("!"), kw_pairs)
 
 proc call_value_method(self: VirtualMachine, value: Value, method_name: string,
                        args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
@@ -5485,7 +5492,7 @@ proc exec*(self: VirtualMachine): Value =
             args[i] = self.frame.pop()
         let (instance, parent_class) = self.resolve_current_instance_and_parent()
         let saved_frame = self.frame
-        if self.call_super_method_resolved(parent_class, instance, inst.arg0.str, args, inst.kind == IkCallSuperMethodMacro):
+        if self.call_super_method_resolved(parent_class, instance, inst.arg0.str, args, inst.kind == IkCallSuperMethodMacro, @[]):
           if self.frame == saved_frame:
             self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
@@ -5522,7 +5529,7 @@ proc exec*(self: VirtualMachine): Value =
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, @[]):
+          if call_super_method(self, obj, method_name, @[], @[]):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
@@ -5660,7 +5667,7 @@ proc exec*(self: VirtualMachine): Value =
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, [arg]):
+          if call_super_method(self, obj, method_name, [arg], @[]):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
@@ -5811,7 +5818,7 @@ proc exec*(self: VirtualMachine): Value =
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, [arg1, arg2]):
+          if call_super_method(self, obj, method_name, [arg1, arg2], @[]):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
@@ -5969,7 +5976,7 @@ proc exec*(self: VirtualMachine): Value =
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, args):
+          if call_super_method(self, obj, method_name, args, @[]):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
@@ -6091,11 +6098,9 @@ proc exec*(self: VirtualMachine): Value =
         let obj = self.frame.pop()
 
         if obj.kind == VkSuper:
-          # For super calls with keyword args, build args with keywords
-          var full_args = @[obj]  # Add self
-          full_args.add(args)
+          # For super calls with keyword args, forward positional args and kw_pairs
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, full_args):
+          if call_super_method(self, obj, method_name, args, kw_pairs):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
@@ -6167,20 +6172,18 @@ proc exec*(self: VirtualMachine): Value =
 
             of VkNativeFn:
               # Method call with self as first argument plus keyword args
-              var native_args = newSeq[Value](args.len + 1)
-              let kw_map =
-                if kw_pairs.len == 0:
-                  new_map_value()
-                else:
-                  var m = new_map_value()
-                  for (k, v) in kw_pairs:
-                    m.ref.map[k] = v
-                  m
-              native_args[0] = kw_map
-              native_args[1] = obj
+              let has_kw = kw_pairs.len > 0
+              let offset = if has_kw: 1 else: 0
+              var native_args = newSeq[Value](args.len + 1 + offset)
+              if has_kw:
+                var kw_map = new_map_value()
+                for (k, v) in kw_pairs:
+                  kw_map.ref.map[k] = v
+                native_args[0] = kw_map
+              native_args[offset] = obj
               for i, arg in args:
-                native_args[i + 2] = arg
-              let result = meth.callable.ref.native_fn(self, cast[ptr UncheckedArray[Value]](native_args[0].addr), native_args.len, true)
+                native_args[i + offset + 1] = arg
+              let result = meth.callable.ref.native_fn(self, cast[ptr UncheckedArray[Value]](native_args[0].addr), native_args.len, has_kw)
               self.frame.push(result)
 
             else:

@@ -1293,10 +1293,11 @@ proc core_assert*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
 
 # Get length of collection
 proc core_len_impl(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if arg_count < 1:
+  let pos_count = get_positional_count(arg_count, has_keyword_args)
+  if pos_count < 1:
     raise new_exception(types.Exception, "len requires 1 argument (collection)")
 
-  let value = args[0]
+  let value = get_positional_arg(args, 0, has_keyword_args)
   result = value.size().int64.to_value()
 
 proc core_len(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
