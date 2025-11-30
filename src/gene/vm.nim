@@ -1088,6 +1088,11 @@ proc namespace_from_value(container: Value): Namespace =
     not_allowed("Class container must be a namespace or class, got " & $container.kind)
 
 proc exec*(self: VirtualMachine): Value =
+  let root_entry = self.exec_depth == 0
+  self.exec_depth.inc()
+  defer:
+    self.exec_depth.dec()
+
   # Reset self.pc for new execution (unless we're resuming a generator)
   # Generators set their PC before calling exec and need to preserve it
   if self.frame == nil or not self.frame.is_generator:
@@ -1101,9 +1106,10 @@ proc exec*(self: VirtualMachine): Value =
   when not defined(release):
     var indent = ""
 
-  # Reset exception state for a fresh execution run.
-  self.current_exception = NIL
-  self.exception_handlers.setLen(0)
+  # Reset exception state only for the outermost exec invocation.
+  if root_entry:
+    self.current_exception = NIL
+    self.exception_handlers.setLen(0)
 
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}

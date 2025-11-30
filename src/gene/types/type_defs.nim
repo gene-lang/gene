@@ -740,6 +740,7 @@ type
     pc*: int
     frame*: Frame
     trace*: bool
+    exec_depth*: int           # Tracks nested exec() invocations
     exception_handlers*: seq[ExceptionHandler]
     current_exception*: Value
     current_generator*: GeneratorObj  # Currently executing generator

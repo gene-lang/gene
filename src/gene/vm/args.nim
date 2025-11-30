@@ -45,7 +45,7 @@ proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
       scope.members[i] = new_array_value()
     elif param.has_default():
       scope.members[i] = param.default_value
-    elif not param.is_prop:
+    elif param.required():
       raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
 
   assign_property_params(matcher, scope)
@@ -72,7 +72,7 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.
         scope.members[i] = new_array_value()
       elif param.has_default():
         scope.members[i] = param.default_value
-      elif not param.is_prop:
+      elif param.required():
         raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got 1")
   else:
     scope.members[0] = arg
@@ -83,7 +83,7 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.
         scope.members[i] = new_array_value()
       elif param.has_default():
         scope.members[i] = param.default_value
-      elif not param.is_prop:
+      elif param.required():
         raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got 1")
   assign_property_params(matcher, scope)
 

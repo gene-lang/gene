@@ -19,6 +19,7 @@ proc init_app_and_vm*() =
   VM = VirtualMachine(
     exception_handlers: @[],
     current_exception: NIL,
+    exec_depth: 0,
     symbols: addr SYMBOLS,
     pending_futures: @[],  # Initialize empty list of pending futures
     thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
