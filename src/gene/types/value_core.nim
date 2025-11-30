@@ -1349,6 +1349,7 @@ proc new_matcher*(root: RootMatcher, kind: MatcherKind): Matcher =
   result = Matcher(
     root: root,
     kind: kind,
+    default_value: NIL,
   )
 
 proc is_empty*(self: RootMatcher): bool =

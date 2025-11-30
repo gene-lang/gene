@@ -20,7 +20,7 @@
 
 # Nil
 (println "Nil: " nil)
-# Expected: Nil: 
+# Expected: Nil: nil
 
 # Symbols
 (println "Symbol: " :hello)

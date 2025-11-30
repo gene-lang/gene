@@ -852,13 +852,13 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
       inc(pos)
       self.bufpos = pos
       let node = m(self)
-      if node != nil:
+      if node != PARSER_IGNORE:
         inc(count)
         if self.options["debug"]: echo $node, "\n"
         list.add(node)
     else:
       let node = self.read()
-      if node != nil:
+      if node != PARSER_IGNORE:
         inc(count)
         if self.options["debug"]: echo $node, "\n"
         list.add(node)

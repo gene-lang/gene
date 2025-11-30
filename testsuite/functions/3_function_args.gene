@@ -1,0 +1,8 @@
+(fn f [a = nil]
+  (println "a:" a)
+)
+
+(f)
+# Expected: a: nil
+(f 1)
+# Expected: a: 1

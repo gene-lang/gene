@@ -304,7 +304,7 @@ catch *
 
 # ===== 17. METHOD CALLS AND ACCESSORS =====
 # Different method call forms
-(calc .add 1)                 # Method call with explicit receiver
+(calc .add 1 2)               # Method call with explicit receiver
 (calc/value = 0)              # Property access and assignment
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====

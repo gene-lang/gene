@@ -2162,7 +2162,7 @@ proc compile_gene(self: Compiler, input: Value) =
           # Convert infix to prefix notation and compile
           # (6 / 2) becomes (/ 6 2)
           # (i + 1) becomes (+ i 1)
-          let prefix_gene = create(Gene)
+          let prefix_gene = new_gene()
           prefix_gene.type = first_child  # operator becomes the type
           prefix_gene.children = @[`type`] & gene.children[1..^1]  # value and rest of args
           self.compile_gene(prefix_gene.to_gene_value())
@@ -2178,7 +2178,7 @@ proc compile_gene(self: Compiler, input: Value) =
         # Convert infix to prefix notation and compile
         # (6 / 2) becomes (/ 6 2)
         # (i + 1) becomes (+ i 1)
-        let prefix_gene = create(Gene)
+        let prefix_gene = new_gene()
         prefix_gene.type = first_child  # operator becomes the type
         prefix_gene.children = @[`type`] & gene.children[1..^1]  # value and rest of args
         self.compile_gene(prefix_gene.to_gene_value())
@@ -2550,12 +2550,6 @@ proc compile*(self: Compiler, input: Value) =
   defer:
     if should_push:
       self.pop_trace()
-  when DEBUG:
-    echo "DEBUG compile: input.kind = ", input.kind
-    if input.kind == VkGene:
-      echo "  gene.type = ", input.gene.type
-      if input.gene.type.kind == VkSymbol:
-        echo "  gene.type.str = ", input.gene.type.str
   
   try:
     case input.kind:
