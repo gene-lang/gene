@@ -87,6 +87,8 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
   # Pure positional fast path
   while scope.members.len < matcher.children.len:
     scope.members.add(NIL)
+  for i in 0..<matcher.children.len:
+    scope.members[i] = NIL
 
   if arg_count == 0:
     for i, param in matcher.children:
@@ -119,6 +121,8 @@ proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArra
   ## Optimized processing when keyword arguments are provided separately.
   while scope.members.len < matcher.children.len:
     scope.members.add(NIL)
+  for i in 0..<matcher.children.len:
+    scope.members[i] = NIL
 
   var used_indices = initHashSet[int]()
   if keywords.len > 0:

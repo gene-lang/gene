@@ -1291,6 +1291,18 @@ proc core_assert*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
       raise new_exception(types.Exception, msg)
   return NIL
 
+# Get length of collection
+proc core_len_impl(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if arg_count < 1:
+    raise new_exception(types.Exception, "len requires 1 argument (collection)")
+
+  let value = args[0]
+  result = value.size().int64.to_value()
+
+proc core_len(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  {.cast(gcsafe).}:
+    return core_len_impl(vm, args, arg_count, has_keyword_args)
+
 # Debug value (write to stderr)
 proc core_debug*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
@@ -2273,6 +2285,9 @@ proc init_stdlib*() =
   var global_ns = App.app.global_ns.ns
   global_ns["print".to_key()] = core_print.to_value()
   global_ns["println".to_key()] = core_println.to_value()
+
+  # Collections
+  global_ns["len".to_key()] = NativeFn(core_len).to_value()
 
   # Assertions and debugging
   global_ns["assert".to_key()] = core_assert.to_value()
