@@ -1359,8 +1359,9 @@ proc has_default*(self: Matcher): bool {.inline.} =
   self.default_value.kind != VkPlaceholder
 
 proc required*(self: Matcher): bool =
-  # A parameter is required only if it has no default, is not splat, and is not a keyword-only prop.
-  return (not self.is_splat) and (not self.has_default()) and (not self.is_prop)
+  # A parameter is required if it has no default and is not a splat parameter.
+  # Properties without defaults are required too.
+  return (not self.is_splat) and (not self.has_default())
 
 proc check_hint*(self: RootMatcher) =
   if self.children.len == 0:
@@ -1455,6 +1456,11 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
           if v.str[1] == '^':
             m.name_key = v.str[2..^4].to_key()
             m.is_prop = true
+            m.default_value = TRUE  # ^^param => default true
+          elif v.str[1] == '!':
+            m.name_key = v.str[2..^4].to_key()
+            m.is_prop = true
+            m.default_value = NIL  # ^!param => default false
           else:
             m.name_key = v.str[1..^4].to_key()
             m.is_prop = true  # Named parameters always have is_prop = true
@@ -1462,6 +1468,11 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
           if v.str[1] == '^':
             m.name_key = v.str[2..^1].to_key()
             m.is_prop = true
+            m.default_value = TRUE   # ^^param => default true
+          elif v.str[1] == '!':
+            m.name_key = v.str[2..^1].to_key()
+            m.is_prop = true
+            m.default_value = NIL  # ^!param => default false
           else:
             m.name_key = v.str[1..^1].to_key()
             m.is_prop = true  # Named parameters always have is_prop = true

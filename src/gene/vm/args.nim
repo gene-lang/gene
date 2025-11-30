@@ -104,7 +104,7 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
         scope.members[i] = new_array_value()
       elif param.has_default():
         scope.members[i] = param.default_value
-      elif not param.is_prop:
+      elif param.required():
         raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
     assign_property_params(matcher, scope)
     return
@@ -124,7 +124,7 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
       pos_index.inc()
     elif param.has_default():
       scope.members[i] = param.default_value
-    elif not param.is_prop:
+    elif param.required():
       raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $arg_count)
 
   if not has_splat and pos_index < arg_count:
@@ -169,7 +169,7 @@ proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArra
       pos_index.inc()
     elif param.has_default():
       scope.members[i] = param.default_value
-    elif not param.is_prop:
+    elif param.required():
       raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $pos_count)
 
   if not has_splat and pos_index < pos_count:
@@ -192,7 +192,7 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
         scope.members[i] = new_array_value()
       elif param.has_default():
         scope.members[i] = param.default_value
-      elif not param.is_prop:
+      elif param.required():
         raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
     return
   
@@ -227,7 +227,7 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
       elif param.has_default():
         # Use default value
         scope.members[i] = param.default_value
-      elif not param.is_prop:
+      elif param.required():
         # No value provided and no default
         raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $positional.len)
 

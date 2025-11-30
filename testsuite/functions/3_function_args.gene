@@ -1,3 +1,8 @@
+#!/usr/bin/env gene run
+
+# ====================
+# Positional arguments
+# ====================
 (fn f [a]
   (println "a:" a)
 )
@@ -18,17 +23,53 @@ catch *
 )
 # Expected: Error caught
 
-(fn f [a = nil]
+(fn f [a = 1]
   (println "a:" a)
 )
 
 (f)
-# Expected: a: nil
-(f 1)
 # Expected: a: 1
+(f 2)
+# Expected: a: 2
 
 (try
   (f 1 2) # Should throw error
+catch *
+  (println "Error caught")
+)
+# Expected: Error caught
+
+(fn f [a b...]
+  (println "a:" a "b:" b)
+)
+(f 1)
+# Expected: a: 1 b: []
+(f 1 2)
+# Expected: a: 1 b: [2]
+(f 1 2 3)
+# Expected: a: 1 b: [2 3]
+
+(try
+  (f) # Should throw error
+catch *
+  (println "Error caught")
+)
+# Expected: Error caught
+
+# =================
+# Keyword arguments
+# =================
+(fn f [^a ^^b ^!c ^d = 4]
+  (println "a:" a "b:" b "c:" c "d:" d)
+)
+(f ^a 1)
+# Expected: a: 1 b: true c: nil d: 4
+
+(f ^a 1 ^!b ^^c ^d 5)
+# Expected: a: 1 b: nil c: true d: 5
+
+(try
+  (f) # Should throw error
 catch *
   (println "Error caught")
 )
