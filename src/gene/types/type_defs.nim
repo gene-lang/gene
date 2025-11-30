@@ -604,6 +604,7 @@ type
     IkUnifiedMethodCall1 # Single-argument method call
     IkUnifiedMethodCall2 # Two-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
+    IkUnifiedMethodCallKw # Method call with keyword arguments
     IkCallArgsStart      # mark start of call arguments (for dynamic arg counting)
     IkCallArgSpread      # spread argument values onto the stack for calls
 

@@ -2088,6 +2088,9 @@ proc exec*(self: VirtualMachine): Value =
             # Push each element onto stack
             for item in value.ref.arr:
               self.frame.push(item)
+          of VkNil:
+            # Spreading nil is a no-op (treat as empty array)
+            discard
           else:
             not_allowed("... can only spread arrays in array context, got " & $value.kind)
 
@@ -2119,6 +2122,9 @@ proc exec*(self: VirtualMachine): Value =
           seq_to_spread = value.ref.arr
         of VkStream:
           seq_to_spread = value.ref.stream
+        of VkNil:
+          # Spreading nil is a no-op (treat as empty stream)
+          seq_to_spread = @[]
         else:
           not_allowed("... can only spread arrays or streams in stream context, got " & $value.kind)
 
@@ -2157,6 +2163,9 @@ proc exec*(self: VirtualMachine): Value =
           of VkMap:
             for k, v in value.ref.map:
               self.frame.current().ref.map[k] = v
+          of VkNil:
+            # Spreading nil is a no-op (treat as empty map)
+            discard
           else:
             not_allowed("... can only spread maps in map context, got " & $value.kind)
       of IkMapEnd:
@@ -2500,6 +2509,9 @@ proc exec*(self: VirtualMachine): Value =
                   v.gene.children.add(item)
               else:
                 not_allowed("... can only spread arrays into gene children, got " & $v.kind)
+          of VkNil:
+            # Spreading nil is a no-op (treat as empty array)
+            discard
           else:
             not_allowed("... can only spread arrays in gene children context, got " & $value.kind)
         {.pop.}
@@ -2559,6 +2571,9 @@ proc exec*(self: VirtualMachine): Value =
                 discard
               else:
                 not_allowed("... can only spread maps into gene properties, got " & $current.kind)
+          of VkNil:
+            # Spreading nil is a no-op (treat as empty map)
+            discard
           else:
             not_allowed("... can only spread maps in gene properties context, got " & $value.kind)
         {.pop.}
@@ -5078,6 +5093,9 @@ proc exec*(self: VirtualMachine): Value =
           of VkStream:
             for item in value.ref.stream:
               self.frame.push(item)
+          of VkNil:
+            # Spreading nil is a no-op (treat as empty array/stream)
+            discard
           else:
             not_allowed("... can only spread arrays or streams in call context, got " & $value.kind)
 
@@ -6040,6 +6058,137 @@ proc exec*(self: VirtualMachine): Value =
             not_allowed("Method " & method_name & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
+        {.pop}
+
+      of IkUnifiedMethodCallKw:
+        {.push checks: off}
+        # Method call with keyword arguments
+        # arg0 = method name (symbol)
+        # arg1 = keyword count (int32) in lower 16 bits, total items in upper 16 bits
+        let method_name = inst.arg0.str
+        let kw_count = (inst.arg1.int64 and 0xFFFF).int
+        let expected = ((inst.arg1.int64 shr 16) and 0xFFFF).int
+        let call_info = self.pop_call_base_info(expected)
+        let total_items = call_info.count
+        let keyword_items = kw_count * 2
+        if total_items < keyword_items:
+          not_allowed("IkUnifiedMethodCallKw expected at least " & $(keyword_items) & " stack args, got " & $total_items)
+        let pos_count = total_items - keyword_items
+
+        # Pop positional args
+        var args = newSeq[Value](pos_count)
+        for i in countdown(pos_count - 1, 0):
+          args[i] = self.frame.pop()
+
+        # Pop keyword pairs
+        var kw_pairs = newSeq[(Key, Value)](kw_count)
+        for i in countdown(kw_count - 1, 0):
+          let value = self.frame.pop()
+          let key_val = self.frame.pop()
+          kw_pairs[i] = (cast[Key](key_val), value)
+
+        # Pop object
+        let obj = self.frame.pop()
+
+        if obj.kind == VkSuper:
+          # For super calls with keyword args, build args with keywords
+          var full_args = @[obj]  # Add self
+          full_args.add(args)
+          let saved_frame = self.frame
+          if call_super_method(self, obj, method_name, full_args):
+            if self.frame == saved_frame:
+              self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        if call_value_method(self, obj, method_name, args, kw_pairs):
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        case obj.kind:
+        of VkInstance, VkCustom:
+          let class = obj.get_object_class()
+          if class.is_nil:
+            not_allowed("Object has no class for method call")
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
+
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.current_method = meth
+              new_frame.current_class = class
+              new_frame.current_self = obj
+
+              # Process arguments with keyword support
+              if not f.matcher.is_empty():
+                # Add self as first positional arg
+                var all_args = @[obj]
+                all_args.add(args)
+                let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
+                process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,
+                  finally_pc: -1,
+                  frame: self.frame,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+            of VkNativeFn:
+              # Method call with self as first argument plus keyword args
+              var native_args = newSeq[Value](args.len + 1)
+              let kw_map =
+                if kw_pairs.len == 0:
+                  new_map_value()
+                else:
+                  var m = new_map_value()
+                  for (k, v) in kw_pairs:
+                    m.ref.map[k] = v
+                  m
+              native_args[0] = kw_map
+              native_args[1] = obj
+              for i, arg in args:
+                native_args[i + 2] = arg
+              let result = meth.callable.ref.native_fn(self, cast[ptr UncheckedArray[Value]](native_args[0].addr), native_args.len, true)
+              self.frame.push(result)
+
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        else:
+          not_allowed("Unified method call with keywords not supported for " & $obj.kind)
         {.pop}
 
       else:
