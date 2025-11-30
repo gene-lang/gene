@@ -27,6 +27,7 @@ proc exec*(self: VirtualMachine): Value
 proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
 proc format_runtime_exception(self: VirtualMachine, value: Value): string
 proc spawn_thread(code: ptr Gene, return_value: bool): Value
+proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instruction): bool
 
 # Template to get the class of a value for unified method calls
 template get_value_class(val: Value): Class =
@@ -85,16 +86,16 @@ proc enter_function(self: VirtualMachine, name: string) {.inline.} =
     
 proc exit_function(self: VirtualMachine) {.inline.} =
   if self.profiling and self.profile_stack.len > 0:
-    let (name, start_time) = self.profile_stack[^1]
+    let (fn_name, start_time) = self.profile_stack[^1]
     self.profile_stack.del(self.profile_stack.len - 1)
     
     let end_time = cpuTime()
     let elapsed = end_time - start_time
     
     # Update or create profile entry
-    if name notin self.profile_data:
-      self.profile_data[name] = FunctionProfile(
-        name: name,
+    if fn_name notin self.profile_data:
+      self.profile_data[fn_name] = FunctionProfile(
+        name: fn_name,
         call_count: 0,
         total_time: 0.0,
         self_time: 0.0,
@@ -102,7 +103,7 @@ proc exit_function(self: VirtualMachine) {.inline.} =
         max_time: elapsed
       )
     
-    var profile = self.profile_data[name]
+    var profile = self.profile_data[fn_name]
     profile.call_count.inc()
     profile.total_time += elapsed
     
@@ -113,14 +114,78 @@ proc exit_function(self: VirtualMachine) {.inline.} =
       profile.max_time = elapsed
     
     # Calculate self time (subtract child call times)
-    var child_time = 0.0
     for i in countdown(self.profile_stack.len - 1, 0):
-      if self.profile_stack[i].name == name:
+      if self.profile_stack[i].name == fn_name:
         break
       # This is a simplification - proper self time calculation is more complex
     profile.self_time = profile.total_time  # For now, just use total
 
-    self.profile_data[name] = profile
+    self.profile_data[fn_name] = profile
+
+proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instruction): bool =
+  ## Shared exception dispatch logic (used by IkThrow).
+  self.current_exception = value
+
+  if self.exception_handlers.len > 0:
+    let handler = self.exception_handlers[^1]
+
+    if handler.catch_pc == CATCH_PC_ASYNC_BLOCK:
+      discard self.exception_handlers.pop()
+
+      let future_val = new_future_value()
+      let future_obj = future_val.ref.future
+      future_obj.fail(value)
+      self.frame.push(future_val)
+
+      while self.pc < self.cu.instructions.len and self.cu.instructions[self.pc].kind != IkAsyncEnd:
+        self.pc.inc()
+      if self.pc < self.cu.instructions.len:
+        self.pc.inc()
+        inst = self.cu.instructions[self.pc].addr
+      return true
+
+    elif handler.catch_pc == CATCH_PC_ASYNC_FUNCTION:
+      discard self.exception_handlers.pop()
+
+      let future_val = new_future_value()
+      let future_obj = future_val.ref.future
+      future_obj.fail(value)
+
+      if self.frame.caller_frame != nil:
+        self.cu = self.frame.caller_address.cu
+        self.pc = self.frame.caller_address.pc
+        inst = self.cu.instructions[self.pc].addr
+        self.frame.update(self.frame.caller_frame)
+        self.frame.ref_count.dec()
+        self.frame.push(future_val)
+      return true
+
+    else:
+      # Unwind frames back to the one that installed the handler
+      if self.frame != handler.frame:
+        var f = self.frame
+        while f != nil and f != handler.frame:
+          let caller = f.caller_frame
+          # Mirror normal return cleanup
+          if caller != nil:
+            f.ref_count.dec()
+          f = caller
+        if f == nil:
+          raise new_exception(types.Exception, "Exception handler frame mismatch")
+        self.frame = f
+
+      self.cu = handler.cu
+      self.pc = handler.catch_pc
+      if self.pc < self.cu.instructions.len:
+        inst = self.cu.instructions[self.pc].addr
+        return true
+      else:
+        raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
+
+  else:
+    raise new_exception(types.Exception, self.format_runtime_exception(value))
+
+  return true
 
 proc poll_event_loop(self: VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
@@ -1036,6 +1101,10 @@ proc exec*(self: VirtualMachine): Value =
   when not defined(release):
     var indent = ""
 
+  # Reset exception state for a fresh execution run.
+  self.current_exception = NIL
+  self.exception_handlers.setLen(0)
+
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
@@ -1054,8 +1123,9 @@ proc exec*(self: VirtualMachine): Value =
         inst_start_time = cpuTime()
         inst_kind_for_profiling = inst.kind  # Save it now, before execution changes anything
 
-    {.computedGoto.}
-    case inst.kind:
+    try:
+      {.computedGoto.}
+      case inst.kind:
       of IkNoop:
         when not defined(release):
           if self.trace:
@@ -1082,6 +1152,10 @@ proc exec*(self: VirtualMachine): Value =
         when not defined(release):
           if indent.len >= 2:
             indent.delete(indent.len-2..indent.len-1)
+        # If we have an unhandled exception, raise it now
+        if self.current_exception != NIL:
+          raise new_exception(types.Exception, self.format_runtime_exception(self.current_exception))
+
         # TODO: validate that there is only one value on the stack
         let v = self.frame.current()
         if self.frame.caller_frame == nil:
@@ -4102,66 +4176,8 @@ proc exec*(self: VirtualMachine): Value =
         {.push checks: off}
         # Pop value from stack if there is one, otherwise use NIL
         let value = self.frame.pop()
-        self.current_exception = value
-        
-        # Look for exception handler
-        if self.exception_handlers.len > 0:
-          let handler = self.exception_handlers[^1]
-          
-          # Check if this is an async block or async function handler
-          if handler.catch_pc == CATCH_PC_ASYNC_BLOCK:
-            # This is an async block - create a failed future
-            discard self.exception_handlers.pop()
-            
-            # Create a failed future
-            let future_val = new_future_value()
-            let future_obj = future_val.ref.future
-            future_obj.fail(value)
-            
-            self.frame.push(future_val)
-            
-            # Skip to the instruction after IkAsyncEnd
-            # We need to find it by scanning forward
-            while self.pc < self.cu.instructions.len and self.cu.instructions[self.pc].kind != IkAsyncEnd:
-              self.pc.inc()
-            if self.pc < self.cu.instructions.len:
-              self.pc.inc()  # Skip past IkAsyncEnd
-              inst = self.cu.instructions[self.pc].addr
-              continue
-          elif handler.catch_pc == CATCH_PC_ASYNC_FUNCTION:
-            # This is an async function - create a failed future and return it
-            discard self.exception_handlers.pop()
-            
-            # Create a failed future
-            let future_val = new_future_value()
-            let future_obj = future_val.ref.future
-            future_obj.fail(value)
-            
-            # Return from the function with the failed future
-            if self.frame.caller_frame != nil:
-              self.cu = self.frame.caller_address.cu
-              self.pc = self.frame.caller_address.pc
-              inst = self.cu.instructions[self.pc].addr
-              self.frame.update(self.frame.caller_frame)
-              self.frame.ref_count.dec()
-              self.frame.push(future_val)
-            continue
-          else:
-            # Regular exception handler
-            when not defined(release):
-              if self.trace:
-                echo "  Throw: jumping to catch at self.pc=", handler.catch_pc
-            # Jump to catch block
-            self.cu = handler.cu
-            self.pc = handler.catch_pc
-            if self.pc < self.cu.instructions.len:
-              inst = self.cu.instructions[self.pc].addr
-            else:
-              raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
-            continue
-        else:
-          # No handler, raise Nim exception
-          raise new_exception(types.Exception, self.format_runtime_exception(value))
+        if self.dispatch_exception(value, inst):
+          continue
         {.pop.}
         
       of IkTryStart:
@@ -4198,6 +4214,10 @@ proc exec*(self: VirtualMachine): Value =
         # It will be popped after the finally block completes
         # Clear current exception
         self.current_exception = NIL
+        if self.exception_handlers.len > 0:
+          let handler = self.exception_handlers[^1]
+          if handler.finally_pc == -1:
+            discard self.exception_handlers.pop()
         
       of IkFinally:
         # Finally block execution
@@ -4251,20 +4271,8 @@ proc exec*(self: VirtualMachine): Value =
           let value = self.current_exception
           self.current_exception = NIL  # Clear before rethrowing
           
-          if self.exception_handlers.len > 0:
-            let handler = self.exception_handlers[^1]
-            when not defined(release):
-              if self.trace:
-                echo "  FinallyEnd: re-throwing to catch at self.pc=", handler.catch_pc
-            self.cu = handler.cu
-            self.pc = handler.catch_pc
-            if self.pc < self.cu.instructions.len:
-              inst = self.cu.instructions[self.pc].addr
-            else:
-              raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
+          if self.dispatch_exception(value, inst):
             continue
-          else:
-            raise new_exception(types.Exception, self.format_runtime_exception(value))
 
       of IkGetClass:
         # Get the class of a value
@@ -6196,6 +6204,14 @@ proc exec*(self: VirtualMachine): Value =
 
       else:
         todo($inst.kind)
+
+    except CatchableError as ex:
+      # Route Nim exceptions through Gene's exception handling so try/catch works.
+      let ex_val = ex.msg.to_value()
+      if self.dispatch_exception(ex_val, inst):
+        continue
+      else:
+        raise
 
     # Record instruction timing
     when not defined(release):

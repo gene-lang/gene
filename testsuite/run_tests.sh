@@ -127,24 +127,41 @@ run_category() {
 # Change to testsuite directory
 cd "$SCRIPT_DIR"
 
-# Run tests in specific order
-run_category "Basic Literals & Variables" "basics"
-run_category "Control Flow" "control_flow"
-run_category "Operators" "operators"
-run_category "Arrays" "arrays"
-run_category "Maps" "maps"
-run_category "Strings" "strings"
-run_category "Functions" "functions"
-run_category "Scopes" "scopes"
-run_category "Callable Instances" "callable_instances"
-run_category "OOP" "oop"
-run_category "Async Support" "async"
-run_category "Generators" "generators"
-run_category "Stdlib Core" "stdlib/core"
-run_category "Stdlib Strings" "stdlib/strings"
-run_category "Stdlib Arrays" "stdlib/arrays"
-# run_category "Stdlib IO" "stdlib/io"
-# run_category "Stdlib Time" "stdlib/time"
+if [ $# -gt 0 ]; then
+    echo -e "${BLUE}Running selected tests:${NC}"
+    for test_arg in "$@"; do
+        # Allow paths relative to testsuite dir
+        if [ -f "$test_arg" ]; then
+            run_test "$test_arg"
+        elif [ -f "$SCRIPT_DIR/$test_arg" ]; then
+            run_test "$SCRIPT_DIR/$test_arg"
+        else
+            printf "  %-40s ${RED}✗ MISSING${NC}\n" "$test_arg"
+            FAILED=$((FAILED + 1))
+            TOTAL=$((TOTAL + 1))
+        fi
+    done
+    echo
+else
+    # Run tests in specific order
+    run_category "Basic Literals & Variables" "basics"
+    run_category "Control Flow" "control_flow"
+    run_category "Operators" "operators"
+    run_category "Arrays" "arrays"
+    run_category "Maps" "maps"
+    run_category "Strings" "strings"
+    run_category "Functions" "functions"
+    run_category "Scopes" "scopes"
+    run_category "Callable Instances" "callable_instances"
+    run_category "OOP" "oop"
+    run_category "Async Support" "async"
+    run_category "Generators" "generators"
+    run_category "Stdlib Core" "stdlib/core"
+    run_category "Stdlib Strings" "stdlib/strings"
+    run_category "Stdlib Arrays" "stdlib/arrays"
+    # run_category "Stdlib IO" "stdlib/io"
+    # run_category "Stdlib Time" "stdlib/time"
+fi
 
 # Summary
 echo "================================"

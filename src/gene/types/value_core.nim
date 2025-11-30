@@ -1349,15 +1349,18 @@ proc new_matcher*(root: RootMatcher, kind: MatcherKind): Matcher =
   result = Matcher(
     root: root,
     kind: kind,
-    default_value: NIL,
+    default_value: PLACEHOLDER, # PLACEHOLDER marks "no default" (distinct from explicit nil)
   )
 
 proc is_empty*(self: RootMatcher): bool =
   self.children.len == 0
 
+proc has_default*(self: Matcher): bool {.inline.} =
+  self.default_value.kind != VkPlaceholder
+
 proc required*(self: Matcher): bool =
-  # return self.default_value_expr == nil and not self.is_splat
-  return not self.is_splat
+  # A parameter is required only if it has no default, is not splat, and is not a keyword-only prop.
+  return (not self.is_splat) and (not self.has_default()) and (not self.is_prop)
 
 proc check_hint*(self: RootMatcher) =
   if self.children.len == 0:

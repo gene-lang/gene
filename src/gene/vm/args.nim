@@ -43,8 +43,10 @@ proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
     if param.is_splat:
       # Rest parameter with no arguments gets empty array
       scope.members[i] = new_array_value()
-    elif param.default_value.kind != VkNil:
+    elif param.has_default():
       scope.members[i] = param.default_value
+    elif not param.is_prop:
+      raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
 
   assign_property_params(matcher, scope)
 
@@ -54,29 +56,35 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.
   while scope.members.len < matcher.children.len:
     scope.members.add(NIL)
 
-  if matcher.children.len > 0:
-    let first_param = matcher.children[0]
-    if first_param.is_splat:
-      # First parameter is rest - collect the single arg into an array
-      let rest_array = new_array_value()
-      rest_array.ref.arr.add(arg)
-      scope.members[0] = rest_array
-      # Rest parameters for remaining params
-      for i in 1..<matcher.children.len:
-        let param = matcher.children[i]
-        if param.is_splat:
-          scope.members[i] = new_array_value()
-        elif param.default_value.kind != VkNil:
-          scope.members[i] = param.default_value
-    else:
-      scope.members[0] = arg
-      # Apply defaults or empty arrays for remaining parameters
-      for i in 1..<matcher.children.len:
-        let param = matcher.children[i]
-        if param.is_splat:
-          scope.members[i] = new_array_value()
-        elif param.default_value.kind != VkNil:
-          scope.members[i] = param.default_value
+  if matcher.children.len == 0:
+    raise new_exception(types.Exception, "Expected 0 arguments, got 1")
+
+  let first_param = matcher.children[0]
+  if first_param.is_splat:
+    # First parameter is rest - collect the single arg into an array
+    let rest_array = new_array_value()
+    rest_array.ref.arr.add(arg)
+    scope.members[0] = rest_array
+    # Rest parameters for remaining params
+    for i in 1..<matcher.children.len:
+      let param = matcher.children[i]
+      if param.is_splat:
+        scope.members[i] = new_array_value()
+      elif param.has_default():
+        scope.members[i] = param.default_value
+      elif not param.is_prop:
+        raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got 1")
+  else:
+    scope.members[0] = arg
+    # Apply defaults or empty arrays for remaining parameters
+    for i in 1..<matcher.children.len:
+      let param = matcher.children[i]
+      if param.is_splat:
+        scope.members[i] = new_array_value()
+      elif param.has_default():
+        scope.members[i] = param.default_value
+      elif not param.is_prop:
+        raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got 1")
   assign_property_params(matcher, scope)
 
 proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
@@ -94,12 +102,15 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
     for i, param in matcher.children:
       if param.is_splat:
         scope.members[i] = new_array_value()
-      elif param.default_value.kind != VkNil:
+      elif param.has_default():
         scope.members[i] = param.default_value
+      elif not param.is_prop:
+        raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
     assign_property_params(matcher, scope)
     return
 
   var pos_index = 0
+  var has_splat = false
   for i, param in matcher.children:
     if param.is_splat:
       let rest_array = new_array_value()
@@ -107,11 +118,17 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
         rest_array.ref.arr.add(args[pos_index])
         pos_index.inc()
       scope.members[i] = rest_array
+      has_splat = true
     elif pos_index < arg_count:
       scope.members[i] = args[pos_index]
       pos_index.inc()
-    elif param.default_value.kind != VkNil:
+    elif param.has_default():
       scope.members[i] = param.default_value
+    elif not param.is_prop:
+      raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $arg_count)
+
+  if not has_splat and pos_index < arg_count:
+    raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $arg_count)
 
   assign_property_params(matcher, scope)
 
@@ -136,6 +153,7 @@ proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArra
         used_indices.incl(i)
 
   var pos_index = 0
+  var has_splat = false
   for i, param in matcher.children:
     if i in used_indices:
       continue
@@ -145,11 +163,17 @@ proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArra
         rest_array.ref.arr.add(positional[pos_index])
         pos_index.inc()
       scope.members[i] = rest_array
+      has_splat = true
     elif pos_index < pos_count:
       scope.members[i] = positional[pos_index]
       pos_index.inc()
-    elif param.default_value.kind != VkNil:
+    elif param.has_default():
       scope.members[i] = param.default_value
+    elif not param.is_prop:
+      raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $pos_count)
+
+  if not has_splat and pos_index < pos_count:
+    raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $pos_count)
 
   assign_property_params(matcher, scope)
 
@@ -166,8 +190,10 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
     for i, param in matcher.children:
       if param.is_splat:
         scope.members[i] = new_array_value()
-      elif param.default_value.kind != VkNil:
+      elif param.has_default():
         scope.members[i] = param.default_value
+      elif not param.is_prop:
+        raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
     return
   
   let positional = args.gene.children
@@ -183,6 +209,7 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
   
   # Second pass: bind positional arguments
   var pos_index = 0
+  var has_splat = false
   for i, param in matcher.children:
     if i notin used_indices:
       if param.is_splat:
@@ -192,16 +219,20 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
           rest_array.ref.arr.add(positional[pos_index])
           pos_index.inc()
         scope.members[i] = rest_array
+        has_splat = true
       elif pos_index < positional.len:
         # Fill in positional argument
         scope.members[i] = positional[pos_index]
         pos_index.inc()
-      elif param.default_value.kind != VkNil:
+      elif param.has_default():
         # Use default value
         scope.members[i] = param.default_value
-      else:
-        # No value provided and no default - keep as NIL
-        discard
+      elif not param.is_prop:
+        # No value provided and no default
+        raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $positional.len)
+
+  if not has_splat and pos_index < positional.len:
+    raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $positional.len)
 
   assign_property_params(matcher, scope)
   

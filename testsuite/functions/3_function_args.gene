@@ -1,3 +1,23 @@
+(fn f [a]
+  (println "a:" a)
+)
+(f 1)
+# Expected: a: 1
+
+(try
+  (f) # Should throw error
+catch *
+  (println "Error caught")
+)
+# Expected: Error caught
+
+(try
+  (f 1 2) # Should throw error
+catch *
+  (println "Error caught")
+)
+# Expected: Error caught
+
 (fn f [a = nil]
   (println "a:" a)
 )
@@ -6,3 +26,10 @@
 # Expected: a: nil
 (f 1)
 # Expected: a: 1
+
+(try
+  (f 1 2) # Should throw error
+catch *
+  (println "Error caught")
+)
+# Expected: Error caught
