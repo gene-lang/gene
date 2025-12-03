@@ -786,7 +786,7 @@ type
     JsCompiled
     JsFailed
 
-  JittedFn* = proc(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, gcsafe.}
+  JittedFn* = proc(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl.}
 
   JitCompiled* = ref object
     entry*: JittedFn          # Entry point (stub until real codegen lands)

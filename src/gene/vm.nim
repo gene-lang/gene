@@ -87,7 +87,7 @@ proc jit_track_call(self: VirtualMachine, f: Function) {.inline.} =
   if self.jit.enabled:
     record_call(self.jit, f)
 
-proc jit_interpreter_trampoline*(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl.} =
+proc jit_interpreter_trampoline*(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, exportc.} =
   ## JIT entry that delegates to the interpreter (used until native codegen arrives).
   if fn_value.kind != VkFunction:
     raise new_exception(types.Exception, "JIT entry expected a function value")
