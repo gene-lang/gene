@@ -461,7 +461,6 @@ type
 
     IkPushValue   # push value to the next slot
     IkPushNil
-    IkPushSelf    # push the current frame's self value
     IkPop
     IkClearStack  # reset the frame stack
     IkDup         # duplicate top stack element

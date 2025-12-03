@@ -57,3 +57,14 @@ when isMainModule:
     # fib(24) requires 150049 recursive calls
     let ops = 150049.0 / duration
     echo fmt"Performance: {ops:.0f} function calls/second"
+
+  echo fmt"JIT enabled: {VM.jit.enabled}"
+  echo fmt"JIT compilations: {VM.jit.stats.compilations} executions: {VM.jit.stats.executions}"
+  let fib_key = "fib".to_key()
+  if ns.has_key(fib_key):
+    let fib_val = ns[fib_key]
+    if fib_val.kind == VkFunction:
+      let f = fib_val.ref.fn
+      let compiled = if f.jit_compiled != nil: f.jit_compiled.built_for_arch else: "nil"
+      let uses_vm_stack = f.jit_compiled != nil and f.jit_compiled.uses_vm_stack
+      echo fmt"fib jit_status: {f.jit_status} compiled_for: {compiled} uses_vm_stack: {uses_vm_stack}"

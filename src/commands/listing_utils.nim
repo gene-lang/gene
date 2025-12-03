@@ -36,7 +36,7 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
     case inst.kind
     # Instructions with no arguments
     of IkNoop, IkEnd, IkScopeEnd, IkSelf, IkSetSelf, IkRotate, IkParse, IkRender,
-       IkEval, IkPushNil, IkPushSelf, IkPop, IkDup, IkDup2, IkDupSecond, IkSwap,
+       IkEval, IkPushNil, IkPop, IkDup, IkDup2, IkDupSecond, IkSwap,
        IkOver, IkLen, IkCallArgsStart, IkCallArgSpread, IkUnifiedCallDynamic, IkArrayStart, IkArrayEnd, IkMapStart,
        IkMapEnd, IkGeneStart, IkGeneEnd, IkGeneSetType, IkGeneAddChild,
        IkGetChildDynamic, IkGetMemberOrNil, IkGetMemberDefault, IkAdd, IkSub,
@@ -92,7 +92,7 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
 
     case inst.kind
     of IkNoop, IkEnd, IkScopeEnd, IkSelf, IkSetSelf, IkRotate, IkParse, IkRender,
-       IkEval, IkPushNil, IkPushSelf, IkPop, IkDup, IkDup2, IkDupSecond, IkSwap,
+       IkEval, IkPushNil, IkPop, IkDup, IkDup2, IkDupSecond, IkSwap,
        IkOver, IkLen, IkCallArgsStart, IkCallArgSpread, IkUnifiedCallDynamic, IkArrayStart, IkArrayEnd, IkMapStart,
        IkMapEnd, IkGeneStart, IkGeneEnd, IkGeneSetType, IkGeneAddChild,
        IkGetChildDynamic, IkGetMemberOrNil, IkGetMemberDefault, IkAdd, IkSub,
