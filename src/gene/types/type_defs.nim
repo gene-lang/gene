@@ -795,6 +795,7 @@ type
     bytecode_version*: uint64 # Simple version/hash marker
     bytecode_len*: int        # Instruction count at compile time
     built_for_arch*: string   # Arch identifier (e.g., "x86_64", "arm64")
+    uses_vm_stack*: bool      # True when JIT code expects to operate on the VM frame stack directly
 
   VmCallback* = proc() {.gcsafe.}
 

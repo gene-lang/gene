@@ -21,6 +21,11 @@ proc emit_mov_rcx_imm64*(code: var seq[uint8], imm: uint64) =
   code.emit([0x48'u8, 0xB9'u8])
   code.emit(cast[array[8, uint8]](imm))
 
+proc emit_mov_rsi_imm64*(code: var seq[uint8], imm: uint64) =
+  ## mov rsi, imm64
+  code.emit([0x48'u8, 0xBE'u8])
+  code.emit(cast[array[8, uint8]](imm))
+
 proc emit_mov_reg_imm32*(code: var seq[uint8], reg_opcode: uint8, imm: int32) =
   ## mov r/m64, imm32 with rm encoded in low 3 bits (ModR/M = 0xC0 + reg)
   code.emit([0x48'u8, 0xC7'u8, (0xC0'u8 or reg_opcode)])
@@ -59,6 +64,9 @@ proc emit_mov_rbx_rax*(code: var seq[uint8]) =
 proc emit_mov_rax_rbx*(code: var seq[uint8]) =
   code.emit([0x48'u8, 0x89'u8, 0xD8'u8]) # mov rax, rbx
 
+proc emit_mov_rsi_rax*(code: var seq[uint8]) =
+  code.emit([0x48'u8, 0x89'u8, 0xC6'u8]) # mov rsi, rax
+
 proc emit_add_rax_rbx*(code: var seq[uint8]) =
   code.emit([0x48'u8, 0x01'u8, 0xD8'u8]) # add rax, rbx
 
@@ -84,6 +92,9 @@ proc emit_setcc_al*(code: var seq[uint8], cc: uint8) =
 
 proc emit_movzx_rax_al*(code: var seq[uint8]) =
   code.emit([0x0F'u8, 0xB6'u8, 0xC0'u8]) # movzx eax, al (zero-extend)
+
+proc emit_call_rax*(code: var seq[uint8]) =
+  code.emit([0xFF'u8, 0xD0'u8])
 
 proc emit_ret*(code: var seq[uint8]) =
   code.emit([0xC3'u8])
@@ -114,6 +125,9 @@ proc emit_je_rel32*(code: var seq[uint8], rel: int32) =
 proc emit_jne_rel32*(code: var seq[uint8], rel: int32) =
   code.emit([0x0F'u8, 0x85'u8])
   code.emit(cast[array[4, uint8]](rel))
+proc emit_test_al_al*(code: var seq[uint8]) =
+  code.emit([0x84'u8, 0xC0'u8])
+
 proc emit_jmp_rax*(code: var seq[uint8]) =
   ## jmp rax
   code.emit([0xFF'u8, 0xE0'u8])

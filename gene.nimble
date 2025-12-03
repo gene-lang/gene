@@ -70,6 +70,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_native.nim"
   exec "nim c -r tests/test_ext.nim"
   exec "nim c -r tests/test_custom_value.nim"
+  exec "nim c -r tests/test_jit_baseline.nim"
   # exec "nim c -d:GENE_LLM_MOCK -r tests/test_llm_mock.nim"
   exec "nim c -r tests/test_thread.nim"
   exec "nim c -r tests/test_thread_msg.nim"
@@ -87,5 +88,4 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_stdlib_datetime.nim"
   exec "nim c -r tests/test_stdlib_sqlite.nim"
   exec "nim c -r tests/test_stdlib_os.nim"
-  # exec "nim c -r tests/test_stdlib_os.nim"
   # exec "nim c -r tests/test_ffi.nim"

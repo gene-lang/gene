@@ -109,21 +109,61 @@ proc maybe_call_jit_function(self: VirtualMachine, fn_value: Value, args: ptr Un
   let f = fn_value.ref.fn
   if f.is_macro_like or f.is_generator or f.async:
     return false
-  if not f.matcher.is_empty():
-    return false
   if f.jit_status == JsFailed:
     return false
   if f.body_compiled.is_nil():
     f.compile()
 
-  if f.jit_compiled != nil:
-    if f.jit_compiled.entry != nil:
-      let result = f.jit_compiled.entry(self, fn_value, args, arg_count)
+  proc run_compiled(compiled: JitCompiled): bool =
+    if compiled.entry != nil:
+      var result: Value
+      if compiled.uses_vm_stack:
+        # Set up a callee frame so the JIT can operate on the real VM stack.
+        var scope: Scope
+        var scope_owned = false
+        if f.matcher.is_empty():
+          scope = f.parent_scope
+          if scope != nil:
+            scope.ref_count.inc()
+            scope_owned = true
+        else:
+          scope = new_scope(f.scope_tracker, f.parent_scope)
+          scope_owned = true
+          if arg_count == 0:
+            process_args_zero(f.matcher, scope)
+          elif arg_count == 1 and args != nil:
+            process_args_one(f.matcher, args[0], scope)
+          else:
+            process_args_direct(f.matcher, args, arg_count, has_keyword_args, scope)
+
+        let saved_frame = self.frame
+        let saved_cu = self.cu
+        let saved_pc = self.pc
+        var new_frame = new_frame()
+        new_frame.kind = FkFunction
+        new_frame.target = fn_value
+        new_frame.scope = scope
+        new_frame.ns = f.ns
+
+        try:
+          self.frame = new_frame
+          self.cu = f.body_compiled
+          self.pc = 0
+          result = compiled.entry(self, fn_value, args, arg_count)
+        finally:
+          self.frame = saved_frame
+          self.cu = saved_cu
+          self.pc = saved_pc
+          new_frame.scope = nil
+          new_frame.free()
+          if scope_owned and scope != nil:
+            scope.free()
+      else:
+        result = compiled.entry(self, fn_value, args, arg_count)
       self.frame.push(result)
       self.jit.stats.executions.inc()
       return true
     else:
-      # Interpreter fallback through exec_function; convert args ptr to seq
       var seq_args: seq[Value] = @[]
       if args != nil and arg_count > 0:
         seq_args.setLen(arg_count)
@@ -134,6 +174,10 @@ proc maybe_call_jit_function(self: VirtualMachine, fn_value: Value, args: ptr Un
       self.jit.stats.executions.inc()
       return true
 
+  if f.jit_compiled != nil:
+    if run_compiled(f.jit_compiled):
+      return true
+
   if is_hot(self.jit, f):
     let compiled = compile_baseline(self, f)
     if compiled != nil:
@@ -142,20 +186,7 @@ proc maybe_call_jit_function(self: VirtualMachine, fn_value: Value, args: ptr Un
       f.jit_status = JsFailed
       self.jit.stats.compilation_failures.inc()
     if f.jit_compiled != nil:
-      if f.jit_compiled.entry != nil:
-        let result = f.jit_compiled.entry(self, fn_value, args, arg_count)
-        self.frame.push(result)
-        self.jit.stats.executions.inc()
-        return true
-      else:
-        var seq_args: seq[Value] = @[]
-        if args != nil and arg_count > 0:
-          seq_args.setLen(arg_count)
-          for i in 0 ..< arg_count:
-            seq_args[i] = args[i]
-        let result = self.exec_function(fn_value, seq_args)
-        self.frame.push(result)
-        self.jit.stats.executions.inc()
+      if run_compiled(f.jit_compiled):
         return true
 
   return false
