@@ -11,6 +11,16 @@ proc emit_mov_rax_imm64*(code: var seq[uint8], imm: uint64) =
   code.emit([0x48'u8, 0xB8'u8])
   code.emit(cast[array[8, uint8]](imm))
 
+proc emit_mov_rbx_imm64*(code: var seq[uint8], imm: uint64) =
+  ## mov rbx, imm64
+  code.emit([0x48'u8, 0xBB'u8])
+  code.emit(cast[array[8, uint8]](imm))
+
+proc emit_mov_rcx_imm64*(code: var seq[uint8], imm: uint64) =
+  ## mov rcx, imm64
+  code.emit([0x48'u8, 0xB9'u8])
+  code.emit(cast[array[8, uint8]](imm))
+
 proc emit_mov_reg_imm32*(code: var seq[uint8], reg_opcode: uint8, imm: int32) =
   ## mov r/m64, imm32 with rm encoded in low 3 bits (ModR/M = 0xC0 + reg)
   code.emit([0x48'u8, 0xC7'u8, (0xC0'u8 or reg_opcode)])
@@ -34,11 +44,20 @@ proc emit_cmp_rax_imm32*(code: var seq[uint8], imm: int32) =
 proc emit_push_rax*(code: var seq[uint8]) =
   code.emit([0x50'u8])
 
+proc emit_push_rbx*(code: var seq[uint8]) =
+  code.emit([0x53'u8])
+
 proc emit_pop_rbx*(code: var seq[uint8]) =
   code.emit([0x5B'u8])
 
+proc emit_pop_rax*(code: var seq[uint8]) =
+  code.emit([0x58'u8])
+
 proc emit_mov_rbx_rax*(code: var seq[uint8]) =
-  code.emit([0x48'u8, 0x89'u8, 0xD8'u8]) # mov rbx, rax
+  code.emit([0x48'u8, 0x89'u8, 0xC3'u8]) # mov rbx, rax
+
+proc emit_mov_rax_rbx*(code: var seq[uint8]) =
+  code.emit([0x48'u8, 0x89'u8, 0xD8'u8]) # mov rax, rbx
 
 proc emit_add_rax_rbx*(code: var seq[uint8]) =
   code.emit([0x48'u8, 0x01'u8, 0xD8'u8]) # add rax, rbx
@@ -55,6 +74,10 @@ proc emit_neg_rax*(code: var seq[uint8]) =
 proc emit_cmp_rax_rbx*(code: var seq[uint8]) =
   code.emit([0x48'u8, 0x39'u8, 0xD8'u8]) # cmp rax, rbx
 
+proc emit_and_rbx_rcx*(code: var seq[uint8]) =
+  ## and rbx, rcx
+  code.emit([0x48'u8, 0x21'u8, 0xD9'u8])
+
 proc emit_setcc_al*(code: var seq[uint8], cc: uint8) =
   ## setcc al with cc in low 3 bits (e.g. 0x94=sete, 0x9C=setl, etc.)
   code.emit([0x0F'u8, cc])
@@ -64,6 +87,21 @@ proc emit_movzx_rax_al*(code: var seq[uint8]) =
 
 proc emit_ret*(code: var seq[uint8]) =
   code.emit([0xC3'u8])
+
+proc emit_shl_rax_imm8*(code: var seq[uint8], imm: uint8) =
+  code.emit([0x48'u8, 0xC1'u8, 0xE0'u8, imm]) # shl rax, imm8
+
+proc emit_shl_rbx_imm8*(code: var seq[uint8], imm: uint8) =
+  code.emit([0x48'u8, 0xC1'u8, 0xE3'u8, imm]) # shl rbx, imm8
+
+proc emit_sar_rax_imm8*(code: var seq[uint8], imm: uint8) =
+  code.emit([0x48'u8, 0xC1'u8, 0xF8'u8, imm]) # sar rax, imm8
+
+proc emit_sar_rbx_imm8*(code: var seq[uint8], imm: uint8) =
+  code.emit([0x48'u8, 0xC1'u8, 0xFB'u8, imm]) # sar rbx, imm8
+
+proc emit_or_rax_rbx*(code: var seq[uint8]) =
+  code.emit([0x48'u8, 0x09'u8, 0xD8'u8]) # or rax, rbx
 
 proc emit_jmp_rel32*(code: var seq[uint8], rel: int32) =
   code.emit([0xE9'u8])
