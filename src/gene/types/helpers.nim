@@ -3,6 +3,7 @@ import os, times, tables
 import ./type_defs
 import ./value_core
 import ./classes
+import ../jit/config
 
 proc refresh_env_map*()
 proc set_program_args*(program: string, args: seq[string])
@@ -26,6 +27,7 @@ proc init_app_and_vm*() =
     message_callbacks: @[],  # Initialize empty list of message callbacks
     thread_local_ns: nil,  # Will be initialized after App is created
   )
+  VM.jit = init_jit_state()
 
   # Pre-allocate frame and scope pools
   if FRAMES.len == 0:

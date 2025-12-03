@@ -44,6 +44,7 @@ proc new_thread_vm(): VirtualMachine =
     pending_futures: @[],
     thread_futures: initTable[int, FutureObj](),
     message_callbacks: @[],
+    jit: init_jit_state(),
   )
 
 proc create_thread_namespace(thread_id: int): Namespace =

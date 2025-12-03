@@ -5,6 +5,9 @@ import asyncdispatch  # For event loop polling in async support
 import ./types
 import ./compiler
 from ./parser import read, read_all
+import ./jit/config
+import ./jit/profiler
+import ./jit/compiler
 import ./vm/args
 import ./vm/module
 import ./vm/utils
@@ -78,6 +81,84 @@ template get_value_class(val: Value): Class =
     types.ref(App.app.class_class).class
   else:
     types.ref(App.app.object_class).class
+
+proc jit_track_call(self: VirtualMachine, f: Function) {.inline.} =
+  ## Lightweight hotness sampling for JIT without altering behavior.
+  if self.jit.enabled:
+    record_call(self.jit, f)
+
+proc jit_interpreter_trampoline*(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl.} =
+  ## JIT entry that delegates to the interpreter (used until native codegen arrives).
+  if fn_value.kind != VkFunction:
+    raise new_exception(types.Exception, "JIT entry expected a function value")
+  var seq_args: seq[Value] = @[]
+  if args != nil and arg_count > 0:
+    seq_args.setLen(arg_count)
+    for i in 0 ..< arg_count:
+      seq_args[i] = args[i]
+  vm.exec_function(fn_value, seq_args)
+
+proc maybe_call_jit_function(self: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): bool {.inline.} =
+  ## Attempt to run a hot function through the JIT entry point (stub today).
+  if not self.jit.enabled:
+    return false
+  if has_keyword_args:
+    return false
+  if fn_value.kind != VkFunction:
+    return false
+  let f = fn_value.ref.fn
+  if f.is_macro_like or f.is_generator or f.async:
+    return false
+  if not f.matcher.is_empty():
+    return false
+  if f.jit_status == JsFailed:
+    return false
+  if f.body_compiled.is_nil():
+    f.compile()
+
+  if f.jit_compiled != nil:
+    if f.jit_compiled.entry != nil:
+      let result = f.jit_compiled.entry(self, fn_value, args, arg_count)
+      self.frame.push(result)
+      self.jit.stats.executions.inc()
+      return true
+    else:
+      # Interpreter fallback through exec_function; convert args ptr to seq
+      var seq_args: seq[Value] = @[]
+      if args != nil and arg_count > 0:
+        seq_args.setLen(arg_count)
+        for i in 0 ..< arg_count:
+          seq_args[i] = args[i]
+      let result = self.exec_function(fn_value, seq_args)
+      self.frame.push(result)
+      self.jit.stats.executions.inc()
+      return true
+
+  if is_hot(self.jit, f):
+    let compiled = compile_baseline(self, f)
+    if compiled != nil:
+      f.jit_compiled = compiled
+    else:
+      f.jit_status = JsFailed
+      self.jit.stats.compilation_failures.inc()
+    if f.jit_compiled != nil:
+      if f.jit_compiled.entry != nil:
+        let result = f.jit_compiled.entry(self, fn_value, args, arg_count)
+        self.frame.push(result)
+        self.jit.stats.executions.inc()
+        return true
+      else:
+        var seq_args: seq[Value] = @[]
+        if args != nil and arg_count > 0:
+          seq_args.setLen(arg_count)
+          for i in 0 ..< arg_count:
+            seq_args[i] = args[i]
+        let result = self.exec_function(fn_value, seq_args)
+        self.frame.push(result)
+        self.jit.stats.executions.inc()
+        return true
+
+  return false
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:
@@ -4775,7 +4856,13 @@ proc exec*(self: VirtualMachine): Value =
         case target.kind:
         of VkFunction:
           let f = target.ref.fn
-          if f.is_generator:
+          self.jit_track_call(f)
+          var jit_handled = false
+          if self.maybe_call_jit_function(target, nil, 0, false):
+            jit_handled = true
+          if jit_handled:
+            discard
+          elif f.is_generator:
             self.frame.push(new_generator_value(f, @[]))
           else:
             if f.body_compiled == nil:
@@ -4942,7 +5029,16 @@ proc exec*(self: VirtualMachine): Value =
         case target.kind:
         of VkFunction:
           let f = target.ref.fn
-          if f.is_generator:
+          self.jit_track_call(f)
+          var jit_handled = false
+          # Single positional arg passed via args array below
+          let arg_arr = [arg]
+          let arg_ptr = cast[ptr UncheckedArray[Value]](arg_arr[0].addr)
+          if self.maybe_call_jit_function(target, arg_ptr, 1, false):
+            jit_handled = true
+          if jit_handled:
+            discard
+          elif f.is_generator:
             self.frame.push(new_generator_value(f, @[arg]))
           else:
             if f.body_compiled == nil:
@@ -5133,7 +5229,14 @@ proc exec*(self: VirtualMachine): Value =
         case target.kind:
         of VkFunction:
           let f = target.ref.fn
-          if f.is_generator:
+          self.jit_track_call(f)
+          var jit_handled = false
+          let arg_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
+          if self.maybe_call_jit_function(target, arg_ptr, args.len, false):
+            jit_handled = true
+          if jit_handled:
+            discard
+          elif f.is_generator:
             self.frame.push(new_generator_value(f, args))
           else:
             if f.body_compiled == nil:
@@ -5262,7 +5365,14 @@ proc exec*(self: VirtualMachine): Value =
         case target.kind:
         of VkFunction:
           let f = target.ref.fn
-          if f.is_generator:
+          self.jit_track_call(f)
+          var jit_handled = false
+          let arg_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
+          if self.maybe_call_jit_function(target, arg_ptr, args.len, false):
+            jit_handled = true
+          if jit_handled:
+            discard
+          elif f.is_generator:
             self.frame.push(new_generator_value(f, args))
           else:
             if f.body_compiled == nil:
@@ -5388,6 +5498,7 @@ proc exec*(self: VirtualMachine): Value =
         case target.kind:
         of VkFunction:
           let f = target.ref.fn
+          self.jit_track_call(f)
           if f.is_generator:
             self.frame.push(new_generator_value(f, args))
           else:
@@ -5584,6 +5695,7 @@ proc exec*(self: VirtualMachine): Value =
             of VkFunction:
               # OPTIMIZED: Follow IkCallMethod1 pattern for zero-arg method calls
               let f = meth.callable.ref.fn
+              self.jit_track_call(f)
               if f.body_compiled == nil:
                 f.compile()
 
@@ -5723,6 +5835,7 @@ proc exec*(self: VirtualMachine): Value =
             of VkFunction:
               # OPTIMIZED: Follow IkCallMethod1 pattern for single-arg method calls
               let f = meth.callable.ref.fn
+              self.jit_track_call(f)
               if f.body_compiled == nil:
                 f.compile()
 
@@ -5874,6 +5987,7 @@ proc exec*(self: VirtualMachine): Value =
             of VkFunction:
               # OPTIMIZED: Follow IkCallMethod pattern for two-arg method calls
               let f = meth.callable.ref.fn
+              self.jit_track_call(f)
               if f.body_compiled == nil:
                 f.compile()
 
@@ -6011,6 +6125,7 @@ proc exec*(self: VirtualMachine): Value =
             case meth.callable.kind:
             of VkFunction:
               let f = meth.callable.ref.fn
+              self.jit_track_call(f)
               if f.body_compiled == nil:
                 f.compile()
 
@@ -6135,6 +6250,7 @@ proc exec*(self: VirtualMachine): Value =
             case meth.callable.kind:
             of VkFunction:
               let f = meth.callable.ref.fn
+              self.jit_track_call(f)
               if f.body_compiled == nil:
                 f.compile()
 
@@ -6260,6 +6376,7 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
     return NIL
   
   let f = fn.ref.fn
+  self.jit_track_call(f)
   
   # Compile if needed
   if f.body_compiled == nil:

@@ -365,6 +365,8 @@ type
     # matching_hint*: MatchingHint
     body*: seq[Value]
     body_compiled*: CompilationUnit
+    jit_compiled*: JitCompiled
+    jit_status*: JitStatus
     # ret*: Expr
 
   Block* = ref object
@@ -725,6 +727,22 @@ type
     class_version*: uint64
     cached_method*: Method       # Cached method reference
 
+  # JIT configuration and counters (kept lightweight for VM embedding)
+  JitStats* = object
+    compilations*: int64
+    compilation_failures*: int64
+    executions*: int64
+    deopts*: int64
+    evictions*: int64
+
+  JitState* = object
+    enabled*: bool                  # Runtime toggle (also gated by build flag/env)
+    log_enabled*: bool              # Verbose logging toggle
+    hot_threshold*: int             # Calls before baseline JIT trigger
+    very_hot_threshold*: int        # Calls before aggressive tier (future use)
+    call_counts*: Table[pointer, int64] # Per-function hotness counters (keyed by fn ref)
+    stats*: JitStats                # Aggregated counters for observability
+
   ThreadMetadata* = object
     id*: int
     secret*: int              # Random token for validation
@@ -759,6 +777,24 @@ type
     thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
     message_callbacks*: seq[Value]  # List of callbacks for incoming messages
     thread_local_ns*: Namespace  # Thread-local namespace for $thread, $main_thread, etc.
+    # JIT
+    jit*: JitState
+
+  JitStatus* {.size: sizeof(int16).} = enum
+    JsNone
+    JsCompiling
+    JsCompiled
+    JsFailed
+
+  JittedFn* = proc(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, gcsafe.}
+
+  JitCompiled* = ref object
+    entry*: JittedFn          # Entry point (stub until real codegen lands)
+    code*: pointer            # Executable memory (may be nil for stubs)
+    size*: int                # Code size in bytes
+    bytecode_version*: uint64 # Simple version/hash marker
+    bytecode_len*: int        # Instruction count at compile time
+    built_for_arch*: string   # Arch identifier (e.g., "x86_64", "arm64")
 
   VmCallback* = proc() {.gcsafe.}
 
