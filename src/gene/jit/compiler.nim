@@ -1,8 +1,8 @@
 import ../types
 import ../types/type_defs
 import ./memory
-
 when defined(amd64):
+  import ./baseline
   import ./x64/thunk
 
 proc jit_interpreter_trampoline(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, importc.}
@@ -21,24 +21,30 @@ proc compile_baseline*(vm: VirtualMachine, fn: Function): JitCompiled =
 
   fn.jit_status = JsCompiling
   var compiled = JitCompiled()
-  compiled.entry = nil
-  compiled.code = nil
-  compiled.size = 0
-  compiled.bytecode_version = if fn.body_compiled != nil: cast[uint64](fn.body_compiled.id) else: 0'u64
-  compiled.bytecode_len = if fn.body_compiled != nil: fn.body_compiled.instructions.len else: 0
-  compiled.built_for_arch =
-    when defined(amd64): "x86_64"
-    elif defined(arm64): "arm64"
-    else: "unknown"
 
   when defined(amd64) and defined(geneJit):
-    # Build a tiny thunk that jumps to the interpreter trampoline (exercises emit + RW→RX path).
-    let thunk = build_jmp_thunk(cast[pointer](jit_interpreter_trampoline))
-    compiled.code = thunk.code
-    compiled.size = thunk.size
-    compiled.entry = cast[JittedFn](compiled.code)
+    compiled = compile_function_x64(vm, fn)
+    if compiled.is_nil:
+      # Fallback thunk to interpreter trampoline if compilation declined.
+      let thunk = build_jmp_thunk(cast[pointer](jit_interpreter_trampoline))
+      compiled = JitCompiled(
+        entry: cast[JittedFn](thunk.code),
+        code: thunk.code,
+        size: thunk.size,
+        bytecode_version: if fn.body_compiled != nil: cast[uint64](fn.body_compiled.id) else: 0'u64,
+        bytecode_len: if fn.body_compiled != nil: fn.body_compiled.instructions.len else: 0,
+        built_for_arch: "x86_64"
+      )
   else:
-    compiled.entry = jit_interpreter_trampoline  # Interpreter bridge until native codegen lands
+    compiled.entry = jit_interpreter_trampoline
+    compiled.code = nil
+    compiled.size = 0
+    compiled.bytecode_version = if fn.body_compiled != nil: cast[uint64](fn.body_compiled.id) else: 0'u64
+    compiled.bytecode_len = if fn.body_compiled != nil: fn.body_compiled.instructions.len else: 0
+    compiled.built_for_arch =
+      when defined(amd64): "x86_64"
+      elif defined(arm64): "arm64"
+      else: "unknown"
 
   fn.jit_status = JsCompiled
   vm.jit.stats.compilations.inc()
