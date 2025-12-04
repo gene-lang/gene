@@ -546,8 +546,6 @@ type
     IkReturn
     IkYield        # Suspend generator and yield value
 
-    IkMacro
-
     IkBlock
 
     IkClass

@@ -56,7 +56,7 @@ Instruction opcodes live in `InstructionKind`. A few important groups:
 - **Variables**: `IkVar`, `IkVarResolve`, `IkVarAssign`, plus literal variants (`IkVarAddValue`, `IkVarSubValue`, …).
 - **Control Flow**: `IkJump`, `IkJumpIfFalse`, `IkLoopStart/End`, `IkContinue`, `IkBreak`, `IkReturn`, `IkTailCall`.
 - **Data & Collections**: `IkArrayStart/End`, `IkMapStart/End`, `IkGene*`, spread instructions, range/enum creation.
-- **Functions & Macros**: `IkFunction`, `IkMacro`, `IkBlock`, `IkCallInit`, `IkCallerEval`.
+- **Functions & Macros**: `IkFunction`, `IkBlock`, `IkCallInit`, `IkCallerEval`.
 - **Classes & Methods**: `IkClass`, `IkSubClass`, `IkNew`, `IkDefineMethod`, `IkResolveMethod`, `IkSuper`.
 - **Error Handling**: `IkTryStart`, `IkTryEnd`, `IkCatchStart/End`, `IkFinally`, `IkThrow`.
 - **Async**: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`.
