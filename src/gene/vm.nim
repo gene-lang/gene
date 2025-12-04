@@ -2104,12 +2104,6 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.push(inst.arg0)
       of IkPushNil:
         self.frame.push(NIL)
-      of IkPushSelf:
-        # Get self from first argument
-        if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
-          self.frame.push(self.frame.args.gene.children[0])
-        else:
-          self.frame.push(NIL)
       of IkPop:
         discard self.frame.pop()
       of IkClearStack:

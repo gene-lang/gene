@@ -276,8 +276,8 @@ proc compile_symbol(self: Compiler, input: Value) =
           else:
             self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
         else:
-          # Fall back to IkPushSelf for non-method contexts
-          self.emit(Instruction(kind: IkPushSelf))
+          # Fall back to IkSelf for non-method contexts
+          self.emit(Instruction(kind: IkSelf))
         return
       elif symbol_str == "super":
         # Push runtime super proxy (handled by IkSuper at execution time)

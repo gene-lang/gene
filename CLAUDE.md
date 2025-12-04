@@ -85,7 +85,7 @@ catch *
 - **Stack**: `IkPushValue`, `IkPop`, `IkDup`, `IkSwap`.
 - **Variables & Scopes**: `IkVar`, `IkVarResolve`, `IkVarAssign`, `IkScopeStart`, `IkScopeEnd`.
 - **Control Flow**: `IkJump`, `IkJumpIfFalse`, `IkReturn`, `IkLoopStart`, `IkLoopEnd`.
-- **Function/Macro**: `IkFunction`, `IkMacro`, `IkCall`, `IkCallerEval`.
+- **Function/Macro**: `IkFunction`, `IkCall`, `IkCallerEval`.
 - **Async**: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`.
 
 When adding new instructions: extend the enum, teach the compiler (emit case), and handle execution in `vm.nim`.
