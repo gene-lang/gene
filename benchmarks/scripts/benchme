@@ -14,7 +14,7 @@ rm -f bin/fibonacci 2>/dev/null
 
 # Compile with modern memory management and suppress warnings
 echo "Compiling fibonacci benchmark..."
-CMD="nim c --hints:off --mm:orc -d:release -d:ssl --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
+CMD="nim c --hints:off --mm:orc -d:release -d:ssl --cpu:arm64 --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
 # Filter out warnings etc
 $CMD 2>&1 | grep -v "arning:" | grep -v "ignoring duplicate libraries" | grep -v "instantiation" || true
 
@@ -27,7 +27,7 @@ echo "Running benchmark..."
 echo
 echo
 echo "Compiling fibonacci benchmark with JIT..."
-CMD="nim c --hints:off --mm:orc -d:release -d:ssl -d:geneJit --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
+CMD="nim c --hints:off --mm:orc -d:release -d:ssl --cpu:arm64 -d:geneJit --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
 # Filter out warnings etc
 $CMD 2>&1 | grep -v "arning:" | grep -v "ignoring duplicate libraries" | grep -v "instantiation" || true
 

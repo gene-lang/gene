@@ -1,4 +1,6 @@
 import os, strutils, tables
+when defined(macosx):
+  import posix
 
 import ../types/type_defs
 
@@ -48,3 +50,12 @@ proc init_jit_state*(): JitState =
   ## Initialize JIT state with build defaults and environment overrides.
   result = default_jit_state()
   result.apply_env_overrides()
+
+  when defined(macosx) and defined(amd64):
+    # Rosetta (x86_64 translated on Apple Silicon) cannot safely run our raw
+    # x86 JIT pages; detect and disable to avoid SIGILL.
+    var translated: cint
+    var size = sizeof(cint)
+    if sysctlbyname("sysctl.proc_translated", addr translated, addr size, nil, 0) == 0:
+      if translated == 1:
+        result.enabled = false

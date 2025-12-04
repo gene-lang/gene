@@ -4,7 +4,7 @@ import ../types/type_defs
 import ../types/value_core
 import ../vm/utils
 import ./memory
-import ./x64/asm
+import ./x64/asm_helpers
 import ./x64/encoders
 
 proc jit_interpreter_trampoline(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, importc.}

@@ -1,3 +1,6 @@
+import tables
+
+import ../../types
 import ./encoders
 
 type

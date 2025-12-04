@@ -18,8 +18,14 @@ when defined(posix):
   proc allocate_executable_memory*(size: int): pointer =
     ## Allocate RW pages for JIT; caller must mark RX later.
     let alloc_size = page_align(size)
-    let mem = mmap(nil, alloc_size, PROT_READ or PROT_WRITE,
-                   MAP_PRIVATE or MAP_ANONYMOUS, -1, 0)
+    var flags = MAP_PRIVATE or MAP_ANONYMOUS
+    when defined(macosx):
+      when declared(MAP_JIT):
+        flags = flags or MAP_JIT
+      else:
+        const MAP_JIT = 0x800'i32
+        flags = flags or MAP_JIT
+    let mem = mmap(nil, alloc_size, PROT_READ or PROT_WRITE, flags, -1, 0)
     if mem == MAP_FAILED:
       raise new_exception(types.Exception, fmt"JIT mmap failed for {alloc_size} bytes")
     mem
