@@ -191,6 +191,23 @@ proc maybe_call_jit_function(self: VirtualMachine, fn_value: Value, args: ptr Un
 
   return false
 
+proc jit_call_function*(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, exportc.} =
+  ## Helper for JIT helpers: attempt JIT dispatch, otherwise fall back to exec_function.
+  if target.kind != VkFunction:
+    return vm.exec_function(target, @[])
+
+  if vm.maybe_call_jit_function(target, args, arg_count, false):
+    if vm.frame != nil and vm.frame.stack_index > 0:
+      return vm.frame.pop()
+    return NIL
+
+  var seq_args: seq[Value] = @[]
+  if args != nil and arg_count > 0:
+    seq_args.setLen(arg_count)
+    for i in 0 ..< arg_count:
+      seq_args[i] = args[i]
+  vm.exec_function(target, seq_args)
+
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:
     let start_time = cpuTime()
@@ -2776,7 +2793,8 @@ proc exec*(self: VirtualMachine): Value =
         let kind = self.frame.current().kind
         case kind:
           of VkFrame:
-            let frame = self.frame.current().ref.frame
+            let frame_val = self.frame.pop()
+            let frame = frame_val.ref.frame
             when DEBUG_VM:
               echo fmt"  Frame kind = {frame.kind}"
             case frame.kind:
@@ -2784,6 +2802,23 @@ proc exec*(self: VirtualMachine): Value =
                 let f = frame.target.ref.fn
                 when DEBUG_VM:
                   echo fmt"  Function name = {f.name}, has compiled body = {f.body_compiled != nil}"
+                self.jit_track_call(f)
+                when defined(amd64):
+                  var arg_ptr: ptr UncheckedArray[Value]
+                  var arg_count = 0
+                  arg_ptr = nil
+                  if frame.args.kind == VkGene:
+                    arg_count = frame.args.gene.children.len
+                    if arg_count > 0:
+                      arg_ptr = cast[ptr UncheckedArray[Value]](frame.args.gene.children[0].addr)
+                  if self.maybe_call_jit_function(frame.target, arg_ptr, arg_count, false):
+                    self.pc.inc()
+                    if self.pc < self.cu.instructions.len:
+                      inst = self.cu.instructions[self.pc].addr
+                      continue
+                    else:
+                      break
+                self.frame.push(frame_val)
                 if f.body_compiled == nil:
                   f.compile()
                   when DEBUG_VM:

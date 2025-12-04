@@ -30,21 +30,30 @@ proc compile_function_x64*(vm: VirtualMachine, fn: Function): JitCompiled =
     of IkStart:
       discard
     of IkPushValue:
-      case inst.arg0.kind
-      of VkInt, VkBool, VkNil:
-        discard
-      else:
-        return nil
       buf.code.emit_mov_rsi_imm64(cast[uint64](inst.arg0))
       buf.emit_helper_call(cast[pointer](jit_stack_push_value))
     of IkAdd:
       buf.emit_helper_call(cast[pointer](jit_add_ints))
+    of IkSub:
+      buf.emit_helper_call(cast[pointer](jit_sub_ints))
     of IkDup:
       buf.emit_helper_call(cast[pointer](jit_stack_dup))
     of IkSwap:
       buf.emit_helper_call(cast[pointer](jit_stack_swap))
     of IkPop:
       buf.emit_helper_call(cast[pointer](jit_stack_pop_discard))
+    of IkJumpIfMatchSuccess:
+      let idx = inst.arg0.int64.int
+      if idx < int32.low or idx > int32.high:
+        return nil
+      buf.code.emit_mov_reg_imm32(6, idx.int32) # rsi
+      buf.emit_helper_call(cast[pointer](jit_jump_if_match_success))
+      buf.code.emit_test_al_al()
+      buf.code.emit([0x0F'u8, 0x85'u8]) # jne rel32
+      buf.add_patch(inst.arg1.int64.int, "jne")
+    of IkResolveSymbol:
+      buf.code.emit_mov_rsi_imm64(cast[uint64](inst.arg0))
+      buf.emit_helper_call(cast[pointer](jit_resolve_symbol))
     of IkVarResolve:
       let slot = inst.arg0.int64.int
       if slot < int32.low or slot > int32.high:
@@ -67,6 +76,23 @@ proc compile_function_x64*(vm: VirtualMachine, fn: Function): JitCompiled =
       buf.emit_helper_call(cast[pointer](jit_compare_ge))
     of IkEq:
       buf.emit_helper_call(cast[pointer](jit_compare_eq))
+    of IkGeneStartDefault:
+      buf.emit_helper_call(cast[pointer](jit_gene_start_default))
+      let target = inst.arg0.int64.int
+      if target < 0 or target >= fn.body_compiled.instructions.len:
+        return nil
+      buf.code.emit([0xE9'u8]) # jmp rel32
+      buf.add_patch(target, "jmp")
+    of IkGeneStart:
+      buf.emit_helper_call(cast[pointer](jit_gene_start))
+    of IkGeneSetType:
+      buf.emit_helper_call(cast[pointer](jit_gene_set_type))
+    of IkGeneAddChild:
+      buf.emit_helper_call(cast[pointer](jit_gene_add_child))
+    of IkTailCall:
+      buf.emit_helper_call(cast[pointer](jit_tail_call))
+    of IkGeneEnd:
+      buf.emit_helper_call(cast[pointer](jit_gene_end))
     of IkJump:
       let target = inst.arg0.int64.int
       if target < 0 or target >= fn.body_compiled.instructions.len:
@@ -89,6 +115,8 @@ proc compile_function_x64*(vm: VirtualMachine, fn: Function): JitCompiled =
       buf.emit_helper_call(cast[pointer](jit_stack_pop_value))
       buf.code.emit_ret()
       has_return = true
+    of IkThrow:
+      buf.emit_helper_call(cast[pointer](jit_throw))
     else:
       return nil
 
