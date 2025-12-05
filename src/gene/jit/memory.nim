@@ -35,6 +35,10 @@ when defined(posix):
     let alloc_size = page_align(size)
     if mprotect(mem, alloc_size, PROT_READ or PROT_EXEC) != 0:
       raise new_exception(types.Exception, fmt"JIT mprotect RX failed for {alloc_size} bytes")
+    when defined(arm64):
+      # Flush the instruction cache for freshly generated code.
+      proc clear_cache(start, finish: cstring) {.importc: "__builtin___clear_cache", noSideEffect.}
+      clear_cache(cast[cstring](mem), cast[cstring](cast[uint](mem) + alloc_size.uint))
 
   proc free_executable_memory*(mem: pointer, size: int) =
     let alloc_size = page_align(size)

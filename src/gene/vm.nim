@@ -82,7 +82,7 @@ template get_value_class(val: Value): Class =
   else:
     types.ref(App.app.object_class).class
 
-proc jit_track_call(self: VirtualMachine, f: Function) {.inline.} =
+proc jit_track_call*(self: VirtualMachine, f: Function) {.inline.} =
   ## Lightweight hotness sampling for JIT without altering behavior.
   if self.jit.enabled:
     record_call(self.jit, f)
@@ -98,8 +98,10 @@ proc jit_interpreter_trampoline*(vm: VirtualMachine, fn_value: Value, args: ptr 
       seq_args[i] = args[i]
   vm.exec_function(fn_value, seq_args)
 
-proc maybe_call_jit_function(self: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): bool {.inline.} =
+proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): bool {.inline.} =
   ## Attempt to run a hot function through the JIT entry point (stub today).
+  when not (defined(amd64) or defined(arm64)):
+    return false
   if not self.jit.enabled:
     return false
   if has_keyword_args:

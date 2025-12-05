@@ -56,12 +56,12 @@ suite "Baseline JIT uses VM stack":
     check interp_res.int64 == 2
 
     # JIT path
-    when defined(geneJit) and defined(amd64):
+    when defined(geneJit) and (defined(amd64) or defined(arm64)):
       reset_vm_state()
       VM.jit.enabled = true
       VM.jit.hot_threshold = 0
       VM.jit.very_hot_threshold = 0
-      let caller = new_frame()
+      var caller = new_frame()
       VM.frame = caller
       VM.jit_track_call(f)
       check VM.maybe_call_jit_function(fn_val, nil, 0, false)
@@ -93,7 +93,7 @@ suite "Baseline JIT uses VM stack":
     scope_interp.free()
 
     # JIT path
-    when defined(geneJit) and defined(amd64):
+    when defined(geneJit) and (defined(amd64) or defined(arm64)):
       var scope_jit = new_scope(new_scope_tracker())
       scope_jit.members.add(3.to_value())
       scope_jit.members.add(5.to_value())
@@ -102,7 +102,7 @@ suite "Baseline JIT uses VM stack":
       VM.jit.enabled = true
       VM.jit.hot_threshold = 0
       VM.jit.very_hot_threshold = 0
-      let caller = new_frame()
+      var caller = new_frame()
       VM.frame = caller
       VM.jit_track_call(f_jit)
       check VM.maybe_call_jit_function(fn_val_jit, nil, 0, false)
@@ -134,12 +134,12 @@ suite "Baseline JIT uses VM stack":
     let interp_res = VM.exec_function(fn_val_branch, @[])
     check interp_res.int64 == 10
 
-    when defined(geneJit) and defined(amd64):
+    when defined(geneJit) and (defined(amd64) or defined(arm64)):
       reset_vm_state()
       VM.jit.enabled = true
       VM.jit.hot_threshold = 0
       VM.jit.very_hot_threshold = 0
-      let caller = new_frame()
+      var caller = new_frame()
       VM.frame = caller
       VM.jit_track_call(f_branch)
       check VM.maybe_call_jit_function(fn_val_branch, nil, 0, false)
