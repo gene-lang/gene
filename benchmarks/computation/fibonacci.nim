@@ -59,7 +59,7 @@ when isMainModule:
     echo fmt"Performance: {ops:.0f} function calls/second"
 
   echo fmt"JIT enabled: {VM.jit.enabled}"
-  echo fmt"JIT compilations: {VM.jit.stats.compilations} executions: {VM.jit.stats.executions}"
+  echo fmt"JIT compilations: {VM.jit.stats.compilations} failures: {VM.jit.stats.compilation_failures} executions: {VM.jit.stats.executions}"
   let fib_key = "fib".to_key()
   if ns.has_key(fib_key):
     let fib_val = ns[fib_key]

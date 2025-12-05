@@ -293,5 +293,5 @@ when defined(arm64):
         bytecode_version: cast[uint64](fn.body_compiled.id),
         bytecode_len: fn.body_compiled.instructions.len,
         built_for_arch: "arm64",
-        uses_vm_stack: false
+        uses_vm_stack: true
       )

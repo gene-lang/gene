@@ -109,6 +109,11 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
   if fn_value.kind != VkFunction:
     return false
   let f = fn_value.ref.fn
+  # Keyword parameters are not supported by the baseline JIT yet.
+  if not has_keyword_args:
+    for param in f.matcher.children:
+      if param.is_prop:
+        return false
   if f.is_macro_like or f.is_generator or f.async:
     return false
   if f.jit_status == JsFailed:
@@ -175,6 +180,20 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
       self.frame.push(result)
       self.jit.stats.executions.inc()
       return true
+
+  when defined(arm64):
+    # On arm64 compile immediately instead of waiting for hotness sampling.
+    if f.jit_compiled.is_nil and f.jit_status == JsNone:
+      let compiled = compile_baseline(self, f)
+      if compiled != nil:
+        f.jit_compiled = compiled
+        f.jit_status = JsCompiled
+        if run_compiled(compiled):
+          return true
+      else:
+        f.jit_status = JsFailed
+        self.jit.stats.compilation_failures.inc()
+        return false
 
   if f.jit_compiled != nil:
     if run_compiled(f.jit_compiled):
@@ -1565,13 +1584,23 @@ proc exec*(self: VirtualMachine): Value =
       of IkTailCall:
         {.push checks: off}
         # IkTailCall works like IkGeneEnd but optimizes tail calls to the same function
-        let value = self.frame.current()
+        let value = self.frame.pop()
         case value.kind:
           of VkFrame:
             let new_frame = value.ref.frame
             case new_frame.kind:
               of FkFunction:
                 let f = new_frame.target.ref.fn
+                if self.jit.enabled:
+                  var arg_ptr: ptr UncheckedArray[Value]
+                  let arg_count = if new_frame.args.kind == VkGene: new_frame.args.gene.children.len else: 0
+                  if arg_count > 0:
+                    arg_ptr = cast[ptr UncheckedArray[Value]](new_frame.args.gene.children[0].addr)
+                  else:
+                    arg_ptr = nil
+                  self.jit_track_call(f)
+                  if self.maybe_call_jit_function(new_frame.target, arg_ptr, arg_count, false):
+                    continue
                 if f.body_compiled == nil:
                   f.compile()
                 
@@ -1580,9 +1609,6 @@ proc exec*(self: VirtualMachine): Value =
                    self.frame.target.kind == VkFunction and
                    self.frame.target.ref.fn == f:
                   # Tail call optimization - reuse current frame
-                  # Pop the VkFrame value from the stack
-                  discard self.frame.pop()
-                  
                   # Update arguments and scope in place
                   self.frame.args = new_frame.args
                   
@@ -1615,7 +1641,6 @@ proc exec*(self: VirtualMachine): Value =
                 else:
                   # Not a tail call - fall back to regular call like IkGeneEnd
                   self.pc.inc()
-                  discard self.frame.pop()
                   new_frame.caller_frame = self.frame
                   self.frame.ref_count.inc()
                   new_frame.caller_address = Address(cu: self.cu, pc: self.pc)
@@ -2805,21 +2830,20 @@ proc exec*(self: VirtualMachine): Value =
                 when DEBUG_VM:
                   echo fmt"  Function name = {f.name}, has compiled body = {f.body_compiled != nil}"
                 self.jit_track_call(f)
-                when defined(amd64):
-                  var arg_ptr: ptr UncheckedArray[Value]
-                  var arg_count = 0
-                  arg_ptr = nil
-                  if frame.args.kind == VkGene:
-                    arg_count = frame.args.gene.children.len
-                    if arg_count > 0:
-                      arg_ptr = cast[ptr UncheckedArray[Value]](frame.args.gene.children[0].addr)
-                  if self.maybe_call_jit_function(frame.target, arg_ptr, arg_count, false):
-                    self.pc.inc()
-                    if self.pc < self.cu.instructions.len:
-                      inst = self.cu.instructions[self.pc].addr
-                      continue
-                    else:
-                      break
+                var arg_ptr: ptr UncheckedArray[Value]
+                var arg_count = 0
+                arg_ptr = nil
+                if frame.args.kind == VkGene:
+                  arg_count = frame.args.gene.children.len
+                  if arg_count > 0:
+                    arg_ptr = cast[ptr UncheckedArray[Value]](frame.args.gene.children[0].addr)
+                if self.maybe_call_jit_function(frame.target, arg_ptr, arg_count, false):
+                  self.pc.inc()
+                  if self.pc < self.cu.instructions.len:
+                    inst = self.cu.instructions[self.pc].addr
+                    continue
+                  else:
+                    break
                 self.frame.push(frame_val)
                 if f.body_compiled == nil:
                   f.compile()

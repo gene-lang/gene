@@ -45,7 +45,8 @@ proc compile_baseline*(vm: VirtualMachine, fn: Function): JitCompiled =
         size: 0,
         bytecode_version: if fn.body_compiled != nil: cast[uint64](fn.body_compiled.id) else: 0'u64,
         bytecode_len: if fn.body_compiled != nil: fn.body_compiled.instructions.len else: 0,
-        built_for_arch: "arm64"
+        built_for_arch: "arm64",
+        uses_vm_stack: true
       )
   else:
     compiled.entry = jit_interpreter_trampoline

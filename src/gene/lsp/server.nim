@@ -1,6 +1,6 @@
 ## Gene Language Server Protocol (LSP) Server Implementation
 
-import asyncdispatch, json, strutils, net, asyncnet, tables, os
+import asyncdispatch, json, strutils, net, asyncnet, tables, os, streams
 import ../types
 import ./types, ./document
 
@@ -11,6 +11,7 @@ type
     host*: string
     workspace*: string
     trace*: bool
+    stdio*: bool  # Use stdio instead of TCP
 
   LspServer* = ref object
     socket*: AsyncSocket
@@ -20,6 +21,8 @@ type
 
 var lsp_config*: LspConfig
 var lsp_server*: LspServer
+var lsp_input*: Stream
+var lsp_output*: Stream
 
 # Helper functions for LSP responses
 proc newNotification*(methodName: string, params: JsonNode): string =
@@ -30,9 +33,18 @@ proc newNotification*(methodName: string, params: JsonNode): string =
   }
   return $notification
 
+# Write LSP message with Content-Length header (for stdio mode)
+proc writeStdioMessage*(message: string) =
+  let header = "Content-Length: " & $message.len & "\r\n\r\n"
+  stdout.write(header)
+  stdout.write(message)
+  stdout.flushFile()
+
 # Helper to send notification to all clients
 proc sendNotificationToClients*(notification: string) {.async.} =
-  if lsp_server != nil and lsp_server.clients.len > 0:
+  if lsp_config != nil and lsp_config.stdio:
+    writeStdioMessage(notification)
+  elif lsp_server != nil and lsp_server.clients.len > 0:
     for client in lsp_server.clients:
       try:
         await client.send(notification & "\r\n")
@@ -495,3 +507,100 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
           lsp_server.clients.delete(idx)
         client.close()
     )()
+
+# Read LSP message from stdin (blocking, with Content-Length header)
+proc readStdioMessage*(): string =
+  var content_length = 0
+  # Read headers until we get a blank line
+  while true:
+    var line: string
+    try:
+      line = stdin.readLine()
+    except IOError:
+      return ""  # EOF
+
+    # Strip any trailing \r (readLine strips \n but may leave \r)
+    line = line.strip(chars = {'\r', ' ', '\t'})
+
+    if line.len == 0:
+      break  # End of headers
+    if line.startsWith("Content-Length:"):
+      content_length = parseInt(line[15..^1].strip())
+
+  if content_length == 0:
+    return ""
+
+  # Read the content
+  result = newString(content_length)
+  var bytesRead = 0
+  while bytesRead < content_length:
+    let c = stdin.readChar()
+    result[bytesRead] = c
+    bytesRead += 1
+
+  if bytesRead != content_length:
+    result = ""
+
+# Stdio LSP server loop (synchronous, no async needed)
+proc start_lsp_stdio_server*(config: LspConfig) =
+  lsp_config = config
+
+  # Initialize LSP state
+  lsp_server = LspServer(
+    socket: nil,
+    config: lsp_config,
+    clients: @[],
+    state: LspState(
+      workspaceRoot: lsp_config.workspace,
+      documents: initTable[string, DocumentState](),
+      symbols: initTable[string, seq[SymbolInfo]](),
+      capabilities: ServerCapabilities(
+        textDocumentSync: %*{
+          "openClose": true,
+          "change": %*1
+        },
+        completionProvider: %*{
+          "resolveProvider": true,
+          "triggerCharacters": @[":", "(", "["]
+        },
+        definitionProvider: %*true,
+        hoverProvider: %*true,
+        referencesProvider: %*true,
+        workspaceSymbolProvider: %*true
+      )
+    )
+  )
+
+  if lsp_config.trace:
+    stderr.writeLine("Gene LSP Server started in stdio mode")
+
+  while true:
+    try:
+      let message = readStdioMessage()
+      if message.len == 0:
+        # EOF or empty message - exit
+        break
+
+      if lsp_config.trace:
+        stderr.writeLine("LSP Request: " & message[0..min(100, message.len-1)] & "...")
+
+      # Handle the request synchronously
+      let response = waitFor handle_lsp_request(message)
+
+      # Check if this is a notification (no response expected) or has null id
+      let json_data = parseJson(message)
+      if json_data.hasKey("id") and json_data["id"].kind != JNull:
+        writeStdioMessage(response)
+        if lsp_config.trace:
+          stderr.writeLine("LSP Response: " & response[0..min(100, response.len-1)] & "...")
+
+      # Check for exit notification
+      if json_data.hasKey("method") and json_data["method"].getStr() == "exit":
+        break
+
+    except IOError:
+      # EOF or broken pipe - exit gracefully
+      break
+    except CatchableError as e:
+      if lsp_config.trace:
+        stderr.writeLine("LSP Error: " & e.msg)
