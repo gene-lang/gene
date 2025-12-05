@@ -4,8 +4,12 @@
   "description": "Language support for Gene programming language",
   "version": "0.1.0",
   "publisher": "gene-lang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gene-lang/gene"
+  },
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.75.0"
   },
   "categories": [
     "Programming Languages"
@@ -38,24 +42,20 @@
         "path": "./syntaxes/gene.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "gene.restartServer",
+        "title": "Gene: Restart Language Server"
+      }
+    ],
     "configuration": {
       "type": "object",
-      "title": "Gene Language Server",
+      "title": "Gene",
       "properties": {
         "gene.lsp.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable Gene Language Server"
-        },
-        "gene.lsp.port": {
-          "type": "number",
-          "default": 8080,
-          "description": "Gene Language Server port"
-        },
-        "gene.lsp.host": {
-          "type": "string",
-          "default": "localhost",
-          "description": "Gene Language Server host"
         },
         "gene.lsp.trace": {
           "type": "boolean",
@@ -68,17 +68,16 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "npx vsce package --no-dependencies"
   },
   "devDependencies": {
-    "@types/vscode": "^1.60.0",
-    "@types/node": "^16.x",
-    "typescript": "^4.4.4"
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.x",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
-    "vscode-languageclient": "^7.0.0"
+    "vscode-languageclient": "^9.0.0"
   },
-  "activationEvents": [
-    "onLanguage:gene"
-  ]
+  "activationEvents": []
 }
