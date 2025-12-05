@@ -16,6 +16,8 @@
 tmp/
 bin/
 build/
+out/
+node_modules/
 benchmark-results/
 .lsp/
 tests/test_wip.nim
