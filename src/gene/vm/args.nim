@@ -32,138 +32,62 @@ proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instan
 # Forward declaration for original process_args function
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)
 
-# Optimized version for zero arguments
-proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
-  ## Ultra-fast path for zero-argument functions
-  while scope.members.len < matcher.children.len:
-    scope.members.add(NIL)
-
-  # Apply default values or empty arrays for rest parameters
-  for i, param in matcher.children:
-    if param.is_splat:
-      # Rest parameter with no arguments gets empty array
-      scope.members[i] = new_array_value()
-    elif param.has_default():
-      scope.members[i] = param.default_value
-    elif param.required():
-      raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
-
-  assign_property_params(matcher, scope)
-
-# Optimized version for single argument
-proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.} =
-  ## Ultra-fast path for single-argument functions
-  while scope.members.len < matcher.children.len:
-    scope.members.add(NIL)
-
-  if matcher.children.len == 0:
-    raise new_exception(types.Exception, "Expected 0 arguments, got 1")
-
-  let first_param = matcher.children[0]
-  if first_param.is_splat:
-    # First parameter is rest - collect the single arg into an array
-    let rest_array = new_array_value()
-    rest_array.ref.arr.add(arg)
-    scope.members[0] = rest_array
-    # Rest parameters for remaining params
-    for i in 1..<matcher.children.len:
-      let param = matcher.children[i]
-      if param.is_splat:
-        scope.members[i] = new_array_value()
-      elif param.has_default():
-        scope.members[i] = param.default_value
-      elif param.required():
-        raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got 1")
+proc key_to_name(key: Key): string {.inline.} =
+  let idx = key.int64
+  if idx >= 0 and idx < SYMBOLS.store.len.int64:
+    result = get_symbol(idx.int)
   else:
-    scope.members[0] = arg
-    # Apply defaults or empty arrays for remaining parameters
-    for i in 1..<matcher.children.len:
-      let param = matcher.children[i]
-      if param.is_splat:
-        scope.members[i] = new_array_value()
-      elif param.has_default():
-        scope.members[i] = param.default_value
-      elif param.required():
-        raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got 1")
-  assign_property_params(matcher, scope)
+    result = "<keyword>"
 
-proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
-                         arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
-  ## Process arguments directly from stack to scope
-  ## Supports positional and keyword (property) arguments.
-
-  # Pure positional fast path
+proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
+                      pos_count: int, keywords: seq[(Key, Value)],
+                      scope: Scope) {.inline.} =
+  ## Shared argument binding logic for positional/keyword combinations.
   while scope.members.len < matcher.children.len:
     scope.members.add(NIL)
   for i in 0..<matcher.children.len:
     scope.members[i] = NIL
 
-  if arg_count == 0:
-    for i, param in matcher.children:
-      if param.is_splat:
-        scope.members[i] = new_array_value()
-      elif param.has_default():
-        scope.members[i] = param.default_value
-      elif param.required():
-        raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
-    assign_property_params(matcher, scope)
-    return
+  var used_param_indices = initHashSet[int]()
+  var used_keys = initHashSet[Key]()
+  var prop_splat_index = -1
 
-  var pos_index = 0
-  var has_splat = false
-  for i, param in matcher.children:
-    if param.is_splat:
-      let rest_array = new_array_value()
-      while pos_index < arg_count:
-        rest_array.ref.arr.add(args[pos_index])
-        pos_index.inc()
-      scope.members[i] = rest_array
-      has_splat = true
-    elif pos_index < arg_count:
-      scope.members[i] = args[pos_index]
-      pos_index.inc()
-    elif param.has_default():
-      scope.members[i] = param.default_value
-    elif param.required():
-      raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $arg_count)
-
-  if not has_splat and pos_index < arg_count:
-    raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $arg_count)
-
-  assign_property_params(matcher, scope)
-
-proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
-                            pos_count: int, keywords: seq[(Key, Value)],
-                            scope: Scope) {.inline.} =
-  ## Optimized processing when keyword arguments are provided separately.
-  while scope.members.len < matcher.children.len:
-    scope.members.add(NIL)
-  for i in 0..<matcher.children.len:
-    scope.members[i] = NIL
-
-  var used_indices = initHashSet[int]()
   if keywords.len > 0:
     var kw_table = initTable[Key, Value]()
     for (k, v) in keywords:
       kw_table[k] = v
 
     for i, param in matcher.children:
-      if param.is_prop and kw_table.hasKey(param.name_key):
+      if (param.kind == MatchProp or param.is_prop) and kw_table.hasKey(param.name_key):
         scope.members[i] = kw_table[param.name_key]
-        used_indices.incl(i)
+        used_param_indices.incl(i)
+        used_keys.incl(param.name_key)
 
   var pos_index = 0
-  var has_splat = false
+  var has_value_splat = false
   for i, param in matcher.children:
-    if i in used_indices:
+    if i in used_param_indices:
       continue
+
+    let is_prop_param = param.kind == MatchProp or param.is_prop
+    if is_prop_param:
+      if param.is_splat:
+        if prop_splat_index < 0:
+          prop_splat_index = i
+      elif param.has_default():
+        scope.members[i] = param.default_value
+      elif param.required():
+        let name = key_to_name(param.name_key)
+        raise new_exception(types.Exception, "Missing keyword argument: " & name)
+      continue
+
     if param.is_splat:
       let rest_array = new_array_value()
       while pos_index < pos_count:
         rest_array.ref.arr.add(positional[pos_index])
         pos_index.inc()
       scope.members[i] = rest_array
-      has_splat = true
+      has_value_splat = true
     elif pos_index < pos_count:
       scope.members[i] = positional[pos_index]
       pos_index.inc()
@@ -172,67 +96,55 @@ proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArra
     elif param.required():
       raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $pos_count)
 
-  if not has_splat and pos_index < pos_count:
+  if prop_splat_index >= 0:
+    var rest_map = new_map_value()
+    if keywords.len > 0:
+      for (k, v) in keywords:
+        if k notin used_keys:
+          rest_map.ref.map[k] = v
+    scope.members[prop_splat_index] = rest_map
+
+  if not has_value_splat and pos_index < pos_count:
     raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $pos_count)
 
   assign_property_params(matcher, scope)
+
+# Optimized version for zero arguments
+proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
+  ## Ultra-fast path for zero-argument functions
+  process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope)
+
+# Optimized version for single argument
+proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.} =
+  ## Ultra-fast path for single-argument functions
+  var arr = [arg]
+  process_args_core(matcher, cast[ptr UncheckedArray[Value]](arr[0].addr), 1, @[], scope)
+
+proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
+                         arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
+  ## Process arguments directly from stack to scope
+  ## Supports positional arguments only (keywords handled by process_args_direct_kw).
+  process_args_core(matcher, args, arg_count, @[], scope)
+
+proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
+                            pos_count: int, keywords: seq[(Key, Value)],
+                            scope: Scope) {.inline.} =
+  ## Optimized processing when keyword arguments are provided separately.
+  process_args_core(matcher, positional, pos_count, keywords, scope)
 
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
   ## Process function arguments and bind them to the scope
   ## Handles both positional and named arguments
 
-  # Ensure scope.members has enough slots for all parameters
-  for i, param in matcher.children:
-    scope.members.add(NIL)
+  var positional: seq[Value] = @[]
+  var keywords: seq[(Key, Value)] = @[]
 
-  if args.kind != VkGene:
-    # No arguments provided, use defaults or empty arrays for rest parameters
-    for i, param in matcher.children:
-      if param.is_splat:
-        scope.members[i] = new_array_value()
-      elif param.has_default():
-        scope.members[i] = param.default_value
-      elif param.required():
-        raise new_exception(types.Exception, "Expected at least " & $(i + 1) & " arguments, got 0")
-    return
-  
-  let positional = args.gene.children
-  let named = args.gene.props
-  
-  # First pass: bind named arguments
-  var used_indices = initHashSet[int]()
-  for i, param in matcher.children:
-    if param.is_prop and named.hasKey(param.name_key):
-      # Named argument provided
-      scope.members[i] = named[param.name_key]
-      used_indices.incl(i)
-  
-  # Second pass: bind positional arguments
-  var pos_index = 0
-  var has_splat = false
-  for i, param in matcher.children:
-    if i notin used_indices:
-      if param.is_splat:
-        # Rest parameter - collect all remaining positional arguments into an array
-        let rest_array = new_array_value()
-        while pos_index < positional.len:
-          rest_array.ref.arr.add(positional[pos_index])
-          pos_index.inc()
-        scope.members[i] = rest_array
-        has_splat = true
-      elif pos_index < positional.len:
-        # Fill in positional argument
-        scope.members[i] = positional[pos_index]
-        pos_index.inc()
-      elif param.has_default():
-        # Use default value
-        scope.members[i] = param.default_value
-      elif param.required():
-        # No value provided and no default
-        raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $positional.len)
+  if args.kind == VkGene:
+    positional = args.gene.children
+    for k, v in args.gene.props:
+      keywords.add((k, v))
 
-  if not has_splat and pos_index < positional.len:
-    raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $positional.len)
-
-  assign_property_params(matcher, scope)
+  let pos_ptr = if positional.len > 0: cast[ptr UncheckedArray[Value]](positional[0].addr)
+                else: cast[ptr UncheckedArray[Value]](nil)
+  process_args_core(matcher, pos_ptr, positional.len, keywords, scope)
   
