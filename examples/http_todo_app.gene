@@ -237,7 +237,7 @@
   )
 
   (.fn construct_handler middleware_index
-    (if (middleware_index < ((/middlewares) .size))
+    (if (middleware_index < (/middlewares .size))
       (var middleware (/middlewares ./ middleware_index))
       (var handler    (.construct_handler (middleware_index + 1)))
       (middleware handler)
@@ -250,8 +250,12 @@
     (println "Starting HTTP server at port" /port "...")
 
     (var root_handler (.construct_handler 0))
-    (genex/http/start_server /port root_handler)
-    (genex/http/run_forever)
+    (if genex/http
+      (genex/http/start_server /port root_handler)
+      (genex/http/run_forever)
+    else
+      (println "HTTP extension unavailable; skipping server start.")
+    )
   )
 )
 
@@ -623,7 +627,7 @@
     (/mappings = [])
   )
 
-  (.fn map [^options... path controller action = "index"]
+  (.fn map [path controller action = "index" options = {}]
     (var http_methods [])
     (for method in ["GET" "POST" "PUT" "PATCH" "DELETE"]
       (if (options ./ method)
@@ -652,11 +656,11 @@
   (println "create_router: Mapping 1...")
   (r .map "/" HomeController)
   (println "create_router: Mapping 2...")
-  (r .map ^^POST   "/todos" TodosController :create)
+  (r .map "/todos" TodosController :create {^POST true})
   (println "create_router: Mapping 3...")
-  (r .map ^^PATCH  "/todos" TodosController :update)
+  (r .map "/todos" TodosController :update {^PATCH true})
   (println "create_router: Mapping 4...")
-  (r .map ^^DELETE "/todos" TodosController :delete)
+  (r .map "/todos" TodosController :delete {^DELETE true})
   (println "create_router: Mapping 5...")
   (r .map          "/todos" TodosController)
   (println "create_router: All mappings added")

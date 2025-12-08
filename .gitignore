@@ -38,6 +38,9 @@ tests/test_*
 nimcache/
 *.exe
 
+# VS Code extension output
+*.vsix
+
 gene-new/
 gene-rust/
 
