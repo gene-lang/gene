@@ -1788,17 +1788,22 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   var definitely_not_macro = false
   if gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    # Exception: control flow keywords might still need special handling
-    if func_name in ["return", "break", "continue", "throw"]:
+    # Macro names end with '!'; everything else (except control keywords) can use fast path.
+    if func_name.endsWith("!"):
       definitely_not_macro = false
+    elif func_name in ["return", "break", "continue", "throw"]:
+      definitely_not_macro = false
+    else:
+      definitely_not_macro = true
   elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
     # Selector results are not macros
     definitely_not_macro = true
   elif gene.type.kind == VkComplexSymbol:
     let parts = gene.type.ref.csymbol
-    if parts.len > 0 and parts[0].startsWith("@"):
-      # Selector results are not macros
-      definitely_not_macro = true
+    if parts.len > 0:
+      if parts[0].startsWith("@"):
+        # Selector results are not macros
+        definitely_not_macro = true
 
   # Detect spreads across properties and children
   var has_spread = false

@@ -50,9 +50,17 @@ proc compile_baseline*(vm: VirtualMachine, fn: Function): JitCompiled =
   elif defined(arm64) and defined(geneJit):
     compiled = compile_function_arm64(vm, fn)
     if compiled.is_nil:
-      fn.jit_status = JsFailed
-      vm.jit.stats.compilation_failures.inc()
-      return nil
+      # Fallback thunk to interpreter trampoline if compilation declined.
+      let thunk = build_jmp_thunk(cast[pointer](jit_interpreter_trampoline))
+      compiled = JitCompiled(
+        entry: cast[JittedFn](thunk.code),
+        code: thunk.code,
+        size: thunk.size,
+        bytecode_version: if fn.body_compiled != nil: cast[uint64](fn.body_compiled.id) else: 0'u64,
+        bytecode_len: if fn.body_compiled != nil: fn.body_compiled.instructions.len else: 0,
+        built_for_arch: "arm64",
+        uses_vm_stack: false
+      )
   else:
     compiled.entry = jit_interpreter_trampoline
     compiled.code = nil

@@ -94,7 +94,12 @@ proc jit_interpreter_trampoline*(vm: VirtualMachine, fn_value: Value, args: ptr 
   ## JIT entry that delegates to the interpreter (used until native codegen arrives).
   if fn_value.kind != VkFunction:
     raise new_exception(types.Exception, "JIT entry expected a function value")
-  vm.exec_function_ptr(fn_value, args, arg_count)
+  let was_enabled = vm.jit.enabled
+  vm.jit.enabled = false   # Avoid re-entering the JIT while interpreting
+  try:
+    result = vm.exec_function_ptr(fn_value, args, arg_count)
+  finally:
+    vm.jit.enabled = was_enabled
 
 proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): bool {.inline.} =
   ## Attempt to run a hot function through the JIT entry point (stub today).
