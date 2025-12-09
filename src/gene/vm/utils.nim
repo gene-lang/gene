@@ -312,9 +312,7 @@ proc jit_gene_end*(vm: VirtualMachine): Value {.exportc, cdecl.} =
       # Function call: invoke via interpreter for efficient frame pooling
       let args = current.gene.children
       let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].unsafeAddr) else: nil
-      let res = jit_call_function(vm, target, args_ptr, args.len)
-      vm.jit_stack_push_value(res)
-      result = res
+      result = jit_call_function(vm, target, args_ptr, args.len)
     else:
       # Not a function call, just push the gene value
       vm.jit_stack_push_value(current)
@@ -326,7 +324,7 @@ proc jit_gene_end*(vm: VirtualMachine): Value {.exportc, cdecl.} =
     var args_seq: seq[Value] = @[]
     if frame.args.kind == VkGene:
       args_seq = frame.args.gene.children
-    let res = jit_call_function_with_frame(
+    result = jit_call_function_with_frame(
       vm,
       target,
       if args_seq.len > 0: cast[ptr UncheckedArray[Value]](args_seq[0].addr) else: nil,
@@ -334,8 +332,6 @@ proc jit_gene_end*(vm: VirtualMachine): Value {.exportc, cdecl.} =
       frame
     )
     frame.free()
-    vm.jit_stack_push_value(res)
-    result = res
   else:
     raise new_exception(type_defs.Exception, "GeneEnd unsupported for " & $current.kind)
 
@@ -351,16 +347,14 @@ proc jit_throw*(vm: VirtualMachine) {.exportc, cdecl.} =
 proc jit_unified_call0*(vm: VirtualMachine) {.exportc, cdecl.} =
   ## Zero-argument function call: target is on stack, call via interpreter and push result.
   let target = vm.jit_stack_pop_value()
-  let result = jit_call_function(vm, target, nil, 0)
-  vm.jit_stack_push_value(result)
+  discard jit_call_function(vm, target, nil, 0)
 
 proc jit_unified_call1*(vm: VirtualMachine) {.exportc, cdecl.} =
   ## Single-argument function call: arg and target on stack, call via interpreter and push result.
   let arg = vm.jit_stack_pop_value()
   let target = vm.jit_stack_pop_value()
   var args_arr = [arg]
-  let result = jit_call_function(vm, target, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1)
-  vm.jit_stack_push_value(result)
+  discard jit_call_function(vm, target, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1)
 
 proc jit_unified_call*(vm: VirtualMachine, arg_count: int) {.exportc, cdecl.} =
   ## Multi-argument function call: args and target on stack, call via interpreter and push result.
@@ -369,8 +363,7 @@ proc jit_unified_call*(vm: VirtualMachine, arg_count: int) {.exportc, cdecl.} =
     args_seq[i] = vm.jit_stack_pop_value()
   let target = vm.jit_stack_pop_value()
   let args_ptr = if arg_count > 0: cast[ptr UncheckedArray[Value]](args_seq[0].addr) else: nil
-  let result = jit_call_function(vm, target, args_ptr, arg_count)
-  vm.jit_stack_push_value(result)
+  discard jit_call_function(vm, target, args_ptr, arg_count)
 
 proc resolve_scope_with_parent(vm: VirtualMachine, slot: int, parent_depth: int): Value =
   ## Helper to resolve a scope slot honoring parent depth for JIT helpers.

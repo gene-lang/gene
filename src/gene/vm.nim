@@ -226,9 +226,78 @@ proc jit_call_function_with_frame*(vm: VirtualMachine, target: Value, args: ptr 
   vm.exec_function_ptr(target, args, arg_count)
 
 proc jit_call_function*(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, exportc.} =
-  ## Helper for JIT helpers: call function via interpreter for efficient frame pooling.
-  ## This bypasses JIT re-entry to avoid frame allocation explosion on recursion.
-  vm.exec_function_ptr(target, args, arg_count)
+  ## Helper for JIT helpers: call a callable from JIT-compiled code.
+  ## Prefer the already-compiled JIT entry (uses_vm_stack=true) to avoid
+  ## bouncing recursive calls back through the interpreter. Fall back to
+  ## the interpreter when no JIT is available.
+  if target.kind != VkFunction:
+    return vm.exec_function_ptr(target, args, arg_count)
+
+  let f = target.ref.fn
+  vm.jit_track_call(f)
+
+  if f.body_compiled == nil:
+    f.compile()
+
+  # Only reuse the JIT if it operates on the VM stack; otherwise fall back.
+  let can_use_jit = f.jit_compiled != nil and f.jit_compiled.uses_vm_stack
+  if not can_use_jit:
+    return vm.exec_function_ptr(target, args, arg_count)
+
+  # Set up a callee frame just like run_compiled, but without the extra
+  # interpreter push/pop layers.
+  var scope: Scope
+  if f.matcher.is_empty():
+    scope = f.parent_scope
+    if scope != nil:
+      scope.ref_count.inc()
+  else:
+    scope = new_scope(f.scope_tracker, f.parent_scope)
+    if arg_count == 0:
+      process_args_zero(f.matcher, scope)
+    elif arg_count == 1 and args != nil:
+      process_args_one(f.matcher, args[0], scope)
+    else:
+      process_args_direct(f.matcher, args, arg_count, false, scope)
+
+  let saved_frame = vm.frame
+  let saved_cu = vm.cu
+  let saved_pc = vm.pc
+
+  var new_frame = new_frame()
+  new_frame.kind = FkFunction
+  new_frame.target = target
+  new_frame.scope = scope
+  new_frame.ns = f.ns
+  if saved_frame != nil:
+    saved_frame.ref_count.inc()
+  new_frame.caller_frame = saved_frame
+  new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+  new_frame.from_exec_function = true
+
+  let args_gene = new_gene_value()
+  if arg_count > 0 and args != nil:
+    for i in 0..<arg_count:
+      args_gene.gene.children.add(args[i])
+  new_frame.args = args_gene
+
+  var result: Value
+  try:
+    vm.frame = new_frame
+    vm.cu = f.body_compiled
+    vm.pc = 0
+    result = f.jit_compiled.entry(vm, target, args, arg_count)
+  finally:
+    vm.frame = saved_frame
+    vm.cu = saved_cu
+    vm.pc = saved_pc
+    new_frame.scope = nil
+    new_frame.free()
+
+  # Match interpreter semantics: leave the return value on the caller stack.
+  if vm.frame != nil:
+    vm.frame.push(result)
+  result
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:

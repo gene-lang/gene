@@ -144,6 +144,16 @@ when defined(amd64):
         has_return = true
       of IkThrow:
         buf.emit_helper_call(cast[pointer](jit_throw))
+      of IkUnifiedCall0:
+        buf.emit_helper_call(cast[pointer](jit_unified_call0))
+      of IkUnifiedCall1:
+        buf.emit_helper_call(cast[pointer](jit_unified_call1))
+      of IkUnifiedCall:
+        let arg_count = inst.arg1.int64.int
+        if arg_count < int32.low or arg_count > int32.high:
+          return nil
+        buf.code.emit_mov_reg_imm32(6, arg_count.int32) # rsi = arg_count
+        buf.emit_helper_call(cast[pointer](jit_unified_call))
       else:
         when defined(geneJitDebug):
           echo "x64 jit unsupported ", inst.kind
@@ -308,6 +318,16 @@ when defined(arm64):
         has_return = true
       of IkThrow:
         call_helper(cast[pointer](jit_throw))
+      of IkUnifiedCall0:
+        call_helper(cast[pointer](jit_unified_call0))
+      of IkUnifiedCall1:
+        call_helper(cast[pointer](jit_unified_call1))
+      of IkUnifiedCall:
+        let arg_count = inst.arg1.int64.int
+        if arg_count < int32.low or arg_count > int32.high:
+          return nil
+        buf.emit_mov_reg_imm64(1, cast[uint64](arg_count)) # x1 = arg_count
+        call_helper(cast[pointer](jit_unified_call))
       else:
         when defined(geneJitDebug):
           echo "arm64 jit unsupported ", inst.kind, " at ", idx
