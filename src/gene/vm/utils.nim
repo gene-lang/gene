@@ -261,29 +261,12 @@ proc jit_gene_start*(vm: VirtualMachine) {.exportc, cdecl.} =
   vm.jit_stack_push_value(new_gene_value())
 
 proc jit_gene_start_default*(vm: VirtualMachine) {.exportc, cdecl.} =
-  ## Prepare call frame for a regular function invocation (minimal subset).
+  ## Prepare a gene-like value for function call. We don't allocate frames here
+  ## to avoid double allocation - let exec_function handle frame pooling efficiently.
   let gene_type = vm.jit_stack_pop_value()
-  case gene_type.kind
-  of VkFunction:
-    let f = gene_type.ref.fn
-    var scope: Scope
-    if f.matcher.is_empty():
-      scope = f.parent_scope
-      if scope != nil:
-        scope.ref_count.inc()
-    else:
-      scope = new_scope(f.scope_tracker, f.parent_scope)
-
-    var r = new_ref(VkFrame)
-    r.frame = new_frame()
-    r.frame.kind = FkFunction
-    r.frame.target = gene_type
-    r.frame.scope = scope
-    vm.jit_stack_push_value(r.to_ref_value())
-  else:
-    var g = new_gene_value()
-    g.gene.type = gene_type
-    vm.jit_stack_push_value(g)
+  var g = new_gene_value()
+  g.gene.type = gene_type
+  vm.jit_stack_push_value(g)
 
 proc jit_gene_set_type*(vm: VirtualMachine) {.exportc, cdecl.} =
   ## Set the type on the current gene-like value.
@@ -320,16 +303,29 @@ proc jit_gene_add_child*(vm: VirtualMachine) {.exportc, cdecl.} =
     raise new_exception(type_defs.Exception, "GeneAddChild unsupported for " & $current.kind)
 
 proc jit_gene_end*(vm: VirtualMachine): Value {.exportc, cdecl.} =
-  ## Finalize a gene or frame; for functions, call via the interpreter trampoline.
+  ## Finalize a gene: if it's a function call, invoke via interpreter.
   let current = vm.jit_stack_pop_value()
   case current.kind
+  of VkGene:
+    let target = current.gene.type
+    if target.kind == VkFunction:
+      # Function call: invoke via interpreter for efficient frame pooling
+      let args = current.gene.children
+      let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].unsafeAddr) else: nil
+      let res = jit_call_function(vm, target, args_ptr, args.len)
+      vm.jit_stack_push_value(res)
+      result = res
+    else:
+      # Not a function call, just push the gene value
+      vm.jit_stack_push_value(current)
+      result = current
   of VkFrame:
+    # Legacy frame handling - should rarely be used now
     var frame = current.ref.frame
     let target = frame.target
     var args_seq: seq[Value] = @[]
     if frame.args.kind == VkGene:
       args_seq = frame.args.gene.children
-    # Use jit_call_function_with_frame to reuse the frame and avoid double allocation
     let res = jit_call_function_with_frame(
       vm,
       target,
@@ -337,13 +333,9 @@ proc jit_gene_end*(vm: VirtualMachine): Value {.exportc, cdecl.} =
       args_seq.len,
       frame
     )
-    # Free the frame after use to return it to the pool
     frame.free()
     vm.jit_stack_push_value(res)
     result = res
-  of VkGene:
-    vm.jit_stack_push_value(current)
-    result = current
   else:
     raise new_exception(type_defs.Exception, "GeneEnd unsupported for " & $current.kind)
 
@@ -355,3 +347,211 @@ proc jit_throw*(vm: VirtualMachine) {.exportc, cdecl.} =
   ## Minimal throw implementation for JIT paths.
   let value = vm.jit_stack_pop_value()
   raise new_exception(type_defs.Exception, "Gene exception: " & $value)
+
+proc jit_unified_call0*(vm: VirtualMachine) {.exportc, cdecl.} =
+  ## Zero-argument function call: target is on stack, call via interpreter and push result.
+  let target = vm.jit_stack_pop_value()
+  let result = jit_call_function(vm, target, nil, 0)
+  vm.jit_stack_push_value(result)
+
+proc jit_unified_call1*(vm: VirtualMachine) {.exportc, cdecl.} =
+  ## Single-argument function call: arg and target on stack, call via interpreter and push result.
+  let arg = vm.jit_stack_pop_value()
+  let target = vm.jit_stack_pop_value()
+  var args_arr = [arg]
+  let result = jit_call_function(vm, target, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1)
+  vm.jit_stack_push_value(result)
+
+proc jit_unified_call*(vm: VirtualMachine, arg_count: int) {.exportc, cdecl.} =
+  ## Multi-argument function call: args and target on stack, call via interpreter and push result.
+  var args_seq = newSeq[Value](arg_count)
+  for i in countdown(arg_count - 1, 0):
+    args_seq[i] = vm.jit_stack_pop_value()
+  let target = vm.jit_stack_pop_value()
+  let args_ptr = if arg_count > 0: cast[ptr UncheckedArray[Value]](args_seq[0].addr) else: nil
+  let result = jit_call_function(vm, target, args_ptr, arg_count)
+  vm.jit_stack_push_value(result)
+
+proc resolve_scope_with_parent(vm: VirtualMachine, slot: int, parent_depth: int): Value =
+  ## Helper to resolve a scope slot honoring parent depth for JIT helpers.
+  if vm.frame.is_nil or vm.frame.scope.isNil:
+    raise new_exception(type_defs.Exception, "JIT Var op requires an active scope")
+  var scope = vm.frame.scope
+  for _ in 0..<parent_depth:
+    if scope.parent.isNil:
+      raise new_exception(type_defs.Exception, "JIT Var op parent scope missing")
+    scope = scope.parent
+  if slot < 0 or slot >= scope.members.len:
+    raise new_exception(type_defs.Exception, "JIT Var op out of bounds")
+  scope.members[slot]
+
+proc jit_scope_start*(vm: VirtualMachine, tracker_val: Value) {.exportc, cdecl.} =
+  ## Create a new scope with an optional tracker and set it on the current frame.
+  if vm.frame.is_nil:
+    raise new_exception(type_defs.Exception, "JIT ScopeStart requires an active frame")
+  var tracker: ScopeTracker
+  if tracker_val.kind == VkNil:
+    tracker = new_scope_tracker()
+  elif tracker_val.kind == VkScopeTracker:
+    tracker = tracker_val.ref.scope_tracker
+  else:
+    raise new_exception(type_defs.Exception, "IkScopeStart: expected ScopeTracker or Nil, got " & $tracker_val.kind)
+  vm.frame.scope = new_scope(tracker, vm.frame.scope)
+
+proc jit_scope_end*(vm: VirtualMachine) {.exportc, cdecl.} =
+  ## End the current scope, restoring the parent.
+  if vm.frame.is_nil or vm.frame.scope.isNil:
+    raise new_exception(type_defs.Exception, "JIT ScopeEnd requires an active scope")
+  let old_scope = vm.frame.scope
+  vm.frame.scope = vm.frame.scope.parent
+  old_scope.free()
+
+proc jit_var_le_value*(vm: VirtualMachine, slot: int, parent_depth: int, literal_value: Value) {.exportc, cdecl.} =
+  ## Compare variable at slot (with parent depth) to a literal (<=), push true/false.
+  let var_value = vm.resolve_scope_with_parent(slot, parent_depth)
+  var result: bool
+  case var_value.kind
+  of VkInt:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.int64 <= literal_value.int64
+    of VkFloat:
+      result = var_value.int64.float <= literal_value.float
+    else:
+      result = false
+  of VkFloat:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.float <= literal_value.int64.float
+    of VkFloat:
+      result = var_value.float <= literal_value.float
+    else:
+      result = false
+  else:
+    result = false
+  vm.jit_stack_push_value(if result: TRUE else: FALSE)
+
+proc jit_var_lt_value*(vm: VirtualMachine, slot: int, parent_depth: int, literal_value: Value) {.exportc, cdecl.} =
+  ## Compare variable at slot (with parent depth) to a literal (<), push true/false.
+  let var_value = vm.resolve_scope_with_parent(slot, parent_depth)
+  var result: bool
+  case var_value.kind
+  of VkInt:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.int64 < literal_value.int64
+    of VkFloat:
+      result = var_value.int64.float < literal_value.float
+    else:
+      result = false
+  of VkFloat:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.float < literal_value.int64.float
+    of VkFloat:
+      result = var_value.float < literal_value.float
+    else:
+      result = false
+  else:
+    result = false
+  vm.jit_stack_push_value(if result: TRUE else: FALSE)
+
+proc jit_var_gt_value*(vm: VirtualMachine, slot: int, parent_depth: int, literal_value: Value) {.exportc, cdecl.} =
+  ## Compare variable at slot (with parent depth) to a literal (>), push true/false.
+  let var_value = vm.resolve_scope_with_parent(slot, parent_depth)
+  var result: bool
+  case var_value.kind
+  of VkInt:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.int64 > literal_value.int64
+    of VkFloat:
+      result = var_value.int64.float > literal_value.float
+    else:
+      result = false
+  of VkFloat:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.float > literal_value.int64.float
+    of VkFloat:
+      result = var_value.float > literal_value.float
+    else:
+      result = false
+  else:
+    result = false
+  vm.jit_stack_push_value(if result: TRUE else: FALSE)
+
+proc jit_var_ge_value*(vm: VirtualMachine, slot: int, parent_depth: int, literal_value: Value) {.exportc, cdecl.} =
+  ## Compare variable at slot (with parent depth) to a literal (>=), push true/false.
+  let var_value = vm.resolve_scope_with_parent(slot, parent_depth)
+  var result: bool
+  case var_value.kind
+  of VkInt:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.int64 >= literal_value.int64
+    of VkFloat:
+      result = var_value.int64.float >= literal_value.float
+    else:
+      result = false
+  of VkFloat:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.float >= literal_value.int64.float
+    of VkFloat:
+      result = var_value.float >= literal_value.float
+    else:
+      result = false
+  else:
+    result = false
+  vm.jit_stack_push_value(if result: TRUE else: FALSE)
+
+proc jit_var_eq_value*(vm: VirtualMachine, slot: int, parent_depth: int, literal_value: Value) {.exportc, cdecl.} =
+  ## Compare variable at slot (with parent depth) to a literal (==), push true/false.
+  let var_value = vm.resolve_scope_with_parent(slot, parent_depth)
+  var result: bool
+  case var_value.kind
+  of VkInt:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.int64 == literal_value.int64
+    of VkFloat:
+      result = var_value.int64.float == literal_value.float
+    else:
+      result = false
+  of VkFloat:
+    case literal_value.kind
+    of VkInt:
+      result = var_value.float == literal_value.int64.float
+    of VkFloat:
+      result = var_value.float == literal_value.float
+    else:
+      result = false
+  else:
+    result = false
+  vm.jit_stack_push_value(if result: TRUE else: FALSE)
+
+proc jit_var_sub_value*(vm: VirtualMachine, slot: int, parent_depth: int, literal_value: Value) {.exportc, cdecl.} =
+  ## Subtract literal value from variable at slot (with parent depth), push result.
+  let var_value = vm.resolve_scope_with_parent(slot, parent_depth)
+  var result: Value
+  case var_value.kind
+  of VkInt:
+    case literal_value.kind
+    of VkInt:
+      result = (var_value.int64 - literal_value.int64).to_value
+    of VkFloat:
+      result = (var_value.int64.float - literal_value.float).to_value
+    else:
+      result = NIL
+  of VkFloat:
+    case literal_value.kind
+    of VkInt:
+      result = (var_value.float - literal_value.int64.float).to_value
+    of VkFloat:
+      result = (var_value.float - literal_value.float).to_value
+    else:
+      result = NIL
+  else:
+    result = NIL
+  vm.jit_stack_push_value(result)

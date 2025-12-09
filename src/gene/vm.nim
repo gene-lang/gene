@@ -28,6 +28,7 @@ when not defined(noExtensions):
 
 proc exec*(self: VirtualMachine): Value
 proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
+proc exec_function_ptr*(self: VirtualMachine, fn: Value, args_ptr: ptr UncheckedArray[Value], arg_count: int): Value {.inline.}
 proc format_runtime_exception(self: VirtualMachine, value: Value): string
 proc spawn_thread(code: ptr Gene, return_value: bool): Value
 proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instruction): bool
@@ -91,12 +92,7 @@ proc jit_interpreter_trampoline*(vm: VirtualMachine, fn_value: Value, args: ptr 
   ## JIT entry that delegates to the interpreter (used until native codegen arrives).
   if fn_value.kind != VkFunction:
     raise new_exception(types.Exception, "JIT entry expected a function value")
-  var seq_args: seq[Value] = @[]
-  if args != nil and arg_count > 0:
-    seq_args.setLen(arg_count)
-    for i in 0 ..< arg_count:
-      seq_args[i] = args[i]
-  vm.exec_function(fn_value, seq_args)
+  vm.exec_function_ptr(fn_value, args, arg_count)
 
 proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): bool {.inline.} =
   ## Attempt to run a hot function through the JIT entry point (stub today).
@@ -123,6 +119,11 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
 
   proc run_compiled(compiled: JitCompiled): bool =
     if compiled.entry != nil:
+      if compiled.entry == jit_interpreter_trampoline and compiled.code == nil:
+        # No native JIT available; fall back to interpreter without extra frames.
+        f.jit_status = JsFailed
+        f.jit_compiled = nil
+        return false
       var result: Value
       if compiled.uses_vm_stack:
         # Set up a callee frame so the JIT can operate on the real VM stack.
@@ -163,11 +164,11 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
           self.pc = saved_pc
           new_frame.scope = nil
           new_frame.free()
-          if scope_owned and scope != nil:
-            scope.free()
       else:
         result = compiled.entry(self, fn_value, args, arg_count)
-      self.frame.push(result)
+      if compiled.entry != jit_interpreter_trampoline:
+        # Interpreter trampoline already pushed the result onto the caller frame.
+        self.frame.push(result)
       self.jit.stats.executions.inc()
       return true
     else:
@@ -213,111 +214,14 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
   return false
 
 proc jit_call_function_with_frame*(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int, reuse_frame: Frame): Value {.cdecl, exportc.} =
-  ## Helper for JIT: call function reusing a pre-allocated frame (avoids double allocation).
-  if target.kind != VkFunction:
-    return vm.exec_function(target, @[])
-
-  let f = target.ref.fn
-  # Check if JIT is applicable
-  when defined(amd64) or defined(arm64):
-    if vm.jit.enabled and not f.is_macro_like and not f.is_generator and not f.async and f.jit_status != JsFailed:
-      # Check for property parameters
-      var has_props = false
-      for param in f.matcher.children:
-        if param.is_prop:
-          has_props = true
-          break
-
-      if not has_props:
-        if f.body_compiled.is_nil():
-          f.compile()
-
-        # Compile if needed
-        when defined(arm64):
-          if f.jit_compiled.is_nil and f.jit_status == JsNone:
-            let compiled = compile_baseline(vm, f)
-            if compiled != nil:
-              f.jit_compiled = compiled
-              f.jit_status = JsCompiled
-            else:
-              # Note: compilation_failures already incremented in compile_baseline
-              f.jit_status = JsFailed
-
-        let compiled = f.jit_compiled
-        if compiled != nil and compiled.entry != nil and compiled.uses_vm_stack:
-          # OPTIMIZATION: Reuse the provided frame instead of allocating a new one
-          var scope = reuse_frame.scope
-          if scope == nil:
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              if scope != nil:
-                scope.ref_count.inc()
-            else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
-              if arg_count == 0:
-                process_args_zero(f.matcher, scope)
-              elif arg_count == 1 and args != nil:
-                process_args_one(f.matcher, args[0], scope)
-              else:
-                process_args_direct(f.matcher, args, arg_count, false, scope)
-          else:
-            # Process args into existing scope if needed
-            if not f.matcher.is_empty():
-              if arg_count == 0:
-                process_args_zero(f.matcher, scope)
-              elif arg_count == 1 and args != nil:
-                process_args_one(f.matcher, args[0], scope)
-              else:
-                process_args_direct(f.matcher, args, arg_count, false, scope)
-
-          reuse_frame.scope = scope
-          reuse_frame.ns = f.ns
-          reuse_frame.target = target
-
-          let saved_frame = vm.frame
-          let saved_cu = vm.cu
-          let saved_pc = vm.pc
-
-          try:
-            vm.frame = reuse_frame
-            vm.cu = f.body_compiled
-            vm.pc = 0
-            result = compiled.entry(vm, target, args, arg_count)
-          finally:
-            vm.frame = saved_frame
-            vm.cu = saved_cu
-            vm.pc = saved_pc
-            # Don't free reuse_frame here - caller owns it
-            reuse_frame.scope = nil
-
-          vm.frame.push(result)
-          vm.jit.stats.executions.inc()
-          return result
-
-  # Fallback to regular call
-  var seq_args: seq[Value] = @[]
-  if args != nil and arg_count > 0:
-    seq_args.setLen(arg_count)
-    for i in 0 ..< arg_count:
-      seq_args[i] = args[i]
-  vm.exec_function(target, seq_args)
+  ## Helper for JIT: call function via interpreter for efficient frame pooling.
+  ## This bypasses JIT re-entry to avoid frame allocation explosion on recursion.
+  vm.exec_function_ptr(target, args, arg_count)
 
 proc jit_call_function*(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, exportc.} =
-  ## Helper for JIT helpers: attempt JIT dispatch, otherwise fall back to exec_function.
-  if target.kind != VkFunction:
-    return vm.exec_function(target, @[])
-
-  if vm.maybe_call_jit_function(target, args, arg_count, false):
-    if vm.frame != nil and vm.frame.stack_index > 0:
-      return vm.frame.pop()
-    return NIL
-
-  var seq_args: seq[Value] = @[]
-  if args != nil and arg_count > 0:
-    seq_args.setLen(arg_count)
-    for i in 0 ..< arg_count:
-      seq_args[i] = args[i]
-  vm.exec_function(target, seq_args)
+  ## Helper for JIT helpers: call function via interpreter for efficient frame pooling.
+  ## This bypasses JIT re-entry to avoid frame allocation explosion on recursion.
+  vm.exec_function_ptr(target, args, arg_count)
 
 proc enter_function(self: VirtualMachine, name: string) {.inline.} =
   if self.profiling:
@@ -6613,6 +6517,62 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   let result = self.exec_continue()
   
   # The VM state should already be restored by return or IkEnd
+  return result
+
+# Fast path for JIT helpers: execute a function with arguments already stored in
+# a contiguous array to avoid per-call seq construction.
+proc exec_function_ptr*(self: VirtualMachine, fn: Value, args_ptr: ptr UncheckedArray[Value], arg_count: int): Value =
+  if fn.kind != VkFunction:
+    return NIL
+
+  let f = fn.ref.fn
+  self.jit_track_call(f)
+
+  if f.body_compiled == nil:
+    f.compile()
+
+  let saved_cu = self.cu
+  let saved_pc = self.pc
+  let saved_frame = self.frame
+
+  var scope: Scope
+  if f.matcher.is_empty():
+    scope = f.parent_scope
+    if scope != nil:
+      scope.ref_count.inc()
+  else:
+    scope = new_scope(f.scope_tracker, f.parent_scope)
+
+  let new_frame = new_frame()
+  new_frame.kind = FkFunction
+  new_frame.target = fn
+  new_frame.scope = scope
+  new_frame.ns = f.ns
+  if saved_frame != nil:
+    saved_frame.ref_count.inc()
+  new_frame.caller_frame = saved_frame
+  new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+  new_frame.from_exec_function = true
+
+  if not f.matcher.is_empty():
+    if arg_count == 0:
+      process_args_zero(f.matcher, scope)
+    elif arg_count == 1 and args_ptr != nil:
+      process_args_one(f.matcher, args_ptr[0], scope)
+    else:
+      process_args_direct(f.matcher, args_ptr, arg_count, false, scope)
+
+  let args_gene = new_gene_value()
+  if arg_count > 0 and args_ptr != nil:
+    for i in 0..<arg_count:
+      args_gene.gene.children.add(args_ptr[i])
+  new_frame.args = args_gene
+
+  self.frame = new_frame
+  self.cu = f.body_compiled
+  self.pc = 0
+
+  let result = self.exec_continue()
   return result
 
 proc exec*(self: VirtualMachine, code: string, module_name: string): Value =

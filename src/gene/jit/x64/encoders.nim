@@ -26,6 +26,11 @@ proc emit_mov_rsi_imm64*(code: var seq[uint8], imm: uint64) =
   code.emit([0x48'u8, 0xBE'u8])
   code.emit(cast[array[8, uint8]](imm))
 
+proc emit_mov_rdx_imm64*(code: var seq[uint8], imm: uint64) =
+  ## mov rdx, imm64
+  code.emit([0x48'u8, 0xBA'u8])
+  code.emit(cast[array[8, uint8]](imm))
+
 proc emit_mov_reg_imm32*(code: var seq[uint8], reg_opcode: uint8, imm: int32) =
   ## mov r/m64, imm32 with rm encoded in low 3 bits (ModR/M = 0xC0 + reg)
   code.emit([0x48'u8, 0xC7'u8, (0xC0'u8 or reg_opcode)])

@@ -35,6 +35,9 @@ when defined(amd64):
       case inst.kind
       of IkStart:
         discard
+      of IkGeneStartDefault, IkGeneStart, IkGeneSetType, IkGeneAddChild, IkTailCall, IkGeneEnd:
+        # Complex gene/tail-call handling not supported by the baseline JIT yet.
+        return nil
       of IkPushValue:
         buf.code.emit_mov_rsi_imm64(cast[uint64](inst.arg0))
         buf.emit_helper_call(cast[pointer](jit_stack_push_value))
@@ -48,6 +51,12 @@ when defined(amd64):
         buf.emit_helper_call(cast[pointer](jit_stack_swap))
       of IkPop:
         buf.emit_helper_call(cast[pointer](jit_stack_pop_discard))
+      of IkScopeStart, IkScopeEnd:
+        if inst.kind == IkScopeStart:
+          buf.code.emit_mov_rsi_imm64(cast[uint64](inst.arg0))
+          buf.emit_helper_call(cast[pointer](jit_scope_start))
+        else:
+          buf.emit_helper_call(cast[pointer](jit_scope_end))
       of IkJumpIfMatchSuccess:
         let idx = inst.arg0.int64.int
         if idx < int32.low or idx > int32.high:
@@ -72,6 +81,33 @@ when defined(amd64):
           return nil
         buf.code.emit_mov_reg_imm32(6, slot.int32) # rsi
         buf.emit_helper_call(cast[pointer](jit_var_assign_top))
+      of IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue, IkVarSubValue:
+        let slot = inst.arg0.int64.int
+        let parent_depth = inst.arg1.int64.int
+        if slot < int32.low or slot > int32.high:
+          return nil
+        if parent_depth < int32.low or parent_depth > int32.high:
+          return nil
+        if idx + 1 >= fn.body_compiled.instructions.len:
+          return nil
+        let literal_inst = fn.body_compiled.instructions[idx + 1]
+        let literal_value = literal_inst.arg0
+        buf.code.emit_mov_reg_imm32(6, slot.int32) # rsi = slot
+        buf.code.emit_mov_reg_imm32(2, parent_depth.int32) # rdx = parent depth
+        buf.code.emit_mov_rcx_imm64(cast[uint64](literal_value)) # rcx = literal
+        case inst.kind
+        of IkVarLtValue:
+          buf.emit_helper_call(cast[pointer](jit_var_lt_value))
+        of IkVarLeValue:
+          buf.emit_helper_call(cast[pointer](jit_var_le_value))
+        of IkVarGtValue:
+          buf.emit_helper_call(cast[pointer](jit_var_gt_value))
+        of IkVarGeValue:
+          buf.emit_helper_call(cast[pointer](jit_var_ge_value))
+        of IkVarEqValue:
+          buf.emit_helper_call(cast[pointer](jit_var_eq_value))
+        else:
+          buf.emit_helper_call(cast[pointer](jit_var_sub_value))
       of IkLt:
         buf.emit_helper_call(cast[pointer](jit_compare_lt))
       of IkLe:
@@ -82,23 +118,8 @@ when defined(amd64):
         buf.emit_helper_call(cast[pointer](jit_compare_ge))
       of IkEq:
         buf.emit_helper_call(cast[pointer](jit_compare_eq))
-      of IkGeneStartDefault:
-        buf.emit_helper_call(cast[pointer](jit_gene_start_default))
-        let target = inst.arg0.int64.int
-        if target < 0 or target >= fn.body_compiled.instructions.len:
-          return nil
-        buf.code.emit([0xE9'u8]) # jmp rel32
-        buf.add_patch(target, "jmp")
-      of IkGeneStart:
-        buf.emit_helper_call(cast[pointer](jit_gene_start))
-      of IkGeneSetType:
-        buf.emit_helper_call(cast[pointer](jit_gene_set_type))
-      of IkGeneAddChild:
-        buf.emit_helper_call(cast[pointer](jit_gene_add_child))
-      of IkTailCall:
-        buf.emit_helper_call(cast[pointer](jit_tail_call))
-      of IkGeneEnd:
-        buf.emit_helper_call(cast[pointer](jit_gene_end))
+      of IkData:
+        discard
       of IkJump:
         let target = inst.arg0.int64.int
         if target < 0 or target >= fn.body_compiled.instructions.len:
@@ -124,6 +145,8 @@ when defined(amd64):
       of IkThrow:
         buf.emit_helper_call(cast[pointer](jit_throw))
       else:
+        when defined(geneJitDebug):
+          echo "x64 jit unsupported ", inst.kind
         return nil
 
     if not has_return:
@@ -154,144 +177,162 @@ when defined(arm64):
     if fn.body_compiled.is_nil:
       return nil
 
-    when defined(geneJitArm64Native):
-      var buf = init_asm()
-      var has_return = false
+    var buf = init_asm()
+    var has_return = false
 
-      # Prologue: save VM pointer and return address.
-      buf.code.emit_sub_sp_imm(16)
-      buf.code.emit_str_sp_imm(0, 0)   # save vm (x0)
-      buf.code.emit_str_sp_imm(30, 8)  # save lr
+    # Prologue: save VM pointer and return address.
+    buf.code.emit_sub_sp_imm(16)
+    buf.code.emit_str_sp_imm(0, 0)   # save vm (x0)
+    buf.code.emit_str_sp_imm(30, 8)  # save lr
 
-      template call_helper(target: pointer) =
-        buf.code.emit_ldr_sp_imm(0, 0)
-        buf.emit_helper_call(target)
+    template call_helper(target: pointer) =
+      buf.code.emit_ldr_sp_imm(0, 0)
+      buf.emit_helper_call(target)
 
-      for idx, inst in fn.body_compiled.instructions:
-        buf.mark_label(idx)
-        case inst.kind
-        of IkStart:
-          discard
-        of IkPushValue:
+    when defined(geneJitDebug):
+      if fn.name.len > 0:
+        echo "JIT arm64 compiling ", fn.name, " (", fn.body_compiled.instructions.len, " insts)"
+        for i, ins in fn.body_compiled.instructions:
+          echo "  ", i, ": ", ins.kind, " arg0=", ins.arg0, " arg1=", ins.arg1
+
+    for idx, inst in fn.body_compiled.instructions:
+      buf.mark_label(idx)
+      case inst.kind
+      of IkStart:
+        discard
+      of IkGeneStartDefault, IkGeneStart, IkGeneSetType, IkGeneAddChild, IkTailCall, IkGeneEnd:
+        # Complex gene/tail-call handling not supported by the baseline JIT yet.
+        return nil
+      of IkPushValue:
+        buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
+        call_helper(cast[pointer](jit_stack_push_value))
+      of IkAdd:
+        call_helper(cast[pointer](jit_add_ints))
+      of IkSub:
+        call_helper(cast[pointer](jit_sub_ints))
+      of IkDup:
+        call_helper(cast[pointer](jit_stack_dup))
+      of IkSwap:
+        call_helper(cast[pointer](jit_stack_swap))
+      of IkPop:
+        call_helper(cast[pointer](jit_stack_pop_discard))
+      of IkScopeStart, IkScopeEnd:
+        if inst.kind == IkScopeStart:
           buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
-          call_helper(cast[pointer](jit_stack_push_value))
-        of IkAdd:
-          call_helper(cast[pointer](jit_add_ints))
-        of IkSub:
-          call_helper(cast[pointer](jit_sub_ints))
-        of IkDup:
-          call_helper(cast[pointer](jit_stack_dup))
-        of IkSwap:
-          call_helper(cast[pointer](jit_stack_swap))
-        of IkPop:
-          call_helper(cast[pointer](jit_stack_pop_discard))
-        of IkJumpIfMatchSuccess:
-          let idx = inst.arg0.int64.int
-          if idx < int32.low or idx > int32.high:
-            return nil
-          buf.emit_mov_reg_imm64(1, cast[uint64](idx))
-          call_helper(cast[pointer](jit_jump_if_match_success))
-          buf.add_patch(inst.arg1.int64.int, "cbnz")
-        of IkResolveSymbol:
-          buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
-          call_helper(cast[pointer](jit_resolve_symbol))
-        of IkVarResolve:
-          let slot = inst.arg0.int64.int
-          if slot < int32.low or slot > int32.high:
-            return nil
-          buf.emit_mov_reg_imm64(1, cast[uint64](slot))
-          call_helper(cast[pointer](jit_var_resolve_push))
-        of IkVarAssign:
-          let slot = inst.arg0.int64.int
-          if slot < int32.low or slot > int32.high:
-            return nil
-          buf.emit_mov_reg_imm64(1, cast[uint64](slot))
-          call_helper(cast[pointer](jit_var_assign_top))
-        of IkLt:
-          call_helper(cast[pointer](jit_compare_lt))
-        of IkLe:
-          call_helper(cast[pointer](jit_compare_le))
-        of IkGt:
-          call_helper(cast[pointer](jit_compare_gt))
-        of IkGe:
-          call_helper(cast[pointer](jit_compare_ge))
-        of IkEq:
-          call_helper(cast[pointer](jit_compare_eq))
-        of IkGeneStartDefault:
-          call_helper(cast[pointer](jit_gene_start_default))
-          let target = inst.arg0.int64.int
-          if target < 0 or target >= fn.body_compiled.instructions.len:
-            return nil
-          buf.add_patch(target, "b")
-        of IkGeneStart:
-          call_helper(cast[pointer](jit_gene_start))
-        of IkGeneSetType:
-          call_helper(cast[pointer](jit_gene_set_type))
-        of IkGeneAddChild:
-          call_helper(cast[pointer](jit_gene_add_child))
-        of IkTailCall:
-          call_helper(cast[pointer](jit_tail_call))
-        of IkGeneEnd:
-          call_helper(cast[pointer](jit_gene_end))
-        of IkJump:
-          let target = inst.arg0.int64.int
-          if target < 0 or target >= fn.body_compiled.instructions.len:
-            return nil
-          buf.add_patch(target, "b")
-        of IkJumpIfFalse:
-          let target = inst.arg0.int64.int
-          if target < 0 or target >= fn.body_compiled.instructions.len:
-            return nil
-          call_helper(cast[pointer](jit_pop_is_false))
-          buf.add_patch(target, "cbnz")
-        of IkReturn:
-          call_helper(cast[pointer](jit_stack_pop_value))
-          buf.code.emit_ldr_sp_imm(30, 8)
-          buf.code.emit_add_sp_imm(16)
-          buf.emit_ret()
-          has_return = true
-        of IkEnd:
-          call_helper(cast[pointer](jit_stack_pop_value))
-          buf.code.emit_ldr_sp_imm(30, 8)
-          buf.code.emit_add_sp_imm(16)
-          buf.emit_ret()
-          has_return = true
-        of IkThrow:
-          call_helper(cast[pointer](jit_throw))
+          call_helper(cast[pointer](jit_scope_start))
         else:
+          call_helper(cast[pointer](jit_scope_end))
+      of IkJumpIfMatchSuccess:
+        let idx = inst.arg0.int64.int
+        if idx < int32.low or idx > int32.high:
           return nil
-
-      if not has_return:
+        buf.emit_mov_reg_imm64(1, cast[uint64](idx))
+        call_helper(cast[pointer](jit_jump_if_match_success))
+        buf.add_patch(inst.arg1.int64.int, "cbnz")
+      of IkResolveSymbol:
+        buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
+        call_helper(cast[pointer](jit_resolve_symbol))
+      of IkVarResolve:
+        let slot = inst.arg0.int64.int
+        if slot < int32.low or slot > int32.high:
+          return nil
+        buf.emit_mov_reg_imm64(1, cast[uint64](slot))
+        call_helper(cast[pointer](jit_var_resolve_push))
+      of IkVarAssign:
+        let slot = inst.arg0.int64.int
+        if slot < int32.low or slot > int32.high:
+          return nil
+        buf.emit_mov_reg_imm64(1, cast[uint64](slot))
+        call_helper(cast[pointer](jit_var_assign_top))
+      of IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue, IkVarSubValue:
+        let slot = inst.arg0.int64.int
+        let parent_depth = inst.arg1.int64.int
+        if slot < int32.low or slot > int32.high:
+          return nil
+        if parent_depth < int32.low or parent_depth > int32.high:
+          return nil
+        if idx + 1 >= fn.body_compiled.instructions.len:
+          return nil
+        let literal_inst = fn.body_compiled.instructions[idx + 1]
+        let literal_value = literal_inst.arg0
+        buf.emit_mov_reg_imm64(1, cast[uint64](slot)) # x1 = slot
+        buf.emit_mov_reg_imm64(2, cast[uint64](parent_depth)) # x2 = parent depth
+        buf.emit_mov_reg_imm64(3, cast[uint64](literal_value)) # x3 = literal_value
+        case inst.kind
+        of IkVarLtValue:
+          call_helper(cast[pointer](jit_var_lt_value))
+        of IkVarLeValue:
+          call_helper(cast[pointer](jit_var_le_value))
+        of IkVarGtValue:
+          call_helper(cast[pointer](jit_var_gt_value))
+        of IkVarGeValue:
+          call_helper(cast[pointer](jit_var_ge_value))
+        of IkVarEqValue:
+          call_helper(cast[pointer](jit_var_eq_value))
+        else:
+          call_helper(cast[pointer](jit_var_sub_value))
+      of IkLt:
+        call_helper(cast[pointer](jit_compare_lt))
+      of IkLe:
+        call_helper(cast[pointer](jit_compare_le))
+      of IkGt:
+        call_helper(cast[pointer](jit_compare_gt))
+      of IkGe:
+        call_helper(cast[pointer](jit_compare_ge))
+      of IkEq:
+        call_helper(cast[pointer](jit_compare_eq))
+      of IkData:
+        discard
+      of IkJump:
+        let target = inst.arg0.int64.int
+        if target < 0 or target >= fn.body_compiled.instructions.len:
+          return nil
+        buf.add_patch(target, "b")
+      of IkJumpIfFalse:
+        let target = inst.arg0.int64.int
+        if target < 0 or target >= fn.body_compiled.instructions.len:
+          return nil
+        call_helper(cast[pointer](jit_pop_is_false))
+        buf.add_patch(target, "cbnz")
+      of IkReturn:
         call_helper(cast[pointer](jit_stack_pop_value))
         buf.code.emit_ldr_sp_imm(30, 8)
         buf.code.emit_add_sp_imm(16)
         buf.emit_ret()
-
-      buf.patch_labels()
-      if buf.code.len == 0:
+        has_return = true
+      of IkEnd:
+        call_helper(cast[pointer](jit_stack_pop_value))
+        buf.code.emit_ldr_sp_imm(30, 8)
+        buf.code.emit_add_sp_imm(16)
+        buf.emit_ret()
+        has_return = true
+      of IkThrow:
+        call_helper(cast[pointer](jit_throw))
+      else:
+        when defined(geneJitDebug):
+          echo "arm64 jit unsupported ", inst.kind, " at ", idx
         return nil
-      let code_size = buf.code.len * sizeof(uint32)
-      let mem = allocate_executable_memory(code_size)
-      copyMem(mem, buf.code[0].unsafeAddr, code_size)
-      make_executable(mem, code_size)
 
-      JitCompiled(
-        entry: cast[JittedFn](mem),
-        code: mem,
-        size: code_size,
-        bytecode_version: cast[uint64](fn.body_compiled.id),
-        bytecode_len: fn.body_compiled.instructions.len,
-        built_for_arch: "arm64",
-        uses_vm_stack: true
-      )
-    else:
-      # Safe fallback: call interpreter trampoline when native arm64 JIT is disabled.
-      JitCompiled(
-        entry: jit_interpreter_trampoline,
-        code: nil,
-        size: 0,
-        bytecode_version: cast[uint64](fn.body_compiled.id),
-        bytecode_len: fn.body_compiled.instructions.len,
-        built_for_arch: "arm64",
-        uses_vm_stack: true
-      )
+    if not has_return:
+      call_helper(cast[pointer](jit_stack_pop_value))
+      buf.code.emit_ldr_sp_imm(30, 8)
+      buf.code.emit_add_sp_imm(16)
+      buf.emit_ret()
+
+    buf.patch_labels()
+    if buf.code.len == 0:
+      return nil
+    let code_size = buf.code.len * sizeof(uint32)
+    let mem = allocate_executable_memory(code_size)
+    copyMem(mem, buf.code[0].unsafeAddr, code_size)
+    make_executable(mem, code_size)
+
+    JitCompiled(
+      entry: cast[JittedFn](mem),
+      code: mem,
+      size: code_size,
+      bytecode_version: cast[uint64](fn.body_compiled.id),
+      bytecode_len: fn.body_compiled.instructions.len,
+      built_for_arch: "arm64",
+      uses_vm_stack: true
+    )
