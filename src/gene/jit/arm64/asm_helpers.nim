@@ -35,7 +35,8 @@ proc patch_labels*(buf: var AsmBuffer) =
       raise newException(types.Exception, "Undefined JIT label " & $p.target)
     let target_idx = buf.labels[p.target]
     let branch_idx = p.offset
-    let diff = target_idx - (branch_idx + 1) # instruction words
+    # ARM64 branch offsets are PC-relative from the branch instruction itself.
+    let diff = target_idx - branch_idx
     case p.kind
     of "b":
       if diff < -33554432 or diff > 33554431:
@@ -44,6 +45,7 @@ proc patch_labels*(buf: var AsmBuffer) =
     of "cbnz":
       if diff < -262144 or diff > 262143:
         raise newException(types.Exception, "Conditional branch target out of range")
+      # CBNZ W0, offset - W0 contains the bool return from the helper.
       buf.code[p.offset] = 0x35000000'u32 or ((uint32(diff) and 0x7FFFF'u32) shl 5) or 0'u32
     else:
       raise newException(types.Exception, "Unknown patch kind " & p.kind)

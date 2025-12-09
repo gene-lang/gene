@@ -34,6 +34,7 @@ proc jit_current_stack_index_ptr*(vm: VirtualMachine): ptr uint16 {.exportc, cde
 
 proc jit_interpreter_trampoline(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, importc.}
 proc jit_call_function(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, importc.}
+proc jit_call_function_with_frame(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int, reuse_frame: Frame): Value {.cdecl, importc.}
 
 #################### JIT Helpers ####################
 
@@ -323,17 +324,21 @@ proc jit_gene_end*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   let current = vm.jit_stack_pop_value()
   case current.kind
   of VkFrame:
-    let frame = current.ref.frame
+    var frame = current.ref.frame
     let target = frame.target
     var args_seq: seq[Value] = @[]
     if frame.args.kind == VkGene:
       args_seq = frame.args.gene.children
-    let res = jit_call_function(
+    # Use jit_call_function_with_frame to reuse the frame and avoid double allocation
+    let res = jit_call_function_with_frame(
       vm,
       target,
       if args_seq.len > 0: cast[ptr UncheckedArray[Value]](args_seq[0].addr) else: nil,
-      args_seq.len
+      args_seq.len,
+      frame
     )
+    # Free the frame after use to return it to the pool
+    frame.free()
     vm.jit_stack_push_value(res)
     result = res
   of VkGene:

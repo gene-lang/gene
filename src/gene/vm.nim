@@ -191,8 +191,8 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
         if run_compiled(compiled):
           return true
       else:
+        # Note: compilation_failures already incremented in compile_baseline
         f.jit_status = JsFailed
-        self.jit.stats.compilation_failures.inc()
         return false
 
   if f.jit_compiled != nil:
@@ -204,13 +204,103 @@ proc maybe_call_jit_function*(self: VirtualMachine, fn_value: Value, args: ptr U
     if compiled != nil:
       f.jit_compiled = compiled
     else:
+      # Note: compilation_failures already incremented in compile_baseline
       f.jit_status = JsFailed
-      self.jit.stats.compilation_failures.inc()
     if f.jit_compiled != nil:
       if run_compiled(f.jit_compiled):
         return true
 
   return false
+
+proc jit_call_function_with_frame*(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int, reuse_frame: Frame): Value {.cdecl, exportc.} =
+  ## Helper for JIT: call function reusing a pre-allocated frame (avoids double allocation).
+  if target.kind != VkFunction:
+    return vm.exec_function(target, @[])
+
+  let f = target.ref.fn
+  # Check if JIT is applicable
+  when defined(amd64) or defined(arm64):
+    if vm.jit.enabled and not f.is_macro_like and not f.is_generator and not f.async and f.jit_status != JsFailed:
+      # Check for property parameters
+      var has_props = false
+      for param in f.matcher.children:
+        if param.is_prop:
+          has_props = true
+          break
+
+      if not has_props:
+        if f.body_compiled.is_nil():
+          f.compile()
+
+        # Compile if needed
+        when defined(arm64):
+          if f.jit_compiled.is_nil and f.jit_status == JsNone:
+            let compiled = compile_baseline(vm, f)
+            if compiled != nil:
+              f.jit_compiled = compiled
+              f.jit_status = JsCompiled
+            else:
+              # Note: compilation_failures already incremented in compile_baseline
+              f.jit_status = JsFailed
+
+        let compiled = f.jit_compiled
+        if compiled != nil and compiled.entry != nil and compiled.uses_vm_stack:
+          # OPTIMIZATION: Reuse the provided frame instead of allocating a new one
+          var scope = reuse_frame.scope
+          if scope == nil:
+            if f.matcher.is_empty():
+              scope = f.parent_scope
+              if scope != nil:
+                scope.ref_count.inc()
+            else:
+              scope = new_scope(f.scope_tracker, f.parent_scope)
+              if arg_count == 0:
+                process_args_zero(f.matcher, scope)
+              elif arg_count == 1 and args != nil:
+                process_args_one(f.matcher, args[0], scope)
+              else:
+                process_args_direct(f.matcher, args, arg_count, false, scope)
+          else:
+            # Process args into existing scope if needed
+            if not f.matcher.is_empty():
+              if arg_count == 0:
+                process_args_zero(f.matcher, scope)
+              elif arg_count == 1 and args != nil:
+                process_args_one(f.matcher, args[0], scope)
+              else:
+                process_args_direct(f.matcher, args, arg_count, false, scope)
+
+          reuse_frame.scope = scope
+          reuse_frame.ns = f.ns
+          reuse_frame.target = target
+
+          let saved_frame = vm.frame
+          let saved_cu = vm.cu
+          let saved_pc = vm.pc
+
+          try:
+            vm.frame = reuse_frame
+            vm.cu = f.body_compiled
+            vm.pc = 0
+            result = compiled.entry(vm, target, args, arg_count)
+          finally:
+            vm.frame = saved_frame
+            vm.cu = saved_cu
+            vm.pc = saved_pc
+            # Don't free reuse_frame here - caller owns it
+            reuse_frame.scope = nil
+
+          vm.frame.push(result)
+          vm.jit.stats.executions.inc()
+          return result
+
+  # Fallback to regular call
+  var seq_args: seq[Value] = @[]
+  if args != nil and arg_count > 0:
+    seq_args.setLen(arg_count)
+    for i in 0 ..< arg_count:
+      seq_args[i] = args[i]
+  vm.exec_function(target, seq_args)
 
 proc jit_call_function*(vm: VirtualMachine, target: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, exportc.} =
   ## Helper for JIT helpers: attempt JIT dispatch, otherwise fall back to exec_function.
