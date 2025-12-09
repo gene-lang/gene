@@ -1,3 +1,4 @@
+{.push warning[UnusedImport]: off, warning[UnreachableCode]: off.}
 import ../types
 import ../types/type_defs
 import ./memory
@@ -66,3 +67,5 @@ proc compile_baseline*(vm: VirtualMachine, fn: Function): JitCompiled =
   fn.jit_status = JsCompiled
   vm.jit.stats.compilations.inc()
   result = compiled
+
+{.pop.}

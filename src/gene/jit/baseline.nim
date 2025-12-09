@@ -1,4 +1,4 @@
-import tables
+{.push warning[UnreachableCode]: off.}
 import ../types
 import ../types/type_defs
 import ../types/value_core
@@ -336,3 +336,5 @@ when defined(arm64):
       built_for_arch: "arm64",
       uses_vm_stack: true
     )
+
+{.pop.}

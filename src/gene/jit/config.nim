@@ -1,6 +1,9 @@
 import os, strutils, tables
+
+{.push warning[UnusedImport]: off.}
 when defined(macosx):
   import posix
+{.pop.}
 
 import ../types/type_defs
 

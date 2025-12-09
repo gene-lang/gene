@@ -1,10 +1,10 @@
-{.push warning[UnusedImport]: off.}
 import os, tables
 import ./commands/base
 import ./commands/[run, eval, repl, help, parse, compile, gir, lsp]
 import ./gene/vm/thread
-import ./gene/extension/c_api  # Link C API for extensions
 
+{.push warning[UnusedImport]: off.}
+import ./gene/extension/c_api  # Link C API for extensions
 {.pop.}
 
 var CommandMgr = CommandManager(data: initTable[string, Command](), help: "")
