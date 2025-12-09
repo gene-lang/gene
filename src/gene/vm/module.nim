@@ -1,4 +1,4 @@
-import tables, strutils, hashes, os, streams
+import tables, strutils, hashes, os
 
 import ../types
 import ../compiler

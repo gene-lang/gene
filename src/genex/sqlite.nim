@@ -1,3 +1,4 @@
+{.push warning[ResultShadowed]: off.}
 import db_connector/db_sqlite
 import db_connector/sqlite3 as sqlite3mod
 import tables
@@ -260,3 +261,5 @@ proc init_sqlite_classes*() =
 
 # Call init function
 init_sqlite_classes()
+
+{.pop.}

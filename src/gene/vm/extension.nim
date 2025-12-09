@@ -51,9 +51,9 @@ proc load_extension*(vm: VirtualMachine, path: string): Namespace =
   
   when defined(posix):
     # Use RTLD_GLOBAL on POSIX to make main executable symbols available
-    let handle = loadLibGlobal(lib_path)
+    let handle = loadLibGlobal(lib_path.cstring)
   else:
-    let handle = loadLib(lib_path)
+    let handle = loadLib(lib_path.cstring)
 
   if handle.isNil:
     raise new_exception(types.Exception, "Failed to load extension: " & lib_path)

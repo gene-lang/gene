@@ -1,3 +1,4 @@
+{.push warning[IgnoredSymbolInjection]: off.}
 import tables, strutils
 import httpclient, uri
 import std/json
@@ -15,6 +16,7 @@ type Future[T] {.used.} = asyncfutures.Future[T]
 var request_class_global: Class
 var response_class_global: Class
 var server_request_class_global: Class
+
 var server_response_class_global: Class
 
 # Global HTTP server instance
@@ -987,3 +989,5 @@ proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
 
 # Call init_http_classes to register the callback
 init_http_classes()
+
+{.pop.}
