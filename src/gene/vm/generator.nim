@@ -1,3 +1,4 @@
+{.push warning[ResultShadowed]: off.}
 import ../types
 
 proc new_generator_value*(f: Function, args: seq[Value]): Value {.inline.} =
@@ -124,3 +125,5 @@ proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.impo
 proc exec_generator*(self: VirtualMachine, gen: GeneratorObj): Value {.gcsafe.} =
   # Use the implementation in vm.nim
   return exec_generator_impl(self, gen)
+
+{.pop.}

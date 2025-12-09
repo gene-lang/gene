@@ -1,6 +1,5 @@
 import tables, strutils
 import ../gene/types
-import ../gene/vm
 
 # Helper to create native function value
 proc wrap_native_fn(fn: NativeFn): Value =

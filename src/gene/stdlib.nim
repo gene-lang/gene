@@ -1,3 +1,4 @@
+{.push warning[ResultShadowed]: off.}
 import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile, tables
 import ./types
 import ./parser
@@ -2341,3 +2342,5 @@ proc init_stdlib*() =
 #   # Convenience aliases
 #   global_ns["OpenAIClient".to_key()] = ai_ns.to_value()
 #   App.app.global_ns.ns["OpenAIClient".to_key()] = ai_ns.to_value()
+
+{.pop.}
