@@ -2964,6 +2964,9 @@ proc exec*(self: VirtualMachine): Value =
                 if f.body_compiled == nil:
                   f.compile()
 
+                # Keep the frame on the stack until we swap contexts (mirrors FkFunction)
+                self.frame.push(frame_val)
+
                 self.pc.inc()
                 frame.caller_frame.update(self.frame)
                 frame.caller_address = Address(cu: self.cu, pc: self.pc)
@@ -2985,6 +2988,9 @@ proc exec*(self: VirtualMachine): Value =
                 let b = frame.target.ref.block
                 if b.body_compiled == nil:
                   b.compile()
+
+                # Keep the frame on the stack until we swap contexts (mirrors FkFunction)
+                self.frame.push(frame_val)
 
                 self.pc.inc()
                 frame.caller_frame.update(self.frame)
