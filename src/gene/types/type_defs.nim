@@ -801,9 +801,6 @@ type
     target*: Value  # target of the invocation
     args*: Value
     stack*: array[256, Value]
-    current_method*: Method  # Currently executing method (for super calls)
-    current_class*: Class    # Current class context (constructors)
-    current_self*: Value     # Cached self/instance for super calls
     stack_index*: uint16
     call_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function
