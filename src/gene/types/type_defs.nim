@@ -67,8 +67,6 @@ type
     from_thread_secret*: int    # Sender thread secret
     handled*: bool              # For user callbacks
 
-  NativeFn2* = proc(vm_data: pointer, args: Value): Value {.gcsafe.}
-
   ValueKind* {.size: sizeof(int16) .} = enum
     # Core types
     VkNil = 0
@@ -148,9 +146,7 @@ type
     VkEnum
     VkEnumMember
     VkNativeFn
-    VkNativeFn2
     VkNativeMethod
-    VkNativeMethod2
 
     # Exception handling
     VkException = 128    # Start exceptions at 128
@@ -1042,9 +1038,7 @@ type
         enum_member*: EnumMember
       of VkNativeFn:
         native_fn*: NativeFn
-      of VkNativeFn2:
-        native_fn2*: NativeFn2
-      of VkNativeMethod, VkNativeMethod2:
+      of VkNativeMethod:
         native_method*: NativeFn
 
       of VkException:

@@ -223,15 +223,6 @@ proc def_native_constructor*(self: Class, f: NativeFn) =
   r.native_fn = f
   self.constructor = r.to_ref_value()
 
-# proc def_native_method*(self: Class, name: string, f: NativeFn2) =
-#   let r = new_ref(VkNativeFn2)
-#   r.native_fn2 = f
-#   self.methods[name.to_key()] = Method(
-#     class: self,
-#     name: name,
-#     callable: r.to_ref_value(),
-#   )
-
 proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
   let r = new_ref(VkNativeFn)
   r.native_fn = f
@@ -246,11 +237,6 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
 proc add_standard_instance_methods*(class: Class) =
   # Currently no standard methods to add
   discard
-
-# proc def_native_constructor*(self: Class, f: NativeFn2) =
-#   let r = new_ref(VkNativeFn2)
-#   r.native_fn2 = f
-#   self.constructor = r.to_ref_value()
 
 #################### Method ######################
 
