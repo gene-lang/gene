@@ -12,6 +12,17 @@ when defined(arm64):
   import ./arm64/asm_helpers
   import ./arm64/encoders
 
+  # Struct layout and NaN-boxing constants for inline arm64 codegen.
+  const
+    OFF_VM_FRAME = offsetof(VirtualMachine, frame).uint16
+    OFF_FRAME_STACK = offsetof(FrameObj, stack).uint16
+    OFF_FRAME_STACK_INDEX = offsetof(FrameObj, stack_index).uint16
+    VAL_SMALL_INT_TAG = SMALL_INT_TAG
+    VAL_PAYLOAD_MASK = PAYLOAD_MASK
+    VAL_TAG_MASK = (not PAYLOAD_MASK)
+    VAL_TRUE = TRUE
+    VAL_FALSE = FALSE
+
 proc jit_interpreter_trampoline(vm: VirtualMachine, fn_value: Value, args: ptr UncheckedArray[Value], arg_count: int): Value {.cdecl, importc.}
 
 when defined(amd64):
@@ -180,7 +191,7 @@ when defined(amd64):
 
 when defined(arm64):
   proc compile_function_arm64*(vm: VirtualMachine, fn: Function): JitCompiled =
-    ## arm64 baseline JIT: emits helper calls that operate on the VM frame stack.
+    ## arm64 baseline JIT with small-int inline ops; var ops use slot-pointer helper.
     when not (defined(arm64) and defined(geneJit)):
       return nil
 
@@ -189,6 +200,7 @@ when defined(arm64):
 
     var buf = init_asm()
     var has_return = false
+    var label_counter: int = if fn.body_compiled != nil: fn.body_compiled.instructions.len + 100 else: 100
 
     # Prologue: save VM pointer and return address.
     buf.code.emit_sub_sp_imm(16)
@@ -198,6 +210,79 @@ when defined(arm64):
     template call_helper(target: pointer) =
       buf.code.emit_ldr_sp_imm(0, 0)
       buf.emit_helper_call(target)
+
+    template load_frame(dest: uint8) =
+      buf.code.emit_ldr_sp_imm(dest, 0)
+      buf.code.emit_ldr_reg_imm(dest, dest, OFF_VM_FRAME)
+
+    template load_stack_base(dest: uint8) =
+      load_frame(dest)
+      buf.code.emit_add_reg_imm(dest, dest, OFF_FRAME_STACK)
+
+    template load_stack_index(dest: uint8) =
+      load_frame(dest)
+      buf.code.emit_ldrh_reg_imm(dest, dest, OFF_FRAME_STACK_INDEX)
+
+    template store_stack_index(src: uint8) =
+      load_frame(17)
+      buf.code.emit_strh_reg_imm(src, 17, OFF_FRAME_STACK_INDEX)
+
+    template push_literal(lit: Value) =
+      load_stack_base(1)
+      load_stack_index(2)
+      buf.code.emit_mov_reg_imm64(3, cast[uint64](lit))
+      buf.code.emit_add_reg_reg_lsl(4, 1, 2, 3) # addr = base + idx*8
+      buf.code.emit_str_reg_imm(3, 4, 0)
+      buf.code.emit_add_reg_imm(2, 2, 1)
+      store_stack_index(2)
+
+    template pop(dest: uint8) =
+      load_stack_base(1)
+      load_stack_index(2)
+      buf.code.emit_sub_reg_imm(2, 2, 1)
+      store_stack_index(2)
+      buf.code.emit_add_reg_reg_lsl(3, 1, 2, 3)
+      buf.code.emit_ldr_reg_imm(dest, 3, 0)
+
+    template peek(dest: uint8) =
+      load_stack_base(1)
+      load_stack_index(2)
+      buf.code.emit_sub_reg_imm(3, 2, 1)
+      buf.code.emit_add_reg_reg_lsl(4, 1, 3, 3)
+      buf.code.emit_ldr_reg_imm(dest, 4, 0)
+
+    template push_reg(src: uint8) =
+      load_stack_base(1)
+      load_stack_index(2)
+      buf.code.emit_add_reg_reg_lsl(3, 1, 2, 3)
+      buf.code.emit_str_reg_imm(src, 3, 0)
+      buf.code.emit_add_reg_imm(2, 2, 1)
+      store_stack_index(2)
+
+    template smallint_payload(dest: uint8, src: uint8) =
+      buf.code.emit_mov_reg_imm64(dest, VAL_PAYLOAD_MASK)
+      buf.code.emit_and_reg_reg(dest, dest, src)
+
+    template box_smallint(dest: uint8, src: uint8) =
+      buf.code.emit_mov_reg_imm64(dest, VAL_SMALL_INT_TAG)
+      buf.code.emit_orr_reg_reg(dest, dest, src)
+
+    template ensure_smallint_or_branch(val_reg: uint8, tmp: uint8, slow_label: int) =
+      buf.code.emit_mov_reg_imm64(tmp, VAL_TAG_MASK)
+      buf.code.emit_and_reg_reg(tmp, tmp, val_reg)
+      buf.code.emit_mov_reg_imm64(15, VAL_SMALL_INT_TAG)
+      buf.code.emit_cmp_reg_reg(tmp, 15)
+      buf.add_patch(slow_label, "cbnz")
+
+    proc next_lbl(): int =
+      label_counter.inc
+      label_counter - 1
+
+    template snapshot_stack_index(dest: uint8) =
+      load_stack_index(dest)
+
+    template restore_stack_index(src: uint8) =
+      store_stack_index(src)
 
     when defined(geneJitDebug):
       if fn.name.len > 0:
@@ -211,15 +296,48 @@ when defined(arm64):
       of IkStart:
         discard
       of IkGeneStartDefault, IkGeneStart, IkGeneSetType, IkGeneAddChild, IkTailCall, IkGeneEnd:
-        # Complex gene/tail-call handling not supported by the baseline JIT yet.
         return nil
       of IkPushValue:
-        buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
         call_helper(cast[pointer](jit_stack_push_value))
       of IkAdd:
+        let slow_add = next_lbl()
+        let done_add = next_lbl()
+        # Pop operands (rhs, lhs)
+        pop(3)
+        pop(4)
+        ensure_smallint_or_branch(3, 5, slow_add)
+        ensure_smallint_or_branch(4, 6, slow_add)
+        smallint_payload(7, 3)
+        smallint_payload(8, 4)
+        buf.code.emit_add_reg_reg(9, 7, 8)
+        box_smallint(10, 9)
+        push_reg(10)
+        buf.add_patch(done_add, "b")
+        buf.mark_label(slow_add)
+        # Slow path: restore operands then call helper
+        push_reg(4) # lhs
+        push_reg(3) # rhs
         call_helper(cast[pointer](jit_add_ints))
+        buf.mark_label(done_add)
       of IkSub:
+        let slow_sub = next_lbl()
+        let done_sub = next_lbl()
+        pop(3)
+        pop(4)
+        ensure_smallint_or_branch(3, 5, slow_sub)
+        ensure_smallint_or_branch(4, 6, slow_sub)
+        smallint_payload(7, 3)
+        smallint_payload(8, 4)
+        buf.code.emit_sub_reg_reg(9, 8, 7) # lhs - rhs
+        box_smallint(10, 9)
+        push_reg(10)
+        buf.add_patch(done_sub, "b")
+        buf.mark_label(slow_sub)
+        push_reg(4)
+        push_reg(3)
         call_helper(cast[pointer](jit_sub_ints))
+        buf.mark_label(done_sub)
       of IkDup:
         call_helper(cast[pointer](jit_stack_dup))
       of IkSwap:
@@ -228,7 +346,7 @@ when defined(arm64):
         call_helper(cast[pointer](jit_stack_pop_discard))
       of IkScopeStart, IkScopeEnd:
         if inst.kind == IkScopeStart:
-          buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
+          buf.code.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
           call_helper(cast[pointer](jit_scope_start))
         else:
           call_helper(cast[pointer](jit_scope_end))
@@ -236,23 +354,23 @@ when defined(arm64):
         let idx = inst.arg0.int64.int
         if idx < int32.low or idx > int32.high:
           return nil
-        buf.emit_mov_reg_imm64(1, cast[uint64](idx))
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](idx))
         call_helper(cast[pointer](jit_jump_if_match_success))
         buf.add_patch(inst.arg1.int64.int, "cbnz")
       of IkResolveSymbol:
-        buf.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](inst.arg0))
         call_helper(cast[pointer](jit_resolve_symbol))
       of IkVarResolve:
         let slot = inst.arg0.int64.int
         if slot < int32.low or slot > int32.high:
           return nil
-        buf.emit_mov_reg_imm64(1, cast[uint64](slot))
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](slot))
         call_helper(cast[pointer](jit_var_resolve_push))
       of IkVarAssign:
         let slot = inst.arg0.int64.int
         if slot < int32.low or slot > int32.high:
           return nil
-        buf.emit_mov_reg_imm64(1, cast[uint64](slot))
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](slot))
         call_helper(cast[pointer](jit_var_assign_top))
       of IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue, IkVarSubValue:
         let slot = inst.arg0.int64.int
@@ -265,9 +383,9 @@ when defined(arm64):
           return nil
         let literal_inst = fn.body_compiled.instructions[idx + 1]
         let literal_value = literal_inst.arg0
-        buf.emit_mov_reg_imm64(1, cast[uint64](slot)) # x1 = slot
-        buf.emit_mov_reg_imm64(2, cast[uint64](parent_depth)) # x2 = parent depth
-        buf.emit_mov_reg_imm64(3, cast[uint64](literal_value)) # x3 = literal_value
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](slot))
+        buf.code.emit_mov_reg_imm64(2, cast[uint64](parent_depth))
+        buf.code.emit_mov_reg_imm64(3, cast[uint64](literal_value))
         case inst.kind
         of IkVarLtValue:
           call_helper(cast[pointer](jit_var_lt_value))
@@ -326,7 +444,7 @@ when defined(arm64):
         let arg_count = inst.arg1.int64.int
         if arg_count < int32.low or arg_count > int32.high:
           return nil
-        buf.emit_mov_reg_imm64(1, cast[uint64](arg_count)) # x1 = arg_count
+        buf.code.emit_mov_reg_imm64(1, cast[uint64](arg_count))
         call_helper(cast[pointer](jit_unified_call))
       else:
         when defined(geneJitDebug):

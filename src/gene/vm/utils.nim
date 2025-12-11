@@ -38,7 +38,7 @@ proc jit_call_function_with_frame(vm: VirtualMachine, target: Value, args: ptr U
 
 #################### JIT Helpers ####################
 
-proc jit_stack_push_value*(vm: VirtualMachine, value: Value) {.exportc, cdecl.} =
+proc jit_stack_push_value*(vm: VirtualMachine, value: Value) {.exportc, cdecl, inline.} =
   ## Push a value onto the current frame stack.
   let stack = vm.jit_current_stack_ptr()
   let idx_ptr = vm.jit_current_stack_index_ptr()
@@ -50,7 +50,7 @@ proc jit_stack_push_value*(vm: VirtualMachine, value: Value) {.exportc, cdecl.} 
   stack_arr[idx_ptr[]] = value
   idx_ptr[] = idx_ptr[] + 1
 
-proc jit_stack_pop_value*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_stack_pop_value*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   ## Pop and return the top value from the current frame stack.
   let stack = vm.jit_current_stack_ptr()
   let idx_ptr = vm.jit_current_stack_index_ptr()
@@ -63,7 +63,7 @@ proc jit_stack_pop_value*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   result = stack_arr[idx_ptr[]]
   stack_arr[idx_ptr[]] = NIL
 
-proc jit_stack_peek_value*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_stack_peek_value*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   ## Return the current top value without removing it.
   let stack = vm.jit_current_stack_ptr()
   let idx_ptr = vm.jit_current_stack_index_ptr()
@@ -74,12 +74,12 @@ proc jit_stack_peek_value*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   let stack_arr = cast[ptr UncheckedArray[Value]](stack)
   stack_arr[idx_ptr[] - 1]
 
-proc jit_stack_dup*(vm: VirtualMachine) {.exportc, cdecl.} =
+proc jit_stack_dup*(vm: VirtualMachine) {.exportc, cdecl, inline.} =
   ## Duplicate the top stack value.
   let v = vm.jit_stack_peek_value()
   vm.jit_stack_push_value(v)
 
-proc jit_stack_swap*(vm: VirtualMachine) {.exportc, cdecl.} =
+proc jit_stack_swap*(vm: VirtualMachine) {.exportc, cdecl, inline.} =
   ## Swap the top two stack values.
   let stack = vm.jit_current_stack_ptr()
   let idx_ptr = vm.jit_current_stack_index_ptr()
@@ -94,7 +94,7 @@ proc jit_stack_swap*(vm: VirtualMachine) {.exportc, cdecl.} =
   stack_arr[top_idx] = stack_arr[second_idx]
   stack_arr[second_idx] = tmp
 
-proc jit_stack_pop_discard*(vm: VirtualMachine) {.exportc, cdecl.} =
+proc jit_stack_pop_discard*(vm: VirtualMachine) {.exportc, cdecl, inline.} =
   ## Pop and drop the top stack value.
   discard vm.jit_stack_pop_value()
 
@@ -118,7 +118,20 @@ proc jit_var_assign_top*(vm: VirtualMachine, slot: int32) {.exportc, cdecl.} =
     raise new_exception(type_defs.Exception, "JIT VarAssign out of bounds")
   vm.frame.scope.members[index] = vm.jit_stack_peek_value()
 
-proc jit_add_ints*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+# Expose a mutable pointer to a scope slot for JIT inline access.
+proc jit_scope_slot_ptr*(vm: VirtualMachine, slot: int32, parent_depth: int32): ptr Value {.exportc, cdecl.} =
+  if vm.frame.is_nil or vm.frame.scope.isNil:
+    return nil
+  var scope = vm.frame.scope
+  var depth = parent_depth.int
+  while depth > 0 and not scope.parent.isNil:
+    scope = scope.parent
+    depth.dec()
+  if slot < 0 or slot >= scope.members.len:
+    return nil
+  scope.members[slot].addr
+
+proc jit_add_ints*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   ## Pop two ints, add them, and push the result.
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
@@ -128,7 +141,7 @@ proc jit_add_ints*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(sum)
   sum
 
-proc jit_compare_lt*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_compare_lt*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
   if lhs.kind != VkInt or rhs.kind != VkInt:
@@ -137,7 +150,7 @@ proc jit_compare_lt*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(res)
   res
 
-proc jit_compare_le*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_compare_le*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
   if lhs.kind != VkInt or rhs.kind != VkInt:
@@ -146,7 +159,7 @@ proc jit_compare_le*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(res)
   res
 
-proc jit_compare_gt*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_compare_gt*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
   if lhs.kind != VkInt or rhs.kind != VkInt:
@@ -155,7 +168,7 @@ proc jit_compare_gt*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(res)
   res
 
-proc jit_compare_ge*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_compare_ge*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
   if lhs.kind != VkInt or rhs.kind != VkInt:
@@ -164,7 +177,7 @@ proc jit_compare_ge*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(res)
   res
 
-proc jit_compare_eq*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_compare_eq*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
   if lhs.kind != VkInt or rhs.kind != VkInt:
@@ -173,7 +186,7 @@ proc jit_compare_eq*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(res)
   res
 
-proc jit_sub_ints*(vm: VirtualMachine): Value {.exportc, cdecl.} =
+proc jit_sub_ints*(vm: VirtualMachine): Value {.exportc, cdecl, inline.} =
   ## Pop two ints, subtract rhs from lhs, and push the result.
   let rhs = vm.jit_stack_pop_value()
   let lhs = vm.jit_stack_pop_value()
@@ -183,7 +196,7 @@ proc jit_sub_ints*(vm: VirtualMachine): Value {.exportc, cdecl.} =
   vm.jit_stack_push_value(diff)
   diff
 
-proc jit_pop_is_false*(vm: VirtualMachine): bool {.exportc, cdecl.} =
+proc jit_pop_is_false*(vm: VirtualMachine): bool {.exportc, cdecl, inline.} =
   ## Pop the top value and report whether it is falsey.
   let v = vm.jit_stack_pop_value()
   (v == FALSE) or (v == NIL)

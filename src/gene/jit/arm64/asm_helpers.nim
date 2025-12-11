@@ -42,11 +42,15 @@ proc patch_labels*(buf: var AsmBuffer) =
       if diff < -33554432 or diff > 33554431:
         raise newException(types.Exception, "Branch target out of range")
       buf.code[p.offset] = 0x14000000'u32 or (uint32(diff) and 0x03FFFFFF'u32)
-    of "cbnz":
+    of "cbnz", "cbz":
       if diff < -262144 or diff > 262143:
         raise newException(types.Exception, "Conditional branch target out of range")
-      # CBNZ W0, offset - W0 contains the bool return from the helper.
-      buf.code[p.offset] = 0x35000000'u32 or ((uint32(diff) and 0x7FFFF'u32) shl 5) or 0'u32
+      let base = if p.kind == "cbnz": 0x35000000'u32 else: 0x34000000'u32
+      buf.code[p.offset] = base or ((uint32(diff) and 0x7FFFF'u32) shl 5) or 0'u32
+    of "beq":
+      if diff < -262144 or diff > 262143:
+        raise newException(types.Exception, "Conditional branch target out of range")
+      buf.code[p.offset] = 0x54000000'u32 or ((uint32(diff) and 0x7FFFF'u32) shl 5) or 0'u32
     else:
       raise newException(types.Exception, "Unknown patch kind " & p.kind)
 
