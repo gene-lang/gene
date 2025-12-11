@@ -70,8 +70,8 @@ test_vm """
 
 # Anonymous macro: fnx! should leave arguments unevaluated
 test_vm """
-  (var quote (fnx! [x] x))
-  (quote (throw "boom"))
+  (var quote! (fnx! [x] x))
+  (quote! (throw "boom"))
 """, proc(r: Value) =
   check r.kind == VkGene
 
