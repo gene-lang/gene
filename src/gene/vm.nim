@@ -19,6 +19,9 @@ template is_method_frame(f: Frame): bool =
 template is_function_like(kind: FrameKind): bool =
   kind in {FkFunction, FkMethod, FkMacroMethod}
 
+template same_value_identity(a: Value, b: Value): bool =
+  cast[uint64](a) == cast[uint64](b)
+
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
@@ -770,11 +773,11 @@ proc current_self_value(frame: Frame): Value =
 proc find_method_class(instance: Value, callable: Value): Class =
   var cls = instance.get_object_class()
   while cls != nil:
-    if not cls.constructor.is_nil and cls.constructor == callable:
+    if not cls.constructor.is_nil and same_value_identity(cls.constructor, callable):
       return cls
     if cls.methods.len > 0:
       for _, m in cls.methods:
-        if m.callable == callable:
+        if same_value_identity(m.callable, callable):
           return cls
     cls = cls.parent
   return nil
