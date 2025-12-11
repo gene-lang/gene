@@ -1912,9 +1912,7 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.ns = nil
   self.scope = nil
   self.target = NIL
-  # self field removed - self is now the first argument
   self.args = NIL
-  self.current_method = nil
   self.stack_index = 0
   self.call_bases.reset()
   # Stack array will be overwritten as needed, no need to clear
@@ -1946,18 +1944,7 @@ proc new_frame*(): Frame {.inline.} =
     result = cast[Frame](alloc0(sizeof(FrameObj)))
     FRAME_ALLOCS.inc()
   result.ref_count = 1
-  result.kind = FkFunction
-  result.caller_frame = nil
-  result.caller_address = Address(cu: nil, pc: 0)
-  result.caller_context = nil
-  result.ns = nil
-  result.scope = nil
-  result.target = NIL
-  result.args = NIL
-  result.current_method = nil
-  result.current_class = nil
-  result.current_self = NIL
-  result.stack_index = 0  # Reset stack index
+  result.stack_index = 0
   result.call_bases.init()
   {.pop.}
 

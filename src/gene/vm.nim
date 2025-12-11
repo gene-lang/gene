@@ -17,6 +17,15 @@ const
   CATCH_PC_ASYNC_FUNCTION = -3
   EVENT_LOOP_POLL_INTERVAL = 100
 
+template is_method_frame(f: Frame): bool =
+  f.kind in {FkMethod, FkMacroMethod}
+
+template is_function_like(kind: FrameKind): bool =
+  kind in {FkFunction, FkMethod, FkMacroMethod}
+
+template same_value_identity(a: Value, b: Value): bool =
+  cast[uint64](a) == cast[uint64](b)
+
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
@@ -412,7 +421,7 @@ proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
       f.compile()
 
     # Tail call optimization: reuse current frame if this is a tail call
-    if is_tail_call and vm.frame.kind == FkFunction:
+    if is_tail_call and is_function_like(vm.frame.kind):
       # Reuse current frame for tail call optimization
       var scope: Scope
       if f.matcher.is_empty():
@@ -695,12 +704,9 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
           process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
 
     var new_frame = new_frame()
-    new_frame.kind = FkFunction
+    new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
     new_frame.target = meth.callable
     new_frame.scope = scope
-    new_frame.current_method = meth
-    new_frame.current_class = meth.class
-    new_frame.current_self = instance
     let args_gene = new_gene_value()
     args_gene.gene.children.add(instance)
     for arg in args:
@@ -796,12 +802,9 @@ proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, insta
         process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
 
     var new_frame = new_frame()
-    new_frame.kind = FkFunction
+    new_frame.kind = if expect_macro: FkMacroMethod else: FkMethod
     new_frame.target = meth.callable
     new_frame.scope = scope
-    new_frame.current_method = meth
-    new_frame.current_class = meth.class
-    new_frame.current_self = instance
     let args_gene = new_gene_value()
     args_gene.gene.children.add(instance)
     for arg in args:
@@ -900,12 +903,9 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string,
           process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
 
     var new_frame = new_frame()
-    new_frame.kind = FkFunction
+    new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
     new_frame.target = meth.callable
     new_frame.scope = scope
-    new_frame.current_method = meth
-    new_frame.current_class = meth.class
-    new_frame.current_self = value
     let args_gene = new_gene_value()
     args_gene.gene.children.add(value)
     for arg in args:
@@ -954,29 +954,45 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string,
     not_allowed("Method must be a function or native function")
     return false
 
+proc current_self_value(frame: Frame): Value =
+  if frame == nil:
+    return NIL
+  if frame.args.kind == VkGene and frame.args.gene.children.len > 0:
+    return frame.args.gene.children[0]
+  if frame.scope != nil and frame.target.kind == VkFunction:
+    let tracker = frame.target.ref.fn.scope_tracker
+    let self_idx = tracker.mappings.get_or_default("self".to_key(), -1)
+    if self_idx >= 0 and self_idx < frame.scope.members.len:
+      return frame.scope.members[self_idx]
+  return NIL
+
+proc find_method_class(instance: Value, callable: Value): Class =
+  var cls = instance.get_object_class()
+  while cls != nil:
+    if not cls.constructor.is_nil and same_value_identity(cls.constructor, callable):
+      return cls
+    if cls.methods.len > 0:
+      for _, m in cls.methods:
+        if same_value_identity(m.callable, callable):
+          return cls
+    cls = cls.parent
+  return nil
+
 proc resolve_current_instance_and_parent(self: VirtualMachine): tuple[instance: Value, parent_class: Class] =
   ## Retrieve the current instance and parent class for super calls.
-  var instance = NIL
-  if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
-    instance = self.frame.args.gene.children[0]
-
-  var parent_class: Class = nil
-  if self.frame.current_method != nil:
-    parent_class = self.frame.current_method.class.parent
-  elif self.frame.current_class != nil:
-    parent_class = self.frame.current_class.parent
-  if instance.kind notin {VkInstance, VkCustom} and self.frame.current_self.kind in {VkInstance, VkCustom}:
-    instance = self.frame.current_self
+  let instance = current_self_value(self.frame)
   if instance.kind notin {VkInstance, VkCustom}:
     when not defined(release):
       echo "DEBUG super resolve: instance.kind=", instance.kind, " args kind=", self.frame.args.kind
       if self.frame.args.kind == VkGene:
         echo "DEBUG super resolve: args children len=", self.frame.args.gene.children.len
     not_allowed("super requires an instance context")
-  if parent_class == nil:
+
+  let current_class = find_method_class(instance, self.frame.target)
+  if current_class.is_nil or current_class.parent.is_nil:
     not_allowed("No parent class available for super")
 
-  (instance, parent_class)
+  (instance, current_class.parent)
 
 proc call_super_constructor(self: VirtualMachine, parent_class: Class, instance: Value, args: openArray[Value], expect_macro: bool): bool =
   ## Invoke a superclass constructor without allocation.
@@ -1020,11 +1036,9 @@ proc call_super_constructor(self: VirtualMachine, parent_class: Class, instance:
       assign_property_params(f.matcher, scope, instance)
 
     var new_frame = new_frame()
-    new_frame.kind = if expect_macro: FkMacro else: FkFunction
+    new_frame.kind = if expect_macro: FkMacroMethod else: FkMethod
     new_frame.target = ctor
     new_frame.scope = scope
-    new_frame.current_class = parent_class
-    new_frame.current_self = instance
     new_frame.caller_frame = self.frame
     self.frame.ref_count.inc()
     new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -1231,7 +1245,7 @@ proc exec*(self: VirtualMachine): Value =
           
           # Check if we're returning from an async function before updating frame
           var result_val = v
-          if self.frame.kind == FkFunction and self.frame.target.kind == VkFunction:
+          if is_function_like(self.frame.kind) and self.frame.target.kind == VkFunction:
             let f = self.frame.target.ref.fn
             if f.async:
               # Wrap the return value in a future
@@ -1441,13 +1455,13 @@ proc exec*(self: VirtualMachine): Value =
           of VkFrame:
             let new_frame = value.ref.frame
             case new_frame.kind:
-              of FkFunction:
+              of FkFunction, FkMethod, FkMacroMethod:
                 let f = new_frame.target.ref.fn
                 if f.body_compiled == nil:
                   f.compile()
                 
                 # Check if this is a tail call to the same function
-                if self.frame.kind == FkFunction and 
+                if is_function_like(self.frame.kind) and 
                    self.frame.target.kind == VkFunction and
                    self.frame.target.ref.fn == f:
                   # Tail call optimization - reuse current frame
@@ -1466,7 +1480,7 @@ proc exec*(self: VirtualMachine): Value =
                   else:
                     self.frame.scope = new_scope(f.scope_tracker, f.parent_scope)
                     # Process arguments
-                    if self.frame.current_method != nil:
+                    if is_method_frame(self.frame):
                       # Method call - create args without self
                       var method_args = new_gene(NIL)
                       if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 1:
@@ -1496,7 +1510,7 @@ proc exec*(self: VirtualMachine): Value =
                   
                   # Process arguments
                   if not f.matcher.is_empty():
-                    if new_frame.current_method != nil:
+                    if is_method_frame(new_frame):
                       var method_args = new_gene(NIL)
                       if new_frame.args.kind == VkGene and new_frame.args.gene.children.len > 1:
                         for i in 1..<new_frame.args.gene.children.len:
@@ -2379,10 +2393,9 @@ proc exec*(self: VirtualMachine): Value =
                 
                 var r = new_ref(VkFrame)
                 r.frame = new_frame()
-                r.frame.kind = FkFunction
+                r.frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
                 r.frame.target = target
                 r.frame.scope = scope
-                r.frame.current_method = meth  # Track the current method for super calls
                 # Prepare args with self as first argument
                 let args_gene = new_gene(NIL)
                 args_gene.children.add(bm.self)
@@ -2437,10 +2450,9 @@ proc exec*(self: VirtualMachine): Value =
                   
                   var r = new_ref(VkFrame)
                   r.frame = new_frame()
-                  r.frame.kind = FkFunction
+                  r.frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
                   r.frame.target = target
                   r.frame.scope = scope
-                  r.frame.current_method = meth
                   # Initialize args with instance as first argument (self)
                   # Additional arguments will be collected by IkGeneAddChild
                   let args_gene = new_gene(NIL)
@@ -2670,7 +2682,7 @@ proc exec*(self: VirtualMachine): Value =
             when DEBUG_VM:
               echo fmt"  Frame kind = {frame.kind}"
             case frame.kind:
-              of FkFunction:
+              of FkFunction, FkMethod, FkMacroMethod:
                 let f = frame.target.ref.fn
                 when DEBUG_VM:
                   echo fmt"  Function name = {f.name}, has compiled body = {f.body_compiled != nil}"
@@ -2704,7 +2716,7 @@ proc exec*(self: VirtualMachine): Value =
                 if not f.matcher.is_empty():
                   # For methods, the matcher includes self as a parameter
                   # So we should pass ALL arguments including self
-                  if frame.current_method != nil:
+                  if is_method_frame(frame):
                     process_args(f.matcher, frame.args, frame.scope)
                   else:
                     # Optimization: Fast paths for common argument patterns
@@ -3560,28 +3572,11 @@ proc exec*(self: VirtualMachine): Value =
       
       of IkSuper:
         # Push a proxy representing the parent class for super calls
-        var instance = NIL
-        if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
-          instance = self.frame.args.gene.children[0]
-        elif self.frame.current_method != nil and self.frame.scope != nil:
-          let method_callable = self.frame.current_method.callable
-          if method_callable.kind == VkFunction:
-            let f = method_callable.ref.fn
-            let self_key = "self".to_key()
-            if f.scope_tracker.mappings.hasKey(self_key):
-              let self_idx = f.scope_tracker.mappings[self_key]
-              if self_idx.int < self.frame.scope.members.len:
-                instance = self.frame.scope.members[self_idx.int]
-
+        let instance = current_self_value(self.frame)
         if instance.kind notin {VkInstance, VkCustom}:
           not_allowed("super requires an instance context")
 
-        var current_class: Class
-        if self.frame.current_method != nil:
-          current_class = self.frame.current_method.class
-        else:
-          current_class = instance.get_object_class()
-
+        let current_class = find_method_class(instance, self.frame.target)
         if current_class == nil or current_class.parent == nil:
           not_allowed("No parent class available for super")
 
@@ -3780,7 +3775,7 @@ proc exec*(self: VirtualMachine): Value =
           let returning_from_exec_function = self.frame.from_exec_function
           
           # Check if we're returning from an async function
-          if self.frame.kind == FkFunction and self.frame.target.kind == VkFunction:
+          if is_function_like(self.frame.kind) and self.frame.target.kind == VkFunction:
             let f = self.frame.target.ref.fn
             if f.async:
               # Remove the async function exception handler
@@ -4072,9 +4067,9 @@ proc exec*(self: VirtualMachine): Value =
 
             self.pc.inc()
             self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+            self.frame.kind = if class.has_macro_constructor: FkMacroMethod else: FkMethod
             self.frame.scope = scope  # Set the scope
-            self.frame.current_class = class
-            self.frame.current_self = instance.to_ref_value()
+            self.frame.target = class.constructor
             # Pass instance as first argument for constructor
             let args_gene = new_gene(NIL)
             args_gene.children.add(instance.to_ref_value())
@@ -4876,10 +4871,9 @@ proc exec*(self: VirtualMachine): Value =
                 scope = new_scope(f.scope_tracker, f.parent_scope)
 
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = init_method.callable
               new_frame.scope = scope
-              new_frame.current_method = init_method
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(instance)  # Add self as first argument
               if not f.matcher.is_empty():
@@ -5046,10 +5040,9 @@ proc exec*(self: VirtualMachine): Value =
                 scope = new_scope(f.scope_tracker, f.parent_scope)
 
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = init_method.callable
               new_frame.scope = scope
-              new_frame.current_method = init_method
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(instance)  # Add self as first argument
               new_frame.args.gene.children.add(arg)       # Add the constructor argument
@@ -5602,12 +5595,9 @@ proc exec*(self: VirtualMachine): Value =
 
               # ULTRA-OPTIMIZED: Minimal frame creation (like original IkCallMethod1)
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
-              new_frame.current_method = meth
-              new_frame.current_class = class
-              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5750,12 +5740,9 @@ proc exec*(self: VirtualMachine): Value =
 
               # ULTRA-OPTIMIZED: Minimal frame creation (like IkUnifiedMethodCall0)
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
-              new_frame.current_method = meth
-              new_frame.current_class = class
-              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5908,12 +5895,9 @@ proc exec*(self: VirtualMachine): Value =
 
               # ULTRA-OPTIMIZED: Minimal frame creation
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
-              new_frame.current_method = meth
-              new_frame.current_class = class
-              new_frame.current_self = obj
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -6019,12 +6003,9 @@ proc exec*(self: VirtualMachine): Value =
                 scope = new_scope(f.scope_tracker, f.parent_scope)
 
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
-              new_frame.current_method = meth
-              new_frame.current_class = class
-              new_frame.current_self = obj
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(obj)  # Add self as first argument
               for arg in args:

@@ -1783,54 +1783,56 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   #   self.emit(Instruction(kind: IkGeneEnd))
   #   return
 
-  # Check if we can determine at compile time that this is definitely NOT a macro
-  # For performance: avoid dual-branch compilation for regular function calls
-  var definitely_not_macro = false
-  if gene.type.kind == VkSymbol:
+  # Fast path optimizations for regular function calls (no properties, not macro-like, no spreads)
+  if gene.props.len == 0 and gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    # Exception: control flow keywords might still need special handling
-    if func_name in ["return", "break", "continue", "throw"]:
-      definitely_not_macro = false
-  elif gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
-    # Selector results are not macros
+    if (not func_name.ends_with("!")) and func_name notin ["return", "break", "continue", "throw"]:
+      var has_spread = false
+      for k, _ in gene.props:
+        if ($k).startsWith("..."):
+          has_spread = true
+          break
+      if not has_spread:
+        var i = 0
+        while i < gene.children.len:
+          let child = gene.children[i]
+          if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
+             (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
+            has_spread = true
+            break
+          i += 1
+
+      if not has_spread:
+        if gene.children.len == 0:
+          self.emit(Instruction(kind: IkUnifiedCall0))
+          return
+        if gene.children.len == 1:
+          self.compile(gene.children[0])
+          self.emit(Instruction(kind: IkUnifiedCall1))
+          return
+        for child in gene.children:
+          self.compile(child)
+        self.emit(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
+        return
+
+  # Selector-based symbols are not macros; allow fast path when applicable
+  var definitely_not_macro = false
+  if gene.type.kind == VkGene and gene.type.gene.type == "@".to_symbol_value():
     definitely_not_macro = true
   elif gene.type.kind == VkComplexSymbol:
     let parts = gene.type.ref.csymbol
     if parts.len > 0 and parts[0].startsWith("@"):
-      # Selector results are not macros
       definitely_not_macro = true
 
-  # Detect spreads across properties and children
-  var has_spread = false
-  if not has_spread:
-    for k, _ in gene.props:
-      if ($k).startsWith("..."):
-        has_spread = true
-        break
-  if not has_spread:
-    var i_spread = 0
-    let children_spread = gene.children
-    while i_spread < children_spread.len:
-      let child = children_spread[i_spread]
-      if (i_spread + 1 < children_spread.len and children_spread[i_spread + 1].kind == VkSymbol and children_spread[i_spread + 1].str == "...") or
-         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
-        has_spread = true
-        break
-      i_spread.inc()
-  # Fast path optimizations for regular function calls
+  # Fast path when selector results are known non-macro and no properties
   if definitely_not_macro and gene.props.len == 0:
-    # Zero-argument optimization
     if gene.children.len == 0:
       self.emit(Instruction(kind: IkUnifiedCall0))
       return
-
-    # Single-argument optimization
     if gene.children.len == 1:
       self.compile(gene.children[0])
       self.emit(Instruction(kind: IkUnifiedCall1))
       return
-
-    # Multi-argument optimization (only if no spreads)
     var has_spread = false
     var i = 0
     while i < gene.children.len:
@@ -1840,12 +1842,9 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
         has_spread = true
         break
       i += 1
-
     if not has_spread:
-      # Compile all arguments onto stack
       for child in gene.children:
         self.compile(child)
-      # Single unified call instruction with argument count
       self.emit(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
       return
     else:
