@@ -1833,42 +1833,11 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       self.compile(gene.children[0])
       self.emit(Instruction(kind: IkUnifiedCall1))
       return
-    var has_spread = false
-    var i = 0
-    while i < gene.children.len:
-      let child = gene.children[i]
-      if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
-         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
-        has_spread = true
-        break
-      i += 1
-    if not has_spread:
-      for child in gene.children:
-        self.compile(child)
-      self.emit(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
-      return
-    else:
-      # Spread-aware dynamic arg path: mark arg start, compile args/spreads, then call
-      self.emit(Instruction(kind: IkCallArgsStart))
-      var i = 0
-      while i < gene.children.len:
-        let child = gene.children[i]
-        if i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...":
-          self.compile(child)
-          self.emit(Instruction(kind: IkCallArgSpread))
-          i += 2
-          continue
-        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-          let base_symbol = child.str[0..^4].to_symbol_value()
-          self.compile(base_symbol)
-          self.emit(Instruction(kind: IkCallArgSpread))
-          i += 1
-          continue
-        self.compile(child)
-        i += 1
-      self.emit(Instruction(kind: IkUnifiedCallDynamic))
-      return
-  elif gene.props.len > 0 and not has_spread and gene.type.kind == VkSymbol and not gene.type.str.ends_with("!"):
+    for child in gene.children:
+      self.compile(child)
+    self.emit(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
+    return
+  elif gene.props.len > 0 and gene.type.kind == VkSymbol and not gene.type.str.ends_with("!"):
     # Keyword argument fast path for eager functions (no spreads)
     # Preserve evaluation order: properties first, then positional children
     for k, v in gene.props:

@@ -6124,12 +6124,9 @@ proc exec*(self: VirtualMachine): Value =
                 scope = new_scope(f.scope_tracker, f.parent_scope)
 
               var new_frame = new_frame()
-              new_frame.kind = FkFunction
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
-              new_frame.current_method = meth
-              new_frame.current_class = class
-              new_frame.current_self = obj
 
               # Process arguments with keyword support
               if not f.matcher.is_empty():
