@@ -5539,10 +5539,11 @@ proc exec*(self: VirtualMachine): Value =
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
-        if call_value_method(self, obj, method_name, []):
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
+        if obj.kind notin {VkInstance, VkCustom}:
+          if call_value_method(self, obj, method_name, []):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
         
         case obj.kind:
         of VkInstance, VkCustom:
@@ -5675,10 +5676,11 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
 
-        if call_value_method(self, obj, method_name, [arg]):
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
+        if obj.kind notin {VkInstance, VkCustom}:
+          if call_value_method(self, obj, method_name, [arg]):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -5823,10 +5825,11 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
 
-        if call_value_method(self, obj, method_name, [arg1, arg2]):
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
+        if obj.kind notin {VkInstance, VkCustom}:
+          if call_value_method(self, obj, method_name, [arg1, arg2]):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -5978,10 +5981,11 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
 
-        if call_value_method(self, obj, method_name, args):
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
+        if obj.kind notin {VkInstance, VkCustom}:
+          if call_value_method(self, obj, method_name, args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6099,10 +6103,11 @@ proc exec*(self: VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
 
-        if call_value_method(self, obj, method_name, args, kw_pairs):
-          self.pc.inc()
-          inst = self.cu.instructions[self.pc].addr
-          continue
+        if obj.kind notin {VkInstance, VkCustom}:
+          if call_value_method(self, obj, method_name, args, kw_pairs):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         case obj.kind:
         of VkInstance, VkCustom:

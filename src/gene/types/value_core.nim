@@ -260,9 +260,13 @@ template map_data*(v: Value): var Table[Key, Value] =
 
 proc instance_ptr*(v: Value): ptr InstanceObj {.inline.} =
   let u = cast[uint64](v)
-  if (u and 0xFFFF_0000_0000_0000u64) != INSTANCE_TAG:
-    raise newException(ValueError, "Value is not an instance")
-  cast[ptr InstanceObj](u and PAYLOAD_MASK)
+  when defined(release):
+    # Fast path in release builds: trust callers that the tag is correct.
+    cast[ptr InstanceObj](u and PAYLOAD_MASK)
+  else:
+    if (u and 0xFFFF_0000_0000_0000u64) != INSTANCE_TAG:
+      raise newException(ValueError, "Value is not an instance")
+    cast[ptr InstanceObj](u and PAYLOAD_MASK)
 
 template instance_class*(v: Value): var Class =
   instance_ptr(v).instance_class
