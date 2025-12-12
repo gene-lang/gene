@@ -64,7 +64,7 @@ proc get_class*(val: Value): Class =
     of VkPackage:
       return App.ref.app.package_class.ref.class
     of VkInstance:
-      return val.ref.instance_class
+      return val.instance_class
     of VkCustom:
       if val.ref.custom_class != nil:
         return val.ref.custom_class
@@ -163,7 +163,7 @@ proc has_object_class*(val: Value): bool {.inline.} =
 proc get_object_class*(val: Value): Class {.inline.} =
   case val.kind
   of VkInstance:
-    val.ref.instance_class
+    val.instance_class
   of VkCustom:
     val.ref.custom_class
   else:

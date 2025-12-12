@@ -126,8 +126,8 @@ suite "Threading Support":
 
     let result = VM.exec()
     check result.kind == VkMap
-    check result.ref.map["a".to_key()].int64 == 1
-    check result.ref.map["b".to_key()].int64 == 2
+    check map_data(result)["a".to_key()].int64 == 1
+    check map_data(result)["b".to_key()].int64 == 2
 
   test "Thread.send - send message with callback":
     let code = """

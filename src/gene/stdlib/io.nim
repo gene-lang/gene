@@ -18,11 +18,9 @@ proc io_file_constructor*(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
     raise new_exception(types.Exception, "File constructor requires a string path")
 
   # Create instance with path property
-  let instance = new_ref(VkInstance)
-  instance.instance_class = App.app.file_class.ref.class
-  instance.instance_props = initTable[Key, Value]()
-  instance.instance_props["path".to_key()] = path_arg
-  return instance.to_ref_value()
+  let instance = new_instance_value(App.app.file_class.ref.class)
+  instance_props(instance)["path".to_key()] = path_arg
+  return instance
 
 # File instance method: read
 proc io_file_read_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -33,7 +31,7 @@ proc io_file_read_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value],
   if self_arg.kind != VkInstance:
     raise new_exception(types.Exception, "read must be called on a File instance")
 
-  let path_value = self_arg.ref.instance_props["path".to_key()]
+  let path_value = instance_props(self_arg)["path".to_key()]
   if path_value.kind != VkString:
     raise new_exception(types.Exception, "File instance has no path")
 
@@ -69,7 +67,7 @@ proc io_file_write_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value]
   if self_arg.kind != VkInstance:
     raise new_exception(types.Exception, "write must be called on a File instance")
 
-  let path_value = self_arg.ref.instance_props["path".to_key()]
+  let path_value = instance_props(self_arg)["path".to_key()]
   if path_value.kind != VkString:
     raise new_exception(types.Exception, "File instance has no path")
 

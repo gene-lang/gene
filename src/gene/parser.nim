@@ -403,9 +403,9 @@ proc read_string_interpolation(self: var Parser): Value {.gcsafe.} =
         self.bufpos.inc()
         self.skip_ws()
         if self.buf[self.bufpos] == '^':
-          let r = new_ref(VkMap)
-          r.map = self.read_map(MkMap)
-          gene.children.add(r.to_ref_value())
+          let r = new_map_value()
+          map_data(r) = self.read_map(MkMap)
+          gene.children.add(r)
           all_are_strings = false
         else:
           let v = self.read()
@@ -762,12 +762,12 @@ proc read_map(self: var Parser, mode: MapKind): Table[Key, Value] {.gcsafe.} =
             for part in parts[0..^2]:
               let key = part.to_key()
               if map[].has_key(key):
-                let r = map[][key].ref
-                map = r.map.addr
+                let r = map[][key]
+                map = map_data(r).addr
               else:
-                var m = new_ref(VkMap)
-                map[][key] = m.to_ref_value()
-                map = m.map.addr
+                var m = new_map_value()
+                map[][key] = m
+                map = map_data(m).addr
             key = parts[^1]
             case key[0]:
             of '^':
@@ -911,9 +911,9 @@ proc read_gene(self: var Parser): Value {.gcsafe.} =
   result = gene.to_gene_value()
 
 proc read_map(self: var Parser): Value {.gcsafe.} =
-  let r = new_ref(VkMap)
-  r.map = self.read_map(MkMap)
-  result = r.to_ref_value()
+  let r = new_map_value()
+  map_data(r) = self.read_map(MkMap)
+  result = r
 
 proc read_array(self: var Parser): Value {.gcsafe.} =
   var r = new_array_value()

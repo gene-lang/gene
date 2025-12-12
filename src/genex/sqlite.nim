@@ -81,17 +81,15 @@ proc vm_open(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
   connection_table[conn_id] = wrapper
 
   # Create Connection instance
-  let instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    if connection_class_global != nil:
-      instance.instance_class = connection_class_global
-    else:
-      instance.instance_class = new_class("Connection")
+  let conn_class = block:
+    {.cast(gcsafe).}:
+      (if connection_class_global != nil: connection_class_global else: new_class("Connection"))
+  let instance = new_instance_value(conn_class)
 
   # Store the connection ID
-  instance.instance_props["__conn_id__".to_key()] = conn_id.to_value()
+  instance_props(instance)["__conn_id__".to_key()] = conn_id.to_value()
 
-  return instance.to_ref_value()
+  return instance
 
 # Execute a SQL statement and return results
 proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -103,10 +101,10 @@ proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
     raise new_exception(types.Exception, "exec must be called on a Connection instance")
 
   let conn_id_key = "__conn_id__".to_key()
-  if not self.ref.instance_props.hasKey(conn_id_key):
+  if not instance_props(self).hasKey(conn_id_key):
     raise new_exception(types.Exception, "Invalid Connection instance")
 
-  let conn_id = self.ref.instance_props[conn_id_key].to_int()
+  let conn_id = instance_props(self)[conn_id_key].to_int()
   if not connection_table.hasKey(conn_id):
     raise new_exception(types.Exception, "Connection not found")
 
@@ -148,10 +146,10 @@ proc vm_execute(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     raise new_exception(types.Exception, "execute must be called on a Connection instance")
 
   let conn_id_key = "__conn_id__".to_key()
-  if not self.ref.instance_props.hasKey(conn_id_key):
+  if not instance_props(self).hasKey(conn_id_key):
     raise new_exception(types.Exception, "Invalid Connection instance")
 
-  let conn_id = self.ref.instance_props[conn_id_key].to_int()
+  let conn_id = instance_props(self)[conn_id_key].to_int()
   if not connection_table.hasKey(conn_id):
     raise new_exception(types.Exception, "Connection not found")
 
@@ -194,10 +192,10 @@ proc vm_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: in
 
   # Get the wrapper
   let conn_id_key = "__conn_id__".to_key()
-  if not self.ref.instance_props.hasKey(conn_id_key):
+  if not instance_props(self).hasKey(conn_id_key):
     raise new_exception(types.Exception, "Invalid Connection instance")
 
-  let conn_id = self.ref.instance_props[conn_id_key].to_int()
+  let conn_id = instance_props(self)[conn_id_key].to_int()
   if not connection_table.hasKey(conn_id):
     raise new_exception(types.Exception, "Connection not found")
 

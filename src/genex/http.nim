@@ -134,7 +134,7 @@ proc server_request_get_prop(vm: VirtualMachine, args: ptr UncheckedArray[Value]
   let self_val = get_positional_arg(args, 0, has_keyword_args)
   if self_val.kind != VkInstance:
     raise new_exception(types.Exception, "ServerRequest methods must be called on an instance")
-  return self_val.ref.instance_props.getOrDefault(prop, NIL)
+  return instance_props(self_val).getOrDefault(prop, NIL)
 
 proc server_request_path(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "path".to_key())
@@ -229,9 +229,9 @@ proc vm_http_post_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], ar
   if headers != NIL:
     req_args.add(headers)
   else:
-    let empty_map = new_ref(VkMap)
-    empty_map.map = Table[Key, Value]()
-    req_args.add(empty_map.to_ref_value())
+    let empty_map = new_map_value()
+    map_data(empty_map) = Table[Key, Value]()
+    req_args.add(empty_map)
   req_args.add(body)
 
   let request = call_native_fn(request_constructor, vm, req_args)
@@ -422,34 +422,35 @@ proc request_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], ar
     raise new_exception(types.Exception, "URL must be a string")
 
   # Create Request instance
-  let instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    instance.instance_class = request_class_global
+  let request_class = block:
+    {.cast(gcsafe).}:
+      request_class_global
+  let instance = new_instance_value(request_class)
 
   # Set properties
-  instance.instance_props["url".to_key()] = url
+  instance_props(instance)["url".to_key()] = url
 
   # Set method (default to GET)
   if arg_count > 1:
-    instance.instance_props["method".to_key()] = get_positional_arg(args, 1, has_keyword_args)
+    instance_props(instance)["method".to_key()] = get_positional_arg(args, 1, has_keyword_args)
   else:
-    instance.instance_props["method".to_key()] = "GET".to_value()
+    instance_props(instance)["method".to_key()] = "GET".to_value()
 
   # Set headers (default to empty map)
   if arg_count > 2:
-    instance.instance_props["headers".to_key()] = get_positional_arg(args, 2, has_keyword_args)
+    instance_props(instance)["headers".to_key()] = get_positional_arg(args, 2, has_keyword_args)
   else:
-    let empty_map = new_ref(VkMap)
-    empty_map.map = Table[Key, Value]()
-    instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
+    let empty_map = new_map_value()
+    map_data(empty_map) = Table[Key, Value]()
+    instance_props(instance)["headers".to_key()] = empty_map
   
   # Set body (default to nil)
   if arg_count > 3:
-    instance.instance_props["body".to_key()] = get_positional_arg(args, 3, has_keyword_args)
+    instance_props(instance)["body".to_key()] = get_positional_arg(args, 3, has_keyword_args)
   else:
-    instance.instance_props["body".to_key()] = NIL
+    instance_props(instance)["body".to_key()] = NIL
   
-  return instance.to_ref_value()
+  return instance
 
 # Request.send method - sends the request and returns a Future[Response]
 proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -461,10 +462,10 @@ proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     raise new_exception(types.Exception, "send can only be called on a Request instance")
   
   # Get request properties
-  let url = request_obj.ref.instance_props["url".to_key()]
-  let http_method = request_obj.ref.instance_props["method".to_key()]
-  let headers = request_obj.ref.instance_props["headers".to_key()]
-  let body = request_obj.ref.instance_props["body".to_key()]
+  let url = instance_props(request_obj)["url".to_key()]
+  let http_method = instance_props(request_obj)["method".to_key()]
+  let headers = instance_props(request_obj)["headers".to_key()]
+  let body = instance_props(request_obj)["body".to_key()]
   
   # Create HTTP client
   let client = newHttpClient()
@@ -472,7 +473,7 @@ proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   
   # Set headers
   if headers.kind == VkMap:
-    for k, v in headers.ref.map:
+    for k, v in map_data(headers):
       if v.kind == VkString:
         client.headers[cast[Value](k).str] = v.str
   
@@ -483,7 +484,7 @@ proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   elif body.kind == VkMap:
     # Convert map to JSON
     var jsonObj = newJObject()
-    for k, v in body.ref.map:
+    for k, v in map_data(body):
       let key_str = cast[Value](k).str
       case v.kind:
       of VkString:
@@ -522,22 +523,23 @@ proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
       raise new_exception(types.Exception, "Unsupported HTTP method: " & methodStr)
   
   # Create Response instance
-  let response_instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    response_instance.instance_class = response_class_global
-  response_instance.instance_props["status".to_key()] = response.code.int.to_value()
-  response_instance.instance_props["body".to_key()] = response.body.to_value()
+  let response_cls = block:
+    {.cast(gcsafe).}:
+      response_class_global
+  let response_instance = new_instance_value(response_cls)
+  instance_props(response_instance)["status".to_key()] = response.code.int.to_value()
+  instance_props(response_instance)["body".to_key()] = response.body.to_value()
   
   # Convert headers to Gene map
-  let headers_map = new_ref(VkMap)
-  headers_map.map = Table[Key, Value]()
+  let headers_map = new_map_value()
+  map_data(headers_map) = Table[Key, Value]()
   for k, v in response.headers.table:
-    headers_map.map[k.to_key()] = v[0].to_value()  # Take first value for multi-value headers
-  response_instance.instance_props["headers".to_key()] = headers_map.to_ref_value()
+    map_data(headers_map)[k.to_key()] = v[0].to_value()  # Take first value for multi-value headers
+  instance_props(response_instance)["headers".to_key()] = headers_map
   
   # Create completed future with response
   let future = new_future_value()
-  future.ref.future.complete(response_instance.to_ref_value())
+  future.ref.future.complete(response_instance)
   return future
 
 # Response constructor implementation
@@ -550,23 +552,24 @@ proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
   let body = get_positional_arg(args, 1, has_keyword_args)
 
   # Create Response instance
-  let instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    instance.instance_class = response_class_global
+  let response_cls = block:
+    {.cast(gcsafe).}:
+      response_class_global
+  let instance = new_instance_value(response_cls)
 
   # Set properties
-  instance.instance_props["status".to_key()] = status
-  instance.instance_props["body".to_key()] = body
+  instance_props(instance)["status".to_key()] = status
+  instance_props(instance)["body".to_key()] = body
 
   # Set headers (default to empty map)
   if arg_count > 2:
-    instance.instance_props["headers".to_key()] = get_positional_arg(args, 2, has_keyword_args)
+    instance_props(instance)["headers".to_key()] = get_positional_arg(args, 2, has_keyword_args)
   else:
-    let empty_map = new_ref(VkMap)
-    empty_map.map = Table[Key, Value]()
-    instance.instance_props["headers".to_key()] = empty_map.to_ref_value()
+    let empty_map = new_map_value()
+    map_data(empty_map) = Table[Key, Value]()
+    instance_props(instance)["headers".to_key()] = empty_map
 
-  return instance.to_ref_value()
+  return instance
 
 # Response.json method - parses body as JSON
 proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -577,7 +580,7 @@ proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   if response_obj.kind != VkInstance:
     raise new_exception(types.Exception, "json can only be called on a Response instance")
 
-  let body = response_obj.ref.instance_props["body".to_key()]
+  let body = instance_props(response_obj)["body".to_key()]
 
   if body.kind != VkString:
     raise new_exception(types.Exception, "Response body must be a string to parse as JSON")
@@ -714,9 +717,9 @@ proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Val
         return NIL
     of VkInstance:
       # If it's an instance, try to call its `call` method
-      let instance = fn.ref
-      if instance.instance_class.methods.contains("call".to_key()):
-        let call_method = instance.instance_class.methods["call".to_key()].callable
+      let inst_class = instance_class(fn)
+      if inst_class.methods.contains("call".to_key()):
+        let call_method = inst_class.methods["call".to_key()].callable
         # Prepend instance as first argument
         var new_args = @[fn]
         new_args.add(args)
@@ -729,40 +732,41 @@ proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Val
 # HTTP Server implementation
 proc create_server_request(req: asynchttpserver.Request): Value =
   # Create ServerRequest instance
-  let instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    instance.instance_class = server_request_class_global
+  let request_cls = block:
+    {.cast(gcsafe).}:
+      server_request_class_global
+  let instance = new_instance_value(request_cls)
   
   # Set properties
-  instance.instance_props["method".to_key()] = ($req.reqMethod).to_value()
-  instance.instance_props["url".to_key()] = req.url.path.to_value()
-  instance.instance_props["path".to_key()] = req.url.path.to_value()
+  instance_props(instance)["method".to_key()] = ($req.reqMethod).to_value()
+  instance_props(instance)["url".to_key()] = req.url.path.to_value()
+  instance_props(instance)["path".to_key()] = req.url.path.to_value()
   
   # Parse query parameters
-  let params_map = new_ref(VkMap)
-  params_map.map = Table[Key, Value]()
+  let params_map = new_map_value()
+  map_data(params_map) = Table[Key, Value]()
   if req.url.query != "":
     for key, val in decodeData(req.url.query):
-      params_map.map[key.to_key()] = val.to_value()
-  instance.instance_props["params".to_key()] = params_map.to_ref_value()
+      map_data(params_map)[key.to_key()] = val.to_value()
+  instance_props(instance)["params".to_key()] = params_map
   
   # Convert headers to Gene map
-  let headers_map = new_ref(VkMap)
-  headers_map.map = Table[Key, Value]()
+  let headers_map = new_map_value()
+  map_data(headers_map) = Table[Key, Value]()
   for k, v in req.headers.table:
-    headers_map.map[k.to_key()] = v[0].to_value()  # Take first value
-  instance.instance_props["headers".to_key()] = headers_map.to_ref_value()
+    map_data(headers_map)[k.to_key()] = v[0].to_value()  # Take first value
+  instance_props(instance)["headers".to_key()] = headers_map
   
   # Store body if present
   let body_content = req.body
-  instance.instance_props["body".to_key()] = body_content.to_value()
+  instance_props(instance)["body".to_key()] = body_content.to_value()
   
   var content_type = ""
   if req.headers.hasKey("Content-Type"):
     content_type = req.headers["Content-Type"]
-  instance.instance_props["body_params".to_key()] = parse_body_params(body_content, content_type)
+  instance_props(instance)["body_params".to_key()] = parse_body_params(body_content, content_type)
   
-  return instance.to_ref_value()
+  return instance
 
 proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
   {.cast(gcsafe).}:
@@ -816,9 +820,9 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       await req.respond(Http404, "Not Found")
     elif response.kind == VkInstance:
       # Check if it's a ServerResponse
-      let status_val = response.ref.instance_props.getOrDefault("status".to_key(), 200.to_value())
-      let body_val = response.ref.instance_props.getOrDefault("body".to_key(), "".to_value())
-      let headers_val = response.ref.instance_props.getOrDefault("headers".to_key(), NIL)
+      let status_val = instance_props(response).getOrDefault("status".to_key(), 200.to_value())
+      let body_val = instance_props(response).getOrDefault("body".to_key(), "".to_value())
+      let headers_val = instance_props(response).getOrDefault("headers".to_key(), NIL)
       
       let status_code = if status_val.kind == VkInt: 
         HttpCode(status_val.int64.int)
@@ -830,7 +834,7 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       # Prepare headers
       var headers = newHttpHeaders()
       if headers_val.kind == VkMap:
-        for k, v in headers_val.ref.map:
+        for k, v in map_data(headers_val):
           if v.kind == VkString:
             headers[cast[Value](k).str] = v.str
       
@@ -889,8 +893,7 @@ proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
 
   var status = 200
   var body = ""
-  var headers = new_ref(VkMap)
-  headers.map = Table[Key, Value]()
+  var headers = new_map_value()
 
   # Parse arguments
   if arg_count == 1:
@@ -916,25 +919,22 @@ proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
       body = $body_arg
 
     # Optional headers
-    if arg_count > 2:
-      let headers_arg = get_positional_arg(args, 2, has_keyword_args)
-      if headers_arg.kind == VkMap:
-        headers = headers_arg.ref
+  if arg_count > 2:
+    let headers_arg = get_positional_arg(args, 2, has_keyword_args)
+    if headers_arg.kind == VkMap:
+      headers = headers_arg
   
   # Create ServerResponse instance
-  let instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    if server_response_class_global != nil:
-      instance.instance_class = server_response_class_global
-    else:
-      # Create temporary class
-      instance.instance_class = new_class("ServerResponse")
+  let instance_class = block:
+    {.cast(gcsafe).}:
+      (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
+  let instance = new_instance_value(instance_class)
   
-  instance.instance_props["status".to_key()] = status.to_value()
-  instance.instance_props["body".to_key()] = body.to_value()
-  instance.instance_props["headers".to_key()] = headers.to_ref_value()
+  instance_props(instance)["status".to_key()] = status.to_value()
+  instance_props(instance)["body".to_key()] = body.to_value()
+  instance_props(instance)["headers".to_key()] = headers
   
-  return instance.to_ref_value()
+  return instance
 
 proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -952,22 +952,19 @@ proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
     else:
       raise new_exception(types.Exception, "redirect status must be an integer")
 
-  let headers = new_ref(VkMap)
-  headers.map = Table[Key, Value]()
-  headers.map["Location".to_key()] = location_arg.str.to_value()
+  let headers = new_map_value()
+  map_data(headers)["Location".to_key()] = location_arg.str.to_value()
 
-  let instance = new_ref(VkInstance)
-  {.cast(gcsafe).}:
-    if server_response_class_global != nil:
-      instance.instance_class = server_response_class_global
-    else:
-      instance.instance_class = new_class("ServerResponse")
+  let redirect_class = block:
+    {.cast(gcsafe).}:
+      (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
+  let instance = new_instance_value(redirect_class)
 
-  instance.instance_props["status".to_key()] = status.to_value()
-  instance.instance_props["body".to_key()] = "".to_value()
-  instance.instance_props["headers".to_key()] = headers.to_ref_value()
+  instance_props(instance)["status".to_key()] = status.to_value()
+  instance_props(instance)["body".to_key()] = "".to_value()
+  instance_props(instance)["headers".to_key()] = headers
 
-  return instance.to_ref_value()
+  return instance
 
 # Run event loop forever
 proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =

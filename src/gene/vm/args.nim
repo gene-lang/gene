@@ -27,7 +27,7 @@ proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instan
     if param.is_prop and i < scope.members.len:
       let value = scope.members[i]
       if value.kind != VkNil:
-        instance.ref.instance_props[param.name_key] = value
+        instance_props(instance)[param.name_key] = value
 
 # Forward declaration for original process_args function
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)
@@ -108,7 +108,7 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
     if keywords.len > 0:
       for (k, v) in keywords:
         if k notin used_keys:
-          rest_map.ref.map[k] = v
+          map_data(rest_map)[k] = v
     scope.members[prop_splat_index] = rest_map
 
   if not has_value_splat and pos_index < pos_count:

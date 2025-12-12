@@ -38,13 +38,13 @@ suite "HTTP Extension Tests":
     let parsed = json_parse.ref.native_fn(VM, args)
     
     check parsed.kind == VkMap
-    let map_ref = parsed.ref
-    check map_ref.map.hasKey(to_key("name"))
-    check map_ref.map.hasKey(to_key("value"))
-    check map_ref.map[to_key("name")].kind == VkString
-    check map_ref.map[to_key("name")].str == "test"
-    check map_ref.map[to_key("value")].kind == VkInt
-    check map_ref.map[to_key("value")].to_int == 42
+    let map_ref = map_data(parsed)
+    check map_ref.hasKey(to_key("name"))
+    check map_ref.hasKey(to_key("value"))
+    check map_ref[to_key("name")].kind == VkString
+    check map_ref[to_key("name")].str == "test"
+    check map_ref[to_key("value")].kind == VkInt
+    check map_ref[to_key("value")].to_int == 42
     
     # Test json_stringify
     let json_stringify = ns["json_stringify".to_key()]
@@ -88,22 +88,20 @@ suite "HTTP Extension Tests":
     let parsed = json_parse.ref.native_fn(VM, args)
     
     check parsed.kind == VkMap
-    let map_ref = parsed.ref
+    let map_ref = map_data(parsed)
     
     # Check nested object
-    check map_ref.map.hasKey(to_key("user"))
-    let user = map_ref.map[to_key("user")]
+    check map_ref.hasKey(to_key("user"))
+    let user = map_ref[to_key("user")]
     check user.kind == VkMap
-    let user_ref = user.ref
-    check user_ref.map[to_key("name")].str == "Alice"
-    check user_ref.map[to_key("age")].to_int == 30
+    check map_data(user)[to_key("name")].str == "Alice"
+    check map_data(user)[to_key("age")].to_int == 30
     
     # Check nested array
-    check map_ref.map.hasKey(to_key("items"))
-    let items = map_ref.map[to_key("items")]
+    check map_ref.hasKey(to_key("items"))
+    let items = map_ref[to_key("items")]
     check items.kind == VkArray
-    let items_ref = items.ref
-    check items_ref.arr.len == 3
-    check items_ref.arr[0].to_int == 1
-    check items_ref.arr[1].to_int == 2
-    check items_ref.arr[2].to_int == 3
+    check array_data(items).len == 3
+    check array_data(items)[0].to_int == 1
+    check array_data(items)[1].to_int == 2
+    check array_data(items)[2].to_int == 3

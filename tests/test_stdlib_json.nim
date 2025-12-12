@@ -8,8 +8,8 @@ test_vm """
 """, proc(result: Value) =
   check result.kind == VkMap
   let key = "a".to_key()
-  check result.ref.map.hasKey(key)
-  check result.ref.map[key].to_bool
+  check map_data(result).hasKey(key)
+  check map_data(result)[key].to_bool
 
 test_vm """
   ([1 2].to_json)

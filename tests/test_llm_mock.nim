@@ -36,10 +36,10 @@ suite "LLM Mock Backend":
       (session .infer "ping pong" {^max_tokens 1})
     """)
     check response.kind == VkMap
-    let text = response.ref.map["text".to_key()]
+    let text = map_data(response)["text".to_key()]
     check text.kind == VkString
     check text.str.endsWith("[mock]")
-    let finish = response.ref.map["finish_reason".to_key()]
+    let finish = map_data(response)["finish_reason".to_key()]
     check finish.kind == VkSymbol
     check finish.str == ":length"
 

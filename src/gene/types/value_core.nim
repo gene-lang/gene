@@ -157,8 +157,7 @@ converter to_value*(k: Key): Value {.inline.} =
 # - Scope lifetime is owned by VM instructions (IkScopeStart/IkScopeEnd); frames borrow/own
 #   per compiler emission. Frames are pooled via Frame.free().
 # Manual ref counting is used instead of Nim ARC/ORC for Value-backed types.
-# NOTE: Array/Map/Instance still use Reference for now; splitting them into dedicated
-# tags/structs is planned but not yet applied in this file.
+# Map, Array, and Instance use dedicated NaN-tagged objects rather than Reference.
 
 # Memory pool for reference objects
 var REF_POOL* {.threadvar.}: seq[ptr Reference]
@@ -176,6 +175,12 @@ proc retain*(v: Value) {.inline.} =
         x.ref_count.inc()
       of ARRAY_TAG:
         let x = cast[ptr ArrayObj](u and PAYLOAD_MASK)
+        x.ref_count.inc()
+      of MAP_TAG:
+        let x = cast[ptr MapObj](u and PAYLOAD_MASK)
+        x.ref_count.inc()
+      of INSTANCE_TAG:
+        let x = cast[ptr InstanceObj](u and PAYLOAD_MASK)
         x.ref_count.inc()
       of GENE_TAG:
         let x = cast[ptr Gene](u and PAYLOAD_MASK)
@@ -207,6 +212,18 @@ proc release*(v: Value) {.inline.} =
           dealloc(x)
         else:
           x.ref_count.dec()
+      of MAP_TAG:
+        let x = cast[ptr MapObj](u and PAYLOAD_MASK)
+        if x.ref_count == 1:
+          dealloc(x)
+        else:
+          x.ref_count.dec()
+      of INSTANCE_TAG:
+        let x = cast[ptr InstanceObj](u and PAYLOAD_MASK)
+        if x.ref_count == 1:
+          dealloc(x)
+        else:
+          x.ref_count.dec()
       of GENE_TAG:
         let x = cast[ptr Gene](u and PAYLOAD_MASK)
         if x.ref_count == 1:
@@ -232,6 +249,27 @@ proc array_ptr*(v: Value): ptr ArrayObj {.inline.} =
 template array_data*(v: Value): var seq[Value] =
   array_ptr(v).arr
 
+proc map_ptr*(v: Value): ptr MapObj {.inline.} =
+  let u = cast[uint64](v)
+  if (u and 0xFFFF_0000_0000_0000u64) != MAP_TAG:
+    raise newException(ValueError, "Value is not a map")
+  cast[ptr MapObj](u and PAYLOAD_MASK)
+
+template map_data*(v: Value): var Table[Key, Value] =
+  map_ptr(v).map
+
+proc instance_ptr*(v: Value): ptr InstanceObj {.inline.} =
+  let u = cast[uint64](v)
+  if (u and 0xFFFF_0000_0000_0000u64) != INSTANCE_TAG:
+    raise newException(ValueError, "Value is not an instance")
+  cast[ptr InstanceObj](u and PAYLOAD_MASK)
+
+template instance_class*(v: Value): var Class =
+  instance_ptr(v).instance_class
+
+template instance_props*(v: Value): var Table[Key, Value] =
+  instance_ptr(v).instance_props
+
 proc `==`*(a, b: ptr Reference): bool =
   if a.is_nil:
     return b.is_nil
@@ -245,16 +283,6 @@ proc `==`*(a, b: ptr Reference): bool =
   case a.kind:
     of VkSet:
       return a.set == b.set
-    of VkMap:
-      if a.map.len != b.map.len:
-        return false
-      for k, v in a.map:
-        let other = b.map.getOrDefault(k, NOT_FOUND)
-        if other == NOT_FOUND:
-          return false
-        if v != other:
-          return false
-      return true
     of VkComplexSymbol:
       return a.csymbol == b.csymbol
     else:
@@ -342,6 +370,17 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
         return false
       else:
         return str1.str == str2.str
+    # Maps compare structurally
+    elif tag1 == MAP_TAG and tag2 == MAP_TAG:
+      let map1 = map_ptr(a).map
+      let map2 = map_ptr(b).map
+      if map1.len != map2.len:
+        return false
+      for k, v in map1:
+        let other = map2.getOrDefault(k, NOT_FOUND)
+        if other == NOT_FOUND or v != other:
+          return false
+      return true
     # Arrays compare structurally
     elif tag1 == ARRAY_TAG and tag2 == ARRAY_TAG:
       let arr1 = array_ptr(a).arr
@@ -352,6 +391,9 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
         if arr1[i] != arr2[i]:
           return false
       return true
+    # Instances compare by identity
+    elif tag1 == INSTANCE_TAG and tag2 == INSTANCE_TAG:
+      return (u1 and PAYLOAD_MASK) == (u2 and PAYLOAD_MASK)
     # Only references can be equal with different bit patterns
     elif tag1 == REF_TAG and tag2 == REF_TAG:
       return a.ref == b.ref
@@ -422,6 +464,10 @@ proc kind*(v: Value): ValueKind {.inline.} =
       return v.ref.kind  # Single pointer dereference
     of ARRAY_TAG:
       return VkArray
+    of MAP_TAG:
+      return VkMap
+    of INSTANCE_TAG:
+      return VkInstance
     of SYMBOL_TAG:
       return VkSymbol
     of STRING_TAG:
@@ -447,6 +493,13 @@ proc is_literal*(self: Value): bool =
           if not is_literal(v):
             return false
         return true
+      of MAP_TAG:
+        for v in map_data(self).values:
+          if not is_literal(v):
+            return false
+        return true
+      of INSTANCE_TAG:
+        result = false
       of SMALL_INT_TAG, STRING_TAG:
         result = true
       of SPECIAL_TAG:
@@ -459,11 +512,6 @@ proc is_literal*(self: Value): bool =
       of REF_TAG:
         let r = self.ref
         case r.kind:
-          of VkMap:
-            for v in r.map.values:
-              if not is_literal(v):
-                return false
-            return true
           of VkSelector:
             return true
           else:
@@ -521,7 +569,7 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
       of VkMap:
         result = "{"
         var first = true
-        for k, v in self.ref.map:
+        for k, v in map_data(self):
           if not first:
             result &= " "
           # Key is a symbol value cast to int64, need to extract the symbol index
@@ -600,7 +648,7 @@ proc `$`*(self: Value): string {.gcsafe.} =
       of VkMap:
         result = "{"
         var first = true
-        for k, v in self.ref.map:
+        for k, v in map_data(self):
           if not first:
             result &= " "
           # Key is a symbol value cast to int64, need to extract the symbol index
@@ -946,7 +994,7 @@ proc len*(self: Value): int =
   of VkArray:
     return array_data(self).len
   of VkMap:
-    return self.ref.map.len
+    return map_data(self).len
   of VkSet:
     return self.ref.set.len
   of VkGene:
@@ -978,13 +1026,40 @@ proc new_set_value*(): Value =
 #################### Map #########################
 
 proc new_map_value*(): Value =
-  let r = new_ref(VkMap)
-  result = r.to_ref_value()
+  let r = cast[ptr MapObj](alloc0(sizeof(MapObj)))
+  r.ref_count = 1
+  r.map = initTable[Key, Value]()
+  let ptr_addr = cast[uint64](r)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Map pointer too large for NaN boxing"
+  result = cast[Value](MAP_TAG or ptr_addr)
 
 proc new_map_value*(map: Table[Key, Value]): Value =
-  let r = new_ref(VkMap)
+  let r = cast[ptr MapObj](alloc0(sizeof(MapObj)))
+  r.ref_count = 1
   r.map = map
-  result = r.to_ref_value()
+  let ptr_addr = cast[uint64](r)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Map pointer too large for NaN boxing"
+  result = cast[Value](MAP_TAG or ptr_addr)
+
+#################### Instance ####################
+
+proc new_instance_value*(cls: Class): Value =
+  let r = cast[ptr InstanceObj](alloc0(sizeof(InstanceObj)))
+  r.ref_count = 1
+  r.instance_class = cls
+  r.instance_props = initTable[Key, Value]()
+  let ptr_addr = cast[uint64](r)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Instance pointer too large for NaN boxing"
+  result = cast[Value](INSTANCE_TAG or ptr_addr)
+
+proc new_instance_value*(cls: Class, props: Table[Key, Value]): Value =
+  let r = cast[ptr InstanceObj](alloc0(sizeof(InstanceObj)))
+  r.ref_count = 1
+  r.instance_class = cls
+  r.instance_props = props
+  let ptr_addr = cast[uint64](r)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Instance pointer too large for NaN boxing"
+  result = cast[Value](INSTANCE_TAG or ptr_addr)
 
 #################### Range ######################
 
@@ -1878,14 +1953,14 @@ proc get_positional_arg*(args: ptr UncheckedArray[Value], index: int, has_keywor
 proc get_keyword_arg*(args: ptr UncheckedArray[Value], name: string): Value {.inline.} =
   ## Get keyword argument by name
   if args[0].kind == VkMap:
-    return args[0].ref.map.get_or_default(name.to_key(), NIL)
+    return map_data(args[0]).get_or_default(name.to_key(), NIL)
   else:
     return NIL
 
 proc has_keyword_arg*(args: ptr UncheckedArray[Value], name: string): bool {.inline.} =
   ## Check if keyword argument exists
   if args[0].kind == VkMap:
-    return args[0].ref.map.hasKey(name.to_key())
+    return map_data(args[0]).hasKey(name.to_key())
   else:
     return false
 

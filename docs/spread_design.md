@@ -347,7 +347,7 @@ proc compile_gene_children(self: Compiler, gene: ptr Gene) =
 proc compile_map(self: Compiler, input: Value) =
   self.output.instructions.add(Instruction(kind: IkMapStart))
 
-  for k, v in input.ref.map:
+  for k, v in map_data(input):
     let key_str = k.to_string()  # Convert Key to string
 
     # Check for spread keys: ^..., ^...1, ^...2, etc.
@@ -448,16 +448,16 @@ of IkMapSetProp:
   # Normal key-value: pop value, set in map
   let key = inst.arg0.Key
   let value = self.frame.pop()
-  self.frame.current().ref.map[key] = value
+  map_data(self.frame.current())[key] = value
 
 of IkMapSpread:
   # Spread map: pop source map, copy all key-value pairs
   let source = self.frame.pop()
   case source.kind:
     of VkMap:
-      for k, v in source.ref.map:
+      for k, v in map_data(source):
         # Later keys override earlier keys
-        self.frame.current().ref.map[k] = v
+        map_data(self.frame.current())[k] = v
     else:
       not_allowed("^... can only spread maps")
 ```
@@ -475,7 +475,7 @@ of IkGenePropsSpread:
   let source = self.frame.pop()
   case source.kind:
     of VkMap:
-      for k, v in source.ref.map:
+      for k, v in map_data(source):
         # Later properties override earlier properties
         self.frame.current().gene.props[k] = v
     else:

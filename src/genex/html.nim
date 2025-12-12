@@ -28,7 +28,7 @@ proc props_to_attrs(props: Table[Key, Value]): string =
       of VkMap:
         # Handle style maps like {^font-size "12px"}
         var style_parts: seq[string] = @[]
-        for sk, sv in v.ref.map:
+        for sk, sv in map_data(v):
           let style_key = cast[Value](sk)
           if style_key.kind == VkSymbol:
             let style_val = if sv.kind == VkString: sv.str else: $sv
@@ -52,7 +52,7 @@ proc html_tag(tag_name: string, vm: VirtualMachine, args: ptr UncheckedArray[Val
   if has_keyword_args and arg_count > 0:
     let props_arg = args[arg_count - 1]
     if props_arg.kind == VkMap:
-      attrs = props_to_attrs(props_arg.ref.map)
+      attrs = props_to_attrs(map_data(props_arg))
       # Content comes from positional args before the props
       for i in 0..<(arg_count - 1):
         let arg = get_positional_arg(args, i, has_keyword_args)
@@ -88,7 +88,7 @@ proc html_self_closing_tag(tag_name: string, vm: VirtualMachine, args: ptr Unche
   if has_keyword_args and arg_count > 0:
     let props_arg = args[arg_count - 1]
     if props_arg.kind == VkMap:
-      attrs = props_to_attrs(props_arg.ref.map)
+      attrs = props_to_attrs(map_data(props_arg))
 
   let html = "<" & tag_name & attrs & " />"
   return new_str_value(html)

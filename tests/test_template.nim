@@ -50,7 +50,7 @@ test_vm """
 #   (var b 1)
 #   ($render tpl)
 # """, proc(r: Value) =
-#   check r.ref.map["p".to_key()] == 2
+#   check map_data(r)["p".to_key()] == 2
 
 test_vm """
   (var i 1)
@@ -118,7 +118,7 @@ test_vm """
   (a = 2)
   ($render tpl)
 """, proc(r: Value) =
-  check r.ref.map["a".to_key()] == 2
+  check map_data(r)["a".to_key()] == 2
 
 test_vm """
   (var tpl :(_ %a))

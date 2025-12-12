@@ -16,7 +16,7 @@ test_vm """
   (class A)
   (new A)
 """, proc(r: Value) =
-  check r.ref.instance_class.name == "A"
+  check instance_class(r).name == "A"
 
 # Multiple classes
 test_vm """

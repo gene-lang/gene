@@ -41,11 +41,11 @@ proc serialize*(self: Serialization, value: Value): Value =
       array_data(arr_val).add(self.serialize(item))
     return arr_val
   of VkMap:
-    let map = new_ref(VkMap)
-    map.map = initTable[Key, Value]()
-    for k, v in value.ref.map:
-      map.map[k] = self.serialize(v)
-    return map.to_ref_value()
+    let map = new_map_value()
+    map_data(map) = initTable[Key, Value]()
+    for k, v in map_data(value):
+      map_data(map)[k] = self.serialize(v)
+    return map
   of VkGene:
     let gene = new_gene(self.serialize(value.gene.type))
     for k, v in value.gene.props:
@@ -60,13 +60,13 @@ proc serialize*(self: Serialization, value: Value): Value =
   of VkInstance:
     # Create (gene/instance <class-ref> {props})
     let gene = new_gene("gene/instance".to_symbol_value())
-    gene.children.add(new_gene_ref(value.ref.instance_class.to_path()))
+    gene.children.add(new_gene_ref(value.instance_class.to_path()))
     
-    let props = new_ref(VkMap)
-    props.map = initTable[Key, Value]()
-    for k, v in value.ref.instance_props:
-      props.map[k] = self.serialize(v)
-    gene.children.add(props.to_ref_value())
+    let props = new_map_value()
+    map_data(props) = initTable[Key, Value]()
+    for k, v in value.instance_props:
+      map_data(props)[k] = self.serialize(v)
+    gene.children.add(props)
     
     return gene.to_gene_value()
   else:
@@ -76,7 +76,7 @@ proc serialize*(self: Serialization, value: Value): Value =
 proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
   var stack: seq[Value] = @[v]
   var seen_arrays: HashSet[ptr ArrayObj]
-  var seen_maps: HashSet[ptr Reference]
+  var seen_maps: HashSet[ptr MapObj]
   var seen_genes: HashSet[ptr Gene]
 
   while stack.len > 0:
@@ -92,7 +92,7 @@ proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
       seen_arrays.incl(r)
       for item in r.arr: stack.add(item)
     of VkMap:
-      let r = cur.ref
+      let r = map_ptr(cur)
       if seen_maps.contains(r): continue
       seen_maps.incl(r)
       for _, val in r.map: stack.add(val)
@@ -226,7 +226,7 @@ proc value_to_gene_str(self: Value): string =
   of VkMap:
     result = "{"
     var first = true
-    for k, v in self.ref.map:
+    for k, v in map_data(self):
       if not first:
         result &= " "
       # k is a Key (distinct int64), which is a packed symbol value
@@ -303,17 +303,15 @@ proc deserialize*(self: Serialization, value: Value): Value =
           if class_ref.kind != VkClass:
             not_allowed("gene/instance expects class reference")
           
-          let instance = new_ref(VkInstance)
-          instance.instance_class = class_ref.ref.class
-          instance.instance_props = initTable[Key, Value]()
+          var instance = new_instance_value(class_ref.ref.class)
           
           # Deserialize properties
           let props = value.gene.children[1]
           if props.kind == VkMap:
-            for k, v in props.ref.map:
-              instance.instance_props[k] = self.deserialize(v)
+            for k, v in map_data(props):
+              instance_props(instance)[k] = self.deserialize(v)
           
-          return instance.to_ref_value()
+          return instance
         else:
           return NIL
     else:

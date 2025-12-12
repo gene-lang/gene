@@ -38,7 +38,7 @@ proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
     "[" & parts.join(" ") & "]"
   of VkMap:
     var parts: seq[string] = @[]
-    for k, v in val.ref.map:
+    for k, v in map_data(val):
       let symbol_value = cast[Value](k)
       let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
       let key_name = get_symbol_gcsafe(symbol_index.int)
@@ -108,7 +108,7 @@ proc value_class_value(val: Value): Value =
     App.app.class_class
   of VkInstance:
     let class_ref = new_ref(VkClass)
-    class_ref.class = val.ref.instance_class
+    class_ref.class = val.instance_class
     return class_ref.to_ref_value()
   of VkCustom:
     if val.ref.custom_class != nil:
@@ -146,7 +146,7 @@ proc object_is_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   of VkClass:
     target_class = target_arg.ref.class
   of VkInstance:
-    target_class = target_arg.ref.instance_class
+    target_class = target_arg.instance_class
   of VkCustom:
     target_class = target_arg.ref.custom_class
   else:
@@ -710,9 +710,9 @@ proc init_collection_classes(object_class: Class) =
     let map = get_positional_arg(args, 0, has_keyword_args)
     let key = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
     if map.kind == VkMap and key.kind == VkString:
-      return map.ref.map.hasKey(key.str.to_key()).to_value()
+      return map_data(map).hasKey(key.str.to_key()).to_value()
     elif map.kind == VkMap and key.kind == VkSymbol:
-      return map.ref.map.hasKey(key.str.to_key()).to_value()
+      return map_data(map).hasKey(key.str.to_key()).to_value()
     return false.to_value()
 
   proc vm_map_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -735,8 +735,8 @@ proc init_collection_classes(object_class: Class) =
     else:
       not_allowed("Map.get key must be a string or symbol")
 
-    if map.ref.map.hasKey(key):
-      return map.ref.map[key]
+    if map_data(map).hasKey(key):
+      return map_data(map)[key]
 
     if arg_count >= 3:
       return get_positional_arg(args, 2, has_keyword_args)
@@ -753,7 +753,7 @@ proc init_collection_classes(object_class: Class) =
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
       not_allowed("size must be called on a map")
-    map_val.ref.map.len.to_value()
+    map_data(map_val).len.to_value()
 
   map_class.def_native_method("size", vm_map_size)
 
@@ -764,7 +764,7 @@ proc init_collection_classes(object_class: Class) =
     if map_val.kind != VkMap:
       not_allowed("keys must be called on a map")
     var result_ref = new_array_value()
-    for key, _ in map_val.ref.map:
+    for key, _ in map_data(map_val):
       let key_val = cast[Value](key)
       array_data(result_ref).add(key_val.str.to_value())
     result_ref
@@ -778,7 +778,7 @@ proc init_collection_classes(object_class: Class) =
     if map_val.kind != VkMap:
       not_allowed("values must be called on a map")
     var result_ref = new_array_value()
-    for _, value in map_val.ref.map:
+    for _, value in map_data(map_val):
       array_data(result_ref).add(value)
     result_ref
 
@@ -794,13 +794,13 @@ proc init_collection_classes(object_class: Class) =
     var result_ref = new_array_value()
     case callback.kind
     of VkFunction:
-      for key, value in map_val.ref.map:
+      for key, value in map_data(map_val):
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           let mapped = vm.exec_function(callback, @[key_val, value])
           array_data(result_ref).add(mapped)
     of VkNativeFn:
-      for key, value in map_val.ref.map:
+      for key, value in map_data(map_val):
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           let mapped = call_native_fn(callback.ref.native_fn, vm, [key_val, value])
@@ -1082,8 +1082,8 @@ proc init_selector_class(object_class: Class) =
         let key = seg.str.to_key()
         case current.kind:
         of VkMap:
-          if key in current.ref.map:
-            current = current.ref.map[key]
+          if key in map_data(current):
+            current = map_data(current)[key]
           else:
             found = false
             break
@@ -1106,8 +1106,8 @@ proc init_selector_class(object_class: Class) =
             found = false
             break
         of VkInstance:
-          if key in current.ref.instance_props:
-            current = current.ref.instance_props[key]
+          if key in instance_props(current):
+            current = instance_props(current)[key]
           else:
             found = false
             break
@@ -1197,10 +1197,10 @@ proc init_gene_and_meta_classes(object_class: Class) =
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
     if gene_val.kind != VkGene:
       not_allowed("Gene.props must be called on a gene")
-    let result_ref = new_ref(VkMap)
+    let result_ref = new_map_value()
     for key, value in gene_val.gene.props:
-      result_ref.map[key] = value
-    result_ref.to_ref_value()
+      map_data(result_ref)[key] = value
+    result_ref
 
   gene_class.def_native_method("props", gene_props_method)
 
@@ -1528,7 +1528,7 @@ proc value_to_json(val: Value): string {.gcsafe.} =
     result = "[" & items.join(",") & "]"
   of VkMap:
     var items: seq[string] = @[]
-    for k, v in val.ref.map:
+    for k, v in map_data(val):
       let key_val = cast[Value](k)
       let key_str =
         case key_val.kind

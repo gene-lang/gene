@@ -33,7 +33,7 @@ proc geneValueToJson*(value: Value): JsonNode =
     result = arr
   of VkMap:
     var obj = newJObject()
-    for key, val in value.ref.map:
+    for key, val in map_data(value):
       let symbol_value = cast[Value](key)
       obj[symbol_value.str] = geneValueToJson(val)
     result = obj
@@ -69,68 +69,72 @@ proc jsonToGeneValue*(json: JsonNode): Value =
     result = new_map_value(map)
 
 # Helper to create error objects
-proc attach_error_class(instance: ptr Reference) {.gcsafe.} =
+proc attach_error_class(instance: Value) {.gcsafe.} =
   {.cast(gcsafe).}:
     if not openai_error_class.isNil:
-      instance.instance_class = openai_error_class
+      instance_class(instance) = openai_error_class
 
 proc new_error*(message: string): Value {.gcsafe.} =
-  var error_obj = new_ref(VkInstance)
+  let error_class = block:
+    {.cast(gcsafe).}:
+      openai_error_class
+  let error_obj = new_instance_value(error_class)
   attach_error_class(error_obj)
-  error_obj.instance_props = initTable[Key, Value]()
-  error_obj.instance_props["message".to_key()] = message.to_value
-  error_obj.instance_props["type".to_key()] = "error".to_value
-  result = error_obj.to_ref_value()
+  instance_props(error_obj)["message".to_key()] = message.to_value
+  instance_props(error_obj)["type".to_key()] = "error".to_value
+  result = error_obj
 
 proc openai_error_value*(err: OpenAIError): Value {.gcsafe.} =
-  var error_obj = new_ref(VkInstance)
+  let error_class = block:
+    {.cast(gcsafe).}:
+      openai_error_class
+  let error_obj = new_instance_value(error_class)
   attach_error_class(error_obj)
-  error_obj.instance_props = initTable[Key, Value]()
-  error_obj.instance_props["message".to_key()] = err.msg.to_value
-  error_obj.instance_props["status".to_key()] = err.status.to_value
+  instance_props(error_obj)["message".to_key()] = err.msg.to_value
+  instance_props(error_obj)["status".to_key()] = err.status.to_value
   if err.provider_error.len > 0:
-    error_obj.instance_props["provider_error".to_key()] = err.provider_error.to_value
+    instance_props(error_obj)["provider_error".to_key()] = err.provider_error.to_value
   if err.request_id.len > 0:
-    error_obj.instance_props["request_id".to_key()] = err.request_id.to_value
+    instance_props(error_obj)["request_id".to_key()] = err.request_id.to_value
   if err.retry_after != 0:
-    error_obj.instance_props["retry_after".to_key()] = err.retry_after.to_value
+    instance_props(error_obj)["retry_after".to_key()] = err.retry_after.to_value
   if err.metadata != nil:
-    error_obj.instance_props["metadata".to_key()] = jsonToGeneValue(err.metadata)
-  result = error_obj.to_ref_value()
+    instance_props(error_obj)["metadata".to_key()] = jsonToGeneValue(err.metadata)
+  result = error_obj
 
 proc register_client(config: OpenAIConfig): Value =
   let client_id = next_client_id
   inc(next_client_id)
   openai_clients[client_id] = config
 
-  let instance = new_ref(VkInstance)
+  let instance_class = block:
+    {.cast(gcsafe).}:
+      (
+        if openai_client_class != nil:
+          openai_client_class
+        else:
+          # Create a temporary class if the global one is not yet available
+          var base_parent: Class = nil
+          if App != nil and App.app.object_class.kind == VkClass:
+            base_parent = App.app.object_class.ref.class
+          new_class("OpenAIClient", base_parent)
+      )
+  let instance = new_instance_value(instance_class)
 
-  # Try to use the global class first, but fall back to creating a new one if needed
-  {.cast(gcsafe).}:
-    if openai_client_class != nil:
-      instance.instance_class = openai_client_class
-    else:
-      # Create a temporary class if the global one is not yet available
-      var base_parent: Class = nil
-      if App != nil and App.app.object_class.kind == VkClass:
-        base_parent = App.app.object_class.ref.class
-      instance.instance_class = new_class("OpenAIClient", base_parent)
+  instance_props(instance)["client_id".to_key()] = client_id.to_value
+  instance_props(instance)["base_url".to_key()] = config.base_url.to_value
+  instance_props(instance)["model".to_key()] = config.model.to_value
 
-  instance.instance_props = initTable[Key, Value]()
-  instance.instance_props["client_id".to_key()] = client_id.to_value
-  instance.instance_props["base_url".to_key()] = config.base_url.to_value
-  instance.instance_props["model".to_key()] = config.model.to_value
-
-  result = instance.to_ref_value()
+  result = instance
 
 proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Value] =
   if client_val.kind != VkInstance:
     return (nil, new_error("Invalid OpenAI client"))
 
-  if not client_val.ref.instance_props.has_key("client_id".to_key()):
+  if not instance_props(client_val).has_key("client_id".to_key()):
     return (nil, new_error("Invalid OpenAI client"))
 
-  let client_id = client_val.ref.instance_props["client_id".to_key()].to_int()
+  let client_id = instance_props(client_val)["client_id".to_key()].to_int()
   var cfg: OpenAIConfig = nil
   {.cast(gcsafe).}:
     if openai_clients.hasKey(client_id):
@@ -185,9 +189,9 @@ proc call_gene_callable(vm: VirtualMachine, callable: Value, args: seq[Value]) {
       new_args.add(args)
       call_gene_callable(vm, call_method, new_args)
   of VkInstance:
-    let inst = callable.ref
-    if not inst.instance_class.isNil and inst.instance_class.methods.hasKey("call".to_key()):
-      let call_method = inst.instance_class.methods["call".to_key()].callable
+    let inst_class = instance_class(callable)
+    if not inst_class.isNil and inst_class.methods.hasKey("call".to_key()):
+      let call_method = inst_class.methods["call".to_key()].callable
       var new_args = @[callable]
       new_args.add(args)
       call_gene_callable(vm, call_method, new_args)
@@ -219,7 +223,7 @@ proc openai_error_to_s(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
   if self_val.kind != VkInstance:
     return "OpenAIError".to_value()
 
-  let props = self_val.ref.instance_props
+  let props = instance_props(self_val)
   let message_key = "message".to_key()
   var desc = "OpenAIError"
   if props.hasKey(message_key) and props[message_key].kind == VkString:

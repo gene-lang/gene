@@ -1023,9 +1023,6 @@ type
       of VkSuper:
         super_instance*: Value
         super_class*: Class
-      of VkInstance:
-        instance_class*: Class
-        instance_props*: Table[Key, Value]
       of VkCast:
         cast_value*: Value
         cast_class*: Class
@@ -1082,3 +1079,12 @@ type
   ArrayObj* = object
     ref_count*: int32
     arr*: seq[Value]
+
+  MapObj* = object
+    ref_count*: int32
+    map*: Table[Key, Value]
+
+  InstanceObj* = object
+    ref_count*: int32
+    instance_class*: Class
+    instance_props*: Table[Key, Value]

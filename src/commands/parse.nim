@@ -104,7 +104,7 @@ proc format_value(value: Value, format: string, indent: int = 0): string =
     of VkMap:
       result = "{"
       var first = true
-      for k, v in value.ref.map:
+      for k, v in map_data(value):
         if not first: result &= " "
         let symbol_value = cast[Value](k)
         let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
@@ -177,10 +177,10 @@ proc format_value(value: Value, format: string, indent: int = 0): string =
         result &= format_value(item, format, indent + 1) & "\n"
       result &= spaces & "]"
     of VkMap:
-      if value.ref.map.len == 0:
+      if map_data(value).len == 0:
         return spaces & "{}"
       result = spaces & "{\n"
-      for k, v in value.ref.map:
+      for k, v in map_data(value):
         let symbol_value = cast[Value](k)
         let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
         result &= spaces & "  ^" & get_symbol(symbol_index.int) & " " & format_value(v, "compact") & "\n"

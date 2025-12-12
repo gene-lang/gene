@@ -381,7 +381,7 @@ proc compile_stream(self: Compiler, input: Value) =
 
 proc compile_map(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkMapStart))
-  for k, v in input.ref.map:
+  for k, v in map_data(input):
     let key_str = $k
     # Check for spread key: ^..., ^...1, ^...2, etc.
     if key_str.startsWith("..."):
@@ -1527,7 +1527,7 @@ proc compile_match(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkDup))
 
     # Iterate over map pairs using the pattern's map field
-    for key, value in pattern.ref.map.pairs:
+    for key, value in map_data(pattern).pairs:
       if value.kind == VkSymbol and value.str.startsWith("^"):
         # Property pattern: ^name -> binds to value of "name" key
         let prop_name = value.str[1..high(value.str)]  # Remove ^ prefix

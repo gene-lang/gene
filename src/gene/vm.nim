@@ -46,7 +46,7 @@ template get_value_class(val: Value): Class =
   of VkCustom:
     types.ref(val).custom_class
   of VkInstance:
-    types.ref(val).instance_class
+    instance_class(val)
   of VkNil:
     types.ref(App.app.nil_class).class
   of VkBool:
@@ -661,10 +661,10 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
     
     of VkMap:
       # Recursively render map values
-      let new_map = new_ref(VkMap)
-      for k, v in tpl.ref.map:
-        new_map.map[k] = self.render_template(v)
-      return new_map.to_ref_value()
+      let new_map = new_map_value()
+      for k, v in map_data(tpl):
+        map_data(new_map)[k] = self.render_template(v)
+      return new_map
     
     else:
       # Other values pass through unchanged
@@ -745,7 +745,7 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     var kw_map = new_map_value()
     if has_kw:
       for (k, v) in kw_pairs:
-        kw_map.ref.map[k] = v
+        map_data(kw_map)[k] = v
 
     let offset = if has_kw: 1 else: 0
     var all_args = newSeq[Value](args.len + 1 + offset)
@@ -846,7 +846,7 @@ proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, insta
     if has_kw:
       var kw_map = new_map_value()
       for (k, v) in kw_pairs:
-        kw_map.ref.map[k] = v
+        map_data(kw_map)[k] = v
       all_args[0] = kw_map
     all_args[offset] = instance
     for i in 0..<args.len:
@@ -943,7 +943,7 @@ proc call_value_method(self: VirtualMachine, value: Value, method_name: string,
     var kw_map = new_map_value()
     if has_kw:
       for (k, v) in kw_pairs:
-        kw_map.ref.map[k] = v
+        map_data(kw_map)[k] = v
 
     let offset = if has_kw: 1 else: 0
     var all_args = newSeq[Value](args.len + 1 + offset)
@@ -1758,7 +1758,7 @@ proc exec*(self: VirtualMachine): Value =
               "<invalid key>"
             not_allowed("Cannot set member '" & symbol_name & "' on nil (namespace or object doesn't exist)")
           of VkMap:
-            target.ref.map[name] = value
+            map_data(target)[name] = value
           of VkGene:
             target.gene.props[name] = value
           of VkNamespace:
@@ -1766,7 +1766,7 @@ proc exec*(self: VirtualMachine): Value =
           of VkClass:
             target.ref.class.ns[name] = value
           of VkInstance:
-            target.ref.instance_props[name] = value
+            instance_props(target)[name] = value
           of VkArray:
             # Arrays don't support named members, this is likely an error
             let symbol_index = cast[uint64](name) and PAYLOAD_MASK
@@ -1797,7 +1797,7 @@ proc exec*(self: VirtualMachine): Value =
             # Already handled above, but needed for exhaustive case
             discard
           of VkMap:
-            self.frame.push(value.ref.map[name])
+            self.frame.push(map_data(value)[name])
           of VkGene:
             self.frame.push(value.gene.props[name])
           of VkNamespace:
@@ -1839,8 +1839,8 @@ proc exec*(self: VirtualMachine): Value =
             else:
               not_allowed("enum " & value.ref.enum_def.name & " has no member " & member_name)
           of VkInstance:
-            if name in value.ref.instance_props:
-              self.frame.push(value.ref.instance_props[name])
+            if name in instance_props(value):
+              self.frame.push(instance_props(value)[name])
             else:
               self.frame.push(NIL)
           else:
@@ -1865,8 +1865,8 @@ proc exec*(self: VirtualMachine): Value =
         
         case target.kind:
           of VkMap:
-            if key in target.ref.map:
-              self.frame.push(target.ref.map[key])
+            if key in map_data(target):
+              self.frame.push(map_data(target)[key])
             else:
               self.frame.push(NIL)
           of VkGene:
@@ -1885,8 +1885,8 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(NIL)
           of VkInstance:
-            if key in target.ref.instance_props:
-              self.frame.push(target.ref.instance_props[key])
+            if key in instance_props(target):
+              self.frame.push(instance_props(target)[key])
             else:
               self.frame.push(NIL)
           of VkArray:
@@ -1925,8 +1925,8 @@ proc exec*(self: VirtualMachine): Value =
         
         case target.kind:
           of VkMap:
-            if key in target.ref.map:
-              self.frame.push(target.ref.map[key])
+            if key in map_data(target):
+              self.frame.push(map_data(target)[key])
             else:
               self.frame.push(default_val)
           of VkGene:
@@ -1945,8 +1945,8 @@ proc exec*(self: VirtualMachine): Value =
             else:
               self.frame.push(default_val)
           of VkInstance:
-            if key in target.ref.instance_props:
-              self.frame.push(target.ref.instance_props[key])
+            if key in instance_props(target):
+              self.frame.push(instance_props(target)[key])
             else:
               self.frame.push(default_val)
           of VkArray:
@@ -2256,18 +2256,18 @@ proc exec*(self: VirtualMachine): Value =
         let key = inst.arg0.Key
         var value: Value
         self.frame.pop2(value)
-        self.frame.current().ref.map[key] = value
+        map_data(self.frame.current())[key] = value
       of IkMapSetPropValue:
         # Set property with literal value
         let key = inst.arg0.Key
-        self.frame.current().ref.map[key] = inst.arg1
+        map_data(self.frame.current())[key] = inst.arg1
       of IkMapSpread:
         # Spread map key-value pairs into current map
         let value = self.frame.pop()
         case value.kind:
           of VkMap:
-            for k, v in value.ref.map:
-              self.frame.current().ref.map[k] = v
+            for k, v in map_data(value):
+              map_data(self.frame.current())[k] = v
           of VkNil:
             # Spreading nil is a no-op (treat as empty map)
             discard
@@ -2663,12 +2663,12 @@ proc exec*(self: VirtualMachine): Value =
           of VkMap:
             case current.kind:
               of VkGene:
-                for k, v in value.ref.map:
+                for k, v in map_data(value):
                   current.gene.props[k] = v
               of VkFrame:
                 if current.ref.frame.args.kind != VkGene:
                   current.ref.frame.args = new_gene_value()
-                for k, v in value.ref.map:
+                for k, v in map_data(value):
                   current.ref.frame.args.gene.props[k] = v
               of VkNativeFrame:
                 discard
@@ -4054,9 +4054,8 @@ proc exec*(self: VirtualMachine): Value =
             
           of VkFunction:
             # Regular function constructor
-            let instance = new_ref(VkInstance)
-            instance.instance_class = class
-            self.frame.push(instance.to_ref_value())
+            let instance = new_instance_value(class)
+            self.frame.push(instance)
             
             class.constructor.ref.fn.compile()
             let compiled = class.constructor.ref.fn.body_compiled
@@ -4080,7 +4079,7 @@ proc exec*(self: VirtualMachine): Value =
             self.frame.target = class.constructor
             # Pass instance as first argument for constructor
             let args_gene = new_gene(NIL)
-            args_gene.children.add(instance.to_ref_value())
+            args_gene.children.add(instance)
             # Add other arguments if present
             if args.kind == VkGene:
               for child in args.gene.children:
@@ -4096,7 +4095,7 @@ proc exec*(self: VirtualMachine): Value =
                 for child in args.gene.children:
                   constructor_args.children.add(child)
               process_args(f.matcher, constructor_args.to_gene_value(), scope)
-              assign_property_params(f.matcher, scope, instance.to_ref_value())
+              assign_property_params(f.matcher, scope, instance)
             
             self.cu = compiled
             self.pc = 0
@@ -4105,9 +4104,8 @@ proc exec*(self: VirtualMachine): Value =
             
           of VkNil:
             # No constructor - create empty instance
-            let instance = new_ref(VkInstance)
-            instance.instance_class = class
-            self.frame.push(instance.to_ref_value())
+            let instance = new_instance_value(class)
+            self.frame.push(instance)
             
           else:
             todo($class.constructor.kind)
@@ -4326,7 +4324,7 @@ proc exec*(self: VirtualMachine): Value =
         of VkInstance:
           # Get the class of the instance
           let instance_class_ref = new_ref(VkClass)
-          instance_class_ref.class = value.ref.instance_class
+          instance_class_ref.class = instance_class(value)
           class_val = instance_class_ref.to_ref_value()
         of VkCustom:
           if value.ref.custom_class != nil:
@@ -4357,7 +4355,7 @@ proc exec*(self: VirtualMachine): Value =
         # Get the actual class of the value
         case value.kind
         of VkInstance:
-          actual_class = value.ref.instance_class
+          actual_class = instance_class(value)
         of VkCustom:
           actual_class = value.ref.custom_class
         of VkClass:
@@ -4856,9 +4854,7 @@ proc exec*(self: VirtualMachine): Value =
         of VkClass:
           # Handle class constructor calls
           let class = target.ref.class
-          let instance_ref = new_ref(VkInstance)
-          instance_ref.instance_class = class
-          let instance = instance_ref.to_ref_value()
+          let instance = new_instance_value(class)
 
           # Check if class has an init method
           let init_method = class.get_method("init")
@@ -5025,9 +5021,7 @@ proc exec*(self: VirtualMachine): Value =
         of VkClass:
           # Handle class constructor calls with one argument
           let class = target.ref.class
-          let instance_ref = new_ref(VkInstance)
-          instance_ref.instance_class = class
-          let instance = instance_ref.to_ref_value()
+          let instance = new_instance_value(class)
 
           # Check if class has an init method
           let init_method = class.get_method("init")
@@ -5314,7 +5308,7 @@ proc exec*(self: VirtualMachine): Value =
             else:
               var m = new_map_value()
               for (k, v) in kw_pairs:
-                m.ref.map[k] = v
+                map_data(m)[k] = v
               m
           native_args[0] = kw_map
           for i, arg in args:
@@ -6174,7 +6168,7 @@ proc exec*(self: VirtualMachine): Value =
               if has_kw:
                 var kw_map = new_map_value()
                 for (k, v) in kw_pairs:
-                  kw_map.ref.map[k] = v
+                  map_data(kw_map)[k] = v
                 native_args[0] = kw_map
               native_args[offset] = obj
               for i, arg in args:

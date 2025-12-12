@@ -127,9 +127,9 @@ test_parser_error "{^a^b 1 ^a 2}"
 test_parser_error "{^a^b 1 ^a {^c 2}}"
 
 test_parser "(_ ^a^b 1)", proc(r: Value) =
-  assert r.gene.props["a".to_key()].ref.map["b".to_key()] == 1
+  assert map_data(r.gene.props["a".to_key()])["b".to_key()] == 1
 test_parser "(_ ^a^^b 1)", proc(r: Value) =
-  assert r.gene.props["a".to_key()].ref.map["b".to_key()] == TRUE
+  assert map_data(r.gene.props["a".to_key()])["b".to_key()] == TRUE
   assert r.gene.children[0] == 1
 
 test_parser "[]", @[]
@@ -227,7 +227,7 @@ test_parser "(1 ^!a 2 3)", proc(r: Value) =
 
 test_parser "{^^x ^!y ^^z}", proc(r: Value) =
   check r.kind == VkMap
-  check r.ref.map == to_table({"x".to_key(): TRUE, "y".to_key(): NIL, "z".to_key(): TRUE})
+  check map_data(r) == to_table({"x".to_key(): TRUE, "y".to_key(): NIL, "z".to_key(): TRUE})
 
 test_parser ":foo", proc(r: Value) =
   check r.ref.kind == VkQuote
@@ -399,9 +399,9 @@ test_parser """
 test_parser """
   {^p #@f a}
 """, proc(r: Value) =
-  check r.ref.map["p".to_key()].kind == VkGene
-  check r.ref.map["p".to_key()].gene.type.str == "f"
-  check r.ref.map["p".to_key()].gene.children[0].str == "a"
+  check map_data(r)["p".to_key()].kind == VkGene
+  check map_data(r)["p".to_key()].gene.type.str == "f"
+  check map_data(r)["p".to_key()].gene.children[0].str == "a"
 
 test_read_all "nil", proc(r: seq[Value]) =
   check r[0] == NIL

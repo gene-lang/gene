@@ -35,14 +35,14 @@ when defined(GENE_LLM_MOCK):
     if opts == NIL or opts.kind != VkMap:
       return false
     let key = name.to_key()
-    opts.ref.map.hasKey(key)
+    map_data(opts).hasKey(key)
 
   proc get_int_option(opts: Value, name: string, default_value: int): int =
     if opts == NIL or opts.kind != VkMap:
       return default_value
     let key = name.to_key()
-    if opts.ref.map.hasKey(key):
-      let val = opts.ref.map[key]
+    if map_data(opts).hasKey(key):
+      let val = map_data(opts)[key]
       case val.kind
       of VkInt:
         return val.to_int()
@@ -56,8 +56,8 @@ when defined(GENE_LLM_MOCK):
     if opts == NIL or opts.kind != VkMap:
       return default_value
     let key = name.to_key()
-    if opts.ref.map.hasKey(key):
-      let val = opts.ref.map[key]
+    if map_data(opts).hasKey(key):
+      let val = map_data(opts)[key]
       case val.kind
       of VkFloat:
         return val.to_float()
@@ -71,8 +71,8 @@ when defined(GENE_LLM_MOCK):
     if opts == NIL or opts.kind != VkMap:
       return default_value
     let key = name.to_key()
-    if opts.ref.map.hasKey(key):
-      return opts.ref.map[key].to_bool()
+    if map_data(opts).hasKey(key):
+      return map_data(opts)[key].to_bool()
     return default_value
 
   proc normalize_path(path: string): string =
@@ -489,14 +489,14 @@ else:
   proc has_option(opts: Value, name: string): bool =
     if opts == NIL or opts.kind != VkMap:
       return false
-    opts.ref.map.hasKey(name.to_key())
+    map_data(opts).hasKey(name.to_key())
 
   proc get_int_option(opts: Value, name: string, default_value: int): int =
     if opts == NIL or opts.kind != VkMap:
       return default_value
     let key = name.to_key()
-    if opts.ref.map.hasKey(key):
-      let val = opts.ref.map[key]
+    if map_data(opts).hasKey(key):
+      let val = map_data(opts)[key]
       case val.kind
       of VkInt:
         return val.to_int()
@@ -510,8 +510,8 @@ else:
     if opts == NIL or opts.kind != VkMap:
       return default_value
     let key = name.to_key()
-    if opts.ref.map.hasKey(key):
-      let val = opts.ref.map[key]
+    if map_data(opts).hasKey(key):
+      let val = map_data(opts)[key]
       case val.kind
       of VkFloat:
         return val.to_float()
@@ -525,8 +525,8 @@ else:
     if opts == NIL or opts.kind != VkMap:
       return default_value
     let key = name.to_key()
-    if opts.ref.map.hasKey(key):
-      return opts.ref.map[key].to_bool()
+    if map_data(opts).hasKey(key):
+      return map_data(opts)[key].to_bool()
     return default_value
 
   proc normalize_path(path: string): string =
