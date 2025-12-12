@@ -14,7 +14,8 @@ requires "nim >= 1.4.0"
 requires "db_connector"
 
 task speedy, "Optimized build for maximum performance":
-  exec "nim c -d:release --mm:orc --opt:speed --passC:\"-march=native -O3\" -o:gene src/gene.nim"
+  exec "mkdir -p bin"
+  exec "nim c -d:release --mm:orc --opt:speed --passC:\"-march=native -O3\" -o:bin/gene src/gene.nim"
 
 task bench, "Build and run benchmarks":
   exec "nim c -d:release --mm:orc --opt:speed --passC:\"-march=native\" -r bench/run_benchmarks.nim"

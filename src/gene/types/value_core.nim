@@ -151,7 +151,8 @@ converter to_value*(k: Key): Value {.inline.} =
 
 # Memory pool for reference objects
 var REF_POOL* {.threadvar.}: seq[ptr Reference]
-const INITIAL_REF_POOL_SIZE* = 2048
+const INITIAL_REF_POOL_SIZE* = 512
+const MAX_REF_POOL_SIZE* = 4096
 
 # Manual reference counting for Values
 proc retain*(v: Value) {.inline.} =
@@ -180,7 +181,7 @@ proc release*(v: Value) {.inline.} =
       of REF_TAG:
         let x = cast[ptr Reference](u and PAYLOAD_MASK)
         if x.ref_count == 1:
-          if REF_POOL.len < INITIAL_REF_POOL_SIZE * 2:
+          if REF_POOL.len < MAX_REF_POOL_SIZE:
             REF_POOL.add(x)
           else:
             dealloc(x)
@@ -1876,7 +1877,7 @@ proc call_native_fn*(fn: NativeFn, vm: VirtualMachine, args: openArray[Value], h
     return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
 
 #################### Frame #######################
-const INITIAL_FRAME_POOL_SIZE* = 1024
+const INITIAL_FRAME_POOL_SIZE* = 128
 
 var FRAMES* {.threadvar.}: seq[Frame]
 
