@@ -92,6 +92,38 @@ proc init_thread_pool*() =
   ## Initialize the thread pool (call once from main thread)
   randomize()  # Initialize random number generator
   initLock(thread_pool_lock)
+  next_message_id = 0
+
+  # Terminate and clean up any existing worker threads/channels
+  for i in 1..MAX_THREADS:
+    if THREAD_DATA[i].channel != nil:
+      # Ask the worker to exit and wait for it to finish
+      var term: ThreadMessage
+      new(term)
+      term.id = next_message_id
+      term.msg_type = MtTerminate
+      term.payload = NIL
+      term.payload_bytes = ThreadPayload(bytes: @[])
+      term.from_thread_id = 0
+      term.from_thread_secret = THREADS[0].secret
+      THREAD_DATA[i].channel.send(term)
+      # Join the thread if it was ever started
+      if THREADS[i].in_use or THREADS[i].state != TsFree:
+        joinThread(THREAD_DATA[i].thread)
+      close(THREAD_DATA[i].channel)
+      THREAD_DATA[i].channel = nil
+    # Reset metadata
+    THREADS[i].id = i
+    THREADS[i].state = TsFree
+    THREADS[i].in_use = false
+    THREADS[i].parent_id = 0
+    THREADS[i].parent_secret = 0
+    THREADS[i].secret = 0
+
+  # Reset main thread channel if it was previously opened
+  if THREAD_DATA[0].channel != nil:
+    close(THREAD_DATA[0].channel)
+    THREAD_DATA[0].channel = nil
 
   # Initialize thread 0 as main thread
   THREADS[0].id = 0

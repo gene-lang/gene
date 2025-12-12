@@ -156,14 +156,14 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
           if name_val.kind == VkSymbol:
             var signature = name_val.str & " "
             # Try to get argument list
-            if gene.children.len >= 2 and gene.children[1].kind == VkVector:
-              signature &= "["
-              let args = gene.children[1].ref.arr
-              for i, arg in args:
-                if i > 0:
-                  signature &= " "
+          if gene.children.len >= 2 and gene.children[1].kind == VkArray:
+            signature &= "["
+            let args = array_data(gene.children[1])
+            for i, arg in args:
+              if i > 0:
+                signature &= " "
                 signature &= $arg
-              signature &= "]"
+            signature &= "]"
 
             symbols.add(SymbolInfo(
               name: name_val.str,
@@ -222,9 +222,9 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
         for child in gene.children:
           extractSymbolsFromValue(child, uri, symbols, depth + 1)
 
-  of VkVector:
-    # Process vector elements
-    for elem in value.ref.arr:
+  of VkArray:
+    # Process array elements
+    for elem in array_data(value):
       extractSymbolsFromValue(elem, uri, symbols, depth + 1)
 
   else:
@@ -282,8 +282,8 @@ proc extractReferencesFromValue(value: Value, uri: string, references: var seq[S
     for child in gene.children:
       extractReferencesFromValue(child, uri, references, depth + 1)
 
-  of VkVector:
-    for elem in value.ref.arr:
+  of VkArray:
+    for elem in array_data(value):
       extractReferencesFromValue(elem, uri, references, depth + 1)
 
   else:

@@ -10,16 +10,16 @@ import ../src/gene/serdes
 # addHandler(newConsoleLogger())
 
 converter to_value*(self: seq[int]): Value =
-  let r = new_ref(VkArray)
+  var r = new_array_value()
   for item in self:
-    r.arr.add(item.to_value())
-  result = r.to_ref_value()
+    array_data(r).add(item.to_value())
+  result = r
 
 converter seq_to_gene*(self: seq[string]): Value =
-  let r = new_ref(VkArray)
+  var r = new_array_value()
   for item in self:
-    r.arr.add(item.to_value())
-  result = r.to_ref_value()
+    array_data(r).add(item.to_value())
+  result = r
 
 converter to_value*(self: openArray[(string, Value)]): Value =
   var map = Table[Key, Value]()

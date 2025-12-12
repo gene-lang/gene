@@ -129,8 +129,8 @@ proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
       let column_count = row.len.int
       var row_array = new_array_value(@[])
       for col in 0..<column_count:
-        row_array.ref.arr.add(row[int32(col)].to_value())
-      result.ref.arr.add(row_array)
+        array_data(row_array).add(row[int32(col)].to_value())
+      array_data(result).add(row_array)
   except DbError as e:
     raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
   finally:

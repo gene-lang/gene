@@ -111,8 +111,7 @@ type
     VkTimezone           # Timezone info
 
     # Collection types
-    VkArray              # For backward compatibility, will alias to VkVector
-    VkVector             # Main sequence type
+    VkArray             # Sequence type
     VkSet
     VkMap
     VkGene
@@ -961,8 +960,6 @@ type
         tz_name*: string
 
       # Collection types
-      of VkArray, VkVector:
-        arr*: seq[Value]
       of VkSet:
         set*: HashSet[Value]
       of VkMap:

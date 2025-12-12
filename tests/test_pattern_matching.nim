@@ -67,8 +67,8 @@ test_vm """
   a
 """, proc(r: Value) =
   check r.kind == VkArray
-  check r.ref.arr.len == 1
-  check r.ref.arr[0] == 1
+  check array_data(r).len == 1
+  check array_data(r)[0] == 1
 
 # TODO: match is not implemented in VM yet
 # test_vm """

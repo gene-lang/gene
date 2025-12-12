@@ -26,18 +26,18 @@ test_vm """
   ("a:b:c" .split ":")
 """, proc(result: Value) =
   check result.kind == VkArray
-  check result.ref.arr.len == 3
-  check result.ref.arr[0].str == "a"
-  check result.ref.arr[1].str == "b"
-  check result.ref.arr[2].str == "c"
+  check array_data(result).len == 3
+  check array_data(result)[0].str == "a"
+  check array_data(result)[1].str == "b"
+  check array_data(result)[2].str == "c"
 
 test_vm """
   ("a:b:c" .split ":" 2)
 """, proc(result: Value) =
   check result.kind == VkArray
-  check result.ref.arr.len == 2
-  check result.ref.arr[0].str == "a"
-  check result.ref.arr[1].str == "b:c"
+  check array_data(result).len == 2
+  check array_data(result)[0].str == "a"
+  check array_data(result)[1].str == "b:c"
 
 test_vm """
   ("abc" .index "b")

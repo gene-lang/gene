@@ -34,18 +34,18 @@ suite "SQLite stdlib":
     (db .close)
   """
 
-  test_vm """
-    (var db (genex/sqlite/open "/tmp/gene-test.db"))
-    (var rows (db .exec "select * from table_a order by id"))
-    (db .close)
-    rows
-  """, proc(result: Value) =
-    check result.kind == VkArray
-    check result.ref.arr.len == 2
-    let row1 = result.ref.arr[0]
-    let row2 = result.ref.arr[1]
-    check row1.ref.arr.len == 2
-    check row1.ref.arr[0].str == "1"
-    check row1.ref.arr[1].str == "John"
-    check row2.ref.arr[0].str == "2"
-    check row2.ref.arr[1].str == "Mark"
+test_vm """
+  (var db (genex/sqlite/open "/tmp/gene-test.db"))
+  (var rows (db .exec "select * from table_a order by id"))
+  (db .close)
+  rows
+""", proc(result: Value) =
+  check result.kind == VkArray
+  check array_data(result).len == 2
+  let row1 = array_data(result)[0]
+  let row2 = array_data(result)[1]
+  check array_data(row1).len == 2
+  check array_data(row1)[0].str == "1"
+  check array_data(row1)[1].str == "John"
+  check array_data(row2)[0].str == "2"
+  check array_data(row2)[1].str == "Mark"

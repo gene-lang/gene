@@ -582,13 +582,12 @@ proc init_collection_classes(object_class: Class) =
     let index_val = get_positional_arg(args, 1, has_keyword_args)
     if index_val.kind != VkInt:
       not_allowed("set index must be an integer")
-    let arr_ref = arr.ref
-    let len = arr_ref.arr.len
+    let len = array_data(arr).len
     var idx = normalize_index(len, index_val.int64)
     if idx < 0 or idx >= len:
       not_allowed("set index out of bounds")
     let value = get_positional_arg(args, 2, has_keyword_args)
-    arr_ref.arr[idx] = value
+    array_data(arr)[idx] = value
     arr
 
   array_class.def_native_method("set", vm_array_set)
@@ -602,13 +601,13 @@ proc init_collection_classes(object_class: Class) =
     let index_val = get_positional_arg(args, 1, has_keyword_args)
     if index_val.kind != VkInt:
       not_allowed("del index must be an integer")
-    let arr_ref = arr.ref
-    let len = arr_ref.arr.len
+    var arr_data = array_data(arr)
+    let len = arr_data.len
     var idx = normalize_index(len, index_val.int64)
     if idx < 0 or idx >= len:
       not_allowed("del index out of bounds")
-    let removed = arr_ref.arr[idx]
-    arr_ref.arr.delete(idx)
+    let removed = arr_data[idx]
+    arr_data.delete(idx)
     removed
 
   array_class.def_native_method("del", vm_array_del)
@@ -1525,11 +1524,6 @@ proc value_to_json(val: Value): string {.gcsafe.} =
   of VkArray:
     var items: seq[string] = @[]
     for item in array_data(val):
-      items.add(value_to_json(item))
-    result = "[" & items.join(",") & "]"
-  of VkVector:
-    var items: seq[string] = @[]
-    for item in val.ref.arr:
       items.add(value_to_json(item))
     result = "[" & items.join(",") & "]"
   of VkMap:

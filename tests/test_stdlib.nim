@@ -78,9 +78,9 @@ test "Global $program and $args reflect CLI inputs":
 
   let args_val = VM.exec("$args", "test_code")
   check args_val.kind == VkArray
-  check args_val.ref.arr.len == 2
-  check args_val.ref.arr[0].str == "123"
-  check args_val.ref.arr[1].str == "456"
+  check array_data(args_val).len == 2
+  check array_data(args_val)[0].str == "123"
+  check array_data(args_val)[1].str == "456"
 
   # Reset to default state for later tests
   set_program_args("", @[])

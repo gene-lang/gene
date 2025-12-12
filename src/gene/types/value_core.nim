@@ -245,10 +245,21 @@ proc `==`*(a, b: ptr Reference): bool =
   case a.kind:
     of VkSet:
       return a.set == b.set
+    of VkMap:
+      if a.map.len != b.map.len:
+        return false
+      for k, v in a.map:
+        let other = b.map.getOrDefault(k, NOT_FOUND)
+        if other == NOT_FOUND:
+          return false
+        if v != other:
+          return false
+      return true
     of VkComplexSymbol:
       return a.csymbol == b.csymbol
     else:
-      todo()
+      # Fallback to pointer identity for other reference types
+      return a == b
 
 proc `$`*(self: ptr Reference): string =
   $self.kind
@@ -331,6 +342,16 @@ proc `==`*(a, b: Value): bool {.no_side_effect.} =
         return false
       else:
         return str1.str == str2.str
+    # Arrays compare structurally
+    elif tag1 == ARRAY_TAG and tag2 == ARRAY_TAG:
+      let arr1 = array_ptr(a).arr
+      let arr2 = array_ptr(b).arr
+      if arr1.len != arr2.len:
+        return false
+      for i in 0 ..< arr1.len:
+        if arr1[i] != arr2[i]:
+          return false
+      return true
     # Only references can be equal with different bit patterns
     elif tag1 == REF_TAG and tag2 == REF_TAG:
       return a.ref == b.ref
@@ -421,6 +442,11 @@ proc is_literal*(self: Value): bool =
 
     # Check NaN-boxed values
     case u and 0xFFFF_0000_0000_0000u64:
+      of ARRAY_TAG:
+        for v in array_data(self):
+          if not is_literal(v):
+            return false
+        return true
       of SMALL_INT_TAG, STRING_TAG:
         result = true
       of SPECIAL_TAG:
@@ -433,11 +459,6 @@ proc is_literal*(self: Value): bool =
       of REF_TAG:
         let r = self.ref
         case r.kind:
-          of VkArray:
-            for v in r.arr:
-              if not is_literal(v):
-                return false
-            return true
           of VkMap:
             for v in r.map.values:
               if not is_literal(v):
@@ -484,13 +505,6 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
       of VkArray:
         result = "["
         for i, v in array_data(self):
-          if i > 0:
-            result &= " "
-          result &= v.str_no_quotes()
-        result &= "]"
-      of VkVector:
-        result = "["
-        for i, v in self.ref.arr:
           if i > 0:
             result &= " "
           result &= v.str_no_quotes()
@@ -570,13 +584,6 @@ proc `$`*(self: Value): string {.gcsafe.} =
       of VkArray:
         result = "["
         for i, v in array_data(self):
-          if i > 0:
-            result &= " "
-          result &= $v
-        result &= "]"
-      of VkVector:
-        result = "["
-        for i, v in self.ref.arr:
           if i > 0:
             result &= " "
           result &= $v
@@ -681,15 +688,17 @@ proc `[]`*(self: Value, i: int): Value =
 
   # Check if it's in NaN space
   if (u and NAN_MASK) == NAN_MASK:
-    case u and 0xFFFF_0000_0000_0000u64:
+    let tag = u and 0xFFFF_0000_0000_0000u64
+    case tag:
+      of ARRAY_TAG:
+        let arr = array_data(self)
+        if i >= 0 and i < arr.len:
+          return arr[i]
+        else:
+          return NIL
       of REF_TAG:
         let r = self.ref
         case r.kind:
-          of VkArray, VkVector:
-            if i >= r.arr.len:
-              return NIL
-            else:
-              return r.arr[i]
           of VkString:
             var j = 0
             for rune in r.str.runes:
@@ -759,12 +768,13 @@ proc size*(self: Value): int =
 
   # Check if it's in NaN space
   if (u and NAN_MASK) == NAN_MASK:
-    case u and 0xFFFF_0000_0000_0000u64:
+    let tag = u and 0xFFFF_0000_0000_0000u64
+    case tag:
+      of ARRAY_TAG:
+        return array_data(self).len
       of REF_TAG:
         let r = self.ref
         case r.kind:
-          of VkArray, VkVector:
-            return r.arr.len
           of VkSet:
             return r.set.len
           of VkMap:
@@ -933,11 +943,8 @@ proc len*(self: Value): int =
   case self.kind
   of VkString:
     return self.str.len
-  of VkArray, VkVector:
-    if self.kind == VkArray:
-      return array_ptr(self).arr.len
-    else:
-      return self.ref.arr.len
+  of VkArray:
+    return array_data(self).len
   of VkMap:
     return self.ref.map.len
   of VkSet:

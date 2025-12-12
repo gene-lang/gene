@@ -97,7 +97,7 @@ proc format_value(value: Value, format: string, indent: int = 0): string =
       return value.ref.csymbol.join("/")
     of VkArray:
       result = "["
-      for i, item in value.ref.arr:
+      for i, item in array_data(value):
         if i > 0: result &= " "
         result &= format_value(item, format)
       result &= "]"
@@ -170,10 +170,10 @@ proc format_value(value: Value, format: string, indent: int = 0): string =
     of VkComplexSymbol:
       return spaces & value.ref.csymbol.join("/")
     of VkArray:
-      if value.ref.arr.len == 0:
+      if array_data(value).len == 0:
         return spaces & "[]"
       result = spaces & "[\n"
-      for item in value.ref.arr:
+      for item in array_data(value):
         result &= format_value(item, format, indent + 1) & "\n"
       result &= spaces & "]"
     of VkMap:

@@ -9,7 +9,6 @@ suite "Extended Type System":
     check VkRatio.ord > VkInt.ord
     check VkRegex.ord > VkComplexSymbol.ord
     check VkDate.ord > VkTimezone.ord - 4  # Date comes before timezone
-    check VkVector.ord > VkArray.ord
     check VkThread.ord >= VkFuture.ord
     check VkException.ord == 128  # Exceptions start at 128
   

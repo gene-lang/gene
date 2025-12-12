@@ -28,7 +28,7 @@ proc geneValueToJson*(value: Value): JsonNode =
     result = %*value.str
   of VkArray:
     var arr = newJArray()
-    for item in value.ref.arr:
+    for item in array_data(value):
       arr.add(geneValueToJson(item))
     result = arr
   of VkMap:

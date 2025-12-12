@@ -17,10 +17,10 @@ test_vm """
   check result.ref.map["a".to_key()] == 2.to_value()
 
 test_vm """
-  (var g :(1 ^a 2 3 4))
-  (g .children)
+(var g :(1 ^a 2 3 4))
+(g .children)
 """, proc(result: Value) =
   check result.kind == VkArray
-  check result.ref.arr.len == 2
-  check result.ref.arr[0] == 3.to_value()
-  check result.ref.arr[1] == 4.to_value()
+  check array_data(result).len == 2
+  check array_data(result)[0] == 3.to_value()
+  check array_data(result)[1] == 4.to_value()

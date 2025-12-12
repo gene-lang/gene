@@ -75,7 +75,7 @@ proc serialize*(self: Serialization, value: Value): Value =
 # Fast literal checker: primitives, strings/symbols, arrays/maps/genes with literal children
 proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
   var stack: seq[Value] = @[v]
-  var seen_arrays: HashSet[ptr Reference]
+  var seen_arrays: HashSet[ptr ArrayObj]
   var seen_maps: HashSet[ptr Reference]
   var seen_genes: HashSet[ptr Gene]
 
@@ -87,7 +87,7 @@ proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
        VkDate, VkDateTime:
       continue
     of VkArray:
-      let r = cur.ref
+      let r = array_ptr(cur)
       if seen_arrays.contains(r): continue
       seen_arrays.incl(r)
       for item in r.arr: stack.add(item)

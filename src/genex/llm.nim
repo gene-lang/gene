@@ -102,7 +102,7 @@ when defined(GENE_LLM_MOCK):
 
     var token_array = new_array_value(@[])
     for token in tokens:
-      token_array.ref.arr.add(token.to_value())
+      array_data(token_array).add(token.to_value())
     map_table["tokens".to_key()] = token_array
 
     map_table["finish_reason".to_key()] = finish_reason.to_symbol_value()
@@ -578,9 +578,9 @@ else:
       for i in 0..<completion.token_count:
         let token_ptr = completion.tokens[i]
         if token_ptr != nil:
-          token_array.ref.arr.add(($token_ptr).to_value())
-        else:
-          token_array.ref.arr.add("".to_value())
+        array_data(token_array).add(($token_ptr).to_value())
+      else:
+        array_data(token_array).add("".to_value())
     map_table["tokens".to_key()] = token_array
 
     let finish_symbol =

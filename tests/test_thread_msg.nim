@@ -15,7 +15,7 @@ suite "Thread message serialization":
     let ser = serialize_literal(value)
     let roundtripped = deserialize_literal(ser.to_s())
     check roundtripped.kind == VkMap
-    check roundtripped.ref.map["a".to_key()].ref.arr.len == 3
+    check array_data(roundtripped.ref.map["a".to_key()]).len == 3
     check roundtripped.ref.map["b".to_key()].str == "ok"
 
   test "non-literal payload is rejected":

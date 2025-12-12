@@ -78,10 +78,9 @@ proc to_json*(val: Value): string =
     return $val.to_float
   of VkString:
     return json.escapeJson(val.str)
-  of VkArray, VkVector:
+  of VkArray:
     var items: seq[string] = @[]
-    let r = val.ref
-    for item in r.arr:
+    for item in array_data(val):
       items.add(to_json(item))
     return "[" & items.join(",") & "]"
   of VkMap:
@@ -287,7 +286,7 @@ proc vm_http_post(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
       let body_arg = get_positional_arg(args, 1, has_keyword_args)
       if body_arg.kind == VkString:
         body = body_arg.str
-      elif body_arg.kind in {VkMap, VkVector, VkArray}:
+      elif body_arg.kind in {VkMap, VkArray}:
         body = to_json(body_arg)
         headers["Content-Type"] = "application/json"
 

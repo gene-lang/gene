@@ -16,18 +16,18 @@ test_vm """
   v
 """, proc(result: Value) =
   check result.kind == VkArray
-  check result.ref.arr.len == 2
-  check result.ref.arr[0] == 3.to_value()
-  check result.ref.arr[1] == 2.to_value()
+  check array_data(result).len == 2
+  check array_data(result)[0] == 3.to_value()
+  check array_data(result)[1] == 2.to_value()
 
 test_vm """
   ([1 2] .add 3)
 """, proc(result: Value) =
   check result.kind == VkArray
-  check result.ref.arr.len == 3
-  check result.ref.arr[0] == 1.to_value()
-  check result.ref.arr[1] == 2.to_value()
-  check result.ref.arr[2] == 3.to_value()
+  check array_data(result).len == 3
+  check array_data(result)[0] == 1.to_value()
+  check array_data(result)[1] == 2.to_value()
+  check array_data(result)[2] == 3.to_value()
 
 test_vm """
   ([1 2] .del 0)
@@ -38,6 +38,6 @@ test_vm """
   ([1 2] .map inc)
 """, proc(result: Value) =
   check result.kind == VkArray
-  check result.ref.arr.len == 2
-  check result.ref.arr[0] == 2.to_value()
-  check result.ref.arr[1] == 3.to_value()
+  check array_data(result).len == 2
+  check array_data(result)[0] == 2.to_value()
+  check array_data(result)[1] == 3.to_value()
