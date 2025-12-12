@@ -200,6 +200,9 @@ proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instru
 
 proc poll_event_loop(self: VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
+  if not self.poll_enabled:
+    return
+
   self.event_loop_counter.inc()
   if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
     self.event_loop_counter = 0
@@ -278,6 +281,9 @@ proc poll_event_loop(self: VirtualMachine) =
             continue
 
         i.inc()
+
+      if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+        self.poll_enabled = false
     except:
       # If polling fails, ignore the error to keep the VM running
       discard
@@ -1179,7 +1185,7 @@ proc exec*(self: VirtualMachine): Value =
           raise new_exception(types.Exception, self.format_runtime_exception(self.current_exception))
 
         # TODO: validate that there is only one value on the stack
-        let v = self.frame.current()
+        let v = if self.frame.stack_index > 0: self.frame.current() else: NIL
         if self.frame.caller_frame == nil:
           # Before returning, if there are pending futures, poll with timeout to let them complete
           var max_iterations = 1000  # Prevent infinite loop

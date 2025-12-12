@@ -21,6 +21,7 @@ proc init_app_and_vm*() =
     current_exception: NIL,
     exec_depth: 0,
     symbols: addr SYMBOLS,
+    poll_enabled: false,
     pending_futures: @[],  # Initialize empty list of pending futures
     thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
     message_callbacks: @[],  # Initialize empty list of message callbacks

@@ -1950,6 +1950,7 @@ proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
 
   # Add to VM's pending futures list so it gets polled
   vm.pending_futures.add(gene_future_obj)
+  vm.poll_enabled = true
 
   return result
 
@@ -2041,6 +2042,7 @@ proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 
   # Add to VM's pending futures list (even if already failed)
   vm.pending_futures.add(gene_future_obj)
+  vm.poll_enabled = true
 
   return result
 
@@ -2096,6 +2098,7 @@ proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
 
   # Add to VM's pending futures list
   vm.pending_futures.add(gene_future_obj)
+  vm.poll_enabled = true
 
   return result
 

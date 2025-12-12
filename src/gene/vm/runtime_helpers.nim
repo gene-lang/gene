@@ -41,6 +41,7 @@ proc new_thread_vm(): VirtualMachine =
     exception_handlers: @[],
     current_exception: NIL,
     symbols: addr SYMBOLS,
+    poll_enabled: false,
     pending_futures: @[],
     thread_futures: initTable[int, FutureObj](),
     message_callbacks: @[],
@@ -243,6 +244,7 @@ proc spawn_thread(code: ptr Gene, return_value: bool): Value =
 
     # Store future in VM's thread_futures table keyed by message ID
     VM.thread_futures[message_id] = future_obj
+    VM.poll_enabled = true
 
     # Return the future
     let future_val = new_ref(VkFuture)

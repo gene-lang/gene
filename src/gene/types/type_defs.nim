@@ -747,6 +747,7 @@ type
     instruction_profile*: array[InstructionKind, InstructionProfile]
     # Async/Event Loop support
     event_loop_counter*: int  # Counter for periodic event loop polling (poll every N instructions)
+    poll_enabled*: bool       # Set when async/thread work is pending; skip polling otherwise
     pending_futures*: seq[FutureObj]  # List of futures with pending Nim futures
     # Thread support
     thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return

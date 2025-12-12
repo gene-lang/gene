@@ -250,6 +250,7 @@ proc init_thread_class*() =
 
       # Store future in vm's thread_futures table keyed by message ID
       vm.thread_futures[message_id] = future_obj
+      vm.poll_enabled = true
 
       # Return the future
       let future_val = new_ref(VkFuture)

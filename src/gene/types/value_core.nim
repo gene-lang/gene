@@ -145,9 +145,17 @@ converter to_value*(k: Key): Value {.inline.} =
 
 #################### Reference ###################
 
-# NOTE: Reference, Gene, and String are manually managed ptr types
-# They use manual ref counting, not Nim's ARC/ORC
-# The ref counting is handled when creating Values from these types
+# Ownership model:
+# - new_ref/new_gene/new_str_value return ref_count = 1. Converting to Value
+#   does NOT retain; callers push/pop Values and rely on retain/release
+#   when storing outside the stack.
+# - release() returns Reference/Gene/String to pools or deallocates when
+#   ref_count reaches 0. REF_POOL is bounded.
+# - Scope lifetime is owned by the VM instructions (IkScopeEnd, IkScopeStart);
+#   frames normally borrow or own scopes as emitted by the compiler, and
+#   IkScopeEnd handles ref_count changes. Frames themselves are pooled and
+#   freed via Frame.free().
+# Manual ref counting is used instead of Nim ARC/ORC for Value-backed types.
 
 # Memory pool for reference objects
 var REF_POOL* {.threadvar.}: seq[ptr Reference]
