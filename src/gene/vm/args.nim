@@ -32,6 +32,13 @@ proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instan
 # Forward declaration for original process_args function
 proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)
 
+template is_simple_positional(matcher: RootMatcher, arg_count: int): bool =
+  matcher.hint_mode == MhSimpleData and matcher.children.len == arg_count
+
+template ensure_scope_capacity(scope: Scope, count: int) =
+  while scope.members.len < count:
+    scope.members.add(NIL)
+
 proc key_to_name(key: Key): string {.inline.} =
   let idx = key.int64
   if idx >= 0 and idx < SYMBOLS.store.len.int64:
@@ -112,11 +119,17 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
 # Optimized version for zero arguments
 proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
   ## Ultra-fast path for zero-argument functions
+  if matcher.is_simple_positional(0):
+    return
   process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope)
 
 # Optimized version for single argument
 proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.} =
   ## Ultra-fast path for single-argument functions
+  if matcher.is_simple_positional(1):
+    ensure_scope_capacity(scope, 1)
+    scope.members[0] = arg
+    return
   var arr = [arg]
   process_args_core(matcher, cast[ptr UncheckedArray[Value]](arr[0].addr), 1, @[], scope)
 
@@ -124,6 +137,16 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
                          arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
   ## Process arguments directly from stack to scope
   ## Supports positional arguments only (keywords handled by process_args_direct_kw).
+  if (not has_keyword_args) and matcher.is_simple_positional(arg_count):
+    ensure_scope_capacity(scope, arg_count)
+    {.push checks: off.}
+    var i = 0
+    while i < arg_count:
+      scope.members[i] = args[i]
+      inc i
+    {.pop.}
+    return
+
   process_args_core(matcher, args, arg_count, @[], scope)
 
 proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
@@ -136,15 +159,27 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
   ## Process function arguments and bind them to the scope
   ## Handles both positional and named arguments
 
-  var positional: seq[Value] = @[]
-  var keywords: seq[(Key, Value)] = @[]
-
   if args.kind == VkGene:
+    if args.gene.props.len == 0 and matcher.is_simple_positional(args.gene.children.len):
+      ensure_scope_capacity(scope, args.gene.children.len)
+      {.push checks: off.}
+      var i = 0
+      while i < args.gene.children.len:
+        scope.members[i] = args.gene.children[i]
+        inc i
+      {.pop.}
+      return
+
+    var positional: seq[Value] = @[]
+    var keywords: seq[(Key, Value)] = @[]
+
     positional = args.gene.children
     for k, v in args.gene.props:
       keywords.add((k, v))
 
-  let pos_ptr = if positional.len > 0: cast[ptr UncheckedArray[Value]](positional[0].addr)
-                else: cast[ptr UncheckedArray[Value]](nil)
-  process_args_core(matcher, pos_ptr, positional.len, keywords, scope)
+    let pos_ptr = if positional.len > 0: cast[ptr UncheckedArray[Value]](positional[0].addr)
+                  else: cast[ptr UncheckedArray[Value]](nil)
+    process_args_core(matcher, pos_ptr, positional.len, keywords, scope)
+  else:
+    process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope)
   
