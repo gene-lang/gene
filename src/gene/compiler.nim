@@ -324,7 +324,7 @@ proc compile_array(self: Compiler, input: Value) =
   self.emit(Instruction(kind: IkArrayStart))
 
   var i = 0
-  let arr = input.ref.arr
+  let arr = array_data(input)
   while i < arr.len:
     let child = arr[i]
 
@@ -444,19 +444,20 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
     case elifs.kind:
       of VkArray:
         # Process elif conditions and bodies in pairs
-        for i in countup(0, elifs.ref.arr.len - 1, 2):
+        let arr = array_data(elifs)
+        for i in countup(0, arr.len - 1, 2):
           self.emit(Instruction(kind: IkNoop, label: next_label))
           
-          if i < elifs.ref.arr.len - 1:
+          if i < arr.len - 1:
             # Compile elif condition
-            self.compile(elifs.ref.arr[i])
+            self.compile(arr[i])
             next_label = new_label()
             self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
             
             # Compile elif body (preserves tail position)
             self.start_scope()
             let old_tail_elif = self.tail_position
-            self.compile(elifs.ref.arr[i + 1])
+            self.compile(arr[i + 1])
             self.tail_position = old_tail_elif
             self.end_scope()
             self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
@@ -965,7 +966,7 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
       not_allowed("enum ^values must be an array")
     
     var value = 0
-    for member in values_array.ref.arr:
+    for member in array_data(values_array):
       if member.kind != VkSymbol:
         not_allowed("enum member must be a symbol")
       # Push member name and value
@@ -1243,31 +1244,32 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   var method_args: Value
   
   if args.kind == VkArray:
-    if args.ref.arr.len == 0:
+    let src = array_data(args)
+    if src.len == 0:
       method_args = new_array_value()
-      method_args.ref.arr.add("self".to_symbol_value())
-    elif args.ref.arr[0].kind == VkSymbol and args.ref.arr[0].str == "self":
+      array_data(method_args).add("self".to_symbol_value())
+    elif src[0].kind == VkSymbol and src[0].str == "self":
       method_args = new_array_value()
-      for arg in args.ref.arr:
-        method_args.ref.arr.add(arg)
+      for arg in src:
+        array_data(method_args).add(arg)
     else:
       method_args = new_array_value()
-      method_args.ref.arr.add("self".to_symbol_value())
-      for arg in args.ref.arr:
-        method_args.ref.arr.add(arg)
+      array_data(method_args).add("self".to_symbol_value())
+      for arg in src:
+        array_data(method_args).add(arg)
   elif args.kind == VkSymbol and args.str == "_":
     # _ means no arguments, but methods need self
     method_args = new_array_value()
-    method_args.ref.arr.add("self".to_symbol_value())
+    array_data(method_args).add("self".to_symbol_value())
   elif args.kind == VkSymbol and args.str == "self":
     # Just self
     method_args = new_array_value()
-    method_args.ref.arr.add(args)
+    array_data(method_args).add(args)
   else:
     # Single argument that's not self - add self first
     method_args = new_array_value()
-    method_args.ref.arr.add("self".to_symbol_value())
-    method_args.ref.arr.add(args)
+    array_data(method_args).add("self".to_symbol_value())
+    array_data(method_args).add(args)
   
   fn_value.gene.children.add(method_args)
 
@@ -1306,7 +1308,7 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
     else:
       # Single argument without brackets - wrap it in an array
       var args_array = new_array_value()
-      args_array.ref.arr.add(args)
+      array_data(args_array).add(args)
       fn_value.gene.children.add(args_array)
   else:
     # Already an array or no body after it
@@ -1502,7 +1504,7 @@ proc compile_match(self: Compiler, gene: ptr Gene) =
     # For now, just pop the array and bind NIL variables
     self.emit(Instruction(kind: IkPop))
 
-    for i, elem in pattern.ref.arr:
+    for i, elem in array_data(pattern):
       if elem.kind == VkSymbol:
         # Store NIL placeholder for each array variable
         let var_name = elem.str

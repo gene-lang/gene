@@ -36,10 +36,10 @@ proc serialize*(self: Serialization, value: Value): Value =
   of VkString, VkSymbol:
     return value
   of VkArray:
-    let arr = new_ref(VkArray)
-    for item in value.ref.arr:
-      arr.arr.add(self.serialize(item))
-    return arr.to_ref_value()
+    var arr_val = new_array_value()
+    for item in array_data(value):
+      array_data(arr_val).add(self.serialize(item))
+    return arr_val
   of VkMap:
     let map = new_ref(VkMap)
     map.map = initTable[Key, Value]()
@@ -218,7 +218,7 @@ proc value_to_gene_str(self: Value): string =
     result = self.str
   of VkArray:
     result = "["
-    for i, v in self.ref.arr:
+    for i, v in array_data(self):
       if i > 0:
         result &= " "
       result &= value_to_gene_str(v)

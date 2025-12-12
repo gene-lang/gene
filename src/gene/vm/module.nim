@@ -431,7 +431,7 @@ proc parse_import_statement*(gene: ptr Gene): tuple[module_path: string, package
             # This is n/[a b] syntax
             let prefix = parts[0..^2].join("/")
             i += 1  # Move to the array
-            let arr = gene.children[i].ref.arr
+            let arr = array_data(gene.children[i])
             
             for sub_child in arr:
               if sub_child.kind == VkSymbol:

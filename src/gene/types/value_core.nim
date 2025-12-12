@@ -27,10 +27,13 @@ const I64_MASK* = 0xC000_0000_0000_0000u64  # Will be removed
 # We use non-canonical quiet NaN values (0xFFF8-0xFFFF prefix with non-zero payload)
 const SMALL_INT_TAG* = 0xFFF8_0000_0000_0000u64   # 48-bit integers
 const POINTER_TAG* = 0xFFFC_0000_0000_0000u64     # Regular pointers
-const REF_TAG* = 0xFFFD_0000_0000_0000u64         # Reference objects
+const REF_TAG* = 0xFFFD_0000_0000_0000u64         # Reference objects (misc)
 const GENE_TAG* = 0xFFFA_0000_0000_0000u64        # Gene S-expressions
 const SYMBOL_TAG* = 0xFFF9_0000_0000_0000u64      # Symbols
-const STRING_TAG* = 0xFFFE_0000_0000_0000u64    # String pointers
+const STRING_TAG* = 0xFFFE_0000_0000_0000u64      # String pointers
+const ARRAY_TAG* = 0xFFF7_0000_0000_0000u64       # Array pointers
+const MAP_TAG* = 0xFFF6_0000_0000_0000u64         # Map pointers
+const INSTANCE_TAG* = 0xFFF5_0000_0000_0000u64    # Instance pointers
 const SPECIAL_TAG* = 0xFFF1_0000_0000_0000u64     # Special values (changed from 0xFFF0)
 
 # Special values (using SPECIAL_TAG)
@@ -146,16 +149,16 @@ converter to_value*(k: Key): Value {.inline.} =
 #################### Reference ###################
 
 # Ownership model:
-# - new_ref/new_gene/new_str_value return ref_count = 1. Converting to Value
-#   does NOT retain; callers push/pop Values and rely on retain/release
-#   when storing outside the stack.
-# - release() returns Reference/Gene/String to pools or deallocates when
-#   ref_count reaches 0. REF_POOL is bounded.
-# - Scope lifetime is owned by the VM instructions (IkScopeEnd, IkScopeStart);
-#   frames normally borrow or own scopes as emitted by the compiler, and
-#   IkScopeEnd handles ref_count changes. Frames themselves are pooled and
-#   freed via Frame.free().
+# - new_ref/new_gene/new_str_value/new_array_value/new_map_value/new_instance_value
+#   return ref_count = 1. Boxing to Value does NOT retain; stack ops are ref-neutral.
+#   Store outside the stack? Call retain/release.
+# - release() returns Reference/Gene/String/Array/Map/Instance to pools or deallocates
+#   when ref_count reaches 0. REF_POOL is bounded; array/map/instance are not pooled today.
+# - Scope lifetime is owned by VM instructions (IkScopeStart/IkScopeEnd); frames borrow/own
+#   per compiler emission. Frames are pooled via Frame.free().
 # Manual ref counting is used instead of Nim ARC/ORC for Value-backed types.
+# NOTE: Array/Map/Instance still use Reference for now; splitting them into dedicated
+# tags/structs is planned but not yet applied in this file.
 
 # Memory pool for reference objects
 var REF_POOL* {.threadvar.}: seq[ptr Reference]
@@ -170,6 +173,9 @@ proc retain*(v: Value) {.inline.} =
     case u and 0xFFFF_0000_0000_0000u64:
       of REF_TAG:
         let x = cast[ptr Reference](u and PAYLOAD_MASK)
+        x.ref_count.inc()
+      of ARRAY_TAG:
+        let x = cast[ptr ArrayObj](u and PAYLOAD_MASK)
         x.ref_count.inc()
       of GENE_TAG:
         let x = cast[ptr Gene](u and PAYLOAD_MASK)
@@ -195,6 +201,12 @@ proc release*(v: Value) {.inline.} =
             dealloc(x)
         else:
           x.ref_count.dec()
+      of ARRAY_TAG:
+        let x = cast[ptr ArrayObj](u and PAYLOAD_MASK)
+        if x.ref_count == 1:
+          dealloc(x)
+        else:
+          x.ref_count.dec()
       of GENE_TAG:
         let x = cast[ptr Gene](u and PAYLOAD_MASK)
         if x.ref_count == 1:
@@ -211,6 +223,15 @@ proc release*(v: Value) {.inline.} =
         discard  # No ref counting for other types
   {.pop.}
 
+proc array_ptr*(v: Value): ptr ArrayObj {.inline.} =
+  let u = cast[uint64](v)
+  if (u and 0xFFFF_0000_0000_0000u64) != ARRAY_TAG:
+    raise newException(ValueError, "Value is not an array")
+  cast[ptr ArrayObj](u and PAYLOAD_MASK)
+
+template array_data*(v: Value): var seq[Value] =
+  array_ptr(v).arr
+
 proc `==`*(a, b: ptr Reference): bool =
   if a.is_nil:
     return b.is_nil
@@ -222,12 +243,8 @@ proc `==`*(a, b: ptr Reference): bool =
     return false
 
   case a.kind:
-    of VkArray:
-      return a.arr == b.arr
     of VkSet:
       return a.set == b.set
-    of VkMap:
-      return a.map == b.map
     of VkComplexSymbol:
       return a.csymbol == b.csymbol
     else:
@@ -377,20 +394,22 @@ proc kind*(v: Value): ValueKind {.inline.} =
 
     # Fast path: Check most common NaN-boxed types with single comparisons
     let tag = u and 0xFFFF_0000_0000_0000u64
-    case tag:
-      of SMALL_INT_TAG:
-        return VkInt
-      of REF_TAG:
-        return v.ref.kind  # Single pointer dereference
-      of SYMBOL_TAG:
-        return VkSymbol
-      of STRING_TAG:
-        return VkString
-      of GENE_TAG:
-        return VkGene
-      else:
-        # Uncommon cases - delegate to separate function
-        return kind_slow(v, u, tag)
+  case tag:
+    of SMALL_INT_TAG:
+      return VkInt
+    of REF_TAG:
+      return v.ref.kind  # Single pointer dereference
+    of ARRAY_TAG:
+      return VkArray
+    of SYMBOL_TAG:
+      return VkSymbol
+    of STRING_TAG:
+      return VkString
+    of GENE_TAG:
+      return VkGene
+    else:
+      # Uncommon cases - delegate to separate function
+      return kind_slow(v, u, tag)
 
 proc is_literal*(self: Value): bool =
   {.cast(gcsafe).}:
@@ -462,7 +481,14 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         result = self.ref.csymbol.join("/")
       of VkRatio:
         result = $self.ref.ratio_num & "/" & $self.ref.ratio_denom
-      of VkArray, VkVector:
+      of VkArray:
+        result = "["
+        for i, v in array_data(self):
+          if i > 0:
+            result &= " "
+          result &= v.str_no_quotes()
+        result &= "]"
+      of VkVector:
         result = "["
         for i, v in self.ref.arr:
           if i > 0:
@@ -541,7 +567,14 @@ proc `$`*(self: Value): string {.gcsafe.} =
         result = self.ref.csymbol.join("/")
       of VkRatio:
         result = $self.ref.ratio_num & "/" & $self.ref.ratio_denom
-      of VkArray, VkVector:
+      of VkArray:
+        result = "["
+        for i, v in array_data(self):
+          if i > 0:
+            result &= " "
+          result &= $v
+        result &= "]"
+      of VkVector:
         result = "["
         for i, v in self.ref.arr:
           if i > 0:
@@ -889,16 +922,22 @@ proc to_complex_symbol*(parts: seq[string]): Value {.inline.} =
 #################### Array #######################
 
 proc new_array_value*(v: varargs[Value]): Value =
-  let r = new_ref(VkArray)
+  let r = cast[ptr ArrayObj](alloc0(sizeof(ArrayObj)))
+  r.ref_count = 1
   r.arr = @v
-  result = r.to_ref_value()
+  let ptr_addr = cast[uint64](r)
+  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Array pointer too large for NaN boxing"
+  result = cast[Value](ARRAY_TAG or ptr_addr)
 
 proc len*(self: Value): int =
   case self.kind
   of VkString:
     return self.str.len
   of VkArray, VkVector:
-    return self.ref.arr.len
+    if self.kind == VkArray:
+      return array_ptr(self).arr.len
+    else:
+      return self.ref.arr.len
   of VkMap:
     return self.ref.map.len
   of VkSet:
@@ -1518,8 +1557,9 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
           m.name_key = name.to_key()
     of VkArray:
       var i = 0
-      while i < v.ref.arr.len:
-        let item = v.ref.arr[i]
+      let arr = array_data(v)
+      while i < arr.len:
+        let item = arr[i]
         i += 1
         if item.kind == VkArray:
           let m = new_matcher(self, MatchData)
@@ -1527,10 +1567,10 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
           self.parse(m.children, item)
         else:
           self.parse(group, item)
-          if i < v.ref.arr.len and v.ref.arr[i] == "=".to_symbol_value():
+          if i < arr.len and arr[i] == "=".to_symbol_value():
             i += 1
             let last_matcher = group[^1]
-            let value = v.ref.arr[i]
+            let value = arr[i]
             i += 1
             last_matcher.default_value = value
     of VkQuote:

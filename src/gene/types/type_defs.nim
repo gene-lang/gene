@@ -973,7 +973,6 @@ type
         stream_ended*: bool
       of VkDocument:
         doc*: Document
-
       # File system types
       of VkFile:
         file_path*: string
@@ -1082,3 +1081,7 @@ type
       else:
         discard
     ref_count*: int32
+
+  ArrayObj* = object
+    ref_count*: int32
+    arr*: seq[Value]

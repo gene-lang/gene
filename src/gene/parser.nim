@@ -916,9 +916,9 @@ proc read_map(self: var Parser): Value {.gcsafe.} =
   result = r.to_ref_value()
 
 proc read_array(self: var Parser): Value {.gcsafe.} =
-  let r = new_ref(VkArray)
-  r.arr = self.read_delimited_list(']', true).list
-  result = r.to_ref_value()
+  var r = new_array_value()
+  array_data(r) = self.read_delimited_list(']', true).list
+  result = r
 
 proc read_stream(self: var Parser): Value {.gcsafe.} =
   let r = new_ref(VkStream)

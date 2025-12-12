@@ -649,15 +649,15 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
     
     of VkArray:
       # Recursively render array elements
-      let new_arr = new_ref(VkArray)
-      for item in tpl.ref.arr:
+      var new_arr = new_array_value()
+      for item in array_data(tpl):
         let rendered = self.render_template(item)
         # Skip NIL values that come from %_ (unquote discard)
         if rendered.kind == VkNil and item.kind == VkUnquote and item.ref.unquote_discard:
           continue
         else:
-          new_arr.arr.add(rendered)
-      return new_arr.to_ref_value()
+          array_data(new_arr).add(rendered)
+      return new_arr
     
     of VkMap:
       # Recursively render map values
@@ -1893,11 +1893,12 @@ proc exec*(self: VirtualMachine): Value =
             # Handle array index access
             if prop.kind == VkInt:
               let idx = prop.int64
-              if idx >= 0 and idx < target.ref.arr.len:
-                self.frame.push(target.ref.arr[idx])
-              elif idx < 0 and -idx <= target.ref.arr.len:
+              let arr = array_data(target)
+              if idx >= 0 and idx < arr.len:
+                self.frame.push(arr[idx])
+              elif idx < 0 and -idx <= arr.len:
                 # Negative indexing
-                self.frame.push(target.ref.arr[target.ref.arr.len + idx])
+                self.frame.push(arr[arr.len + idx])
               else:
                 self.frame.push(NIL)
             else:
@@ -1952,11 +1953,12 @@ proc exec*(self: VirtualMachine): Value =
             # Handle array index access
             if prop.kind == VkInt:
               let idx = prop.int
-              if idx >= 0 and idx < target.ref.arr.len:
-                self.frame.push(target.ref.arr[idx])
-              elif idx < 0 and -idx <= target.ref.arr.len:
+              let arr = array_data(target)
+              if idx >= 0 and idx < arr.len:
+                self.frame.push(arr[idx])
+              elif idx < 0 and -idx <= arr.len:
                 # Negative indexing
-                self.frame.push(target.ref.arr[target.ref.arr.len + idx])
+                self.frame.push(arr[arr.len + idx])
               else:
                 self.frame.push(default_val)
             else:
@@ -1972,7 +1974,7 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.pop2(target)
         case target.kind:
           of VkArray:
-            target.ref.arr[i] = new_value
+            array_data(target)[i] = new_value
           of VkGene:
             target.gene.children[i] = new_value
           else:
@@ -1988,7 +1990,7 @@ proc exec*(self: VirtualMachine): Value =
         self.frame.pop2(value)
         case value.kind:
           of VkArray:
-            self.frame.push(value.ref.arr[i])
+            self.frame.push(array_data(value)[i])
           of VkGene:
             self.frame.push(value.gene.children[i])
           else:
@@ -2009,7 +2011,7 @@ proc exec*(self: VirtualMachine): Value =
             echo fmt"IkGetChildDynamic: collection={collection}, index={index}"
         case collection.kind:
           of VkArray:
-            self.frame.push(collection.ref.arr[i])
+            self.frame.push(array_data(collection)[i])
           of VkGene:
             self.frame.push(collection.gene.children[i])
           of VkRange:
@@ -2189,7 +2191,7 @@ proc exec*(self: VirtualMachine): Value =
         case value.kind:
           of VkArray:
             # Push each element onto stack
-            for item in value.ref.arr:
+            for item in array_data(value):
               self.frame.push(item)
           of VkNil:
             # Spreading nil is a no-op (treat as empty array)
@@ -2205,10 +2207,10 @@ proc exec*(self: VirtualMachine): Value =
         # Create array with exact capacity
         let arr = new_array_value()
         if count > 0:
-          arr.ref.arr.setLen(count)
+          array_data(arr).setLen(count)
           # Copy elements from stack
           for i in 0..<count:
-            arr.ref.arr[i] = self.frame.stack[base + uint16(i)]
+            array_data(arr)[i] = self.frame.stack[base + uint16(i)]
 
         # Pop all elements and push array
         self.frame.stack_index = base
@@ -2222,7 +2224,7 @@ proc exec*(self: VirtualMachine): Value =
         var seq_to_spread: seq[Value]
         case value.kind
         of VkArray:
-          seq_to_spread = value.ref.arr
+          seq_to_spread = array_data(value)
         of VkStream:
           seq_to_spread = value.ref.stream
         of VkNil:
@@ -2600,13 +2602,13 @@ proc exec*(self: VirtualMachine): Value =
               of VkFrame:
                 if v.ref.frame.args.kind != VkGene:
                   v.ref.frame.args = new_gene_value()
-                for item in value.ref.arr:
+                for item in array_data(value):
                   v.ref.frame.args.gene.children.add(item)
               of VkNativeFrame:
-                for item in value.ref.arr:
+                for item in array_data(value):
                   v.ref.native_frame.args.gene.children.add(item)
               of VkGene:
-                for item in value.ref.arr:
+                for item in array_data(value):
                   v.gene.children.add(item)
               else:
                 not_allowed("... can only spread arrays into gene children, got " & $v.kind)
@@ -5104,7 +5106,7 @@ proc exec*(self: VirtualMachine): Value =
         let value = self.frame.pop()
         case value.kind:
           of VkArray:
-            for item in value.ref.arr:
+            for item in array_data(value):
               self.frame.push(item)
           of VkStream:
             for item in value.ref.stream:

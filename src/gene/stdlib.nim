@@ -33,7 +33,7 @@ proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
     $(cast[float64](val))
   of VkArray:
     var parts: seq[string] = @[]
-    for item in val.ref.arr:
+    for item in array_data(val):
       parts.add(display_value(item, false))
     "[" & parts.join(" ") & "]"
   of VkMap:
@@ -391,10 +391,10 @@ proc init_string_class(object_class: Class) =
       parts = self_arg.str.split(sep, limit - 1)
     else:
       parts = self_arg.str.split(sep)
-    let arr_ref = new_ref(VkArray)
+    var arr_ref = new_array_value()
     for part in parts:
-      arr_ref.arr.add(part.to_value())
-    arr_ref.to_ref_value()
+      array_data(arr_ref).add(part.to_value())
+    arr_ref
 
   string_class.def_native_method("split", string_split)
 
@@ -541,7 +541,7 @@ proc init_collection_classes(object_class: Class) =
     let arr = get_positional_arg(args, 0, has_keyword_args)
     let value = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
     if arr.kind == VkArray:
-      arr.ref.arr.add(value)
+      array_data(arr).add(value)
     return arr
 
   array_class.def_native_method("add", vm_array_add)
@@ -550,7 +550,7 @@ proc init_collection_classes(object_class: Class) =
     # First argument is the array (self)
     let arr = get_positional_arg(args, 0, has_keyword_args)
     if arr.kind == VkArray:
-      return arr.ref.arr.len.to_value()
+      return array_data(arr).len.to_value()
     return 0.to_value()
 
   array_class.def_native_method("size", vm_array_size)
@@ -561,8 +561,8 @@ proc init_collection_classes(object_class: Class) =
     let index = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: 0.to_value()
     if arr.kind == VkArray and index.kind == VkInt:
       let idx = index.int64.int
-      if idx >= 0 and idx < arr.ref.arr.len:
-        return arr.ref.arr[idx]
+      if idx >= 0 and idx < array_data(arr).len:
+        return array_data(arr)[idx]
     return NIL
 
   array_class.def_native_method("get", vm_array_get)
@@ -619,7 +619,7 @@ proc init_collection_classes(object_class: Class) =
     let arr = get_positional_arg(args, 0, has_keyword_args)
     if arr.kind != VkArray:
       not_allowed("empty must be called on an array")
-    (arr.ref.arr.len == 0).to_value()
+    (array_data(arr).len == 0).to_value()
 
   array_class.def_native_method("empty", vm_array_empty)
 
@@ -630,7 +630,7 @@ proc init_collection_classes(object_class: Class) =
     if arr.kind != VkArray:
       not_allowed("contains must be called on an array")
     let needle = get_positional_arg(args, 1, has_keyword_args)
-    for item in arr.ref.arr:
+    for item in array_data(arr):
       if item == needle:
         return TRUE
     FALSE
@@ -656,11 +656,11 @@ proc init_collection_classes(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
     of VkFunction:
-      for item in arr.ref.arr:
+      for item in array_data(arr):
         {.cast(gcsafe).}:
           discard vm.exec_function(callback, @[item])
     of VkNativeFn:
-      for item in arr.ref.arr:
+      for item in array_data(arr):
         {.cast(gcsafe).}:
           discard call_native_fn(callback.ref.native_fn, vm, [item])
     else:
@@ -679,22 +679,22 @@ proc init_collection_classes(object_class: Class) =
     var mapped: seq[Value] = @[]
     case callback.kind
     of VkFunction:
-      for item in arr.ref.arr:
+      for item in array_data(arr):
         var mapped_value: Value
         {.cast(gcsafe).}:
           mapped_value = vm.exec_function(callback, @[item])
         mapped.add(mapped_value)
     of VkNativeFn:
-      for item in arr.ref.arr:
+      for item in array_data(arr):
         var mapped_value: Value
         {.cast(gcsafe).}:
           mapped_value = call_native_fn(callback.ref.native_fn, vm, [item])
         mapped.add(mapped_value)
     else:
       not_allowed("map callback must be a function")
-    let result_ref = new_ref(VkArray)
-    result_ref.arr = mapped
-    result_ref.to_ref_value()
+    var result = new_array_value()
+    array_data(result) = mapped
+    result
 
   array_class.def_native_method("map", vm_array_map)
 
@@ -764,11 +764,11 @@ proc init_collection_classes(object_class: Class) =
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
       not_allowed("keys must be called on a map")
-    let result_ref = new_ref(VkArray)
+    var result_ref = new_array_value()
     for key, _ in map_val.ref.map:
       let key_val = cast[Value](key)
-      result_ref.arr.add(key_val.str.to_value())
-    result_ref.to_ref_value()
+      array_data(result_ref).add(key_val.str.to_value())
+    result_ref
 
   map_class.def_native_method("keys", vm_map_keys)
 
@@ -778,10 +778,10 @@ proc init_collection_classes(object_class: Class) =
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
       not_allowed("values must be called on a map")
-    let result_ref = new_ref(VkArray)
+    var result_ref = new_array_value()
     for _, value in map_val.ref.map:
-      result_ref.arr.add(value)
-    result_ref.to_ref_value()
+      array_data(result_ref).add(value)
+    result_ref
 
   map_class.def_native_method("values", vm_map_values)
 
@@ -792,23 +792,23 @@ proc init_collection_classes(object_class: Class) =
     if map_val.kind != VkMap:
       not_allowed("map must be called on a map")
     let callback = get_positional_arg(args, 1, has_keyword_args)
-    let result_ref = new_ref(VkArray)
+    var result_ref = new_array_value()
     case callback.kind
     of VkFunction:
       for key, value in map_val.ref.map:
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           let mapped = vm.exec_function(callback, @[key_val, value])
-          result_ref.arr.add(mapped)
+          array_data(result_ref).add(mapped)
     of VkNativeFn:
       for key, value in map_val.ref.map:
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           let mapped = call_native_fn(callback.ref.native_fn, vm, [key_val, value])
-          result_ref.arr.add(mapped)
+          array_data(result_ref).add(mapped)
     else:
       not_allowed("map callback must be a function")
-    result_ref.to_ref_value()
+    result_ref
 
   map_class.def_native_method("map", vm_map_map)
 
@@ -1119,12 +1119,12 @@ proc init_selector_class(object_class: Class) =
         let idx64 = seg.int64
         case current.kind:
         of VkArray:
-          let arr_len = current.ref.arr.len.int64
+          let arr_len = array_data(current).len.int64
           var resolved = idx64
           if resolved < 0:
             resolved = arr_len + resolved
           if resolved >= 0 and resolved < arr_len:
-            current = current.ref.arr[resolved.int]
+            current = array_data(current)[resolved.int]
           else:
             found = false
             break
@@ -1211,10 +1211,10 @@ proc init_gene_and_meta_classes(object_class: Class) =
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
     if gene_val.kind != VkGene:
       not_allowed("Gene.children must be called on a gene")
-    let result_ref = new_ref(VkArray)
+    var result_ref = new_array_value()
     for child in gene_val.gene.children:
-      result_ref.arr.add(child)
-    result_ref.to_ref_value()
+      array_data(result_ref).add(child)
+    result_ref
 
   gene_class.def_native_method("children", gene_children_method)
 
@@ -1498,10 +1498,10 @@ proc parse_json_node(node: json.JsonNode): Value {.gcsafe.} =
       map_table[to_key(k)] = parse_json_node(v)
     return new_map_value(map_table)
   of json.JArray:
-    let arr_ref = new_ref(VkArray)
+    var arr_ref = new_array_value()
     for elem in node.elems:
-      arr_ref.arr.add(parse_json_node(elem))
-    return arr_ref.to_ref_value()
+      array_data(arr_ref).add(parse_json_node(elem))
+    return arr_ref
 
 proc parse_json_string(json_str: string): Value {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -1522,7 +1522,12 @@ proc value_to_json(val: Value): string {.gcsafe.} =
     result = "\"" & json.escapeJson(val.str) & "\""
   of VkSymbol:
     result = "\"" & json.escapeJson(val.str) & "\""
-  of VkArray, VkVector:
+  of VkArray:
+    var items: seq[string] = @[]
+    for item in array_data(val):
+      items.add(value_to_json(item))
+    result = "[" & items.join(",") & "]"
+  of VkVector:
     var items: seq[string] = @[]
     for item in val.ref.arr:
       items.add(value_to_json(item))
@@ -1698,10 +1703,10 @@ proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     # compiler.output.scope_tracker = scope_tracker
     compiler.scope_trackers.add(scope_tracker)
     compiler.compile(get_positional_arg(args, 0, has_keyword_args))
-    let instrs = new_ref(VkArray)
+    var instrs = new_array_value()
     for instr in compiler.output.instructions:
-      instrs.arr.add instr.to_value()
-    result = instrs.to_ref_value()
+      array_data(instrs).add instr.to_value()
+    result = instrs
 
 proc vm_push(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:

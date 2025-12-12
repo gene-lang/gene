@@ -91,7 +91,7 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
     if param.is_splat:
       let rest_array = new_array_value()
       while pos_index < pos_count:
-        rest_array.ref.arr.add(positional[pos_index])
+        array_data(rest_array).add(positional[pos_index])
         pos_index.inc()
       scope.members[i] = rest_array
       has_value_splat = true

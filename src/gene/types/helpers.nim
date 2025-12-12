@@ -112,11 +112,10 @@ proc set_program_args*(program: string, args: seq[string]) =
     if App == NIL or App.kind != VkApplication:
       return
   App.app.args = args
-  let arr_ref = new_ref(VkArray)
-  arr_ref.arr = @[]
+  var arr_ref = new_array_value()
   for arg in args:
-    arr_ref.arr.add(arg.to_value())
-  App.app.gene_ns.ref.ns["args".to_key()] = arr_ref.to_ref_value()
+    array_data(arr_ref).add(arg.to_value())
+  App.app.gene_ns.ref.ns["args".to_key()] = arr_ref
   App.app.gene_ns.ref.ns["program".to_key()] = program.to_value()
 
 const SYM_UNDERSCORE* = SYMBOL_TAG or 0
