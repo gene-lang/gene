@@ -30,7 +30,7 @@ proc get_constructor*(self: Class): Value =
   else:
     return self.constructor
 
-proc has_method*(self: Class, name: Key): bool =
+proc has_method*(self: Class, name: Key): bool {.inline.} =
   if self.methods.has_key(name):
     return true
   elif self.parent != nil:
@@ -39,7 +39,7 @@ proc has_method*(self: Class, name: Key): bool =
 proc has_method*(self: Class, name: string): bool {.inline.} =
   self.has_method(name.to_key)
 
-proc get_method*(self: Class, name: Key): Method =
+proc get_method*(self: Class, name: Key): Method {.inline.} =
   let found = self.methods.get_or_default(name, nil)
   if not found.is_nil:
     return found
@@ -51,13 +51,13 @@ proc get_method*(self: Class, name: Key): Method =
 proc get_method*(self: Class, name: string): Method {.inline.} =
   self.get_method(name.to_key)
 
-proc get_super_method*(self: Class, name: string): Method =
+proc get_super_method*(self: Class, name: string): Method {.inline.} =
   if self.parent != nil:
     return self.parent.get_method(name)
   else:
     not_allowed("No super method available: " & name)
 
-proc get_class*(val: Value): Class =
+proc get_class*(val: Value): Class {.inline.} =
   case val.kind:
     of VkApplication:
       return App.ref.app.application_class.ref.class
@@ -169,19 +169,19 @@ proc get_object_class*(val: Value): Class {.inline.} =
   else:
     nil
 
-proc require_object_class*(val: Value, context: string): Class =
+proc require_object_class*(val: Value, context: string): Class {.inline.} =
   let cls = val.get_object_class()
   if cls.is_nil:
     raise new_exception(type_defs.Exception, context)
   cls
 
-proc object_class_name*(val: Value): string =
+proc object_class_name*(val: Value): string {.inline.} =
   let cls = val.get_object_class()
   if cls.is_nil or cls.name.len == 0:
     return "UnknownObject"
   cls.name
 
-proc is_a*(self: Value, class: Class): bool =
+proc is_a*(self: Value, class: Class): bool {.inline.} =
   var my_class = self.get_class
   while true:
     if my_class == class:
