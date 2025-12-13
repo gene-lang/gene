@@ -8,13 +8,13 @@ type
 # Create extension class
 var ExtensionClass {.threadvar.}: Class
 
-proc test*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc test*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   if arg_count > 0:
     get_positional_arg(args, 0, has_keyword_args)
   else:
     1.to_value()
 
-proc new_extension*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc new_extension*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   let r = new_ref(VkCustom)
   r.custom_data = Extension(
     i: if arg_count > 0: get_positional_arg(args, 0, has_keyword_args).to_int() else: 0,
@@ -23,13 +23,13 @@ proc new_extension*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   r.custom_class = ExtensionClass
   result = r.to_ref_value()
 
-proc get_i*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc get_i*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   if arg_count > 0 and get_positional_arg(args, 0, has_keyword_args).kind == VkCustom:
     let ext = cast[Extension](get_positional_arg(args, 0, has_keyword_args).ref.custom_data)
     return ext.i.to_value()
   0.to_value()
 
-proc get_i_method*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc get_i_method*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   # Self is now the first argument in args
   if arg_count > 0:
     let self = get_positional_arg(args, 0, has_keyword_args)

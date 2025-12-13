@@ -11,7 +11,7 @@ var openai_error_class*: Class
 var openai_clients: Table[system.int64, OpenAIConfig] = initTable[system.int64, OpenAIConfig]()
 var next_client_id: system.int64 = 1
 
-proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc openai_client_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 
 # Helper to convert Gene Value to JsonNode
 proc geneValueToJson*(value: Value): JsonNode =
@@ -146,7 +146,7 @@ proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Va
   (cfg, NIL)
 
 # Native function: Create new OpenAI client
-proc vm_openai_new_client*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_openai_new_client*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var options: JsonNode = newJNull()
 
   if get_positional_count(arg_count, has_keyword_args) > 0:
@@ -156,7 +156,7 @@ proc vm_openai_new_client*(vm: VirtualMachine, args: ptr UncheckedArray[Value], 
   let config = buildOpenAIConfig(options)
   return register_client(config)
 
-proc openai_client_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc openai_client_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   var options: JsonNode = newJNull()
   if get_positional_count(arg_count, has_keyword_args) > 0:
     options = geneValueToJson(get_positional_arg(args, 0, has_keyword_args))
@@ -175,7 +175,7 @@ proc call_openai_endpoint(config: OpenAIConfig, endpoint: string, payload: JsonN
   except OpenAIError as e:
     return openai_error_value(e)
 
-proc call_gene_callable(vm: VirtualMachine, callable: Value, args: seq[Value]) {.gcsafe.} =
+proc call_gene_callable(vm: ptr VirtualMachine, callable: Value, args: seq[Value]) {.gcsafe.} =
   case callable.kind
   of VkNativeFn:
     discard call_native_fn(callable.ref.native_fn, vm, args)
@@ -198,7 +198,7 @@ proc call_gene_callable(vm: VirtualMachine, callable: Value, args: seq[Value]) {
   else:
     discard
 
-proc createGeneStreamHandler(vm: VirtualMachine, callback: Value): StreamHandler =
+proc createGeneStreamHandler(vm: ptr VirtualMachine, callback: Value): StreamHandler =
   proc handler(event: StreamEvent) {.gcsafe.} =
     try:
       var map = initTable[Key, Value]()
@@ -215,7 +215,7 @@ proc createGeneStreamHandler(vm: VirtualMachine, callback: Value): StreamHandler
         echo "DEBUG: Stream handler error: ", e.msg
   return handler
 
-proc openai_error_to_s(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc openai_error_to_s(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if get_positional_count(arg_count, has_keyword_args) < 1:
     return "OpenAIError".to_value()
 
@@ -242,7 +242,7 @@ proc openai_error_to_s(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
 
   return desc.to_value()
 
-proc start_openai_stream(vm: VirtualMachine, config: OpenAIConfig, options: JsonNode, handler: Value): Value =
+proc start_openai_stream(vm: ptr VirtualMachine, config: OpenAIConfig, options: JsonNode, handler: Value): Value =
   if handler.kind notin {VkNativeFn, VkFunction, VkClass, VkInstance}:
     return new_error("Callback must be callable")
 
@@ -265,7 +265,7 @@ proc start_openai_stream(vm: VirtualMachine, config: OpenAIConfig, options: Json
   return future_val
 
 # Native function: Chat completion
-proc vm_openai_chat*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_chat*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI chat requires client and options arguments")
 
@@ -281,7 +281,7 @@ proc vm_openai_chat*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   return call_openai_endpoint(config, "/chat/completions", payload)
 
 # Native function: Embeddings
-proc vm_openai_embeddings*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_embeddings*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI embeddings requires client and options arguments")
 
@@ -297,7 +297,7 @@ proc vm_openai_embeddings*(vm: VirtualMachine, args: ptr UncheckedArray[Value], 
   return call_openai_endpoint(config, "/embeddings", payload)
 
 # Native function: Responses (for structured outputs)
-proc vm_openai_respond*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_respond*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI respond requires client and options arguments")
 
@@ -313,7 +313,7 @@ proc vm_openai_respond*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg
   return call_openai_endpoint(config, "/responses", payload)
 
 # Native function: Stream chat completion (instance method)
-proc vm_openai_client_stream*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_client_stream*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 2:
     return new_error("OpenAI client stream requires self and callback arguments")
 
@@ -331,7 +331,7 @@ proc vm_openai_client_stream*(vm: VirtualMachine, args: ptr UncheckedArray[Value
   return start_openai_stream(vm, config, options, callback_val)
 
 # Native function: Stream chat completion (namespace/global)
-proc vm_openai_stream*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_stream*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 3:
     return new_error("OpenAI stream requires client, options, and handler arguments")
 
@@ -347,7 +347,7 @@ proc vm_openai_stream*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
   return start_openai_stream(vm, config, options, handler_val)
 
 # Native function: Chat completion as instance method
-proc vm_openai_client_chat*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_client_chat*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 1:
     return new_error("OpenAI client chat requires self argument")
 
@@ -363,7 +363,7 @@ proc vm_openai_client_chat*(vm: VirtualMachine, args: ptr UncheckedArray[Value],
   let payload = buildChatPayload(config, options)
   return call_openai_endpoint(config, "/chat/completions", payload)
 
-proc vm_openai_client_embeddings*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_client_embeddings*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 1:
     return new_error("OpenAI client embeddings requires self argument")
 
@@ -379,7 +379,7 @@ proc vm_openai_client_embeddings*(vm: VirtualMachine, args: ptr UncheckedArray[V
   let payload = buildEmbeddingsPayload(config, options)
   return call_openai_endpoint(config, "/embeddings", payload)
 
-proc vm_openai_client_respond*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_openai_client_respond*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 1:
     return new_error("OpenAI client respond requires self argument")
 

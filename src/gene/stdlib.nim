@@ -122,19 +122,19 @@ proc value_class_value(val: Value): Value =
   else:
     App.app.object_class
 
-proc object_class_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc object_class_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) == 0:
     return App.app.object_class
   let self_arg = get_positional_arg(args, 0, has_keyword_args)
   result = value_class_value(self_arg)
 
-proc object_to_s_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc object_to_s_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) == 0:
     return "".to_value()
   let self_arg = get_positional_arg(args, 0, has_keyword_args)
   display_value(self_arg, true).to_value()
 
-proc object_is_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc object_is_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   let positional = get_positional_count(arg_count, has_keyword_args)
   if positional < 2:
     not_allowed("Object.is expects a class as the second argument")
@@ -220,7 +220,7 @@ proc init_string_class(object_class: Class) =
   let string_class = new_class("String")
   string_class.parent = object_class
 
-  proc ensure_mutable_string(vm: VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
+  proc ensure_mutable_string(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
     ## Return the string value (all strings are now mutable heap allocations)
     let self_index = if has_keyword_args: 1 else: 0
     let original = args[self_index]
@@ -234,7 +234,7 @@ proc init_string_class(object_class: Class) =
       return original
 
   # append method
-  proc string_append(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_append(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.append requires a value to append")
 
@@ -263,7 +263,7 @@ proc init_string_class(object_class: Class) =
   string_class.def_native_method("append", append_fn.native_fn)
 
   # length method
-  proc string_length(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc string_length(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:
       raise new_exception(types.Exception, "String.length requires self argument")
 
@@ -278,7 +278,7 @@ proc init_string_class(object_class: Class) =
   string_class.def_native_method("length", length_fn.native_fn)
   string_class.def_native_method("size", length_fn.native_fn)
 
-  proc string_to_i(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc string_to_i(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("String.to_i requires self argument")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -295,7 +295,7 @@ proc init_string_class(object_class: Class) =
   string_class.def_native_method("to_i", string_to_i)
 
   # to_upper method
-  proc string_to_upper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc string_to_upper(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:
       raise new_exception(types.Exception, "String.to_upper requires self argument")
 
@@ -310,7 +310,7 @@ proc init_string_class(object_class: Class) =
   string_class.def_native_method("to_upper", to_upper_fn.native_fn)
 
   # to_lower method
-  proc string_to_lower(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc string_to_lower(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:
       raise new_exception(types.Exception, "String.to_lower requires self argument")
 
@@ -325,16 +325,16 @@ proc init_string_class(object_class: Class) =
   string_class.def_native_method("to_lower", to_lower_fn.native_fn)
   string_class.def_native_method("to_lowercase", to_lower_fn.native_fn)
 
-  proc string_to_uppercase(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc string_to_uppercase(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     string_to_upper(vm, args, arg_count, has_keyword_args)
 
-  proc string_to_lowercase(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc string_to_lowercase(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     string_to_lower(vm, args, arg_count, has_keyword_args)
 
   string_class.def_native_method("to_uppercase", string_to_uppercase)
   string_class.def_native_method("to_lowercase", string_to_lowercase)
 
-  proc string_substr(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_substr(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.substr requires start index")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -375,7 +375,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("substr", string_substr)
 
-  proc string_split(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_split(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.split requires separator")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -398,7 +398,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("split", string_split)
 
-  proc string_index(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_index(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.index requires substring")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -412,7 +412,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("index", string_index)
 
-  proc string_rindex(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_rindex(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.rindex requires substring")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -426,7 +426,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("rindex", string_rindex)
 
-  proc string_trim(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_trim(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("String.trim requires self")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -436,7 +436,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("trim", string_trim)
 
-  proc string_starts_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_starts_with(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.starts_with requires prefix")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -445,7 +445,7 @@ proc init_string_class(object_class: Class) =
       not_allowed("starts_with expects string arguments")
     self_arg.str.startsWith(prefix.str).to_value()
 
-  proc string_ends_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_ends_with(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.ends_with requires suffix")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -457,7 +457,7 @@ proc init_string_class(object_class: Class) =
   string_class.def_native_method("starts_with", string_starts_with)
   string_class.def_native_method("ends_with", string_ends_with)
 
-  proc string_char_at(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_char_at(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("String.char_at requires index")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -471,7 +471,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("char_at", string_char_at)
 
-  proc string_replace(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc string_replace(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 3:
       not_allowed("String.replace requires target and replacement")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -483,7 +483,7 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("replace", string_replace)
 
-  proc gene_dollar(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_dollar(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     var buffer = newStringOfCap(16)
     for i in 0..<positional:
@@ -536,7 +536,7 @@ proc init_collection_classes(object_class: Class) =
   App.app.gene_ns.ns["Array".to_key()] = App.app.array_class
   App.app.global_ns.ns["Array".to_key()] = App.app.array_class
 
-  proc vm_array_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc vm_array_add(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self), second is the value to add
     let arr = get_positional_arg(args, 0, has_keyword_args)
     let value = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
@@ -546,7 +546,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("add", vm_array_add)
 
-  proc vm_array_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc vm_array_size(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self)
     let arr = get_positional_arg(args, 0, has_keyword_args)
     if arr.kind == VkArray:
@@ -555,7 +555,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("size", vm_array_size)
 
-  proc vm_array_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc vm_array_get(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self), second is the index
     let arr = get_positional_arg(args, 0, has_keyword_args)
     let index = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: 0.to_value()
@@ -573,7 +573,7 @@ proc init_collection_classes(object_class: Class) =
       idx = len + idx
     idx
 
-  proc vm_array_set(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_set(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 3:
       not_allowed("Array.set requires index and value")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -592,7 +592,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("set", vm_array_set)
 
-  proc vm_array_del(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_del(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("Array.del requires index")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -612,7 +612,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("del", vm_array_del)
 
-  proc vm_array_empty(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_empty(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Array.empty requires self")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -622,7 +622,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("empty", vm_array_empty)
 
-  proc vm_array_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_contains(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("Array.contains requires value")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -636,7 +636,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("contains", vm_array_contains)
 
-  proc vm_array_to_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_to_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Array.to_json requires self")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -646,7 +646,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("to_json", vm_array_to_json)
 
-  proc vm_array_each(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_each(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("Array.each requires a function")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -668,7 +668,7 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("each", vm_array_each)
 
-  proc vm_array_map(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_array_map(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("Array.map requires a function")
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -705,7 +705,7 @@ proc init_collection_classes(object_class: Class) =
   App.app.gene_ns.ns["Map".to_key()] = App.app.map_class
   App.app.global_ns.ns["Map".to_key()] = App.app.map_class
 
-  proc vm_map_contains(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_map_contains(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     # First argument is the map (self), second is the key
     let map = get_positional_arg(args, 0, has_keyword_args)
     let key = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
@@ -715,7 +715,7 @@ proc init_collection_classes(object_class: Class) =
       return map_data(map).hasKey(key.str.to_key()).to_value()
     return false.to_value()
 
-  proc vm_map_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc vm_map_get(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # map.get(key, default?) -> value|default|nil
     if arg_count < 2:
       not_allowed("Map.get expects at least a key argument")
@@ -747,7 +747,7 @@ proc init_collection_classes(object_class: Class) =
 
   map_class.def_native_method("contains", vm_map_contains)
 
-  proc vm_map_size(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_map_size(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Map.size requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
@@ -757,7 +757,7 @@ proc init_collection_classes(object_class: Class) =
 
   map_class.def_native_method("size", vm_map_size)
 
-  proc vm_map_keys(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_map_keys(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Map.keys requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
@@ -771,7 +771,7 @@ proc init_collection_classes(object_class: Class) =
 
   map_class.def_native_method("keys", vm_map_keys)
 
-  proc vm_map_values(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_map_values(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Map.values requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
@@ -784,7 +784,7 @@ proc init_collection_classes(object_class: Class) =
 
   map_class.def_native_method("values", vm_map_values)
 
-  proc vm_map_map(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_map_map(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("Map.map requires a function")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
@@ -811,7 +811,7 @@ proc init_collection_classes(object_class: Class) =
 
   map_class.def_native_method("map", vm_map_map)
 
-  proc vm_map_to_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_map_to_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Map.to_json requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
@@ -831,7 +831,7 @@ proc init_date_classes(object_class: Class) =
   App.app.gene_ns.ns["Date".to_key()] = App.app.date_class
   App.app.global_ns.ns["Date".to_key()] = App.app.date_class
 
-  proc date_year(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc date_year(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Date.year requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -839,7 +839,7 @@ proc init_date_classes(object_class: Class) =
       not_allowed("Date.year must be called on a date")
     self_val.ref.date_year.int.to_value()
 
-  proc date_month(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc date_month(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Date.month requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -847,7 +847,7 @@ proc init_date_classes(object_class: Class) =
       not_allowed("Date.month must be called on a date")
     self_val.ref.date_month.int.to_value()
 
-  proc date_day(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc date_day(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Date.day requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -867,7 +867,7 @@ proc init_date_classes(object_class: Class) =
   App.app.gene_ns.ns["DateTime".to_key()] = App.app.datetime_class
   App.app.global_ns.ns["DateTime".to_key()] = App.app.datetime_class
 
-  proc datetime_year(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc datetime_year(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("DateTime.year requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -875,7 +875,7 @@ proc init_date_classes(object_class: Class) =
       not_allowed("DateTime.year must be called on a datetime")
     self_val.ref.dt_year.int.to_value()
 
-  proc datetime_month(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc datetime_month(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("DateTime.month requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -883,7 +883,7 @@ proc init_date_classes(object_class: Class) =
       not_allowed("DateTime.month must be called on a datetime")
     self_val.ref.dt_month.int.to_value()
 
-  proc datetime_day(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc datetime_day(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("DateTime.day requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -891,7 +891,7 @@ proc init_date_classes(object_class: Class) =
       not_allowed("DateTime.day must be called on a datetime")
     self_val.ref.dt_day.int.to_value()
 
-  proc datetime_hour(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc datetime_hour(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("DateTime.hour requires self")
     let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -905,7 +905,7 @@ proc init_date_classes(object_class: Class) =
   datetime_class.def_native_method("hour", datetime_hour)
 
 proc init_regex_and_json() =
-  proc regex_create(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc regex_create(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional == 0:
       not_allowed("regex_create requires at least a pattern string")
@@ -935,7 +935,7 @@ proc init_regex_and_json() =
     let flags = build_regex_flags(ignore_case, multiline)
     new_regex_value(pattern, flags)
 
-  proc regex_match(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc regex_match(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
       not_allowed("regex_match requires input string and pattern")
     let input_val = get_positional_arg(args, 0, has_keyword_args)
@@ -948,7 +948,7 @@ proc init_regex_and_json() =
     let regex_obj = get_compiled_regex(pattern, flags)
     (re.find(input_val.str, regex_obj) >= 0).to_value()
 
-  proc regex_find(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc regex_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 2:
       not_allowed("regex_find requires input string and pattern")
@@ -980,7 +980,7 @@ proc init_regex_and_json() =
     let capture_value = captures[capture_index]
     capture_value.to_value()
 
-  proc json_parse_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc json_parse_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("json.parse requires a string argument")
     let json_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -992,7 +992,7 @@ proc init_regex_and_json() =
     except json.JsonParsingError as e:
       raise new_exception(types.Exception, "Invalid JSON: " & e.msg)
 
-  proc json_stringify_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc json_stringify_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("json.stringify requires a value")
     let value_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -1020,19 +1020,19 @@ proc init_regex_and_json() =
   App.app.gene_ns.ns["json".to_key()] = json_ns.to_value()
 
 proc init_date_functions() =
-  proc gene_today_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_today_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let dt = times.now()
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
-  proc gene_now_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_now_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let dt = times.now()
     new_datetime_value(dt)
 
-  proc gene_yesterday_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_yesterday_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let dt = times.now() - initDuration(days = 1)
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
-  proc gene_tomorrow_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_tomorrow_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let dt = times.now() + initDuration(days = 1)
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
@@ -1057,7 +1057,7 @@ proc init_selector_class(object_class: Class) =
   let selector_class = new_class("Selector")
   selector_class.parent = object_class
 
-  proc selector_call(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc selector_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 2:
       not_allowed("Selector.call expects a target value")
 
@@ -1181,7 +1181,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
   App.app.gene_ns.ns["Gene".to_key()] = App.app.gene_class
   App.app.global_ns.ns["Gene".to_key()] = App.app.gene_class
 
-  proc gene_type_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_type_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Gene.type requires self")
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
@@ -1191,7 +1191,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
 
   gene_class.def_native_method("type", gene_type_method)
 
-  proc gene_props_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_props_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Gene.props requires self")
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
@@ -1204,7 +1204,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
 
   gene_class.def_native_method("props", gene_props_method)
 
-  proc gene_children_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc gene_children_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Gene.children requires self")
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
@@ -1259,7 +1259,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
 # Core functions for the Gene standard library
 
 # Print without newline
-proc core_print*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_print*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
     let k = get_positional_arg(args, i, has_keyword_args)
@@ -1270,7 +1270,7 @@ proc core_print*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
   return NIL
 
 # Print with newline
-proc core_println*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_println*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
     let k = get_positional_arg(args, i, has_keyword_args)
@@ -1281,7 +1281,7 @@ proc core_println*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   return NIL
 
 # Assert condition
-proc core_assert*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_assert*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count > 0:
     let condition = get_positional_arg(args, 0, has_keyword_args)
     if not condition.to_bool():
@@ -1292,7 +1292,7 @@ proc core_assert*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   return NIL
 
 # Get length of collection
-proc core_len_impl(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_len_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   let pos_count = get_positional_count(arg_count, has_keyword_args)
   if pos_count < 1:
     raise new_exception(types.Exception, "len requires 1 argument (collection)")
@@ -1300,28 +1300,28 @@ proc core_len_impl(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   let value = get_positional_arg(args, 0, has_keyword_args)
   result = value.size().int64.to_value()
 
-proc core_len(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc core_len(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     return core_len_impl(vm, args, arg_count, has_keyword_args)
 
 # Debug value (write to stderr)
-proc core_debug*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_debug*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
     let val = get_positional_arg(args, i, has_keyword_args)
     stderr.writeLine("<debug>: " & $val)
   return NIL
 
 # Trace control
-proc core_trace_start*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_trace_start*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   vm.trace = true
   return NIL
 
-proc core_trace_end*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_trace_end*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   vm.trace = false
   return NIL
 
 # Sleep (synchronous)
-proc core_sleep*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "sleep requires 1 argument (duration in milliseconds)")
 
@@ -1340,14 +1340,14 @@ proc core_sleep*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
   return NIL
 
 # Run event loop forever
-proc core_run_forever*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Run the async event loop indefinitely
   while hasPendingOperations():
     poll(0)
   return NIL
 
 # Environment variable functions
-proc core_get_env*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_get_env*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "get_env requires at least 1 argument (variable name)")
 
@@ -1367,7 +1367,7 @@ proc core_get_env*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   else:
     return value.to_value()
 
-proc core_set_env*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_set_env*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "set_env requires 2 arguments (name, value)")
 
@@ -1383,7 +1383,7 @@ proc core_set_env*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   putEnv(name, value)
   return NIL
 
-proc core_has_env*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_has_env*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "has_env requires 1 argument (variable name)")
 
@@ -1395,7 +1395,7 @@ proc core_has_env*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   return existsEnv(name).to_value()
 
 # Base64 encoding/decoding
-proc core_base64*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_base64*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "base64 requires a string argument")
 
@@ -1406,7 +1406,7 @@ proc core_base64*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   let encoded = base64.encode(input.str)
   return encoded.to_value()
 
-proc core_base64_decode*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_base64_decode*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "base64_decode requires a string argument")
 
@@ -1421,7 +1421,7 @@ proc core_base64_decode*(vm: VirtualMachine, args: ptr UncheckedArray[Value], ar
     raise new_exception(types.Exception, "Invalid base64 string: " & e.msg)
 
 # VM debugging functions
-proc core_vm_print_stack*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_vm_print_stack*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = "Stack: "
   for i, reg in vm.frame.stack:
     if i > 0:
@@ -1432,7 +1432,7 @@ proc core_vm_print_stack*(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
   echo s
   return NIL
 
-proc core_vm_print_instructions*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_vm_print_instructions*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   echo vm.cu
   return NIL
 
@@ -1549,10 +1549,10 @@ proc value_to_json(val: Value): string {.gcsafe.} =
 # JIT the code (create a temporary block, reuse the frame)
 # Execute the code
 # Show the result
-proc debug(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc debug(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   todo()
 
-proc println(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc println(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
     let k = get_positional_arg(args, i, has_keyword_args)
@@ -1562,7 +1562,7 @@ proc println(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
   echo s
   return NIL
 
-proc print(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc print(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = ""
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
     let k = get_positional_arg(args, i, has_keyword_args)
@@ -1572,7 +1572,7 @@ proc print(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, 
   stdout.write(s)
   return NIL
 
-proc gene_assert(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc gene_assert(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count > 0:
     let condition = get_positional_arg(args, 0, has_keyword_args)
     if not condition.to_bool():
@@ -1582,7 +1582,7 @@ proc gene_assert(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
       raise new_exception(types.Exception, msg)
   return NIL
 
-proc base64_encode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc base64_encode(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "base64_encode requires a string argument")
 
@@ -1593,7 +1593,7 @@ proc base64_encode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   let encoded = base64.encode(input.str)
   return encoded.to_value()
 
-proc base64_decode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc base64_decode(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "base64_decode requires a string argument")
 
@@ -1607,15 +1607,15 @@ proc base64_decode(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   except ValueError as e:
     raise new_exception(types.Exception, "Invalid base64 string: " & e.msg)
 
-proc trace_start(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc trace_start(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   vm.trace = true
   return NIL
 
-proc trace_end(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc trace_end(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   vm.trace = false
   return NIL
 
-proc print_stack(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc print_stack(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var s = "Stack: "
   for i, reg in vm.frame.stack:
     if i > 0:
@@ -1626,7 +1626,7 @@ proc print_stack(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
   echo s
   return NIL
 
-proc print_instructions(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc print_instructions(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   echo vm.cu
   return NIL
 
@@ -1644,7 +1644,7 @@ proc to_ctor(node: Value): Function =
   # body = wrap_with_try(body)
   result = new_fn(name, matcher, body)
 
-proc class_ctor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc class_ctor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     not_allowed("class_ctor requires arguments")
 
@@ -1660,7 +1660,7 @@ proc class_ctor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   else:
     not_allowed("Constructor can only be defined on classes")
 
-proc class_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc class_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     not_allowed("class_fn requires arguments")
 
@@ -1684,7 +1684,7 @@ proc class_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: in
   else:
     not_allowed()
 
-proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_compile(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       not_allowed("vm_compile requires an argument")
@@ -1702,15 +1702,15 @@ proc vm_compile(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
       array_data(instrs).add instr.to_value()
     result = instrs
 
-proc vm_push(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_push(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     not_allowed("vm_push requires an argument")
   new_instr(IkPushValue, get_positional_arg(args, 0, has_keyword_args))
 
-proc vm_add(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_add(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   new_instr(IkAdd)
 
-proc current_ns(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc current_ns(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Return the current namespace
   let r = new_ref(VkNamespace)
   r.ns = vm.frame.ns
@@ -1720,7 +1720,7 @@ proc current_ns(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
 
 # vm_spread function removed - ... is now handled as compile-time keyword
 
-proc vm_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_parse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Parse Gene code from string
   if arg_count != 1:
     not_allowed("$parse expects exactly 1 argument")
@@ -1759,7 +1759,7 @@ proc vm_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: in
     else:
       not_allowed("$parse expects a string argument")
 
-proc vm_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_with(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # $with sets self to the first argument and executes the body, returns the original value
   if arg_count < 2:
     not_allowed("$with expects at least 2 arguments")
@@ -1774,7 +1774,7 @@ proc vm_with(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
 
   return original_value
 
-proc vm_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_tap(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # $tap executes the body with self set to the first argument, returns the original value
   if arg_count < 2:
     not_allowed("$tap expects at least 2 arguments")
@@ -1800,7 +1800,7 @@ proc vm_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
   return original_value
 
 # String interpolation handler
-proc vm_str_interpolation(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc vm_str_interpolation(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # #Str concatenates all arguments as strings
   var result = ""
   for i in 0..<get_positional_count(arg_count, has_keyword_args):
@@ -1824,7 +1824,7 @@ proc vm_str_interpolation(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
 
   return result.to_value()
 
-proc vm_eval(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_eval(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     # This function is not used - eval is handled by IkEval instruction
     # The compiler generates IkEval instructions for each argument
@@ -1834,7 +1834,7 @@ proc vm_eval(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
 
 
 # Sleep functions
-proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc gene_sleep(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 1:
     raise new_exception(types.Exception, "sleep requires 1 argument")
 
@@ -1913,7 +1913,7 @@ proc gene_sleep(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
 
   return NIL
 
-proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc gene_sleep_async(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "sleep_async requires 1 argument")
 
@@ -1954,7 +1954,7 @@ proc gene_sleep_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   return result
 
 # I/O functions
-proc file_read(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc file_read(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "File/read requires 1 argument")
 
@@ -1969,7 +1969,7 @@ proc file_read(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
   except IOError as e:
     raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
 
-proc file_write(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc file_write(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "File/write requires 2 arguments")
 
@@ -1990,7 +1990,7 @@ proc file_write(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   except IOError as e:
     raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
 
-proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc file_read_async(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "File/read_async requires 1 argument")
 
@@ -2045,7 +2045,7 @@ proc file_read_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 
   return result
 
-proc file_write_async(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc file_write_async(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "File/write_async requires 2 arguments")
 
@@ -2135,7 +2135,7 @@ proc init_gene_core_functions() =
   App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
 
 proc init_os_io_namespaces() =
-  proc os_exec_native(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc os_exec_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("os.exec requires a command string")
     let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -2181,7 +2181,7 @@ proc init_class_class(object_class: Class) =
   class.parent = object_class
   class.def_native_macro_method("ctor", class_ctor)
   class.def_native_macro_method("fn", class_fn)
-  class.def_native_method "parent", proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  class.def_native_method "parent", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) == 0:
       return NIL
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -2194,7 +2194,7 @@ proc init_class_class(object_class: Class) =
       parent_ref.to_ref_value()
     else:
       NIL
-  class.def_native_method "name", proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  class.def_native_method "name", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) == 0:
       return "".to_value()
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -2250,7 +2250,7 @@ proc init_gene_namespace*() =
   init_thread_class()
 
 # Utility function: $tap - applies operations to a value and returns it
-proc core_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc core_tap(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) == 0:
     return NIL
 
@@ -2275,7 +2275,7 @@ proc core_tap(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: in
   return value
 
 # Utility function: $if_main - executes code only when running as main script
-proc core_if_main(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc core_if_main(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # For now, just execute the first argument since we don't have import tracking
   if get_positional_count(arg_count, has_keyword_args) > 0:
     let code = get_positional_arg(args, 0, has_keyword_args)

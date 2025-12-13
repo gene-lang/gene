@@ -20,7 +20,7 @@ proc new_generator_value*(f: Function, args: seq[Value]): Value {.inline.} =
   result = gen_ref.to_ref_value()
 
 # Forward declaration
-proc exec_generator*(self: VirtualMachine, gen: GeneratorObj): Value {.gcsafe.}
+proc exec_generator*(self: ptr VirtualMachine, gen: GeneratorObj): Value {.gcsafe.}
 
 # Initialize generator support
 proc init_generator*() =
@@ -32,7 +32,7 @@ proc init_generator*() =
     let generator_class = new_class("Generator")
     
     # Add next method - for now just returns VOID
-    proc generator_next(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    proc generator_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
       # Get next value from generator
       if arg_count < 1:
         raise new_exception(types.Exception, "Generator.next requires a generator")
@@ -64,7 +64,7 @@ proc init_generator*() =
       let result = exec_generator(vm, gen)
       return result
 
-    proc generator_has_next(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    proc generator_has_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
       # Check if generator has a next value without consuming it
       if arg_count < 1:
         raise new_exception(types.Exception, "Generator.has_next requires a generator")
@@ -119,10 +119,10 @@ proc init_generator*() =
 init_generator()
 
 # Declare exec_generator_impl which will be in vm.nim
-proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.importc, gcsafe.}
+proc exec_generator_impl*(self: ptr VirtualMachine, gen: GeneratorObj): Value {.importc, gcsafe.}
 
 # Execute generator until it yields or completes
-proc exec_generator*(self: VirtualMachine, gen: GeneratorObj): Value {.gcsafe.} =
+proc exec_generator*(self: ptr VirtualMachine, gen: GeneratorObj): Value {.gcsafe.} =
   # Use the implementation in vm.nim
   return exec_generator_impl(self, gen)
 

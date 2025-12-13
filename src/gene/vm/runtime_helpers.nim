@@ -1,6 +1,6 @@
 # ========== Threading Support ==========
 
-proc current_trace(self: VirtualMachine): SourceTrace =
+proc current_trace(self: ptr VirtualMachine): SourceTrace =
   if self.cu.is_nil:
     return nil
   if self.pc >= 0 and self.pc < self.cu.instruction_traces.len:
@@ -12,7 +12,7 @@ proc current_trace(self: VirtualMachine): SourceTrace =
     return self.cu.trace_root
   nil
 
-proc format_runtime_exception(self: VirtualMachine, value: Value): string =
+proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string =
   let trace = self.current_trace()
   let location = trace_location(trace)
   if location.len > 0:
@@ -35,17 +35,9 @@ proc ensure_ref_pool() =
     for i in 0..<INITIAL_REF_POOL_SIZE:
       REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
 
-proc new_thread_vm(): VirtualMachine =
+proc new_thread_vm(): ptr VirtualMachine =
   ## Create a VM instance for a worker thread (App/shared bits are populated elsewhere).
-  VirtualMachine(
-    exception_handlers: @[],
-    current_exception: NIL,
-    symbols: addr SYMBOLS,
-    poll_enabled: false,
-    pending_futures: @[],
-    thread_futures: initTable[int, FutureObj](),
-    message_callbacks: @[],
-  )
+  new_vm_ptr()
 
 proc create_thread_namespace(thread_id: int): Namespace =
   ## Build the thread-local namespace with thread metadata.
@@ -192,12 +184,15 @@ proc thread_handler(thread_id: int) {.thread.} =
         of MtTerminate:
           break
 
-      # Clean up thread
-      cleanup_thread(thread_id)
     except CatchableError as e:
       echo "Thread ", thread_id, " crashed: ", e.msg
       when not defined(release):
         echo e.getStackTrace()
+    finally:
+      if VM != nil:
+        free_vm_ptr(VM)
+        VM = nil
+      cleanup_thread(thread_id)
 
 # Spawn functions
 proc spawn_thread(code: ptr Gene, return_value: bool): Value =

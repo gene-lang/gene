@@ -36,7 +36,7 @@ type
   # Function type for setting globals in extension
   SetGlobals* = proc(vm: ptr VirtualMachine) {.nimcall.}
 
-proc load_extension*(vm: VirtualMachine, path: string): Namespace =
+proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a dynamic library extension and return its namespace
   var lib_path = path
   
@@ -63,14 +63,14 @@ proc load_extension*(vm: VirtualMachine, path: string): Namespace =
   if set_globals == nil:
     raise new_exception(types.Exception, "set_globals not found in extension: " & path)
   
-  set_globals(vm.addr)
+  set_globals(vm)
   
   # Call init to get the extension's namespace
   let init = cast[Init](handle.symAddr("init"))
   if init == nil:
     raise new_exception(types.Exception, "init not found in extension: " & path)
   
-  result = init(vm.addr)
+  result = init(vm)
   if result == nil:
     raise new_exception(types.Exception, "Extension init returned nil: " & path)
   

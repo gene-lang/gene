@@ -89,7 +89,7 @@ proc `[]=`*(self: Namespace, key: Key, val: Value) {.inline.}
 
 #################### Runtime globals #################
 
-var VM* {.threadvar.}: VirtualMachine   # The current virtual machine (per-thread)
+var VM* {.threadvar.}: ptr VirtualMachine   # The current virtual machine (per-thread)
 
 # Application is shared across all threads (initialized once by main thread)
 # After initialization, it's read-only so no locking needed
@@ -1328,7 +1328,7 @@ proc member_names*(self: Namespace): Value =
   #   result.vec.add(k)
 
 # proc on_member_missing*(frame: Frame, self: Value, args: Value): Value =
-proc on_member_missing*(vm_data: VirtualMachine, args: Value): Value =
+proc on_member_missing*(vm_data: ptr VirtualMachine, args: Value): Value =
   todo()
   # let self = args.gene_type
   # case self.kind
@@ -2020,7 +2020,7 @@ proc create_gene_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyw
   return gene_args
 
 # Helper for calling native functions with proper casting
-proc call_native_fn*(fn: NativeFn, vm: VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
+proc call_native_fn*(fn: NativeFn, vm: ptr VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
   ## Helper to call native function with proper array casting
   if args.len == 0:
     return fn(vm, nil, 0, has_keyword_args)

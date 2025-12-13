@@ -4,7 +4,7 @@ import ../types
 # Math functions for the Gene standard library
 
 # Absolute value
-proc math_abs*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_abs*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "abs requires 1 argument")
 
@@ -18,7 +18,7 @@ proc math_abs*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
       raise new_exception(types.Exception, "abs requires a numeric argument")
 
 # Square root
-proc math_sqrt*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_sqrt*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "sqrt requires 1 argument")
 
@@ -32,7 +32,7 @@ proc math_sqrt*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
       raise new_exception(types.Exception, "sqrt requires a numeric argument")
 
 # Power
-proc math_pow*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_pow*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "pow requires 2 arguments (base, exponent)")
 
@@ -61,7 +61,7 @@ proc math_pow*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
   return pow(base_val, exp_val).to_value()
 
 # Trigonometric functions
-proc math_sin*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_sin*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "sin requires 1 argument")
 
@@ -74,7 +74,7 @@ proc math_sin*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
     else:
       raise new_exception(types.Exception, "sin requires a numeric argument")
 
-proc math_cos*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_cos*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "cos requires 1 argument")
 
@@ -87,7 +87,7 @@ proc math_cos*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
     else:
       raise new_exception(types.Exception, "cos requires a numeric argument")
 
-proc math_tan*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_tan*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "tan requires 1 argument")
 
@@ -101,7 +101,7 @@ proc math_tan*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
       raise new_exception(types.Exception, "tan requires a numeric argument")
 
 # Logarithms
-proc math_log*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_log*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "log requires 1 argument")
 
@@ -114,7 +114,7 @@ proc math_log*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
     else:
       raise new_exception(types.Exception, "log requires a numeric argument")
 
-proc math_log10*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_log10*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "log10 requires 1 argument")
 
@@ -128,7 +128,7 @@ proc math_log10*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
       raise new_exception(types.Exception, "log10 requires a numeric argument")
 
 # Rounding functions
-proc math_floor*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_floor*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "floor requires 1 argument")
 
@@ -141,7 +141,7 @@ proc math_floor*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
     else:
       raise new_exception(types.Exception, "floor requires a numeric argument")
 
-proc math_ceil*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_ceil*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "ceil requires 1 argument")
 
@@ -154,7 +154,7 @@ proc math_ceil*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     else:
       raise new_exception(types.Exception, "ceil requires a numeric argument")
 
-proc math_round*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_round*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "round requires 1 argument")
 
@@ -168,7 +168,7 @@ proc math_round*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
       raise new_exception(types.Exception, "round requires a numeric argument")
 
 # Min/Max
-proc math_min*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_min*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "min requires at least 2 arguments")
 
@@ -186,7 +186,7 @@ proc math_min*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: i
 
   return min_val
 
-proc math_max*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_max*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "max requires at least 2 arguments")
 
@@ -212,11 +212,11 @@ proc ensure_rng() =
     randomize()
     rng_initialized = true
 
-proc math_random*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_random*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   ensure_rng()
   return rand(1.0).to_value()
 
-proc math_random_int*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_random_int*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   ensure_rng()
   if arg_count < 1:
     raise new_exception(types.Exception, "random_int requires at least 1 argument (max)")
@@ -239,10 +239,10 @@ proc math_random_int*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     return rand(max_val).int64.to_value()
 
 # Constants
-proc math_pi*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_pi*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   return PI.to_value()
 
-proc math_e*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc math_e*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   return E.to_value()
 
 # Register all math functions in a namespace

@@ -34,11 +34,11 @@ import ./vm/async
 when not defined(noExtensions):
   import ./vm/extension
 
-proc exec*(self: VirtualMachine): Value
-proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value
-proc format_runtime_exception(self: VirtualMachine, value: Value): string
+proc exec*(self: ptr VirtualMachine): Value
+proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Value
+proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
 proc spawn_thread(code: ptr Gene, return_value: bool): Value
-proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instruction): bool
+proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool
 
 # Template to get the class of a value for unified method calls
 template get_value_class(val: Value): Class =
@@ -90,12 +90,12 @@ template get_value_class(val: Value): Class =
   else:
     types.ref(App.app.object_class).class
 
-proc enter_function(self: VirtualMachine, name: string) {.inline.} =
+proc enter_function(self: ptr VirtualMachine, name: string) {.inline.} =
   if self.profiling:
     let start_time = cpuTime()
     self.profile_stack.add((name, start_time))
     
-proc exit_function(self: VirtualMachine) {.inline.} =
+proc exit_function(self: ptr VirtualMachine) {.inline.} =
   if self.profiling and self.profile_stack.len > 0:
     let (fn_name, start_time) = self.profile_stack[^1]
     self.profile_stack.del(self.profile_stack.len - 1)
@@ -133,7 +133,7 @@ proc exit_function(self: VirtualMachine) {.inline.} =
 
     self.profile_data[fn_name] = profile
 
-proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instruction): bool =
+proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
   self.current_exception = value
 
@@ -198,7 +198,7 @@ proc dispatch_exception(self: VirtualMachine, value: Value, inst: var ptr Instru
 
   return true
 
-proc poll_event_loop(self: VirtualMachine) =
+proc poll_event_loop(self: ptr VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
   if not self.poll_enabled:
     return
@@ -288,7 +288,7 @@ proc poll_event_loop(self: VirtualMachine) =
       # If polling fails, ignore the error to keep the VM running
       discard
 
-proc print_profile*(self: VirtualMachine) =
+proc print_profile*(self: ptr VirtualMachine) =
   if not self.profiling or self.profile_data.len == 0:
     echo "No profiling data available"
     return
@@ -324,7 +324,7 @@ proc print_profile*(self: VirtualMachine) =
   
   echo "\nTotal functions profiled: ", self.profile_data.len
 
-proc print_instruction_profile*(self: VirtualMachine) =
+proc print_instruction_profile*(self: ptr VirtualMachine) =
   if not self.instruction_profiling:
     echo "No instruction profiling data available"
     return
@@ -377,7 +377,7 @@ proc print_instruction_profile*(self: VirtualMachine) =
 
 #################### Unified Callable System ####################
 
-proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: bool, base: uint16, count: int] {.inline.} =
+proc pop_call_base_info(vm: ptr VirtualMachine, expected: int = -1): tuple[hasBase: bool, base: uint16, count: int] {.inline.} =
   ## Retrieve call base metadata if present, otherwise fall back to expected count.
   if vm.frame.call_bases.is_empty():
     result.hasBase = false
@@ -391,7 +391,7 @@ proc pop_call_base_info(vm: VirtualMachine, expected: int = -1): tuple[hasBase: 
       if expected >= 0 and result.count != expected:
         discard
 
-proc unified_call_dispatch*(vm: VirtualMachine, callable: Callable,
+proc unified_call_dispatch*(vm: ptr VirtualMachine, callable: Callable,
                            args: seq[Value], self_value: Value = NIL,
                            is_tail_call: bool = false): Value =
   ## Unified call dispatcher that handles all callable types through a single interface
@@ -552,7 +552,7 @@ proc value_to_callable*(value: Value): Callable =
   else:
     not_allowed("Cannot convert " & $value.kind & " to Callable")
 
-proc render_template(self: VirtualMachine, tpl: Value): Value =
+proc render_template(self: ptr VirtualMachine, tpl: Value): Value =
   # Render a template by recursively processing quote/unquote values
   case tpl.kind:
     of VkQuote:
@@ -670,7 +670,7 @@ proc render_template(self: VirtualMachine, tpl: Value): Value =
       # Other values pass through unchanged
       return tpl
 
-proc call_instance_method(self: VirtualMachine, instance: Value, method_name: string,
+proc call_instance_method(self: ptr VirtualMachine, instance: Value, method_name: string,
                           args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Helper to forward instance calls to 'call' method
   ## Returns true if method was found and call was initiated (via continue), false otherwise
@@ -762,7 +762,7 @@ proc call_instance_method(self: VirtualMachine, instance: Value, method_name: st
     not_allowed("call method must be a function or native function")
     return false
 
-proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, instance: Value, method_name: string, args: openArray[Value], expect_macro: bool, kw_pairs: seq[(Key, Value)] = @[]): bool =
+proc call_super_method_resolved(self: ptr VirtualMachine, parent_class: Class, instance: Value, method_name: string, args: openArray[Value], expect_macro: bool, kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Invoke a superclass method without allocating a proxy.
   if parent_class == nil:
     not_allowed("No parent class available for super")
@@ -863,14 +863,14 @@ proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, insta
     not_allowed("Super method must be a function or native function")
     return false
 
-proc call_super_method(self: VirtualMachine, super_value: Value, method_name: string, args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
+proc call_super_method(self: ptr VirtualMachine, super_value: Value, method_name: string, args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Legacy helper that accepts a VkSuper proxy.
   if super_value.kind != VkSuper:
     return false
   let super_ref = super_value.ref
   return self.call_super_method_resolved(super_ref.super_class, super_ref.super_instance, method_name, args, method_name.ends_with("!"), kw_pairs)
 
-proc call_value_method(self: VirtualMachine, value: Value, method_name: string,
+proc call_value_method(self: ptr VirtualMachine, value: Value, method_name: string,
                        args: openArray[Value], kw_pairs: seq[(Key, Value)] = @[]): bool =
   ## Helper for calling native/class methods on non-instance values (strings, selectors, etc.)
   let value_class = get_value_class(value)
@@ -988,7 +988,7 @@ proc find_method_class(instance: Value, callable: Value): Class =
     cls = cls.parent
   return nil
 
-proc resolve_current_instance_and_parent(self: VirtualMachine): tuple[instance: Value, parent_class: Class] =
+proc resolve_current_instance_and_parent(self: ptr VirtualMachine): tuple[instance: Value, parent_class: Class] =
   ## Retrieve the current instance and parent class for super calls.
   let instance = current_self_value(self.frame)
   if instance.kind notin {VkInstance, VkCustom}:
@@ -1004,7 +1004,7 @@ proc resolve_current_instance_and_parent(self: VirtualMachine): tuple[instance: 
 
   (instance, current_class.parent)
 
-proc call_super_constructor(self: VirtualMachine, parent_class: Class, instance: Value, args: openArray[Value], expect_macro: bool): bool =
+proc call_super_constructor(self: ptr VirtualMachine, parent_class: Class, instance: Value, args: openArray[Value], expect_macro: bool): bool =
   ## Invoke a superclass constructor without allocation.
   if parent_class == nil:
     not_allowed("No parent class available for super")
@@ -1113,7 +1113,7 @@ proc namespace_from_value(container: Value): Namespace =
   else:
     not_allowed("Class container must be a namespace or class, got " & $container.kind)
 
-proc exec*(self: VirtualMachine): Value =
+proc exec*(self: ptr VirtualMachine): Value =
   let root_entry = self.exec_depth == 0
   self.exec_depth.inc()
   defer:
@@ -6234,13 +6234,13 @@ proc exec*(self: VirtualMachine): Value =
 
 # Continue execution from the current PC
 # This allows re-entrant execution for coroutines/async contexts
-proc exec_continue*(self: VirtualMachine): Value =
+proc exec_continue*(self: ptr VirtualMachine): Value =
   # Call the main exec loop which now uses self.pc
   return self.exec()
 
 # Execute a Gene function with given arguments and return the result
 # This preserves the VM state and can be called from async contexts  
-proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.exportc.} =
+proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.exportc.} =
   if fn.kind != VkFunction:
     return NIL
   
@@ -6307,7 +6307,7 @@ proc exec_function*(self: VirtualMachine, fn: Value, args: seq[Value]): Value {.
   # The VM state should already be restored by return or IkEnd
   return result
 
-proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
+proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
   let compiled = parse_and_compile(code, module_name)
 
   let ns = new_namespace(module_name)
@@ -6337,7 +6337,7 @@ proc exec*(self: VirtualMachine, code: string, module_name: string): Value =
 
   self.exec()
 
-proc exec*(self: VirtualMachine, stream: Stream, module_name: string): Value =
+proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value =
   ## Execute Gene code from a stream (more memory-efficient for large files)
   let compiled = parse_and_compile(stream, module_name)
 
@@ -6361,7 +6361,7 @@ proc exec*(self: VirtualMachine, stream: Stream, module_name: string): Value =
   self.exec()
 
 # Generator execution implementation
-proc exec_generator_impl*(self: VirtualMachine, gen: GeneratorObj): Value {.exportc.} =
+proc exec_generator_impl*(self: ptr VirtualMachine, gen: GeneratorObj): Value {.exportc.} =
   # Check for nil generator
   if gen == nil:
     raise new_exception(types.Exception, "exec_generator_impl: generator is nil")

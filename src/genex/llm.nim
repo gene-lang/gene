@@ -151,7 +151,7 @@ when defined(GENE_LLM_MOCK):
     state.closed = true
 
 
-  proc vm_load_model(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_load_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "genex/llm/load_model requires a file path")
@@ -181,7 +181,7 @@ when defined(GENE_LLM_MOCK):
     )
     new_model_value(state)
 
-  proc vm_model_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_model_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "Model.close requires self")
@@ -193,7 +193,7 @@ when defined(GENE_LLM_MOCK):
     cleanup_model(state)
     NIL
 
-  proc vm_model_new_session(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_model_new_session(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "Model.new_session requires self")
@@ -227,7 +227,7 @@ when defined(GENE_LLM_MOCK):
     model_state.open_sessions.inc()
     new_session_value(session_state)
 
-  proc vm_session_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_session_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "Session.close requires self")
@@ -237,7 +237,7 @@ when defined(GENE_LLM_MOCK):
     cleanup_session(session_state)
     NIL
 
-  proc vm_session_infer(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_session_infer(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 2:
       raise new_exception(types.Exception, "Session.infer requires self and a prompt string")
@@ -599,7 +599,7 @@ else:
 
     new_map_value(map_table)
 
-  proc vm_load_model(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_load_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "genex/llm/load_model requires a file path")
@@ -644,7 +644,7 @@ else:
     track_model(state)
     new_model_value(state)
 
-  proc vm_model_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_model_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "Model.close requires self")
@@ -659,7 +659,7 @@ else:
     cleanup_model(state)
     NIL
 
-  proc vm_model_new_session(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_model_new_session(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "Model.new_session requires self")
@@ -705,7 +705,7 @@ else:
     track_session(session_state)
     new_session_value(session_state)
 
-  proc vm_session_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_session_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 1:
       raise new_exception(types.Exception, "Session.close requires self")
@@ -716,7 +716,7 @@ else:
     cleanup_session(state)
     NIL
 
-  proc vm_session_infer(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc vm_session_infer(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
     if positional < 2:
       raise new_exception(types.Exception, "Session.infer requires self and a prompt string")

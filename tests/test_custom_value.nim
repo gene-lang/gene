@@ -10,7 +10,7 @@ type
 
 var native_handle_class {.threadvar.}: Class
 
-proc native_get_id(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc native_get_id(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   let self = get_positional_arg(args, 0, has_keyword_args)
   let data = cast[NativeHandle](self.get_custom_data("NativeHandle payload missing"))
   data.id.to_value()

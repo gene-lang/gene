@@ -55,7 +55,7 @@ proc finalize_stmt(stmt: SqlPrepared) =
   discard sqlite3mod.finalize(stmt.PStmt)
 
 # Open a database connection
-proc vm_open(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_open(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 1:
     raise new_exception(types.Exception, "open requires a database path")
 
@@ -92,7 +92,7 @@ proc vm_open(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
   return instance
 
 # Execute a SQL statement and return results
-proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 2:
     raise new_exception(types.Exception, "exec requires self and SQL statement")
 
@@ -137,7 +137,7 @@ proc vm_exec(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int
   return result
 
 # Execute a SQL statement without returning results (for INSERT, UPDATE, DELETE, etc.)
-proc vm_execute(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_execute(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 2:
     raise new_exception(types.Exception, "execute requires self and SQL statement")
 
@@ -182,7 +182,7 @@ proc vm_execute(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   return NIL
 
 # Close the database connection
-proc vm_close(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 1:
     raise new_exception(types.Exception, "close requires self")
 

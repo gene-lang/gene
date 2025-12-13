@@ -727,7 +727,7 @@ type
     # Note: thread and channel fields will be added in vm/thread.nim module
     # which will properly import std/channels and std/locks with --threads:on
 
-  VirtualMachine* = ref object
+  VirtualMachine* = object
     cu*: CompilationUnit
     pc*: int
     frame*: Frame
@@ -863,7 +863,7 @@ type
   # Types related to command line argument parsing
   ArgumentError* = object of Exception
 
-  NativeFn* = proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.}
+  NativeFn* = proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.}
 
   # Unified Callable System
   CallableKind* = enum

@@ -241,7 +241,7 @@ proc find_native_build(pkg_root: string, resolved_path: string): string =
     return candidate  # load_extension will append the suffix
   return ""
 
-proc current_module_path(vm: VirtualMachine): string =
+proc current_module_path(vm: ptr VirtualMachine): string =
   ## Best-effort retrieval of current module filename.
   if vm.frame != nil and vm.frame.ns != nil:
     let key = "__module_name__".to_key()
@@ -268,7 +268,7 @@ proc extension_library_path(name: string): string =
   else:
     result = "build" / ("lib" & name & ".so")
 
-proc ensure_genex_extension(vm: VirtualMachine, part: string): Value =
+proc ensure_genex_extension(vm: ptr VirtualMachine, part: string): Value =
   ## Ensure a genex extension is loaded when accessing genex/<part>.
   if App == NIL or App.kind != VkApplication:
     return NIL
@@ -292,7 +292,7 @@ proc ensure_genex_extension(vm: VirtualMachine, part: string): Value =
     # Even if extension loading failed, keep NIL to prevent repeated attempts
   return member
 
-proc resolve_from_root(vm: VirtualMachine, root: Value, parts: seq[string]): Value =
+proc resolve_from_root(vm: ptr VirtualMachine, root: Value, parts: seq[string]): Value =
   ## Resolve a path against a root namespace value.
   if parts.len == 0:
     return root
@@ -315,7 +315,7 @@ proc resolve_from_root(vm: VirtualMachine, root: Value, parts: seq[string]): Val
 
   return current
 
-proc import_from_namespace(vm: VirtualMachine, items: seq[ImportItem]): bool =
+proc import_from_namespace(vm: ptr VirtualMachine, items: seq[ImportItem]): bool =
   ## Try to handle imports targeting known namespaces like gene/* or genex/*.
   var handled = false
 
@@ -533,7 +533,7 @@ proc compile_module*(path: string): CompilationUnit =
   let parsed = read_all(code)
   return compile(parsed)
 
-proc load_module*(vm: VirtualMachine, path: string): Namespace =
+proc load_module*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a module from file and return its namespace
   # Check cache first
   if ModuleCache.hasKey(path):
@@ -580,12 +580,12 @@ proc resolve_import_value*(ns: Namespace, path: string): Value =
   
   return final_value
 
-proc execute_module*(vm: VirtualMachine, path: string, module_ns: Namespace): Value =
+proc execute_module*(vm: ptr VirtualMachine, path: string, module_ns: Namespace): Value =
   ## Execute a module in its namespace context
   # This will be called from vm.nim where exec is available
   raise new_exception(types.Exception, "execute_module should be overridden by vm.nim")
 
-proc handle_import*(vm: VirtualMachine, import_gene: ptr Gene): tuple[path: string, imports: seq[ImportItem], ns: Namespace, is_native: bool, handled: bool] =
+proc handle_import*(vm: ptr VirtualMachine, import_gene: ptr Gene): tuple[path: string, imports: seq[ImportItem], ns: Namespace, is_native: bool, handled: bool] =
   ## Parse import statement and prepare for execution
   let (raw_module_path, package_from_stmt, imports) = parse_import_statement(import_gene)
   

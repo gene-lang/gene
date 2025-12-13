@@ -9,7 +9,7 @@ type
     path*: string
 
 # File constructor
-proc io_file_constructor*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_constructor*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "File constructor requires 1 argument (path)")
 
@@ -23,7 +23,7 @@ proc io_file_constructor*(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
   return instance
 
 # File instance method: read
-proc io_file_read_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_read_instance*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "read requires self")
 
@@ -43,7 +43,7 @@ proc io_file_read_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value],
     raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
 
 # File static method: read (for File/read "path" syntax)
-proc io_file_read*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_read*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "File/read requires 1 argument (path)")
 
@@ -59,7 +59,7 @@ proc io_file_read*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
     raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
 
 # File instance method: write
-proc io_file_write_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_write_instance*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "write requires self and content")
 
@@ -82,7 +82,7 @@ proc io_file_write_instance*(vm: VirtualMachine, args: ptr UncheckedArray[Value]
     raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
 
 # File static method: write
-proc io_file_write*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_write*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "File/write requires 2 arguments (path, content)")
 
@@ -101,7 +101,7 @@ proc io_file_write*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   except IOError as e:
     raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
 
-proc io_file_append*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_append*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "File/append requires 2 arguments (path, content)")
 
@@ -122,7 +122,7 @@ proc io_file_append*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   except IOError as e:
     raise new_exception(types.Exception, "Failed to append to file '" & path & "': " & e.msg)
 
-proc io_file_exists*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "File/exists requires 1 argument (path)")
 
@@ -133,7 +133,7 @@ proc io_file_exists*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   let path = path_arg.str
   return fileExists(path).to_value()
 
-proc io_file_delete*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_file_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "File/delete requires 1 argument (path)")
 
@@ -149,7 +149,7 @@ proc io_file_delete*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
     raise new_exception(types.Exception, "Failed to delete file '" & path & "': " & e.msg)
 
 # Dir class methods
-proc io_dir_exists*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_dir_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Dir/exists requires 1 argument (path)")
 
@@ -160,7 +160,7 @@ proc io_dir_exists*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   let path = path_arg.str
   return dirExists(path).to_value()
 
-proc io_dir_create*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_dir_create*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Dir/create requires 1 argument (path)")
 
@@ -175,7 +175,7 @@ proc io_dir_create*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   except OSError as e:
     raise new_exception(types.Exception, "Failed to create directory '" & path & "': " & e.msg)
 
-proc io_dir_delete*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_dir_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Dir/delete requires 1 argument (path)")
 
@@ -190,7 +190,7 @@ proc io_dir_delete*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   except OSError as e:
     raise new_exception(types.Exception, "Failed to delete directory '" & path & "': " & e.msg)
 
-proc io_dir_list*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_dir_list*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Dir/list requires 1 argument (path)")
 
@@ -208,7 +208,7 @@ proc io_dir_list*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     raise new_exception(types.Exception, "Failed to list directory '" & path & "': " & e.msg)
 
 # Path operations
-proc io_path_join*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_path_join*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
     raise new_exception(types.Exception, "path_join requires at least 2 arguments")
 
@@ -221,7 +221,7 @@ proc io_path_join*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
 
   return joinPath(parts).to_value()
 
-proc io_path_abs*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_path_abs*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "path_abs requires 1 argument (path)")
 
@@ -232,7 +232,7 @@ proc io_path_abs*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   let path = path_arg.str
   return absolutePath(path).to_value()
 
-proc io_path_basename*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_path_basename*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "path_basename requires 1 argument (path)")
 
@@ -243,7 +243,7 @@ proc io_path_basename*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
   let path = path_arg.str
   return extractFilename(path).to_value()
 
-proc io_path_dirname*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_path_dirname*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "path_dirname requires 1 argument (path)")
 
@@ -254,7 +254,7 @@ proc io_path_dirname*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   let path = path_arg.str
   return parentDir(path).to_value()
 
-proc io_path_ext*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc io_path_ext*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "path_ext requires 1 argument (path)")
 

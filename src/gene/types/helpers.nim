@@ -9,6 +9,35 @@ proc set_program_args*(program: string, args: seq[string])
 
 #################### VM ##########################
 
+proc new_vm_ptr*(): ptr VirtualMachine =
+  ## Allocate and initialize a new VM instance for the current thread.
+  result = cast[ptr VirtualMachine](alloc0(sizeof(VirtualMachine)))
+  result[].exec_depth = 0
+  result[].exception_handlers = @[]
+  result[].current_exception = NIL
+  result[].symbols = addr SYMBOLS
+  result[].poll_enabled = false
+  result[].pending_futures = @[]
+  result[].thread_futures = initTable[int, FutureObj]()
+  result[].message_callbacks = @[]
+  result[].profile_data = initTable[string, FunctionProfile]()
+  result[].profile_stack = @[]
+  result[].thread_local_ns = nil
+
+proc free_vm_ptr*(vm: ptr VirtualMachine) =
+  ## Release a VM instance allocated by new_vm_ptr.
+  if vm.is_nil:
+    return
+  # Return frames to the thread-local pool before dropping VM state.
+  var current_frame = vm[].frame
+  while current_frame != nil:
+    let caller = current_frame.caller_frame
+    current_frame.free()
+    current_frame = caller
+  vm[].frame = nil
+  reset(vm[])
+  dealloc(vm)
+
 proc init_app_and_vm*() =
   # Reset gene namespace initialization flag since we're creating a new App
   gene_namespace_initialized = false
@@ -16,17 +45,11 @@ proc init_app_and_vm*() =
   # Initialize as main thread (ID 0)
   current_thread_id = 0
 
-  VM = VirtualMachine(
-    exception_handlers: @[],
-    current_exception: NIL,
-    exec_depth: 0,
-    symbols: addr SYMBOLS,
-    poll_enabled: false,
-    pending_futures: @[],  # Initialize empty list of pending futures
-    thread_futures: initTable[int, FutureObj](),  # Initialize empty table for thread futures
-    message_callbacks: @[],  # Initialize empty list of message callbacks
-    thread_local_ns: nil,  # Will be initialized after App is created
-  )
+  if VM != nil:
+    free_vm_ptr(VM)
+    VM = nil
+
+  VM = new_vm_ptr()
 
   # Pre-allocate frame and scope pools
   if FRAMES.len == 0:
@@ -66,7 +89,7 @@ proc init_app_and_vm*() =
   # Add time namespace stub to prevent errors
   let time_ns = new_namespace("time")
   # Simple time function that returns current timestamp
-  proc time_now(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc time_now(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     return epochTime().to_value()
 
   var time_now_fn = new_ref(VkNativeFn)

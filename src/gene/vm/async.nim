@@ -6,7 +6,7 @@ import asyncdispatch  # For Future procs: finished, failed, read
 # For Phase 1, we're just setting up the infrastructure
 
 # Update a future from its underlying Nim future
-proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
+proc update_future_from_nim*(vm: ptr VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
   ## Check if the underlying Nim future has completed and update Gene future state
   ## This should be called during event loop polling
   if future_obj.state != FsPending:
@@ -29,7 +29,7 @@ proc update_future_from_nim*(vm: VirtualMachine, future_obj: FutureObj) {.gcsafe
       future_obj.value = read(future_obj.nim_future)
 
 # Future methods
-proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc future_on_success(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
   if arg_count < 2:
     raise new_exception(types.Exception, "Future.on_success requires 2 arguments (self and callback)")
@@ -59,7 +59,7 @@ proc future_on_success(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
   # Return the future for chaining
   return future_arg
 
-proc future_on_failure(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc future_on_failure(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
   if arg_count < 2:
     raise new_exception(types.Exception, "Future.on_failure requires 2 arguments (self and callback)")
@@ -89,7 +89,7 @@ proc future_on_failure(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
   # Return the future for chaining
   return future_arg
 
-proc future_state(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc future_state(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Get the state of a future
   # When called as a method, args contains the future as the first child
   if arg_count == 0:
@@ -111,7 +111,7 @@ proc future_state(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     of FsFailure:
       return "failure".to_symbol_value()
 
-proc future_value(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc future_value(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # Get the value of a completed future
   # When called as a method, args contains the future as the first child
   if arg_count == 0:
@@ -138,7 +138,7 @@ proc init_async*() =
       return
     
     # Native function to complete a future
-    proc complete_future_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    proc complete_future_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
       # complete_future(future, value) - completes the given future with the value
       if arg_count != 2:
         raise new_exception(types.Exception, "complete_future requires exactly 2 arguments (future and value)")
@@ -163,7 +163,7 @@ proc init_async*() =
     # Don't set parent yet - will be set later when object_class is available
     
     # Add Future constructor
-    proc future_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    proc future_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
       # Create a new Future instance
       let future_val = new_future_value()
       # If initial value is provided, complete the future immediately
@@ -175,7 +175,7 @@ proc init_async*() =
     future_class.def_native_constructor(future_constructor)
     
     # Add complete method
-    proc future_complete(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    proc future_complete(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
       # Complete the future with a value
       # When called as a method, args contains [future, value]
       if arg_count < 2:

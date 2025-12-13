@@ -214,13 +214,13 @@ proc init_thread_class*() =
   # Don't set parent yet - will be set later when object_class is available
 
   # Add Thread constructor (not typically called directly - threads created via spawn)
-  proc thread_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc thread_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     raise new_exception(types.Exception, "Thread cannot be constructed directly - use spawn or spawn_return")
 
   thread_class.def_native_constructor(thread_constructor)
 
   # Add .send methods
-  proc thread_send_internal(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, force_reply: bool): Value {.gcsafe.} =
+  proc thread_send_internal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, force_reply: bool): Value {.gcsafe.} =
     if arg_count < 2:
       raise new_exception(types.Exception, "Thread.send requires a thread and a message")
 
@@ -291,11 +291,11 @@ proc init_thread_class*() =
     else:
       return NIL
 
-  thread_class.def_native_method("send", (proc (vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = thread_send_internal(vm, args, arg_count, has_keyword_args, false)))
-  thread_class.def_native_method("send_expect_reply", (proc (vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = thread_send_internal(vm, args, arg_count, has_keyword_args, true)))
+  thread_class.def_native_method("send", (proc (vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = thread_send_internal(vm, args, arg_count, has_keyword_args, false)))
+  thread_class.def_native_method("send_expect_reply", (proc (vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = thread_send_internal(vm, args, arg_count, has_keyword_args, true)))
 
   # Add .on_message method
-  proc thread_on_message(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc thread_on_message(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # Register callback for incoming messages
     # Usage: (.on_message $thread callback)
     if arg_count < 2:
@@ -329,7 +329,7 @@ proc init_thread_class*() =
     let thread_key = "Thread".to_key()
     App.app.gene_ns.ref.ns[thread_key] = App.app.thread_class
     # Global helper to force reply expectation
-    proc thread_send_expect_reply_fn(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    proc thread_send_expect_reply_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
       thread_send_internal(vm, args, arg_count, has_keyword_args, true)
     App.app.gene_ns.ref.ns["send_expect_reply".to_key()] = (cast[NativeFn](thread_send_expect_reply_fn)).to_value()
 
@@ -337,7 +337,7 @@ proc init_thread_class*() =
   let thread_message_class = new_class("ThreadMessage")
 
   # Add .payload method
-  proc thread_message_payload(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc thread_message_payload(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:
       raise new_exception(types.Exception, "ThreadMessage.payload requires self argument")
 
@@ -350,7 +350,7 @@ proc init_thread_class*() =
   thread_message_class.def_native_method("payload", thread_message_payload)
 
   # Add .reply method
-  proc thread_message_reply(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  proc thread_message_reply(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if arg_count < 2:
       raise new_exception(types.Exception, "ThreadMessage.reply requires a message and a value")
 
@@ -400,7 +400,7 @@ proc init_thread_class*() =
     App.app.gene_ns.ref.ns[thread_message_key] = App.app.thread_message_class
 
 # keep_alive function - keeps thread running to receive messages
-proc keep_alive_fn*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc keep_alive_fn*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   ## Keep thread alive to receive messages
   ## This function blocks forever, processing incoming messages
   ## Usage: (keep_alive) or (keep_alive timeout_ms)

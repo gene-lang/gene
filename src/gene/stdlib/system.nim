@@ -5,7 +5,7 @@ import ../types
 # System functions for the Gene standard library
 
 # Process execution
-proc system_exec*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_exec*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "exec requires at least 1 argument (command)")
 
@@ -30,7 +30,7 @@ proc system_exec*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   except OSError as e:
     raise new_exception(types.Exception, "Failed to execute command: " & e.msg)
 
-proc system_shell*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_shell*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "shell requires 1 argument (command)")
 
@@ -50,10 +50,10 @@ proc system_shell*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
     raise new_exception(types.Exception, "Failed to execute shell command: " & e.msg)
 
 # Current working directory
-proc system_cwd*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_cwd*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   return getCurrentDir().to_value()
 
-proc system_cd*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_cd*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "cd requires 1 argument (path)")
 
@@ -69,7 +69,7 @@ proc system_cd*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
     raise new_exception(types.Exception, "Failed to change directory: " & e.msg)
 
 # Exit
-proc system_exit*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_exit*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var exit_code = 0
   if arg_count > 0:
     let code_arg = get_positional_arg(args, 0, has_keyword_args)
@@ -79,14 +79,14 @@ proc system_exit*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   quit(exit_code)
 
 # Command line arguments
-proc system_args*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_args*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var args_array: seq[Value] = @[]
   for i in 1..paramCount():
     args_array.add(paramStr(i).to_value())
   return new_array_value(args_array)
 
 # Platform information
-proc system_os*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_os*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   when defined(windows):
     return "windows".to_value()
   elif defined(macosx):
@@ -102,7 +102,7 @@ proc system_os*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   else:
     return "unknown".to_value()
 
-proc system_arch*(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc system_arch*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   when defined(amd64):
     return "amd64".to_value()
   elif defined(i386):

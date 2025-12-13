@@ -44,7 +44,7 @@ proc props_to_attrs(props: Table[Key, Value]): string =
     return ""
 
 # Generic HTML tag function
-proc html_tag(tag_name: string, vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc html_tag(tag_name: string, vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   var attrs = ""
   var content = ""
 
@@ -81,7 +81,7 @@ proc html_tag(tag_name: string, vm: VirtualMachine, args: ptr UncheckedArray[Val
   return new_str_value(html)
 
 # Self-closing tag helper
-proc html_self_closing_tag(tag_name: string, vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc html_self_closing_tag(tag_name: string, vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   var attrs = ""
 
   # Check for keyword args (props)
@@ -94,37 +94,37 @@ proc html_self_closing_tag(tag_name: string, vm: VirtualMachine, args: ptr Unche
   return new_str_value(html)
 
 # Define all HTML tag functions
-proc tag_HTML(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("html", vm, args, arg_count, has_keyword_args)
-proc tag_HEAD(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("head", vm, args, arg_count, has_keyword_args)
-proc tag_TITLE(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("title", vm, args, arg_count, has_keyword_args)
-proc tag_BODY(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("body", vm, args, arg_count, has_keyword_args)
-proc tag_DIV(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("div", vm, args, arg_count, has_keyword_args)
-proc tag_SPAN(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("span", vm, args, arg_count, has_keyword_args)
-proc tag_P(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("p", vm, args, arg_count, has_keyword_args)
-proc tag_H1(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("h1", vm, args, arg_count, has_keyword_args)
-proc tag_H2(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("h2", vm, args, arg_count, has_keyword_args)
-proc tag_H3(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("h3", vm, args, arg_count, has_keyword_args)
-proc tag_UL(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("ul", vm, args, arg_count, has_keyword_args)
-proc tag_OL(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("ol", vm, args, arg_count, has_keyword_args)
-proc tag_LI(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("li", vm, args, arg_count, has_keyword_args)
-proc tag_FORM(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("form", vm, args, arg_count, has_keyword_args)
-proc tag_INPUT(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("input", vm, args, arg_count, has_keyword_args)
-proc tag_BUTTON(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("button", vm, args, arg_count, has_keyword_args)
-proc tag_LABEL(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("label", vm, args, arg_count, has_keyword_args)
-proc tag_A(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("a", vm, args, arg_count, has_keyword_args)
-proc tag_IMG(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("img", vm, args, arg_count, has_keyword_args)
-proc tag_TABLE(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("table", vm, args, arg_count, has_keyword_args)
-proc tag_TR(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("tr", vm, args, arg_count, has_keyword_args)
-proc tag_TD(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("td", vm, args, arg_count, has_keyword_args)
-proc tag_TH(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("th", vm, args, arg_count, has_keyword_args)
-proc tag_HEADER(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("header", vm, args, arg_count, has_keyword_args)
-proc tag_FOOTER(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("footer", vm, args, arg_count, has_keyword_args)
-proc tag_SCRIPT(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("script", vm, args, arg_count, has_keyword_args)
-proc tag_STYLE(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("style", vm, args, arg_count, has_keyword_args)
-proc tag_LINK(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("link", vm, args, arg_count, has_keyword_args)
-proc tag_META(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("meta", vm, args, arg_count, has_keyword_args)
-proc tag_SVG(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("svg", vm, args, arg_count, has_keyword_args)
-proc tag_LINE(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("line", vm, args, arg_count, has_keyword_args)
+proc tag_HTML(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("html", vm, args, arg_count, has_keyword_args)
+proc tag_HEAD(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("head", vm, args, arg_count, has_keyword_args)
+proc tag_TITLE(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("title", vm, args, arg_count, has_keyword_args)
+proc tag_BODY(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("body", vm, args, arg_count, has_keyword_args)
+proc tag_DIV(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("div", vm, args, arg_count, has_keyword_args)
+proc tag_SPAN(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("span", vm, args, arg_count, has_keyword_args)
+proc tag_P(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("p", vm, args, arg_count, has_keyword_args)
+proc tag_H1(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("h1", vm, args, arg_count, has_keyword_args)
+proc tag_H2(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("h2", vm, args, arg_count, has_keyword_args)
+proc tag_H3(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("h3", vm, args, arg_count, has_keyword_args)
+proc tag_UL(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("ul", vm, args, arg_count, has_keyword_args)
+proc tag_OL(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("ol", vm, args, arg_count, has_keyword_args)
+proc tag_LI(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("li", vm, args, arg_count, has_keyword_args)
+proc tag_FORM(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("form", vm, args, arg_count, has_keyword_args)
+proc tag_INPUT(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("input", vm, args, arg_count, has_keyword_args)
+proc tag_BUTTON(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("button", vm, args, arg_count, has_keyword_args)
+proc tag_LABEL(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("label", vm, args, arg_count, has_keyword_args)
+proc tag_A(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("a", vm, args, arg_count, has_keyword_args)
+proc tag_IMG(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("img", vm, args, arg_count, has_keyword_args)
+proc tag_TABLE(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("table", vm, args, arg_count, has_keyword_args)
+proc tag_TR(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("tr", vm, args, arg_count, has_keyword_args)
+proc tag_TD(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("td", vm, args, arg_count, has_keyword_args)
+proc tag_TH(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("th", vm, args, arg_count, has_keyword_args)
+proc tag_HEADER(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("header", vm, args, arg_count, has_keyword_args)
+proc tag_FOOTER(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("footer", vm, args, arg_count, has_keyword_args)
+proc tag_SCRIPT(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("script", vm, args, arg_count, has_keyword_args)
+proc tag_STYLE(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("style", vm, args, arg_count, has_keyword_args)
+proc tag_LINK(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("link", vm, args, arg_count, has_keyword_args)
+proc tag_META(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("meta", vm, args, arg_count, has_keyword_args)
+proc tag_SVG(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_tag("svg", vm, args, arg_count, has_keyword_args)
+proc tag_LINE(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} = html_self_closing_tag("line", vm, args, arg_count, has_keyword_args)
 
 # Register functions in namespace
 proc init_html_module*() =

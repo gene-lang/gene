@@ -66,10 +66,10 @@ proc cleanup*(code: string): string =
 var initialized = false
 
 # Test-specific native functions
-proc test1(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc test1(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   1.to_value()
 
-proc test2(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc test2(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   # TODO: Implement instance_props access when needed
   # For now, just add the two arguments
   if arg_count >= 2:
@@ -79,26 +79,27 @@ proc test2(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, 
   else:
     return 0.to_value()
 
-proc test_increment(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc test_increment(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   if arg_count > 0:
     let x = get_positional_arg(args, 0, has_keyword_args).to_int()
     return (x + 1).to_value()
   else:
     return 1.to_value()
 
-proc test_reentry(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if arg_count < 2:
-    return NIL
+proc test_reentry(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  {.cast(gcsafe).}:
+    if arg_count < 2:
+      return NIL
 
-  let fn_val = get_positional_arg(args, 0, has_keyword_args)
-  let arg_val = get_positional_arg(args, 1, has_keyword_args)
+    let fn_val = get_positional_arg(args, 0, has_keyword_args)
+    let arg_val = get_positional_arg(args, 1, has_keyword_args)
 
-  if fn_val.kind != VkFunction:
-    not_allowed("test_reentry expects a function as first argument")
+    if fn_val.kind != VkFunction:
+      not_allowed("test_reentry expects a function as first argument")
 
-  let first = vm.exec_function(fn_val, @[arg_val])
-  let second = vm.exec_function(fn_val, @[first])
-  return second
+    let first = vm.exec_function(fn_val, @[arg_val])
+    let second = vm.exec_function(fn_val, @[first])
+    return second
 
 proc init_all*() =
   if not initialized:
@@ -108,8 +109,7 @@ proc init_all*() =
     App.app.gene_ns.ns["test1".to_key()] = test1.to_value()
     App.app.gene_ns.ns["test2".to_key()] = test2.to_value()
     App.app.gene_ns.ns["test_increment".to_key()] = test_increment.to_value()
-    let reentry_fn = cast[NativeFn](test_reentry)
-    App.app.gene_ns.ns["test_reentry".to_key()] = reentry_fn.to_value()
+    App.app.gene_ns.ns["test_reentry".to_key()] = test_reentry.to_value()
     initialized = true
 
 proc test_parser*(code: string, result: Value) =

@@ -3,6 +3,7 @@ import os, tables
 import ./commands/base
 import ./commands/[run, eval, repl, help, parse, compile, gir]
 import ./gene/vm/thread
+import ./gene/types as gene_types
 import ./gene/extension/c_api  # Link C API for extensions
 
 {.pop.}
@@ -19,7 +20,7 @@ compile.init(CommandMgr)
 gir.init(CommandMgr)
 # lsp.init(CommandMgr)
 
-proc main() =
+proc main(): int =
   # Initialize thread pool for multi-threading support
   init_thread_pool()
 
@@ -32,7 +33,7 @@ proc main() =
       let helpResult = result("help", @[])
       if helpResult.output.len > 0:
         echo helpResult.output
-    return
+    return 0
   
   var cmd = args[0]
   let command_args = args[1 .. ^1]
@@ -47,16 +48,21 @@ proc main() =
       let helpResult = helpHandler("help", @[])
       if helpResult.output.len > 0:
         echo helpResult.output
-    quit(1)
+    return 1
   
   # Execute the command
   let result = handler(cmd, command_args)
   if not result.success:
     if result.error.len > 0:
       echo "Error: ", result.error
-    quit(1)
+    return 1
   elif result.output.len > 0:
     echo result.output
+  return 0
 
 when isMainModule:
-  main()
+  let exit_code = main()
+  if gene_types.VM != nil:
+    gene_types.free_vm_ptr(gene_types.VM)
+    gene_types.VM = nil
+  quit(exit_code)

@@ -23,18 +23,18 @@ var server_response_class_global: Class
 var http_server: AsyncHttpServer
 var server_handler: proc(req: Value): Value {.gcsafe.}
 var stored_gene_handler: Value  # Store the Gene function/instance
-var stored_vm: VirtualMachine   # Store VM reference for execution
+var stored_vm: ptr VirtualMachine   # Store VM reference for execution
 
 # Forward declarations
-proc request_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc vm_start_server(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
-proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
+proc request_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc request_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc response_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc response_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_respond(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_run_forever(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 
 proc parse_json_internal(node: json.JsonNode): Value {.gcsafe.}
 
@@ -128,7 +128,7 @@ proc parse_body_params(body: string, content_type: string): Value =
     return parse_form_body(trimmed)
   return NIL
 
-proc server_request_get_prop(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, prop: Key): Value =
+proc server_request_get_prop(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, prop: Key): Value =
   if get_positional_count(arg_count, has_keyword_args) < 1:
     raise new_exception(types.Exception, "ServerRequest method requires self")
   let self_val = get_positional_arg(args, 0, has_keyword_args)
@@ -136,25 +136,25 @@ proc server_request_get_prop(vm: VirtualMachine, args: ptr UncheckedArray[Value]
     raise new_exception(types.Exception, "ServerRequest methods must be called on an instance")
   return instance_props(self_val).getOrDefault(prop, NIL)
 
-proc server_request_path(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_path(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "path".to_key())
 
-proc server_request_method(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "method".to_key())
 
-proc server_request_url(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_url(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "url".to_key())
 
-proc server_request_params(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_params(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "params".to_key())
 
-proc server_request_headers(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_headers(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "headers".to_key())
 
-proc server_request_body(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_body(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "body".to_key())
 
-proc server_request_body_params(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc server_request_body_params(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   server_request_get_prop(vm, args, arg_count, has_keyword_args, "body_params".to_key())
 
 proc http_get*(url: string, headers: Table[string, string] = initTable[string, string]()): string =
@@ -197,7 +197,7 @@ proc http_delete*(url: string, headers: Table[string, string] = initTable[string
   client.close()
 
 # Helper function that uses Request class for consistency
-proc vm_http_get_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_http_get_helper(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # http_get(url, [headers]) -> Future[Response]
   if arg_count < 1:
     raise new_exception(types.Exception, "http_get requires at least a URL")
@@ -215,7 +215,7 @@ proc vm_http_get_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg
   # Send request
   return call_native_fn(request_send, vm, @[request])
 
-proc vm_http_post_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_http_post_helper(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # http_post(url, body, [headers]) -> Future[Response]
   if arg_count < 2:
     raise new_exception(types.Exception, "http_post requires URL and body")
@@ -240,7 +240,7 @@ proc vm_http_post_helper(vm: VirtualMachine, args: ptr UncheckedArray[Value], ar
   return call_native_fn(request_send, vm, @[request])
 
 # Native function wrappers for VM (backward compatibility)
-proc vm_http_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_http_get(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "http_get requires at least 1 argument (url)")
@@ -257,7 +257,7 @@ proc vm_http_get(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
     let content = http_get(url, headers)
     return new_str_value(content)
 
-proc vm_http_get_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_http_get_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "http_get_json requires at least 1 argument (url)")
@@ -273,7 +273,7 @@ proc vm_http_get_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_c
 
     return http_get_json(url, headers)
 
-proc vm_http_post(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_http_post(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "http_post requires at least 1 argument (url)")
@@ -299,7 +299,7 @@ proc vm_http_post(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     let content = http_post(url, body, headers)
     return new_str_value(content)
 
-proc vm_http_post_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_http_post_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 2:
       raise new_exception(types.Exception, "http_post_json requires at least 2 arguments (url, body)")
@@ -316,7 +316,7 @@ proc vm_http_post_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_
 
     return http_post_json(url, body, headers)
 
-proc vm_http_put(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_http_put(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "http_put requires at least 1 argument (url)")
@@ -337,7 +337,7 @@ proc vm_http_put(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
     let content = http_put(url, body, headers)
     return new_str_value(content)
 
-proc vm_http_delete(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_http_delete(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "http_delete requires at least 1 argument (url)")
@@ -354,7 +354,7 @@ proc vm_http_delete(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
     let content = http_delete(url, headers)
     return new_str_value(content)
 
-proc vm_json_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_json_parse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "json_parse requires 1 argument (json_string)")
@@ -365,7 +365,7 @@ proc vm_json_parse(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
 
     return parse_json(json_arg.str)
 
-proc vm_json_stringify(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+proc vm_json_stringify(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
       raise new_exception(types.Exception, "json_stringify requires 1 argument")
@@ -412,7 +412,7 @@ proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   result["json_stringify".to_key()] = fn.to_ref_value()
 
 # Request constructor implementation
-proc request_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc request_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # new Request(url, [method], [headers], [body])
   if arg_count < 1:
     raise new_exception(types.Exception, "Request requires at least a URL")
@@ -453,7 +453,7 @@ proc request_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], ar
   return instance
 
 # Request.send method - sends the request and returns a Future[Response]
-proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc request_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Request.send requires self")
 
@@ -543,7 +543,7 @@ proc request_send(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   return future
 
 # Response constructor implementation
-proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc response_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # new Response(status, body, [headers])
   if arg_count < 2:
     raise new_exception(types.Exception, "Response requires status and body")
@@ -572,7 +572,7 @@ proc response_constructor(vm: VirtualMachine, args: ptr UncheckedArray[Value], a
   return instance
 
 # Response.json method - parses body as JSON
-proc response_json(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc response_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Response.json requires self")
 
@@ -674,7 +674,7 @@ type
 
 # Global storage for handler and VM reference
 var gene_handler_global: Value = NIL
-var gene_vm_global: VirtualMachine = nil
+var gene_vm_global: ptr VirtualMachine = nil
 
 # Queue for pending handler requests
 var handler_queue {.threadvar.}: Deque[HandlerRequest]
@@ -682,7 +682,7 @@ var queue_lock: Lock
 initLock(queue_lock)
 
 # Process pending handler requests (called from VM main loop)
-proc process_handler_queue*(vm: VirtualMachine) {.exportc, dynlib.} =
+proc process_handler_queue*(vm: ptr VirtualMachine) {.exportc, dynlib.} =
   {.cast(gcsafe).}:
     withLock(queue_lock):
       while handler_queue.len > 0:
@@ -700,7 +700,7 @@ proc process_handler_queue*(vm: VirtualMachine) {.exportc, dynlib.} =
         req.completed[] = true
 
 # Execute a Gene function in VM context
-proc execute_gene_function(vm: VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
+proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     case fn.kind:
     of VkNativeFn:
@@ -844,7 +844,7 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       await req.respond(Http500, "Invalid response type")
 
 # Start HTTP server
-proc vm_start_server(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 1:
     raise new_exception(types.Exception, "start_server requires at least a port")
 
@@ -887,7 +887,7 @@ proc vm_start_server(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   return NIL
 
 # Create a response
-proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_respond(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 1:
     raise new_exception(types.Exception, "respond requires at least status or body")
 
@@ -936,7 +936,7 @@ proc vm_respond(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: 
   
   return instance
 
-proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 1:
     raise new_exception(types.Exception, "redirect requires a destination URL")
 
@@ -967,7 +967,7 @@ proc vm_redirect(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
   return instance
 
 # Run event loop forever
-proc vm_run_forever(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_run_forever(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   echo "Running event loop..."
 
   # Start a timer to periodically process the handler queue
