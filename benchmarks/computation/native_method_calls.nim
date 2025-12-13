@@ -6,15 +6,15 @@ when isMainModule:
   import ../../src/gene/compiler
   import ../../src/gene/vm
 
-  proc native_method0(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  proc native_method0(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
     # {.cast(gcsafe).}:
     #   echo fmt"native_method0 {args[0]}"
-    discard
+    return NIL
 
-  proc native_method1(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  proc native_method1(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
     # {.cast(gcsafe).}:
     #   echo fmt"native_method1 {args[0]} {args[1]}"
-    discard
+    return NIL
 
   var repeats = 1000
   var callsPerRepeat = 100

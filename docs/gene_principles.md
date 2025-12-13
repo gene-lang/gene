@@ -162,7 +162,7 @@ g/0                          # => 1 (element access)
 
 ```nim
 # In src/gene/vm/core.nim
-proc string_to_upper(vm: VirtualMachine, args: ptr UncheckedArray[Value],
+proc string_to_upper(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
                      arg_count: int, has_keyword_args: bool): Value =
   let self_arg = get_positional_arg(args, 0, has_keyword_args)
   return self_arg.str.toUpperAscii().to_value()

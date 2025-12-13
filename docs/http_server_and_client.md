@@ -93,7 +93,7 @@ Server requests have these properties:
 Currently only native functions registered in Gene can work as handlers:
 ```nim
 # In genex/http.nim
-proc my_handler(vm: VirtualMachine, args: Value): Value {.gcsafe.} =
+proc my_handler(vm: ptr VirtualMachine, args: Value): Value {.gcsafe.} =
   let req = args.gene.children[0]
   # Process request...
   return vm_respond(vm, response_args)

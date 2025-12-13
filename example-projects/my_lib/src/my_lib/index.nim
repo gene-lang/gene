@@ -5,7 +5,7 @@ include ../../../../src/gene/extension/boilerplate
 
 proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   result = new_namespace("my_lib")
-  let upcase_fn = proc(vm: VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.wrap_exception, gcsafe, nimcall.} =
+  let upcase_fn = proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.wrap_exception, gcsafe, nimcall.} =
     if arg_count < 1:
       not_allowed("upcase expects 1 argument")
     let v = args[0]

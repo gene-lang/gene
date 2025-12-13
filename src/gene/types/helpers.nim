@@ -38,6 +38,15 @@ proc free_vm_ptr*(vm: ptr VirtualMachine) =
   reset(vm[])
   dealloc(vm)
 
+proc free_vm_ptr_fast*(vm: ptr VirtualMachine) =
+  ## Release the VM container without walking nested ref-counted fields.
+  ##
+  ## This is useful for process teardown paths where the OS will reclaim
+  ## remaining allocations and we want to avoid paying destructor costs.
+  if vm.is_nil:
+    return
+  dealloc(vm)
+
 proc init_app_and_vm*() =
   # Reset gene namespace initialization flag since we're creating a new App
   gene_namespace_initialized = false

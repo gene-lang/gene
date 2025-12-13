@@ -28,9 +28,9 @@ proc main(): int =
   
   if args.len == 0:
     # No arguments, show help
-    let result = CommandMgr.lookup("help")
-    if result != nil:
-      let helpResult = result("help", @[])
+    let helpCommand = CommandMgr.lookup("help")
+    if helpCommand != nil:
+      let helpResult = helpCommand("help", @[])
       if helpResult.output.len > 0:
         echo helpResult.output
     return 0
@@ -51,18 +51,21 @@ proc main(): int =
     return 1
   
   # Execute the command
-  let result = handler(cmd, command_args)
-  if not result.success:
-    if result.error.len > 0:
-      echo "Error: ", result.error
+  let cmdResult = handler(cmd, command_args)
+  if not cmdResult.success:
+    if cmdResult.error.len > 0:
+      echo "Error: ", cmdResult.error
     return 1
-  elif result.output.len > 0:
-    echo result.output
+  elif cmdResult.output.len > 0:
+    echo cmdResult.output
   return 0
 
 when isMainModule:
   let exit_code = main()
   if gene_types.VM != nil:
-    gene_types.free_vm_ptr(gene_types.VM)
+    if existsEnv("GENE_DEEP_VM_FREE") and getEnv("GENE_DEEP_VM_FREE") == "1":
+      gene_types.free_vm_ptr(gene_types.VM)
+    else:
+      gene_types.free_vm_ptr_fast(gene_types.VM)
     gene_types.VM = nil
   quit(exit_code)
