@@ -209,6 +209,13 @@ proc init_thread_class*() =
   if not gene_namespace_initialized:
     return
 
+  # Check if already initialized (idempotency for worker threads)
+  # Prevents worker threads from racing to mutate shared App
+  if App.app.thread_class.kind == VkClass:
+    THREAD_CLASS_VALUE = App.app.thread_class
+    THREAD_MESSAGE_CLASS_VALUE = App.app.thread_message_class
+    return
+
   # Create Thread class
   let thread_class = new_class("Thread")
   # Don't set parent yet - will be set later when object_class is available

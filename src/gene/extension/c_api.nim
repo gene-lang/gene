@@ -88,13 +88,19 @@ proc gene_wrap_native_fn*(fn: NativeFn): Value {.exportc, dynlib.} =
 # Argument helpers
 proc gene_get_arg*(args: ptr Value, arg_count: cint, has_keyword_args: bool, index: cint): Value {.exportc, dynlib.} =
   ## Get positional argument at index
-  if args == nil or index < 0 or index >= arg_count:
+  if args == nil or index < 0:
     return NIL
 
-  # For C extensions, just return args[index] directly
-  # The has_keyword_args offset is already handled by the VM when calling
+  # When has_keyword_args=true, args[0] is the keyword map
+  # Positional arguments start at args[1]
   let args_array = cast[ptr UncheckedArray[Value]](args)
-  return args_array[index]
+  let offset = if has_keyword_args: 1 else: 0
+  let actual_index = offset + index
+
+  if actual_index >= arg_count:
+    return NIL
+
+  return args_array[actual_index]
 
 # Error handling
 proc gene_raise_error*(message: cstring) {.exportc, dynlib, noreturn.} =
