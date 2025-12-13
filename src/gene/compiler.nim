@@ -1997,45 +1997,30 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
       )
     return
 
-  # Fallback path for named properties or other complex invocations
-  let initial_pos = self.output.instructions.len
-  let start_pos = initial_pos
-  let label = new_label()
-  self.emit(Instruction(kind: IkGeneStartDefault, arg0: label.to_value()))
-
-  # Skip the macro path - jump directly to function call
-  self.emit(Instruction(kind: IkJump, arg0: label.to_value()))
-
-  # Function call path
-  self.emit(Instruction(kind: IkNoop, label: label))
-
-  # After IkGeneStartDefault replaces method with frame, stack is [object, frame]
-  # We need to swap to get [frame, object] for IkGeneAddChild
-  self.emit(Instruction(kind: IkSwap))
-
-  # Now add the object as the first argument
-  self.emit(Instruction(kind: IkGeneAddChild))
-
-  # Add properties and arguments
+  # Fast path: method call with keyword arguments.
+  # Stack layout expected by IkUnifiedMethodCallKw is:
+  #   [obj, kw_key1, kw_val1, ..., kw_keyN, kw_valN, pos_arg1, ..., pos_argM]
+  # Preserve evaluation order: keyword values first, then positional args.
   if is_macro_like_method:
     self.quote_level.inc()
 
-  # Add properties if any
   for k, v in gene.props:
+    self.emit(Instruction(kind: IkPushValue, arg0: cast[Value](k)))
     self.compile(v)
-    self.emit(Instruction(kind: IkGeneSetProp, arg0: k))
 
-  # Add remaining arguments (skip method name if it's in children)
   for i in start_index..<gene.children.len:
     self.compile(gene.children[i])
-    self.emit(Instruction(kind: IkGeneAddChild))
 
   if is_macro_like_method:
     self.quote_level.dec()
 
-  # Emit the call instruction
-  # Note: Tail call optimization seems to have issues with methods, disable for now
-  self.emit(Instruction(kind: IkGeneEnd, arg0: start_pos, label: label))
+  let kw_count = gene.props.len
+  let total_items = arg_count + kw_count * 2
+  if kw_count > 0xFFFF or total_items > 0xFFFF:
+    not_allowed("Too many keyword arguments for unified method call")
+  let packed = ((total_items shl 16) or kw_count).int32
+  self.emit(Instruction(kind: IkUnifiedMethodCallKw, arg0: method_value, arg1: packed))
+  return
 
 proc compile_gene(self: Compiler, input: Value) =
   let gene = input.gene
@@ -2070,8 +2055,10 @@ proc compile_gene(self: Compiler, input: Value) =
     self.compile_literal(gene.type)
     return
   
-  # Special case: super calls
-  if gene.type.kind == VkSymbol and gene.type.str == "super":
+  # Special case: super calls (positional-only fast path).
+  # If keyword arguments are present, fall through so `super` becomes a runtime proxy
+  # and keyword pairs can be forwarded via unified method call dispatch.
+  if gene.type.kind == VkSymbol and gene.type.str == "super" and gene.props.len == 0:
     if gene.children.len == 0:
       not_allowed("super requires a member")
     let member = gene.children[0]

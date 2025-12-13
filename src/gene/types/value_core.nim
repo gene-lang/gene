@@ -1,4 +1,5 @@
 import math, hashes, tables, sets, re, bitops, unicode, strutils, strformat
+import locks
 import random
 import times
 import os
@@ -322,27 +323,43 @@ proc to_ref_value*(v: ptr Reference): Value {.inline.} =
 #################### Symbol #####################
 
 var SYMBOLS*: ManagedSymbols
+var SYMBOLS_LOCK: Lock
+
+initLock(SYMBOLS_LOCK)
 
 proc get_symbol*(i: int): string {.inline.} =
-  SYMBOLS.store[i]
+  {.cast(gcsafe).}:
+    acquire(SYMBOLS_LOCK)
+    try:
+      result = SYMBOLS.store[i]
+    finally:
+      release(SYMBOLS_LOCK)
 
 proc get_symbol_gcsafe*(i: int): string {.inline, gcsafe.} =
   {.cast(gcsafe).}:
-    result = SYMBOLS.store[i]
+    acquire(SYMBOLS_LOCK)
+    try:
+      result = SYMBOLS.store[i]
+    finally:
+      release(SYMBOLS_LOCK)
 
 proc to_symbol_value*(s: string): Value =
   {.cast(gcsafe).}:
-    let found = SYMBOLS.map.get_or_default(s, -1)
-    if found != -1:
-      let i = found.uint64
-      result = cast[Value](SYMBOL_TAG or i)
-    else:
-      let new_id = SYMBOLS.store.len.uint64
-      # Ensure symbol ID fits in 48 bits
-      assert new_id <= PAYLOAD_MASK, "Too many symbols for NaN boxing"
-      result = cast[Value](SYMBOL_TAG or new_id)
-      SYMBOLS.map[s] = SYMBOLS.store.len
-      SYMBOLS.store.add(s)
+    acquire(SYMBOLS_LOCK)
+    try:
+      let found = SYMBOLS.map.get_or_default(s, -1)
+      if found != -1:
+        let i = found.uint64
+        result = cast[Value](SYMBOL_TAG or i)
+      else:
+        let new_id = SYMBOLS.store.len.uint64
+        # Ensure symbol ID fits in 48 bits
+        assert new_id <= PAYLOAD_MASK, "Too many symbols for NaN boxing"
+        result = cast[Value](SYMBOL_TAG or new_id)
+        SYMBOLS.map[s] = SYMBOLS.store.len
+        SYMBOLS.store.add(s)
+    finally:
+      release(SYMBOLS_LOCK)
 
 proc to_key*(s: string): Key {.inline.} =
   cast[Key](to_symbol_value(s))

@@ -805,7 +805,11 @@ proc call_super_method_resolved(self: VirtualMachine, parent_class: Class, insta
       for i in 0..<args.len:
         all_args[i + 1] = args[i]
       if all_args.len > 0:
-        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+        let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
+        if kw_pairs.len > 0:
+          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+        else:
+          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
 
     var new_frame = new_frame()
     new_frame.kind = if expect_macro: FkMacroMethod else: FkMethod

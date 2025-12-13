@@ -40,10 +40,9 @@ template ensure_scope_capacity(scope: Scope, count: int) =
     scope.members.add(NIL)
 
 proc key_to_name(key: Key): string {.inline.} =
-  let idx = key.int64
-  if idx >= 0 and idx < SYMBOLS.store.len.int64:
-    result = get_symbol(idx.int)
-  else:
+  try:
+    result = cast[Value](key).str
+  except CatchableError:
     result = "<keyword>"
 
 proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Value],

@@ -25,6 +25,22 @@ test_vm """
   (c .add 3)
 """, 5.to_value()
 
+# Super call to parent eager method should forward keyword args
+
+test_vm """
+  (class Base
+    (.fn m [^x]
+      x
+    )
+  )
+  (class Child < Base
+    (.fn m [^x]
+      (super .m ^x x)
+    )
+  )
+  ((new Child) .m ^x 42)
+""", 42.to_value()
+
 # Super call to parent macro method should preserve unevaluated args
 
 test_vm """
