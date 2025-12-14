@@ -28,13 +28,6 @@ proc ensure_frame_pool() =
       FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
       FRAME_ALLOCS.inc()
 
-proc ensure_ref_pool() =
-  ## Lazily allocate the shared reference pool for this thread.
-  if REF_POOL.len == 0:
-    REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
-    for i in 0..<INITIAL_REF_POOL_SIZE:
-      REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
-
 proc new_thread_vm(): ptr VirtualMachine =
   ## Create a VM instance for a worker thread (App/shared bits are populated elsewhere).
   new_vm_ptr()
@@ -64,7 +57,6 @@ proc setup_thread_vm(thread_id: int) =
   current_thread_id = thread_id
   VM = new_thread_vm()
   ensure_frame_pool()
-  ensure_ref_pool()
   VM.thread_local_ns = create_thread_namespace(thread_id)
   gene_namespace_initialized = true
   init_thread_class()

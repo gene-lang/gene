@@ -153,17 +153,11 @@ converter to_value*(k: Key): Value {.inline.} =
 # - new_ref/new_gene/new_str_value/new_array_value/new_map_value/new_instance_value
 #   return ref_count = 1. Boxing to Value does NOT retain; stack ops are ref-neutral.
 #   Store outside the stack? Call retain/release.
-# - release() returns Reference/Gene/String/Array/Map/Instance to pools or deallocates
-#   when ref_count reaches 0. REF_POOL is bounded; array/map/instance are not pooled today.
+# - release() destroys Reference/Gene/String/Array/Map/Instance when ref_count reaches 0.
 # - Scope lifetime is owned by VM instructions (IkScopeStart/IkScopeEnd); frames borrow/own
 #   per compiler emission. Frames are pooled via Frame.free().
 # Manual ref counting is used instead of Nim ARC/ORC for Value-backed types.
 # Map, Array, and Instance use dedicated NaN-tagged objects rather than Reference.
-
-# Memory pool for reference objects
-var REF_POOL* {.threadvar.}: seq[ptr Reference]
-const INITIAL_REF_POOL_SIZE* = 512
-const MAX_REF_POOL_SIZE* = 4096
 
 # Manual reference counting for Values
 proc retain*(v: Value) {.inline.} =
@@ -201,10 +195,8 @@ proc release*(v: Value) {.inline.} =
       of REF_TAG:
         let x = cast[ptr Reference](u and PAYLOAD_MASK)
         if x.ref_count == 1:
-          if REF_POOL.len < MAX_REF_POOL_SIZE:
-            REF_POOL.add(x)
-          else:
-            dealloc(x)
+          reset(x[])
+          dealloc(x)
         else:
           x.ref_count.dec()
       of ARRAY_TAG:
@@ -298,11 +290,7 @@ proc `$`*(self: ptr Reference): string =
   $self.kind
 
 proc new_ref*(kind: ValueKind): ptr Reference {.inline.} =
-  if REF_POOL.len > 0:
-    result = REF_POOL.pop()
-    result[].reset()
-  else:
-    result = cast[ptr Reference](alloc0(sizeof(Reference)))
+  result = cast[ptr Reference](alloc0(sizeof(Reference)))
   copy_mem(result, kind.addr, 2)
   result.ref_count = 1
 

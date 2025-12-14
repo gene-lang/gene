@@ -67,12 +67,6 @@ proc init_app_and_vm*() =
       FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
       FRAME_ALLOCS.inc()  # Count the pre-allocated frames
 
-
-  if REF_POOL.len == 0:
-    REF_POOL = newSeqOfCap[ptr Reference](INITIAL_REF_POOL_SIZE)
-    for i in 0..<INITIAL_REF_POOL_SIZE:
-      REF_POOL.add(cast[ptr Reference](alloc0(sizeof(Reference))))
-
   let r = new_ref(VkApplication)
   r.app = new_app()
   r.app.global_ns = new_namespace("global").to_value()
