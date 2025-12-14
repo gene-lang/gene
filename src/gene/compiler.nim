@@ -991,7 +991,7 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
         i += 2
         if gene.children[i].kind != VkInt:
           not_allowed("enum member value must be an integer")
-        value = gene.children[i].int
+        value = gene.children[i].int64.int
       
       # Push member name and value
       self.emit(Instruction(kind: IkPushValue, arg0: member.str.to_value()))

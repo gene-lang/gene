@@ -1747,7 +1747,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.frame.push(value)
 
       of IkSetMember:
-        let name = inst.arg0.Key
+        let name = cast[Key](inst.arg0.raw)
         var value: Value
         self.frame.pop2(value)
         var target: Value
@@ -1956,7 +1956,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkArray:
             # Handle array index access
             if prop.kind == VkInt:
-              let idx = prop.int
+              let idx = prop.int64.int
               let arr = array_data(target)
               if idx >= 0 and idx < arr.len:
                 self.frame.push(arr[idx])
@@ -2055,7 +2055,7 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkJumpIfMatchSuccess:
         {.push checks: off}
         # if self.frame.match_result.fields[inst.arg0.int64] == MfSuccess:
-        let index = inst.arg0.int
+        let index = inst.arg0.int64.int
         if self.frame.scope.members.len > index:
           let target = inst.arg1.int32.int
           if target < self.pc:
@@ -2257,13 +2257,13 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkMapStart:
         self.frame.push(new_map_value())
       of IkMapSetProp:
-        let key = inst.arg0.Key
+        let key = cast[Key](inst.arg0.raw)
         var value: Value
         self.frame.pop2(value)
         map_data(self.frame.current())[key] = value
       of IkMapSetPropValue:
         # Set property with literal value
-        let key = inst.arg0.Key
+        let key = cast[Key](inst.arg0.raw)
         map_data(self.frame.current())[key] = inst.arg1
       of IkMapSpread:
         # Spread map key-value pairs into current map
@@ -2515,7 +2515,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
       of IkGeneSetProp:
         {.push checks: off}
-        let key = inst.arg0.Key
+        let key = cast[Key](inst.arg0.raw)
         var value: Value
         self.frame.pop2(value)
         let current = self.frame.current()
@@ -2643,7 +2643,7 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkGeneSetPropValue:
         # Set property with literal value
         {.push checks: off}
-        let key = inst.arg0.Key
+        let key = cast[Key](inst.arg0.raw)
         let current = self.frame.current()
         case current.kind:
           of VkGene:
@@ -3869,9 +3869,9 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         # Store in appropriate parent
         if parent_ns != nil:
-          parent_ns[name.Key] = v
+          parent_ns[cast[Key](name.raw)] = v
         else:
-          self.frame.ns[name.Key] = v
+          self.frame.ns[cast[Key](name.raw)] = v
 
         self.frame.push(v)
 

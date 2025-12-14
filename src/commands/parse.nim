@@ -78,7 +78,7 @@ proc format_value(value: Value, format: string, indent: int = 0): string =
     of VkFloat:
       return $value.to_float()
     of VkChar:
-      return "'" & $value.char & "'"
+      return "'" & $chr((value.raw and 0xFF).int) & "'"
     of VkString:
       # Properly escape strings
       result = "\""
@@ -152,7 +152,7 @@ proc format_value(value: Value, format: string, indent: int = 0): string =
     of VkFloat:
       return spaces & $value.to_float()
     of VkChar:
-      return spaces & "'" & $value.char & "'"
+      return spaces & "'" & $chr((value.raw and 0xFF).int) & "'"
     of VkString:
       # Properly escape strings
       result = spaces & "\""

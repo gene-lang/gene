@@ -13,7 +13,7 @@ proc formatValue*(value: Value): string =
   of VkFloat:
     result = $value.to_float()
   of VkChar:
-    result = "'" & $value.char & "'"
+    result = "'" & $chr((value.raw and 0xFF).int) & "'"
   of VkString:
     result = "\"" & value.str & "\""
   of VkSymbol:
@@ -56,14 +56,14 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
        IkAssign, IkData:
       result &= " " & $inst.arg0
     of IkSetMember, IkGetMember:
-      let key = inst.arg0.Key
-      let symbol_value = cast[Value](key)
-      let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+      let key = cast[Key](inst.arg0.raw)
+      let symbol_value = Value(raw: cast[uint64](key))
+      let symbol_index = symbol_value.raw and PAYLOAD_MASK
       result &= " " & get_symbol(symbol_index.int)
     of IkMapSetProp, IkGeneSetProp:
-      let key = inst.arg0.Key
-      let symbol_value = cast[Value](key)
-      let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+      let key = cast[Key](inst.arg0.raw)
+      let symbol_value = Value(raw: cast[uint64](key))
+      let symbol_index = symbol_value.raw and PAYLOAD_MASK
       result &= " " & get_symbol(symbol_index.int)
     of IkSetChild, IkGetChild:
       result &= " " & $inst.arg0.int64
@@ -122,9 +122,9 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
       else:
         result &= formatValue(inst.arg0)
     of IkSetMember, IkGetMember:
-      let key = inst.arg0.Key
-      let symbol_value = cast[Value](key)
-      let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+      let key = cast[Key](inst.arg0.raw)
+      let symbol_value = Value(raw: cast[uint64](key))
+      let symbol_index = symbol_value.raw and PAYLOAD_MASK
       result &= "." & get_symbol(symbol_index.int)
     of IkSetChild, IkGetChild:
       result &= "[" & $inst.arg0.int64 & "]"
@@ -136,9 +136,9 @@ proc formatInstruction*(inst: Instruction, index: int, format: string, show_addr
       else:
         result &= "label=" & $inst.arg0.int64
     of IkMapSetProp, IkGeneSetProp:
-      let key = inst.arg0.Key
-      let symbol_value = cast[Value](key)
-      let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+      let key = cast[Key](inst.arg0.raw)
+      let symbol_value = Value(raw: cast[uint64](key))
+      let symbol_index = symbol_value.raw and PAYLOAD_MASK
       result &= "^" & get_symbol(symbol_index.int)
     of IkGeneStartDefault:
       if inst.arg0.kind == VkInt:

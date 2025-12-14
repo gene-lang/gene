@@ -132,7 +132,8 @@ proc write_value(stream: Stream, v: Value) =
   of VkSymbol:
     stream.write_string(v.str)
   of VkChar:
-    stream.write(v.char.uint32)
+    # Extract char from NaN-boxed value
+    stream.write((v.raw and 0xFF).uint32)
   of VkFunctionDef:
     writeFunctionDef(stream, v.ref.function_def)
   else:

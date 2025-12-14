@@ -24,31 +24,41 @@ const SMALL_INT_MAX* = (1'i64 shl 47) - 1
 const I64_MASK* = 0xC000_0000_0000_0000u64  # Will be removed
 
 
-# Primary type tags in NaN space
-# We use non-canonical quiet NaN values (0xFFF8-0xFFFF prefix with non-zero payload)
-const SMALL_INT_TAG* = 0xFFF8_0000_0000_0000u64   # 48-bit integers
-const POINTER_TAG* = 0xFFFC_0000_0000_0000u64     # Regular pointers
-const REF_TAG* = 0xFFFD_0000_0000_0000u64         # Reference objects (misc)
-const GENE_TAG* = 0xFFFA_0000_0000_0000u64        # Gene S-expressions
-const SYMBOL_TAG* = 0xFFF9_0000_0000_0000u64      # Symbols
-const STRING_TAG* = 0xFFFE_0000_0000_0000u64      # String pointers
-const ARRAY_TAG* = 0xFFF7_0000_0000_0000u64       # Array pointers
-const MAP_TAG* = 0xFFF6_0000_0000_0000u64         # Map pointers
-const INSTANCE_TAG* = 0xFFF5_0000_0000_0000u64    # Instance pointers
-const SPECIAL_TAG* = 0xFFF1_0000_0000_0000u64     # Special values (changed from 0xFFF0)
+# Primary type tags in NaN space (reorganized for GC)
+# We use non-canonical quiet NaN values (0xFFF1-0xFFFF prefix with non-zero payload)
+#
+# DESIGN: All managed types (need ref-counting) have tags >= 0xFFF8
+#         All non-managed types (immediate/global) have tags < 0xFFF8
+#         This enables fast isManaged() check: (tag >= 0xFFF8)
+
+# Non-managed types (< 0xFFF8) - no retain/release needed
+const SPECIAL_TAG*   = 0xFFF1_0000_0000_0000u64   # Special values (nil, bool, void, char)
+const SMALL_INT_TAG* = 0xFFF2_0000_0000_0000u64   # 48-bit immediate integers
+const SYMBOL_TAG*    = 0xFFF3_0000_0000_0000u64   # Symbol index (global SYMBOLS table)
+const POINTER_TAG*   = 0xFFF4_0000_0000_0000u64   # Raw pointers (non-refcounted)
+# 0xFFF5-0xFFF7 reserved for future non-managed types
+
+# Managed types (>= 0xFFF8) - need ref-counting retain/release
+const ARRAY_TAG*     = 0xFFF8_0000_0000_0000u64   # Array pointers (RC)
+const MAP_TAG*       = 0xFFF9_0000_0000_0000u64   # Map pointers (RC)
+const INSTANCE_TAG*  = 0xFFFA_0000_0000_0000u64   # Instance pointers (RC)
+const GENE_TAG*      = 0xFFFB_0000_0000_0000u64   # Gene S-expression pointers (RC)
+const REF_TAG*       = 0xFFFC_0000_0000_0000u64   # Reference object pointers (RC)
+const STRING_TAG*    = 0xFFFD_0000_0000_0000u64   # String pointers (RC)
+# 0xFFFE-0xFFFF reserved for future managed types (e.g., weak refs)
 
 # Special values (using SPECIAL_TAG)
-const NIL* = cast[Value](SPECIAL_TAG or 0)
-const TRUE* = cast[Value](SPECIAL_TAG or 1)
-const FALSE* = cast[Value](SPECIAL_TAG or 2)
+const NIL* = Value(raw: SPECIAL_TAG or 0)
+const TRUE* = Value(raw: SPECIAL_TAG or 1)
+const FALSE* = Value(raw: SPECIAL_TAG or 2)
 
-const VOID* = cast[Value](SPECIAL_TAG or 3)
-const PLACEHOLDER* = cast[Value](SPECIAL_TAG or 4)
+const VOID* = Value(raw: SPECIAL_TAG or 3)
+const PLACEHOLDER* = Value(raw: SPECIAL_TAG or 4)
 # Used when a key does not exist in a map
-const NOT_FOUND* = cast[Value](SPECIAL_TAG or 5)
+const NOT_FOUND* = Value(raw: SPECIAL_TAG or 5)
 
 # Special variable used by the parser
-const PARSER_IGNORE* = cast[Value](SPECIAL_TAG or 6)
+const PARSER_IGNORE* = Value(raw: SPECIAL_TAG or 6)
 
 # Character encoding in special values (using SPECIAL_TAG prefix)
 const CHAR_MASK = 0xFFF1_0000_0001_0000u64
@@ -58,7 +68,7 @@ const CHAR4_MASK = 0xFFF1_0000_0004_0000u64
 
 # String constants
 
-const EMPTY_STRING* = cast[Value](STRING_TAG)  # Empty string is a null pointer with STRING_TAG
+const EMPTY_STRING* = Value(raw: STRING_TAG)  # Empty string is a null pointer with STRING_TAG
 
 const BIGGEST_INT = 2^61 - 1
 
@@ -111,6 +121,61 @@ var gene_namespace_initialized* {.threadvar.}: bool
 var current_thread_id* {.threadvar.}: int
 
 randomize()
+
+#################### GC Infrastructure #################
+
+# Fast managed check - single comparison to determine if value needs RC
+proc isManaged*(v: Value): bool {.inline.} =
+  ## Returns true if value is a managed (heap-allocated, ref-counted) type
+  ## All managed types have tags >= 0xFFF8
+  (v.raw and 0xFFF8_0000_0000_0000'u64) == 0xFFF8_0000_0000_0000'u64
+
+# GC operations (retainManaged/releaseManaged) are implemented in helpers.nim
+# They will be available when types module is fully imported
+
+# Value conversion helpers
+proc toValue*(raw: uint64): Value {.inline.} =
+  ## Convert raw uint64 to Value (for interfacing with cast-heavy code)
+  Value(raw: raw)
+
+proc toRaw*(v: Value): uint64 {.inline.} =
+  ## Extract raw uint64 from Value
+  v.raw
+
+# Nim lifecycle hooks for automatic reference counting
+# TODO: Re-enable these hooks once compilation is working
+# These will enable automatic GC via reference counting
+
+when false:  # Temporarily disabled
+  proc `=destroy`*(v: var Value) =
+    ## Called when Value goes out of scope
+    ## Decrements ref count for managed types
+    if isManaged(v):
+      releaseManaged(v.raw)
+
+  proc `=copy`*(dest: var Value; src: Value) =
+    ## Called on assignment: dest = src
+    ## Must destroy old dest, copy bits, then retain new value
+    # Destroy old dest value (if managed)
+    if isManaged(dest):
+      releaseManaged(dest.raw)
+
+    # Bitwise copy
+    dest.raw = src.raw
+
+    # Retain new value (if managed)
+    if isManaged(src):
+      retainManaged(src.raw)
+
+  proc `=sink`*(dest: var Value; src: Value) =
+    ## Called on move/sink: dest = move(src)
+    ## Transfers ownership without retain/release
+    # Destroy old dest value (if managed)
+    if isManaged(dest):
+      releaseManaged(dest.raw)
+
+    # Transfer ownership (no retain - src won't be destroyed)
+    dest.raw = src.raw
 
 #################### Common ######################
 
@@ -291,8 +356,11 @@ proc `$`*(self: ptr Reference): string =
 
 proc new_ref*(kind: ValueKind): ptr Reference {.inline.} =
   result = cast[ptr Reference](alloc0(sizeof(Reference)))
-  copy_mem(result, kind.addr, 2)
   result.ref_count = 1
+  # Can't assign to discriminant directly, use direct memory write
+  # ref_count is 8 bytes, kind starts at offset 8
+  var k = kind
+  copy_mem(cast[pointer](cast[uint](result) + 8), addr k, 2)
 
 proc `ref`*(v: Value): ptr Reference {.inline.} =
   let u = cast[uint64](v)
@@ -435,13 +503,13 @@ proc kind_slow(v: Value, u: uint64, tag: uint64): ValueKind {.noinline.} =
     of SPECIAL_TAG:
       # Special values
       case u:
-        of cast[uint64](NIL):
+        of NIL.raw:
           return VkNil
-        of cast[uint64](TRUE), cast[uint64](FALSE):
+        of TRUE.raw, FALSE.raw:
           return VkBool
-        of cast[uint64](VOID):
+        of VOID.raw:
           return VkVoid
-        of cast[uint64](PLACEHOLDER):
+        of PLACEHOLDER.raw:
           return VkPlaceholder
         else:
           # Check for character values
@@ -767,7 +835,7 @@ proc `[]`*(self: Value, i: int): Value =
             if i >= r.bytes_data.len:
               return NIL
             else:
-              return r.bytes_data[i].Value
+              return r.bytes_data[i].to_value()
           of VkRange:
             # Calculate the i-th element in the range
             let start_int = r.range_start.int64
@@ -779,12 +847,12 @@ proc `[]`*(self: Value, i: int): Value =
             # Check if the value is within the range bounds
             if step_int > 0:
               if value >= start_int and value < end_int:
-                return value.Value
+                return Value(raw: SMALL_INT_TAG or (cast[uint64](value) and PAYLOAD_MASK))
               else:
                 return NIL
             else:  # step_int < 0
               if value <= start_int and value > end_int:
-                return value.Value
+                return Value(raw: SMALL_INT_TAG or (cast[uint64](value) and PAYLOAD_MASK))
               else:
                 return NIL
           else:
@@ -879,23 +947,23 @@ converter to_value*(v: int): Value {.inline, noSideEffect.} =
   let i = v.int64
   if i >= SMALL_INT_MIN and i <= SMALL_INT_MAX:
     # Fits in 48 bits - use NaN boxing
-    result = cast[Value](SMALL_INT_TAG or (cast[uint64](i) and PAYLOAD_MASK))
+    result = Value(raw: SMALL_INT_TAG or (cast[uint64](i) and PAYLOAD_MASK))
   else:
     # TODO: Allocate BigInt for values outside 48-bit range
     raise newException(OverflowDefect, "Integer " & $i & " outside supported range")
 
 converter to_value*(v: int16): Value {.inline, noSideEffect.} =
   # int16 always fits in 48 bits
-  result = cast[Value](SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
+  result = Value(raw: SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
 
 converter to_value*(v: int32): Value {.inline, noSideEffect.} =
   # int32 always fits in 48 bits
-  result = cast[Value](SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
+  result = Value(raw: SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
 
 converter to_value*(v: int64): Value {.inline, noSideEffect.} =
   if v >= SMALL_INT_MIN and v <= SMALL_INT_MAX:
     # Fits in 48 bits - use NaN boxing
-    result = cast[Value](SMALL_INT_TAG or (cast[uint64](v) and PAYLOAD_MASK))
+    result = Value(raw: SMALL_INT_TAG or (cast[uint64](v) and PAYLOAD_MASK))
   else:
     # TODO: Allocate BigInt for values outside 48-bit range
     raise newException(OverflowDefect, "Integer " & $v & " outside supported range")
@@ -903,7 +971,7 @@ converter to_value*(v: int64): Value {.inline, noSideEffect.} =
 converter to_int*(v: Value): int64 {.inline, noSideEffect.} =
   if is_small_int(v):
     # Extract and sign-extend from 48 bits
-    let raw = cast[uint64](v) and PAYLOAD_MASK
+    let raw = v.raw and PAYLOAD_MASK
     if (raw and 0x8000_0000_0000u64) != 0:
       # Negative - sign extend
       result = cast[int64](raw or 0xFFFF_0000_0000_0000u64)
@@ -1010,9 +1078,9 @@ proc len*(self: Value): int =
     return self.gene.children.len
   of VkRange:
     # Calculate range length: (end - start) / step + 1
-    let start = self.ref.range_start.int
-    let endVal = self.ref.range_end.int
-    let step = if self.ref.range_step == NIL: 1 else: self.ref.range_step.int
+    let start = self.ref.range_start.int64
+    let endVal = self.ref.range_end.int64
+    let step = if self.ref.range_step == NIL: 1 else: self.ref.range_step.int64
     if step == 0:
       return 0
     return ((endVal - start) div step) + 1

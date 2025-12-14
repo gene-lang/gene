@@ -1815,7 +1815,7 @@ proc vm_str_interpolation(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value
     of VkNil:
       result.add("nil")
     of VkChar:
-      result.add($child.char)
+      result.add($chr((child.raw and 0xFF).int))
     of VkFloat:
       result.add($child.float)
     else:

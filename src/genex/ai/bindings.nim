@@ -21,7 +21,7 @@ proc geneValueToJson*(value: Value): JsonNode =
   of VkBool:
     result = %*value.to_bool
   of VkInt:
-    result = %*value.int
+    result = %*value.int64.int
   of VkFloat:
     result = %*value.float
   of VkString:

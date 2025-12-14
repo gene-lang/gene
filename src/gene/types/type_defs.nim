@@ -2,7 +2,12 @@
 import tables, sets, asyncdispatch, dynlib
 
 type
-  Value* {.bycopy, shallow.} = distinct int64  # No copy/destroy hooks needed for POD type
+  Value* {.bycopy.} = object
+    ## NaN-boxed value with automatic reference counting
+    ## Size: 8 bytes (same as distinct int64)
+    ## Enables =copy/=destroy hooks for GC
+    raw*: uint64
+
   CustomValue* = ref object of RootObj
 
   EnumDef* = ref object
@@ -195,14 +200,14 @@ type
     child_index*: int
 
   Gene* = object
-    ref_count*: int32
+    ref_count*: int
     `type`*: Value
     trace*: SourceTrace
     props*: Table[Key, Value]
     children*: seq[Value]
 
   String* = object
-    ref_count*: int32
+    ref_count*: int
     str*: string
 
   Document* = ref object
@@ -212,7 +217,7 @@ type
     # references*: References # Uncomment this when it's needed.
 
   ScopeObj* = object
-    ref_count*: int32
+    ref_count*: int
     tracker*: ScopeTracker
     parent*: Scope
     members*:  seq[Value]
@@ -779,7 +784,7 @@ type
     data*: seq[uint16]
 
   FrameObj* = object
-    ref_count*: int32
+    ref_count*: int
     kind*: FrameKind
     caller_frame*: Frame
     caller_address*: Address
@@ -900,6 +905,7 @@ const INST_SIZE* = sizeof(Instruction)
 type
   # Extended Reference type supporting all ValueKind variants
   Reference* = object
+    ref_count*: int  # Reference count for GC
     case kind*: ValueKind
       # Basic string-like types
       of VkString, VkSymbol:
@@ -1074,17 +1080,16 @@ type
 
       else:
         discard
-    ref_count*: int32
 
   ArrayObj* = object
-    ref_count*: int32
+    ref_count*: int
     arr*: seq[Value]
 
   MapObj* = object
-    ref_count*: int32
+    ref_count*: int
     map*: Table[Key, Value]
 
   InstanceObj* = object
-    ref_count*: int32
+    ref_count*: int
     instance_class*: Class
     instance_props*: Table[Key, Value]

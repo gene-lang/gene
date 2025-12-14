@@ -211,7 +211,8 @@ proc value_to_gene_str(self: Value): string =
   of VkFloat:
     result = $self.to_float()
   of VkChar:
-    result = "'" & $self.char & "'"
+    # Extract char from NaN-boxed value
+    result = "'" & $chr((self.raw and 0xFF).int) & "'"
   of VkString:
     result = "\"" & self.str & "\""
   of VkSymbol:
