@@ -2,10 +2,11 @@
 import streams, hashes, os, times, json, strutils, tables
 import ./types
 
-const 
+const
   GIR_MAGIC = "GENE"
   GIR_VERSION* = 1'u32
   COMPILER_VERSION = "0.1.0"
+  VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   
 type
   GirHeader* = object
@@ -297,7 +298,7 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   header.magic = ['G', 'E', 'N', 'E']
   header.version = GIR_VERSION
   header.compiler_version = COMPILER_VERSION
-  header.vm_abi = "nim-" & NimVersion & "-" & $sizeof(pointer) & "bit"
+  header.vm_abi = "nim-" & NimVersion & "-" & $sizeof(pointer) & "bit-valueabi" & $VALUE_ABI_VERSION
   header.timestamp = 0'i64  # TODO: Fix epochTime conversion
   header.debug = debug
   header.published = false
@@ -388,6 +389,15 @@ proc load_gir_file*(path: string): GirFile =
 
   header.compiler_version = stream.read_string()
   header.vm_abi = stream.read_string()
+
+  # Validate VALUE_ABI version to prevent loading incompatible GIR files
+  let expected_abi_marker = "-valueabi" & $VALUE_ABI_VERSION
+  if not header.vm_abi.contains(expected_abi_marker):
+    raise new_exception(types.Exception,
+      "Incompatible GIR file: VALUE_ABI mismatch. " &
+      "Expected valueabi" & $VALUE_ABI_VERSION & " but got: " & header.vm_abi &
+      ". Please recompile the source file.")
+
   header.timestamp = stream.readInt64()
   header.debug = stream.readBool()
   header.published = stream.readBool()

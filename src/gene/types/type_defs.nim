@@ -795,6 +795,7 @@ type
     args*: Value
     stack*: array[256, Value]
     stack_index*: uint16
+    stack_max*: uint16  # Track highest stack position for GC cleanup
     call_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function
     is_generator*: bool  # Set when executing in generator context
