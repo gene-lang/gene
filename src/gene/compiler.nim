@@ -1500,22 +1500,30 @@ proc compile_match(self: Compiler, gene: ptr Gene) =
 
   elif pattern.kind == VkArray:
     # Array pattern matching: (match [a b] [1 2])
-    # TODO: Temporarily disabled due to integer conversion issue in IkGetChild
-    # For now, just pop the array and bind NIL variables
-    self.emit(Instruction(kind: IkPop))
+    # Stack has the array value on top
 
     for i, elem in array_data(pattern):
       if elem.kind == VkSymbol:
-        # Store NIL placeholder for each array variable
         let var_name = elem.str
+
+        # Duplicate the array for extraction (keeps array on stack)
+        self.emit(Instruction(kind: IkDup))
+        # Get the i-th child - use i.to_value() to convert int to Value
+        self.emit(Instruction(kind: IkGetChild, arg0: i.to_value()))
+
+        # Store in variable
         let var_index = self.scope_tracker.next_index
         self.scope_tracker.mappings[var_name.to_key()] = var_index
         self.add_scope_start()
         self.scope_tracker.next_index.inc()
-        self.emit(Instruction(kind: IkPushNil))  # Push NIL value
         self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+        # Pop the result of Var (which is the extracted value) to keep array on top
+        self.emit(Instruction(kind: IkPop))
       else:
         not_allowed("Unsupported array pattern element type: " & $elem.kind & " (only symbols supported)")
+
+    # Pop the original array
+    self.emit(Instruction(kind: IkPop))
 
     # Push nil as the result of match
     self.emit(Instruction(kind: IkPushNil))

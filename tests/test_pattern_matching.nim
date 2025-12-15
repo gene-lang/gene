@@ -70,18 +70,17 @@ test_vm """
   check array_data(r).len == 1
   check array_data(r)[0] == 1
 
-# TODO: match is not implemented in VM yet
-# test_vm """
-#   (match [a] [1])
-#   a
-# """, 1
+# Array pattern matching
+test_vm """
+  (match [a] [1])
+  a
+""", 1
 
-# TODO: match is not implemented in VM yet
-# test_vm """
-#   (var x (_ 1 2))
-#   (match [a b] x)
-#   (a + b)
-# """, 3
+# Array pattern matching with multiple elements
+test_vm """
+  (match [a b] [1 2])
+  (a + b)
+""", 3
 
 # TODO: match is not implemented in VM yet
 # test_vm """
