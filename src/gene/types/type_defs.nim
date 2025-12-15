@@ -1264,10 +1264,9 @@ proc `=copy`*(dest: var Value; src: Value) =
   ## Called on assignment: dest = src
   ## Must destroy old dest, copy bits, then retain new value
 
-  # TODO: Releasing dest causes premature frees (double-free bugs)
-  # The issue is complex ref counting interactions between hooks and VM operations
-  # if dest.raw != 0 and isManaged(dest):
-  #   releaseManaged(dest.raw)
+  # Release old dest value if it's a managed type
+  if dest.raw != 0 and isManaged(dest):
+    releaseManaged(dest.raw)
 
   # Bitwise copy
   dest.raw = src.raw
@@ -1280,9 +1279,9 @@ proc `=sink`*(dest: var Value; src: Value) =
   ## Called on move/sink: dest = move(src)
   ## Transfers ownership without retain/release
 
-  # TODO: Skip release to avoid premature frees
-  # if dest.raw != 0 and isManaged(dest):
-  #   releaseManaged(dest.raw)
+  # Release old dest value if it's a managed type
+  if dest.raw != 0 and isManaged(dest):
+    releaseManaged(dest.raw)
 
   # Transfer ownership (no retain - src won't be destroyed)
   dest.raw = src.raw

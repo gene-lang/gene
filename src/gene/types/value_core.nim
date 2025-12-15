@@ -2050,12 +2050,12 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.target = NIL
   self.args = NIL
 
-  # GC: Clear the stack to prevent stale references
-  # Note: We don't call releaseManaged here because the VM's pop operations
-  # already handle reference counting. We just clear to prevent stale refs.
+  # GC: Clear the stack using raw memory operations to avoid triggering =copy hooks
+  # The VM's pop operations already handle reference counting, so we just need to
+  # zero the memory to prevent stale references without double-releasing.
   {.push boundChecks: off.}
-  for i in 0'u16..<self.stack_max:
-    self.stack[i] = NIL  # Clear the slot
+  if self.stack_max > 0:
+    zeroMem(addr self.stack[0], int(self.stack_max) * sizeof(Value))
   {.pop.}
 
   self.stack_index = 0
@@ -2147,15 +2147,22 @@ template push*(self: var Frame, value: sink Value) =
 proc pop*(self: var Frame): Value {.inline.} =
   {.push boundChecks: off, overflowChecks: off.}
   self.stack_index.dec()
-  result = self.stack[self.stack_index]
-  self.stack[self.stack_index] = NIL
+  # Move value out of stack slot using raw copy (no retain - we're transferring ownership)
+  copyMem(addr result, addr self.stack[self.stack_index], sizeof(Value))
+  # Clear the slot using raw memory write to avoid =copy hook (no double-release)
+  cast[ptr uint64](addr self.stack[self.stack_index])[] = 0
   {.pop.}
 
 template pop2*(self: var Frame, to: var Value) =
   {.push boundChecks: off, overflowChecks: off.}
   self.stack_index.dec()
-  copy_mem(to.addr, self.stack[self.stack_index].addr, 8)
-  self.stack[self.stack_index] = NIL
+  # If to already has a managed value, release it first
+  if to.raw != 0 and isManaged(to):
+    releaseManaged(to.raw)
+  # Move value out of stack slot using raw copy (no retain)
+  copyMem(addr to, addr self.stack[self.stack_index], sizeof(Value))
+  # Clear the slot using raw memory write to avoid =copy hook
+  cast[ptr uint64](addr self.stack[self.stack_index])[] = 0
   {.pop.}
 
 proc push_call_base*(self: Frame) {.inline.} =
