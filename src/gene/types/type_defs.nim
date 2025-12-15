@@ -1188,51 +1188,72 @@ proc retainManaged*(raw: uint64) {.gcsafe.} =
 
 proc releaseManaged*(raw: uint64) {.gcsafe.} =
   ## Decrement reference count, destroy at 0
+  ## CRITICAL: Must validate pointer before dereferencing to avoid SIGSEGV on garbage
   if raw == 0:
     return
 
   let tag = raw shr 48
+
+  # Validate tag is exactly in managed range
+  if tag < 0xFFF8 or tag > 0xFFFD:
+    return
+
+  # Validate payload is not null
+  let payload = raw and PAYLOAD_MASK
+  if payload == 0:
+    return
+
+  # Validate pointer looks reasonable (not obviously garbage)
+  # Check if it's aligned (pointers should be 8-byte aligned on most platforms)
+  if (payload and 0x7) != 0:
+    return  # Not 8-byte aligned, likely garbage
+
+  # We cannot safely validate ref_count without dereferencing,
+  # and try-except doesn't catch SIGSEGV in Nim.
+  # Our best defense is tag + alignment validation above.
+  # Unfortunately, this means we may still crash on cleverly-aligned garbage.
+
   case tag:
     of 0xFFF8:  # ARRAY_TAG
-      let arr = cast[ptr ArrayObj](raw and PAYLOAD_MASK)
-      if arr != nil:
-        let old_count = atomicDec(arr.ref_count)
-        if old_count == 1:
-          destroy_array(arr)
+      let arr = cast[ptr ArrayObj](payload)
+      let old_count = atomicDec(arr.ref_count)
+      if old_count == 1:
+        destroy_array(arr)
     of 0xFFF9:  # MAP_TAG
-      let m = cast[ptr MapObj](raw and PAYLOAD_MASK)
-      if m != nil:
-        let old_count = atomicDec(m.ref_count)
-        if old_count == 1:
-          destroy_map(m)
+      let m = cast[ptr MapObj](payload)
+      let old_count = atomicDec(m.ref_count)
+      if old_count == 1:
+        destroy_map(m)
     of 0xFFFA:  # INSTANCE_TAG
-      let inst = cast[ptr InstanceObj](raw and PAYLOAD_MASK)
-      if inst != nil:
-        let old_count = atomicDec(inst.ref_count)
-        if old_count == 1:
-          destroy_instance(inst)
+      let inst = cast[ptr InstanceObj](payload)
+      let old_count = atomicDec(inst.ref_count)
+      if old_count == 1:
+        destroy_instance(inst)
     of 0xFFFB:  # GENE_TAG
-      let g = cast[ptr Gene](raw and PAYLOAD_MASK)
-      if g != nil:
-        let old_count = atomicDec(g.ref_count)
-        if old_count == 1:
-          destroy_gene(g)
+      let g = cast[ptr Gene](payload)
+      let old_count = atomicDec(g.ref_count)
+      if old_count == 1:
+        destroy_gene(g)
     of 0xFFFC:  # REF_TAG
-      let ref_obj = cast[ptr Reference](raw and PAYLOAD_MASK)
-      if ref_obj != nil:
-        let old_count = atomicDec(ref_obj.ref_count)
-        if old_count == 1:
-          destroy_reference(ref_obj)
+      let ref_obj = cast[ptr Reference](payload)
+      let old_count = atomicDec(ref_obj.ref_count)
+      if old_count == 1:
+        destroy_reference(ref_obj)
     of 0xFFFD:  # STRING_TAG
-      let s = cast[ptr String](raw and PAYLOAD_MASK)
-      if s != nil:
-        let old_count = atomicDec(s.ref_count)
-        if old_count == 1:
-          destroy_string(s)
+      let s = cast[ptr String](payload)
+      let old_count = atomicDec(s.ref_count)
+      if old_count == 1:
+        destroy_string(s)
     else:
       discard
 
 # Lifecycle hooks for automatic GC
+
+proc `=default`*(v: var Value) {.inline.} =
+  ## Default constructor - initializes all Values to NIL
+  ## This ensures no uninitialized garbage, making =copy safe
+  v.raw = 0
+
 proc `=destroy`*(v: var Value) =
   ## Called when Value goes out of scope
   ## Decrements ref count for managed types
@@ -1241,8 +1262,12 @@ proc `=destroy`*(v: var Value) =
 
 proc `=copy`*(dest: var Value; src: Value) =
   ## Called on assignment: dest = src
-  ## TODO: Currently NOT releasing dest to avoid crashes on uninitialized memory
-  ## This causes memory leaks but prevents crashes
+  ## Must destroy old dest, copy bits, then retain new value
+
+  # TODO: Releasing dest causes premature frees (double-free bugs)
+  # The issue is complex ref counting interactions between hooks and VM operations
+  # if dest.raw != 0 and isManaged(dest):
+  #   releaseManaged(dest.raw)
 
   # Bitwise copy
   dest.raw = src.raw
@@ -1254,5 +1279,10 @@ proc `=copy`*(dest: var Value; src: Value) =
 proc `=sink`*(dest: var Value; src: Value) =
   ## Called on move/sink: dest = move(src)
   ## Transfers ownership without retain/release
-  # Temporarily simplified - just bitwise copy
+
+  # TODO: Skip release to avoid premature frees
+  # if dest.raw != 0 and isManaged(dest):
+  #   releaseManaged(dest.raw)
+
+  # Transfer ownership (no retain - src won't be destroyed)
   dest.raw = src.raw
