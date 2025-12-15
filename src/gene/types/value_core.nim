@@ -4,18 +4,15 @@ import random
 import times
 import os
 import asyncdispatch  # For async I/O support
-import std/atomics     # For atomic reference counting
 
 import ./type_defs
 export type_defs
 
-# NaN Boxing implementation
+#################### NaN Boxing implementation ####################
 # We use the negative quiet NaN space (0xFFF0-0xFFFF prefix) for non-float values
 # This allows all valid IEEE 754 floats to work correctly
 
 const NAN_MASK* = 0xFFF0_0000_0000_0000u64
-const PAYLOAD_MASK* = 0x0000_FFFF_FFFF_FFFFu64
-const TAG_SHIFT* = 48
 
 # Size limits for immediate integers (48-bit)
 const SMALL_INT_MIN* = -(1'i64 shl 47)
@@ -23,30 +20,6 @@ const SMALL_INT_MAX* = (1'i64 shl 47) - 1
 
 # Legacy constants for compatibility
 const I64_MASK* = 0xC000_0000_0000_0000u64  # Will be removed
-
-
-# Primary type tags in NaN space (reorganized for GC)
-# We use non-canonical quiet NaN values (0xFFF1-0xFFFF prefix with non-zero payload)
-#
-# DESIGN: All managed types (need ref-counting) have tags >= 0xFFF8
-#         All non-managed types (immediate/global) have tags < 0xFFF8
-#         This enables fast isManaged() check: (tag >= 0xFFF8)
-
-# Non-managed types (< 0xFFF8) - no retain/release needed
-const SPECIAL_TAG*   = 0xFFF1_0000_0000_0000u64   # Special values (nil, bool, void, char)
-const SMALL_INT_TAG* = 0xFFF2_0000_0000_0000u64   # 48-bit immediate integers
-const SYMBOL_TAG*    = 0xFFF3_0000_0000_0000u64   # Symbol index (global SYMBOLS table)
-const POINTER_TAG*   = 0xFFF4_0000_0000_0000u64   # Raw pointers (non-refcounted)
-# 0xFFF5-0xFFF7 reserved for future non-managed types
-
-# Managed types (>= 0xFFF8) - need ref-counting retain/release
-const ARRAY_TAG*     = 0xFFF8_0000_0000_0000u64   # Array pointers (RC)
-const MAP_TAG*       = 0xFFF9_0000_0000_0000u64   # Map pointers (RC)
-const INSTANCE_TAG*  = 0xFFFA_0000_0000_0000u64   # Instance pointers (RC)
-const GENE_TAG*      = 0xFFFB_0000_0000_0000u64   # Gene S-expression pointers (RC)
-const REF_TAG*       = 0xFFFC_0000_0000_0000u64   # Reference object pointers (RC)
-const STRING_TAG*    = 0xFFFD_0000_0000_0000u64   # String pointers (RC)
-# 0xFFFE-0xFFFF reserved for future managed types (e.g., weak refs)
 
 # Special values (using SPECIAL_TAG)
 const NIL* = Value(raw: SPECIAL_TAG or 0)
@@ -123,126 +96,6 @@ var current_thread_id* {.threadvar.}: int
 
 randomize()
 
-#################### GC Infrastructure #################
-
-# Fast managed check - single comparison to determine if value needs RC
-proc isManaged*(v: Value): bool {.inline.} =
-  ## Returns true if value is a managed (heap-allocated, ref-counted) type
-  ## All managed types have tags >= 0xFFF8
-  (v.raw and 0xFFF8_0000_0000_0000'u64) == 0xFFF8_0000_0000_0000'u64
-
-#################### GC Implementation #################
-
-template destroyAndDealloc[T](p: ptr T) =
-  ## Safely destroy and deallocate a heap object
-  ## Calls Nim destructors (reset) before freeing memory
-  if p != nil:
-    reset(p[])   # Run Nim destructors on all fields
-    dealloc(p)   # Free memory
-
-# Destroy functions for each managed type
-
-proc destroy_string(s: ptr String) =
-  destroyAndDealloc(s)
-
-proc destroy_array(arr: ptr ArrayObj) =
-  destroyAndDealloc(arr)
-
-proc destroy_map(m: ptr MapObj) =
-  destroyAndDealloc(m)
-
-proc destroy_gene(g: ptr Gene) =
-  destroyAndDealloc(g)
-
-proc destroy_instance(inst: ptr InstanceObj) =
-  destroyAndDealloc(inst)
-
-proc destroy_reference(ref_obj: ptr Reference) =
-  destroyAndDealloc(ref_obj)
-
-# Core GC operations
-
-proc retainManaged*(raw: uint64) {.gcsafe.} =
-  ## Increment reference count for a managed value
-  if raw == 0:
-    return
-
-  let tag = raw shr 48
-  case tag:
-    of 0xFFF8:  # ARRAY_TAG
-      let arr = cast[ptr ArrayObj](raw and PAYLOAD_MASK)
-      if arr != nil:
-        atomicInc(arr.ref_count)
-    of 0xFFF9:  # MAP_TAG
-      let m = cast[ptr MapObj](raw and PAYLOAD_MASK)
-      if m != nil:
-        atomicInc(m.ref_count)
-    of 0xFFFA:  # INSTANCE_TAG
-      let inst = cast[ptr InstanceObj](raw and PAYLOAD_MASK)
-      if inst != nil:
-        atomicInc(inst.ref_count)
-    of 0xFFFB:  # GENE_TAG
-      let g = cast[ptr Gene](raw and PAYLOAD_MASK)
-      if g != nil:
-        atomicInc(g.ref_count)
-    of 0xFFFC:  # REF_TAG
-      let ref_obj = cast[ptr Reference](raw and PAYLOAD_MASK)
-      if ref_obj != nil:
-        atomicInc(ref_obj.ref_count)
-    of 0xFFFD:  # STRING_TAG
-      let s = cast[ptr String](raw and PAYLOAD_MASK)
-      if s != nil:
-        atomicInc(s.ref_count)
-    else:
-      discard
-
-proc releaseManaged*(raw: uint64) {.gcsafe.} =
-  ## Decrement reference count, destroy at 0
-  if raw == 0:
-    return
-
-  let tag = raw shr 48
-  case tag:
-    of 0xFFF8:  # ARRAY_TAG
-      let arr = cast[ptr ArrayObj](raw and PAYLOAD_MASK)
-      if arr != nil:
-        let old_count = atomicDec(arr.ref_count)
-        if old_count == 1:
-          destroy_array(arr)
-    of 0xFFF9:  # MAP_TAG
-      let m = cast[ptr MapObj](raw and PAYLOAD_MASK)
-      if m != nil:
-        let old_count = atomicDec(m.ref_count)
-        if old_count == 1:
-          destroy_map(m)
-    of 0xFFFA:  # INSTANCE_TAG
-      let inst = cast[ptr InstanceObj](raw and PAYLOAD_MASK)
-      if inst != nil:
-        let old_count = atomicDec(inst.ref_count)
-        if old_count == 1:
-          destroy_instance(inst)
-    of 0xFFFB:  # GENE_TAG
-      let g = cast[ptr Gene](raw and PAYLOAD_MASK)
-      if g != nil:
-        let old_count = atomicDec(g.ref_count)
-        if old_count == 1:
-          destroy_gene(g)
-    of 0xFFFC:  # REF_TAG
-      let ref_obj = cast[ptr Reference](raw and PAYLOAD_MASK)
-      if ref_obj != nil:
-        let old_count = atomicDec(ref_obj.ref_count)
-        if old_count == 1:
-          destroy_reference(ref_obj)
-    of 0xFFFD:  # STRING_TAG
-      let s = cast[ptr String](raw and PAYLOAD_MASK)
-      if s != nil:
-        let old_count = atomicDec(s.ref_count)
-        if old_count == 1:
-          destroy_string(s)
-    else:
-      discard
-# They will be available when types module is fully imported
-
 # Value conversion helpers
 proc toValue*(raw: uint64): Value {.inline.} =
   ## Convert raw uint64 to Value (for interfacing with cast-heavy code)
@@ -251,41 +104,6 @@ proc toValue*(raw: uint64): Value {.inline.} =
 proc toRaw*(v: Value): uint64 {.inline.} =
   ## Extract raw uint64 from Value
   v.raw
-
-# Nim lifecycle hooks for automatic reference counting
-# TODO: Re-enable these hooks once compilation is working
-# These will enable automatic GC via reference counting
-
-when false:  # Temporarily disabled
-  proc `=destroy`*(v: var Value) =
-    ## Called when Value goes out of scope
-    ## Decrements ref count for managed types
-    if isManaged(v):
-      releaseManaged(v.raw)
-
-  proc `=copy`*(dest: var Value; src: Value) =
-    ## Called on assignment: dest = src
-    ## Must destroy old dest, copy bits, then retain new value
-    # Destroy old dest value (if managed)
-    if isManaged(dest):
-      releaseManaged(dest.raw)
-
-    # Bitwise copy
-    dest.raw = src.raw
-
-    # Retain new value (if managed)
-    if isManaged(src):
-      retainManaged(src.raw)
-
-  proc `=sink`*(dest: var Value; src: Value) =
-    ## Called on move/sink: dest = move(src)
-    ## Transfers ownership without retain/release
-    # Destroy old dest value (if managed)
-    if isManaged(dest):
-      releaseManaged(dest.raw)
-
-    # Transfer ownership (no retain - src won't be destroyed)
-    dest.raw = src.raw
 
 #################### Common ######################
 
