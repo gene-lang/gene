@@ -31,7 +31,7 @@ proc normalize_if*(self: ptr Gene) =
       case state:
       of IsIf:
         if input == nil:
-          not_allowed()
+          not_allowed("if: missing condition")
         elif input == "not".to_symbol_value():
           state = IsIfNot
         else:
@@ -46,7 +46,7 @@ proc normalize_if*(self: ptr Gene) =
         state = IsIfLogic
         logic = @[]
         if input == nil:
-          not_allowed()
+          not_allowed("if: missing body after condition")
         elif input == "else".to_symbol_value():
           state = IsElse
           logic = @[]
@@ -66,7 +66,7 @@ proc normalize_if*(self: ptr Gene) =
           logic.add(input)
       of IsElif:
         if input == nil:
-          not_allowed()
+          not_allowed("elif: missing condition")
         elif input == "not".to_symbol_value():
           state = IsElifNot
         else:
@@ -81,7 +81,7 @@ proc normalize_if*(self: ptr Gene) =
         state = IsElifLogic
         logic = @[]
         if input == nil:
-          not_allowed()
+          not_allowed("elif: missing body after condition")
         elif input != "then".to_symbol_value():
           logic.add(input)
       of IsElifLogic:

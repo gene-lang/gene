@@ -2548,7 +2548,7 @@ proc compile*(self: Compiler, input: Value) =
         # Functions should be compiled as literals
         self.compile_literal(input)
       else:
-        todo($input.kind)
+        not_allowed("Unsupported syntax: cannot compile value of type " & $input.kind)
   except CatchableError:
     if self.last_error_trace.is_nil:
       if not trace.is_nil:
