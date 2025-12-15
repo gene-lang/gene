@@ -2773,7 +2773,7 @@ proc compile*(f: Function, eager_functions: bool) =
     if m.default_value.kind != VkPlaceholder:
       self.compile(m.default_value)
       self.add_scope_start()
-      self.emit(Instruction(kind: IkVar, arg0: m.name_key.to_value()))
+      self.emit(Instruction(kind: IkVar, arg0: i.to_value()))
       self.emit(Instruction(kind: IkPop))
     else:
       self.emit(Instruction(kind: IkThrow))
@@ -2822,7 +2822,7 @@ proc compile*(b: Block, eager_functions: bool) =
     if m.default_value.kind != VkPlaceholder:
       self.compile(m.default_value)
       self.add_scope_start()
-      self.emit(Instruction(kind: IkVar, arg0: m.name_key.to_value()))
+      self.emit(Instruction(kind: IkVar, arg0: i.to_value()))
       self.emit(Instruction(kind: IkPop))
     else:
       self.emit(Instruction(kind: IkThrow))
