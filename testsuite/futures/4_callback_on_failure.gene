@@ -1,0 +1,40 @@
+# Test: on_failure callbacks execute for failed futures
+
+(var result [])
+
+# Create a future that will fail
+(var f (async (throw "intentional error")))
+
+# Try to await it (will fail)
+(try
+  (await f)
+catch *
+  # The exception is caught and ignored
+  nil
+)
+
+# Add failure callback after future has failed
+(f .on_failure (fnx [err]
+  (result .append "failure_callback_executed")
+))
+
+# Force polling
+(var i 0)
+(while (< i 200)
+  (i = (+ i 1))
+)
+
+# Verify callback executed
+(assert (result == ["failure_callback_executed"]) "Failure callback should execute")
+
+# Verify on_success callback does NOT execute for failed future
+(var success_called false)
+(f .on_success (fnx [v] (success_called = true)))
+
+# Force more polling
+(var j 0)
+(while (< j 200)
+  (j = (+ j 1))
+)
+
+(assert (success_called == false) "Success callback should not execute on failed future")

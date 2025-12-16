@@ -1,0 +1,33 @@
+# Test: Callbacks execute only once, not on every poll
+
+(var count 0)
+
+# Create and complete a future
+(var f (async 100))
+(await f)
+
+# Add callback
+(f .on_success (fnx [v]
+  (count = (count + 1))
+))
+
+# Force many polling cycles
+(var i 0)
+(while (< i 1000)
+  (i = (+ i 1))
+)
+
+# Add another callback, it should also execute once
+(var count2 0)
+(f .on_success (fnx [v]
+  (count2 = (count2 + 1))
+))
+
+# Force more polling
+(var j 0)
+(while (< j 1000)
+  (j = (+ j 1))
+)
+
+(assert (count  == 1) "First callback should still be 1")
+(assert (count2 == 1) "Second callback should also execute exactly once")

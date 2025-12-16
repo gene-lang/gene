@@ -1,0 +1,13 @@
+# Test: VM automatically drains pending futures at end of execution
+
+# Create and complete a future
+(var f (async 42))
+(await f)
+
+# Add callback after completion that prints directly
+(f .on_success (fnx [v]
+  (println ["auto-drain" v])
+))
+
+# NO polling loop - VM should auto-drain at end
+# Expected: [auto-drain 42]

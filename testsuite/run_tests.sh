@@ -155,6 +155,7 @@ else
     run_category "Callable Instances" "callable_instances"
     run_category "OOP" "oop"
     run_category "Async Support" "async"
+    run_category "Futures" "futures"
     run_category "Generators" "generators"
     run_category "Stdlib Core" "stdlib/core"
     run_category "Stdlib Strings" "stdlib/strings"

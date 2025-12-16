@@ -99,7 +99,7 @@ test "Mixed function calls":
   # Test function returning function - DISABLED (closures not fully implemented)
   # test_vm("""
   #   (fn make_adder [n]
-  #     (fn [x] (x + n)))
+  #     (fnx [x] (x + n)))
   #   (var add5 (make_adder 5))
   #   (add5 10)
   # """, 15.to_value())
@@ -120,7 +120,7 @@ test "Performance: Zero-arg function calls":
   # test_vm("""
   #   (fn counter []
   #     (var count 0)
-  #     (fn []
+  #     (fnx []
   #       (count = (count + 1))
   #       count))
   #   (var c (counter))

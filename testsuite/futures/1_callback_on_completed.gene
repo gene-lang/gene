@@ -1,0 +1,26 @@
+# Test: Callbacks execute on already-completed futures
+
+(var result [])
+
+# Create and complete a future
+(var f (async 42))
+(await f)
+
+# Add callback after completion
+(f .on_success (fnx [v]
+  (result .append ["callback1" v])
+))
+
+# Add another callback
+(f .on_success (fnx [v]
+  (result .append ["callback2" (v * 2)])
+))
+
+# Force polling by doing work (poll happens every 100 VM instructions)
+(var i 0)
+(while (< i 200)
+  (i = (+ i 1))
+)
+
+(println result)
+# Expected: [[callback1 42] [callback2 84]]

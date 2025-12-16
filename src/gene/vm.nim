@@ -29,15 +29,19 @@ template same_value_identity(a: Value, b: Value): bool =
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
+
+# Forward declarations needed by vm/async
+proc exec*(self: ptr VirtualMachine): Value
+proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Value
+proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj)
+proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
+proc spawn_thread(code: ptr Gene, return_value: bool): Value
+proc poll_event_loop(self: ptr VirtualMachine)
+
 import ./vm/async
 
 when not defined(noExtensions):
   import ./vm/extension
-
-proc exec*(self: ptr VirtualMachine): Value
-proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Value
-proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
-proc spawn_thread(code: ptr Gene, return_value: bool): Value
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool
 
 # Template to get the class of a value for unified method calls
@@ -198,6 +202,48 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
 
   return true
 
+proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj) =
+  ## Execute success or failure callbacks for a completed future
+  ## This should be called when a future completes OR when callbacks are added to an already-completed future
+  if future_obj.state == FsSuccess:
+    # Execute success callbacks
+    for callback in future_obj.success_callbacks:
+      try:
+        case callback.kind:
+          of VkFunction, VkBlock:
+            discard self.exec_function(callback, @[future_obj.value])
+          of VkNativeFn:
+            var args_arr = [future_obj.value]
+            discard call_native_fn(callback.ref.native_fn, self, args_arr)
+          else:
+            discard
+      except:
+        # If callback throws, mark future as failed
+        future_obj.state = FsFailure
+        future_obj.value = self.current_exception
+        break
+    # Clear callbacks after execution
+    future_obj.success_callbacks.setLen(0)
+
+  elif future_obj.state == FsFailure:
+    # Execute failure callbacks
+    for callback in future_obj.failure_callbacks:
+      try:
+        case callback.kind:
+          of VkFunction, VkBlock:
+            discard self.exec_function(callback, @[future_obj.value])
+          of VkNativeFn:
+            var args_arr = [future_obj.value]
+            discard call_native_fn(callback.ref.native_fn, self, args_arr)
+          else:
+            discard
+      except:
+        # If callback throws, keep failure state but replace value
+        future_obj.value = self.current_exception
+        break
+    # Clear callbacks after execution
+    future_obj.failure_callbacks.setLen(0)
+
 proc poll_event_loop(self: ptr VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
   if not self.poll_enabled:
@@ -207,7 +253,12 @@ proc poll_event_loop(self: ptr VirtualMachine) =
   if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
     self.event_loop_counter = 0
     try:
-      poll(0)  # Non-blocking poll - check for completed async operations
+      # Try to poll Nim async dispatcher, but ignore "no handles" error
+      try:
+        poll(0)  # Non-blocking poll - check for completed async operations
+      except:
+        # Ignore "No handles or timers registered" - this is normal when using Gene futures
+        discard
 
       # Check for thread replies (non-blocking)
       # Only check if we're the main thread (thread 0)
@@ -230,6 +281,8 @@ proc poll_event_loop(self: ptr VirtualMachine) =
                   payload = NIL
               future_obj.state = FsSuccess
               future_obj.value = payload
+              # Execute callbacks for the completed future
+              execute_future_callbacks(self, future_obj)
               self.thread_futures.del(msg.from_message_id)
 
       # Update all pending futures from their Nim futures
@@ -239,43 +292,17 @@ proc poll_event_loop(self: ptr VirtualMachine) =
         let old_state = future_obj.state
         update_future_from_nim(self, future_obj)
 
-        # If future just completed, execute callbacks
-        if old_state == FsPending and future_obj.state != FsPending:
-          if future_obj.state == FsSuccess:
-            # Execute success callbacks
-            for callback in future_obj.success_callbacks:
-              try:
-                case callback.kind:
-                  of VkFunction, VkBlock:
-                    discard self.exec_function(callback, @[future_obj.value])
-                  of VkNativeFn:
-                    var args_arr = [future_obj.value]
-                    discard call_native_fn(callback.ref.native_fn, self, args_arr)
-                  else:
-                    discard
-              except:
-                # If callback throws, mark future as failed
-                future_obj.state = FsFailure
-                future_obj.value = self.current_exception
-                break
-          else:
-            # Execute failure callbacks
-            for callback in future_obj.failure_callbacks:
-              try:
-                case callback.kind:
-                  of VkFunction, VkBlock:
-                    discard self.exec_function(callback, @[future_obj.value])
-                  of VkNativeFn:
-                    var args_arr = [future_obj.value]
-                    discard call_native_fn(callback.ref.native_fn, self, args_arr)
-                  else:
-                    discard
-              except:
-                # If callback throws, keep failure state but replace value
-                future_obj.value = self.current_exception
-                break
+        # Execute callbacks if:
+        # 1. Future just completed (transition from Pending), OR
+        # 2. Future is already completed but has callbacks (added after completion)
+        let needs_callback_execution =
+          (old_state == FsPending and future_obj.state != FsPending) or
+          (future_obj.state != FsPending and (future_obj.success_callbacks.len > 0 or future_obj.failure_callbacks.len > 0))
 
-          # Remove completed futures
+        if needs_callback_execution:
+          execute_future_callbacks(self, future_obj)
+
+          # Remove completed futures after callbacks are executed
           if future_obj.state != FsPending:
             self.pending_futures.delete(i)
             continue
@@ -1140,6 +1167,9 @@ proc exec*(self: ptr VirtualMachine): Value =
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
+    # Poll for async/thread events periodically
+    self.poll_event_loop()
+
     when not defined(release):
       if self.trace:
         if inst.kind == IkStart: # This is part of INDENT_LOGIC
@@ -1191,61 +1221,22 @@ proc exec*(self: ptr VirtualMachine): Value =
         # TODO: validate that there is only one value on the stack
         let v = if self.frame.stack_index > 0: self.frame.current() else: NIL
         if self.frame.caller_frame == nil:
-          # Before returning, if there are pending futures, poll with timeout to let them complete
-          var max_iterations = 1000  # Prevent infinite loop
-          var iteration = 0
-          while self.pending_futures.len > 0 and iteration < max_iterations:
-            iteration.inc()
-            try:
-              # Try to drain the async event queue
-              while hasPendingOperations():
-                poll(0)  # Process any ready operations
+          # Before returning, drain any pending futures with callbacks
+          # This ensures callbacks execute even if the main code has finished
+          if self.pending_futures.len > 0 or self.thread_futures.len > 0:
+            var max_iterations = 100  # Limit drain iterations
+            var iteration = 0
+            while (self.pending_futures.len > 0 or self.thread_futures.len > 0) and iteration < max_iterations:
+              iteration.inc()
 
-              # Then wait a bit for timers
-              sleep(10)  # Sleep 10ms to let timers fire
+              # Force immediate polling by resetting counter and enabling poll
+              self.event_loop_counter = EVENT_LOOP_POLL_INTERVAL
+              self.poll_enabled = true
+              self.poll_event_loop()
 
-              # Update all pending futures
-              var i = 0
-              while i < self.pending_futures.len:
-                let future_obj = self.pending_futures[i]
-                let old_state = future_obj.state
-                update_future_from_nim(self, future_obj)
-
-
-                # If future just completed, execute callbacks
-                if old_state == FsPending and future_obj.state != FsPending:
-                  if future_obj.state == FsSuccess:
-                    # Execute success callbacks
-                    for callback in future_obj.success_callbacks:
-                      case callback.kind:
-                        of VkFunction, VkBlock:
-                          discard self.exec_function(callback, @[future_obj.value])
-                        of VkNativeFn:
-                          var args_arr = [future_obj.value]
-                          discard call_native_fn(callback.ref.native_fn, self, args_arr)
-                        else:
-                          discard
-                  elif future_obj.state == FsFailure:
-                    # Execute failure callbacks
-                    for callback in future_obj.failure_callbacks:
-                      case callback.kind:
-                        of VkFunction, VkBlock:
-                          discard self.exec_function(callback, @[future_obj.value])
-                        of VkNativeFn:
-                          var args_arr = [future_obj.value]
-                          discard call_native_fn(callback.ref.native_fn, self, args_arr)
-                        else:
-                          discard
-
-                # If future completed, remove from pending list
-                if future_obj.state != FsPending:
-                  self.pending_futures.delete(i)
-                else:
-                  i.inc()
-            except ValueError:
-              # No async operations pending, but we still have futures
-              # This shouldn't happen, but if it does, break to avoid infinite loop
-              break
+              # If no more pending work, break
+              if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+                break
 
           return v
         else:

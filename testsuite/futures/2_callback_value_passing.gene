@@ -1,0 +1,27 @@
+# Test: Callbacks receive correct values
+
+(var received nil)
+
+# Create future with complex value
+(var data {
+  ^name "test"
+  ^value 42
+  ^nested [1 2 3]
+})
+
+(var f (async data))
+(await f)
+
+# Add callback that captures the value
+(f .on_success (fnx [v]
+  (received = v)
+))
+
+(var i 0)
+(while (< i 200)
+  (i = (+ i 1))
+)
+
+# 
+(println received/name)
+# Expected: test

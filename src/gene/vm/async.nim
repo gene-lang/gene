@@ -1,9 +1,7 @@
 import ../types
 import asyncdispatch  # For Future procs: finished, failed, read
 
-# NOTE: Callback execution is deferred for now
-# In a full implementation, callbacks would be executed when futures complete
-# For Phase 1, we're just setting up the infrastructure
+# Note: execute_future_callbacks is implemented in vm.nim and imported there
 
 # Update a future from its underlying Nim future
 proc update_future_from_nim*(vm: ptr VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
@@ -46,11 +44,15 @@ proc future_on_success(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
 
   let future_obj = future_arg.ref.future
 
-  # If future is already completed successfully, store callback (will execute later)
+  # Add callback
   if future_obj.state == FsSuccess:
-    # TODO: Execute callback immediately with the future's value (Phase 1.3)
-    # For now, just store it
+    # Future already completed successfully - mark for immediate execution by adding to pending list
+    # The callback will be executed on next poll (callbacks are always executed in poll loop)
     future_obj.success_callbacks.add(callback_arg)
+    # Re-add future to pending list so callbacks get executed
+    if vm.pending_futures.find(future_obj) < 0:
+      vm.pending_futures.add(future_obj)
+      vm.poll_enabled = true  # Ensure polling is enabled
   elif future_obj.state == FsPending:
     # Store callback for later execution when future completes
     future_obj.success_callbacks.add(callback_arg)
@@ -76,11 +78,15 @@ proc future_on_failure(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
 
   let future_obj = future_arg.ref.future
 
-  # If future is already failed, store callback (will execute later)
+  # Add callback
   if future_obj.state == FsFailure:
-    # TODO: Execute callback immediately with the future's error value (Phase 1.3)
-    # For now, just store it
+    # Future already failed - mark for immediate execution by adding to pending list
+    # The callback will be executed on next poll (callbacks are always executed in poll loop)
     future_obj.failure_callbacks.add(callback_arg)
+    # Re-add future to pending list so callbacks get executed
+    if vm.pending_futures.find(future_obj) < 0:
+      vm.pending_futures.add(future_obj)
+      vm.poll_enabled = true  # Ensure polling is enabled
   elif future_obj.state == FsPending:
     # Store callback for later execution when future fails
     future_obj.failure_callbacks.add(callback_arg)

@@ -545,6 +545,7 @@ proc init_collection_classes(object_class: Class) =
     return arr
 
   array_class.def_native_method("add", vm_array_add)
+  array_class.def_native_method("append", vm_array_add)  # Alias for add
 
   proc vm_array_size(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self)
@@ -554,6 +555,7 @@ proc init_collection_classes(object_class: Class) =
     return 0.to_value()
 
   array_class.def_native_method("size", vm_array_size)
+  array_class.def_native_method("length", vm_array_size)  # Alias for size
 
   proc vm_array_get(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     # First argument is the array (self), second is the index

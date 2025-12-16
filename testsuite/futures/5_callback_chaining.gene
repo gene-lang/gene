@@ -1,0 +1,29 @@
+# Test: Callback chaining with method chaining syntax
+
+(var steps [])
+
+# Create and complete a future
+(var f (async "start"))
+(await f)
+
+# Chain multiple callbacks
+(f .on_success (fnx [v] (steps .append ["step1" v])))
+(f .on_success (fnx [v] (steps .append ["step2" v])))
+(f .on_success (fnx [v] (steps .append ["step3" v])))
+
+# Force polling
+(var i 0)
+(while (< i 200)
+  (i = (+ i 1))
+)
+
+# Verify all steps executed
+(assert (steps .length == 3) "All three callbacks should execute")
+(assert (steps/0/0 == "step1") "Step 1")
+(assert (steps/1/0 == "step2") "Step 2")
+(assert (steps/2/0 == "step3") "Step 3")
+
+# All should receive the same value
+(assert (steps/0/1 == "start") "Step 1 value")
+(assert (steps/1/1 == "start") "Step 2 value")
+(assert (steps/2/1 == "start") "Step 3 value")

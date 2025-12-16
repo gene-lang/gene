@@ -203,7 +203,7 @@ of IkCheckChannel:
     (.send $main_thread result)))
 
 # Main collects results:
-(.on_message $thread (fn [msg]
+(.on_message $thread (fnx [msg]
   (println "Worker result:" (.payload msg))))
 
 # Main keeps running to receive messages:
@@ -228,7 +228,7 @@ of IkCheckChannel:
 ```gene
 # Worker requests data from main:
 (spawn
-  (.on_message $thread (fn [msg]
+  (.on_message $thread (fnx [msg]
     (var data (.payload msg))
     (var result (process data))
     (.reply msg result)))

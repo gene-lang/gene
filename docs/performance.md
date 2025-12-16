@@ -246,7 +246,7 @@ When optimizing Gene code:
 4. **Code Patterns**
    ```gene
    # Avoid
-   (map (fn [x] (+ x 1)) list)
+   (map (fnx [x] (+ x 1)) list)
    
    # Prefer (when available)
    (map .+ list 1)

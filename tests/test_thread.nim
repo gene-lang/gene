@@ -107,7 +107,7 @@ suite "Threading Support":
     let code = """
       (do
         (var worker (spawn (do
-          (thread .on_message (fn [msg]
+          (thread .on_message (fnx [msg]
             (msg .reply (msg .payload))
           ))
         )))
@@ -133,7 +133,7 @@ suite "Threading Support":
     let code = """
       (var received nil)
       (var thread (spawn (do
-        (thread .on_message (fn [msg]
+        (thread .on_message (fnx [msg]
           (var received (.payload msg))
         ))
         (keep_alive)
