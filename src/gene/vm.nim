@@ -6198,7 +6198,18 @@ proc exec*(self: ptr VirtualMachine): Value =
 
     except CatchableError as ex:
       # Route Nim exceptions through Gene's exception handling so try/catch works.
-      let ex_val = ex.msg.to_value()
+      # Wrap Nim exception into a Gene exception instance with structured data
+      # Inline current_trace logic since runtime_helpers is included later
+      var trace: SourceTrace = nil
+      if not self.cu.is_nil:
+        if self.pc >= 0 and self.pc < self.cu.instruction_traces.len:
+          trace = self.cu.instruction_traces[self.pc]
+          if trace.is_nil and not self.cu.trace_root.is_nil:
+            trace = self.cu.trace_root
+        elif not self.cu.trace_root.is_nil:
+          trace = self.cu.trace_root
+      let location = trace_location(trace)
+      let ex_val = wrap_nim_exception(ex, location)
       if self.dispatch_exception(ex_val, inst):
         continue
       else:

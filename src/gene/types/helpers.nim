@@ -79,8 +79,11 @@ proc init_app_and_vm*() =
   let exception_class = new_class("GeneException")
   let exception_ref = new_ref(VkClass)
   exception_ref.class = exception_class
+  let exception_class_val = exception_ref.to_ref_value()
+  # Store in App for easy access
+  App.app.exception_class = exception_class_val
   # Add to global namespace so it's accessible everywhere
-  App.app.global_ns.ref.ns["GeneException".to_key()] = exception_ref.to_ref_value()
+  App.app.global_ns.ref.ns["GeneException".to_key()] = exception_class_val
 
   # Add genex to global namespace (similar to gene-new)
   App.app.global_ns.ref.ns["genex".to_key()] = App.app.genex_ns
@@ -158,4 +161,29 @@ proc init_values*() =
   discard "container".to_symbol_value()
 
 init_values()
+
+#################### Exception Wrapping ####################
+
+proc wrap_nim_exception*(ex: ref CatchableError, location: string = ""): Value =
+  ## Wrap a Nim exception into a Gene exception instance with structured data.
+  ## The instance has properties: message, nim_type, nim_stack, location
+  let exception_class_val = App.app.exception_class
+  if exception_class_val == NIL:
+    # Fallback to string if exception class not initialized
+    return ex.msg.to_value()
+
+  let cls = value_core.`ref`(exception_class_val).class
+  var props = initTable[Key, Value]()
+  props["message".to_key()] = ex.msg.to_value()
+  props["nim_type".to_key()] = ($type(ex[])).to_value()
+  when not defined(release):
+    props["nim_stack".to_key()] = ex.getStackTrace().to_value()
+  else:
+    props["nim_stack".to_key()] = NIL
+  if location.len > 0:
+    props["location".to_key()] = location.to_value()
+  else:
+    props["location".to_key()] = NIL
+
+  result = new_instance_value(cls, props)
 
