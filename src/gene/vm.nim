@@ -1393,7 +1393,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkAssign:
-        todo($IkAssign)
+        not_allowed("IkAssign is not implemented")
         # let value = self.frame.current()
         # Find the namespace where the member is defined and assign it there
 
@@ -1534,10 +1534,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                   continue
               else:
                 # For other frame kinds, just do regular call
-                todo("IkTailCall for " & $new_frame.kind)
+                not_allowed("IkTailCall not supported for frame kind: " & $new_frame.kind)
           else:
             # For non-frames, fall back to IkGeneEnd behavior
-            todo("IkTailCall for " & $value.kind)
+            not_allowed("IkTailCall not supported for value kind: " & $value.kind)
         {.pop}
 
       of IkResolveSymbol:
@@ -1780,7 +1780,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               "<invalid key>"
             not_allowed("Cannot set named member '" & symbol_name & "' on array")
           else:
-            todo($target.kind)
+            not_allowed("Cannot set member on value of type: " & $target.kind)
         self.frame.push(value)
 
       of IkGetMember:
@@ -1850,7 +1850,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           else:
             when not defined(release):
               echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
-            todo($value.kind)
+            not_allowed("Cannot get member '" & $name & "' on value of type: " & $value.kind)
 
       of IkGetMemberOrNil:
         # Pop property/index, then target
@@ -1985,7 +1985,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             when not defined(release):
               if self.trace:
                 echo fmt"IkSetChild unsupported kind: {target.kind}"
-            todo($target.kind)
+            not_allowed("Cannot set child on value of type: " & $target.kind)
         self.frame.push(new_value)
 
       of IkGetChild:
@@ -2001,7 +2001,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             when not defined(release):
               if self.trace:
                 echo fmt"IkGetChild unsupported kind: {value.kind}"
-            todo($value.kind)
+            not_allowed("Cannot get child from value of type: " & $value.kind)
       of IkGetChildDynamic:
         # Get child using index from stack
         # Stack order: [... collection index]
@@ -2028,7 +2028,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             when not defined(release):
               if self.trace:
                 echo fmt"IkGetChildDynamic unsupported kind: {collection.kind}"
-            todo($collection.kind)
+            not_allowed("Cannot get child from value of type: " & $collection.kind)
 
       of IkJump:
         {.push checks: off}
@@ -2531,7 +2531,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             # For native function calls, ignore property setting for now
             discard
           else:
-            todo("GeneSetProp for " & $current.kind)
+            not_allowed("Cannot set property on value of type: " & $current.kind)
         {.pop.}
       of IkGeneAddChild:
         {.push checks: off}
@@ -2569,7 +2569,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           else:
             # For other value types, we can't add children directly
             # This might be an error in the compilation or a special case
-            todo("GeneAddChild: " & $v.kind)
+            not_allowed("Cannot add child to value of type: " & $v.kind)
         {.pop.}
 
       of IkGeneAdd:
@@ -2592,7 +2592,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkBoundMethod:
             discard
           else:
-            todo("GeneAdd: " & $v.kind)
+            not_allowed("Cannot add to value of type: " & $v.kind)
         {.pop.}
 
       of IkGeneAddSpread:
@@ -2637,7 +2637,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkGene:
             v.gene.children.add(inst.arg0)
           else:
-            todo("GeneAddChildValue: " & $v.kind)
+            not_allowed("Cannot add child value to type: " & $v.kind)
         {.pop.}
 
       of IkGeneSetPropValue:
@@ -2655,7 +2655,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkNativeFrame:
             discard
           else:
-            todo("GeneSetPropValue for " & $current.kind)
+            not_allowed("Cannot set property value on type: " & $current.kind)
         {.pop.}
 
       of IkGenePropsSpread:
@@ -2861,7 +2861,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 continue
 
               else:
-                todo($frame.kind)
+                not_allowed("Unsupported frame kind for gene end: " & $frame.kind)
 
           of VkNativeFrame:
             let frame = self.frame.current().ref.native_frame
@@ -2874,7 +2874,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 let f = frame.target.ref.native_fn
                 self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
               else:
-                todo($frame.kind)
+                not_allowed("Unsupported native frame kind: " & $frame.kind)
 
           else:
             # Check if this is a gene with a generator function as its type
@@ -2910,7 +2910,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(add_mixed(first.int64, second.float))
               else:
-                todo("Unsupported second operand for addition: " & $second)
+                not_allowed("Cannot add " & $first.kind & " and " & $second.kind)
           of VkFloat:
             case second.kind:
               of VkInt:
@@ -2922,9 +2922,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(add_float_fast(first.float, second.float))
               else:
-                todo("Unsupported second operand for addition: " & $second)
+                not_allowed("Cannot add " & $first.kind & " and " & $second.kind)
           else:
-            todo("Unsupported first operand for addition: " & $first)
+            not_allowed("Cannot add values of type: " & $first.kind)
         {.pop.}
 
       of IkSub:
@@ -2939,7 +2939,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(sub_mixed(first.int64, second.float))
               else:
-                todo("Unsupported second operand for subtraction: " & $second)
+                not_allowed("Cannot subtract " & $second.kind & " from " & $first.kind)
           of VkFloat:
             case second.kind:
               of VkInt:
@@ -2947,9 +2947,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(sub_float_fast(first.float, second.float))
               else:
-                todo("Unsupported second operand for subtraction: " & $second)
+                not_allowed("Cannot subtract " & $second.kind & " from " & $first.kind)
           else:
-            todo("Unsupported first operand for subtraction: " & $first)
+            not_allowed("Cannot subtract from values of type: " & $first.kind)
         {.pop.}
       of IkSubValue:
         {.push checks: off}
@@ -2962,7 +2962,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.replace(sub_mixed(first.int64, inst.arg0.float))
               else:
-                todo("Unsupported arg0 type for IkSubValue: " & $inst.arg0.kind)
+                not_allowed("Cannot subtract " & $inst.arg0.kind & " from " & $first.kind)
           of VkFloat:
             case inst.arg0.kind:
               of VkInt:
@@ -2970,9 +2970,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.replace(sub_float_fast(first.float, inst.arg0.float))
               else:
-                todo("Unsupported arg0 type for IkSubValue: " & $inst.arg0.kind)
+                not_allowed("Cannot subtract " & $inst.arg0.kind & " from " & $first.kind)
           else:
-            todo("Unsupported operand type for IkSubValue: " & $first.kind)
+            not_allowed("Cannot subtract from values of type: " & $first.kind)
         {.pop.}
 
       of IkMul:
@@ -2987,7 +2987,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(mul_mixed(first.int64, second.float))
               else:
-                todo("Unsupported second operand for multiplication: " & $second)
+                not_allowed("Cannot multiply " & $first.kind & " by " & $second.kind)
           of VkFloat:
             case second.kind:
               of VkInt:
@@ -2995,9 +2995,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(mul_float_fast(first.float, second.float))
               else:
-                todo("Unsupported second operand for multiplication: " & $second)
+                not_allowed("Cannot multiply " & $first.kind & " by " & $second.kind)
           else:
-            todo("Unsupported first operand for multiplication: " & $first)
+            not_allowed("Cannot multiply values of type: " & $first.kind)
         {.pop.}
 
       of IkDiv:
@@ -3011,7 +3011,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(div_mixed(first.int64, second.float))
               else:
-                todo("Unsupported second operand for division: " & $second)
+                not_allowed("Cannot divide " & $first.kind & " by " & $second.kind)
           of VkFloat:
             case second.kind:
               of VkInt:
@@ -3019,9 +3019,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(div_float_fast(first.float, second.float))
               else:
-                todo("Unsupported second operand for division: " & $second)
+                not_allowed("Cannot divide " & $first.kind & " by " & $second.kind)
           else:
-            todo("Unsupported first operand for division: " & $first)
+            not_allowed("Cannot divide values of type: " & $first.kind)
 
       of IkNeg:
         # Unary negation
@@ -3032,7 +3032,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkFloat:
             self.frame.push(neg_float_fast(value.float))
           else:
-            todo("Unsupported operand for negation: " & $value)
+            not_allowed("Cannot negate value of type: " & $value.kind)
 
       of IkVarAddValue:
         {.push checks: off}
@@ -3059,7 +3059,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(add_mixed(var_value.int64, literal_value.float))
               else:
-                todo("Unsupported literal operand for VarAddValue: " & $literal_value)
+                not_allowed("Cannot add " & $var_value.kind & " and " & $literal_value.kind)
           of VkFloat:
             case literal_value.kind:
               of VkInt:
@@ -3067,9 +3067,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(add_float_fast(var_value.float, literal_value.float))
               else:
-                todo("Unsupported literal operand for VarAddValue: " & $literal_value)
+                not_allowed("Cannot add " & $var_value.kind & " and " & $literal_value.kind)
           else:
-            todo("Unsupported variable operand for VarAddValue: " & $var_value)
+            not_allowed("Cannot add variable of type: " & $var_value.kind)
         {.pop.}
 
       of IkIncVar:
@@ -3081,7 +3081,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.scope.members[index] = (current.int64 + 1).to_value()
           self.frame.push(self.frame.scope.members[index])
         else:
-          todo("IkIncVar only supports integers")
+          not_allowed("Cannot increment variable of type: " & $current.kind & " (only integers supported)")
         {.pop.}
 
       of IkVarSubValue:
@@ -3109,7 +3109,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(sub_mixed(var_value.int64, literal_value.float))
               else:
-                todo("Unsupported literal operand for VarSubValue: " & $literal_value)
+                not_allowed("Cannot subtract " & $literal_value.kind & " from " & $var_value.kind)
           of VkFloat:
             case literal_value.kind:
               of VkInt:
@@ -3117,9 +3117,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(sub_float_fast(var_value.float, literal_value.float))
               else:
-                todo("Unsupported literal operand for VarSubValue: " & $literal_value)
+                not_allowed("Cannot subtract " & $literal_value.kind & " from " & $var_value.kind)
           else:
-            todo("Unsupported variable operand for VarSubValue: " & $var_value)
+            not_allowed("Cannot subtract from variable of type: " & $var_value.kind)
         {.pop.}
 
       of IkDecVar:
@@ -3131,7 +3131,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.scope.members[index] = (current.int64 - 1).to_value()
           self.frame.push(self.frame.scope.members[index])
         else:
-          todo("IkDecVar only supports integers")
+          not_allowed("Cannot decrement variable of type: " & $current.kind & " (only integers supported)")
         {.pop.}
 
       of IkVarMulValue:
@@ -3159,7 +3159,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(var_value.int64.float64 * literal_value.float)
               else:
-                todo("Unsupported literal operand for VarMulValue: " & $literal_value)
+                not_allowed("Cannot multiply " & $var_value.kind & " by " & $literal_value.kind)
           of VkFloat:
             case literal_value.kind:
               of VkInt:
@@ -3167,9 +3167,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(var_value.float * literal_value.float)
               else:
-                todo("Unsupported literal operand for VarMulValue: " & $literal_value)
+                not_allowed("Cannot multiply " & $var_value.kind & " by " & $literal_value.kind)
           else:
-            todo("Unsupported variable operand for VarMulValue: " & $var_value)
+            not_allowed("Cannot multiply variable of type: " & $var_value.kind)
         {.pop.}
 
       of IkVarDivValue:
@@ -3197,7 +3197,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(var_value.int64.float64 / literal_value.float)
               else:
-                todo("Unsupported literal operand for VarDivValue: " & $literal_value)
+                not_allowed("Cannot divide " & $var_value.kind & " by " & $literal_value.kind)
           of VkFloat:
             case literal_value.kind:
               of VkInt:
@@ -3205,9 +3205,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               of VkFloat:
                 self.frame.push(var_value.float / literal_value.float)
               else:
-                todo("Unsupported literal operand for VarDivValue: " & $literal_value)
+                not_allowed("Cannot divide " & $var_value.kind & " by " & $literal_value.kind)
           else:
-            todo("Unsupported variable operand for VarDivValue: " & $var_value)
+            not_allowed("Cannot divide variable of type: " & $var_value.kind)
         {.pop.}
 
       of IkLt:
@@ -3611,7 +3611,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkClass:
             ns = obj.ref.class.ns
           else:
-            todo($obj.kind)
+            not_allowed("Cannot access namespace member on value of type: " & $obj.kind)
 
         self.pc.inc()
         self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
@@ -4110,9 +4110,9 @@ proc exec*(self: ptr VirtualMachine): Value =
             # No constructor - create empty instance
             let instance = new_instance_value(class)
             self.frame.push(instance)
-            
+
           else:
-            todo($class.constructor.kind)
+            not_allowed("Unsupported constructor type: " & $class.constructor.kind)
 
       of IkSubClass:
         let name = inst.arg0
@@ -6194,7 +6194,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop}
 
       else:
-        todo($inst.kind)
+        not_allowed("Unsupported instruction: " & $inst.kind)
 
     except CatchableError as ex:
       # Route Nim exceptions through Gene's exception handling so try/catch works.
