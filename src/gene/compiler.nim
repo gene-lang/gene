@@ -2134,7 +2134,7 @@ proc compile_gene(self: Compiler, input: Value) =
     if first_child.kind == VkSymbol:
       if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
         # Don't convert if the type is already an operator or special form
-        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "$", ".", "->"]:
+        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "$", ".", "->", "@"]:
           # Convert infix to prefix notation and compile
           # (6 / 2) becomes (/ 6 2)
           # (i + 1) becomes (+ i 1)

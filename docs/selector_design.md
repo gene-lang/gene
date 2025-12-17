@@ -10,6 +10,7 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
 - **Graceful Missing Values**: Distinguish between “present but empty” (`nil`) and “absent” (`void`) so callers can recover or escalate as needed.
 - **Inline Mutation**: Pair selectors with simple update utilities so that modifying nested data feels natural.
 - **Composable Transformations**: Make it easy to feed selector results into higher-order functions, predicate filters, and transformation pipelines.
+- **Native Map/Reduce Pipelines**: Make it natural to select many values, transform them, and fold/collect results (CSS/XPath/XSLT-style).
 
 ## Current Implementation
 
@@ -53,7 +54,119 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
 - `IkSetMember` and `IkSetChild` perform mutation for string/symbol keys and integer indices respectively.
 - `IkAssertNotVoid` throws if the current value is `void`. This is the runtime primitive backing `/!`.
 
-### Tests Exercising the Implementation
+## Recommendations: Map/Reduce as First-Class Selector Operators
+
+To approach CSS selector + XPath query power, selectors need to support **match-many** queries and then **transform/aggregate** them. The recommended model is:
+
+- Keep current `/`, `./`, `Selector.call` as **value-mode** (single value, missing → `void`).
+- Add **selection-mode** APIs that return a collection of matches (possibly empty), and allow *operators* like map/reduce to run on that selection.
+
+### 1) Selection Mode vs Value Mode
+
+`void` is a great sentinel for “missing key/index/member” in value-mode, but it is awkward for match-many queries (where “no matches” should be an empty set).
+
+Recommendation:
+- `Selector.call(selector, target, [default])` → value-mode (existing)
+- `Selector.query(selector, target, ^mode :all|:first)` → selection-mode (new)
+  - `^mode :all`: returns an array (empty when no matches)
+  - `^mode :first`: returns first match or `void`
+
+This cleanly separates “missing member” (`void`) from “matched nothing” (`[]`).
+
+### 2) Operator Segments: `(map ...)`, `(filter ...)`, `(reduce ...)`, `(collect)`
+
+Define a small set of selector-specific operator segments:
+- `(map fn)` → apply `fn` to each element of the current selection/array
+- `(filter pred)` → keep elements where `pred` returns truthy
+- `(reduce init fn)` → fold elements into an accumulator
+- `(collect)` → normalize the current selection into an array (convenience; often the implicit final step in `query`)
+
+Important semantic recommendation (to avoid surprises):
+- A **callable segment** `(fnx ...)` continues to mean “transform the current value”.
+- A **map** operator is always explicit; we do not implicitly map just because the current value happens to be an array.
+
+### 2.1) Token Operators: `*`, `**`, `@`, `@@`
+
+For ergonomics (especially in selector-heavy code), we can introduce single-token operators as selector path segments:
+
+- `*` (**expand children**)  
+  Converts an array / gene into a stream of individual child values.
+  - On arrays: expands elements
+  - On genes: expands children (equivalent to `:$children`)
+  - On other types: produces an empty stream
+
+- `**` (**expand entries**)  
+  Converts a keyed container into a stream of `[key value]` pairs.
+  - On maps: expands entries
+  - On genes: expands props entries (equivalent to `:$props`)
+  - On namespaces: expands members
+  - On classes: expands static members
+  - On instances: expands instance properties
+  - On other types: produces an empty stream
+
+- `@` (**collect values**)  
+  Collects the current stream of values into an array and switches back to value-mode.
+
+- `@@` (**collect entries**)  
+  Collects the current stream of `[key value]` pairs into a map and switches back to value-mode.
+
+Pair representation:
+- Entry streams are represented as 2-element arrays `[key value]`, so `@@` can rebuild a map deterministically (last write wins on duplicate keys).
+- When mapping an entry stream with a callable segment, the callable is invoked as `fn(k, v)` (2 args). If it returns `[key value]`, both key and value are replaced; otherwise only the value is replaced and the key is preserved.
+
+Syntax/compatibility notes:
+- These token operators are intended to work **inside selector literals** like `(@ ... )`. Until the shorthand grammar is extended, forms like `@a/*/b/@` will be parsed as plain member lookups, not selector operators.
+- `@@` currently looks like an `@`-prefixed symbol in normal code; outside selector literals it may be interpreted as selector shorthand by the compiler. Inside `(@ ... )` it is just a selector segment value.
+
+### 2.2) Implicit Mapping in Selection Mode
+
+Once `*` or `**` has turned the pipeline into selection-mode, subsequent **normal path segments** are applied element-wise (i.e. the pipeline implicitly maps over the current selection). This yields the “map array children, process” behavior without requiring an explicit `(map ...)`.
+
+Default end-of-selector reduction (recommended):
+- If selector execution ends while in **value-stream** mode, the result is automatically collected to an array (equivalent to appending a trailing `@`).
+- If selector execution ends while in **entry-stream** mode, the result is an array of `[key value]` pairs unless an explicit `@@` is used to collect into a map.
+
+Missing values in selection-mode should behave like “no match”:
+- `void` is skipped when processing streams of values or pairs (it does not appear in collected output).
+- Use `/!` when you want to assert that at least one match exists (throws if the current value is `void` in value-mode, or if the current stream is empty in selection-mode).
+
+### 3) Example: Map Children and Reduce Into a Collection
+
+```gene
+# Select children, transform each, then reduce into an array accumulator.
+# (acc .append v) returns acc, so it works well as a reducer.
+((@ a :$children
+    (map (fnx [child] ...))
+    (reduce [] (fnx [acc v] (acc .append v)))
+ ) target)
+```
+
+This pattern directly supports “map array children, process, then reduce to a collection at the end”.
+
+Token-operator equivalent:
+
+```gene
+((@ a *                # expand children/items
+    (fnx [child] ...)  # transform each selected child
+ ) target)
+```
+
+And for keyed collections:
+
+```gene
+((@ props **                    # stream [k v] pairs
+    (fnx [k v] [k (f v)])       # transform values (key is preserved unless you return [k v])
+    @@                          # collect back into a map (otherwise you get an array of [k v])
+ ) target)
+```
+
+### 4) Implementation Notes (for later)
+
+- Start by supporting operators when the current value is a `VkArray` (low risk).
+- Extend selection-mode once descendant traversal / `:$children` / `_` land.
+- For performance, compile common operator chains into dedicated fast paths (avoid allocating intermediate arrays when `map → reduce` can stream).
+
+## Tests Exercising the Implementation
 
 `tests/test_selector.nim` contains the active coverage:
 - `m/x` and `arr/idx` for maps and arrays.
@@ -72,6 +185,7 @@ Many more scenarios are sketched but commented out, signalling the intended scop
 - **Predicate-based selectors**: There is no mechanism to pass a predicate function (`fnx`) that filters descendants or siblings.
 - **Selector flags and modes**: Concepts like `match-first` vs `match-all` and `error_on_no_match` are undefined beyond comments.
 - **Transform pipelines**: We do not yet surface APIs to apply transformations or callbacks to selector matches (akin to CSS selectors + rules).
+- **Selector collection operators**: There is no native selector support for `(map ...)`, `(filter ...)`, `(reduce ...)`, or `(collect)` over match sets.
 - **Mutation breadth**: `$set` handles only direct property/index assignment. There is no support for appending, removing, or mutating collections returned by composite selectors.
 - **Dedicated error handling**: Without `void` propagation and flags, callers must manually guard against `nil` and cannot distinguish “missing” from “present but empty”.
 

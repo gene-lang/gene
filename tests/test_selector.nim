@@ -1,4 +1,5 @@
 import unittest
+import tables
 
 import gene/types except Exception
 
@@ -229,6 +230,82 @@ test_vm """
   (var arr [{^name "n"}])
   (@0/name arr)
 """, "n"
+
+test_vm """
+  (var data [[10 11] [20 21]])
+  ((@ * 1) data)
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 2
+  check array_data(r)[0] == 11.to_value()
+  check array_data(r)[1] == 21.to_value()
+
+test_vm """
+  (var xs [1 2 3])
+  ((@ * (fnx [x] (x + 1))) xs)
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 3
+  check array_data(r)[0] == 2.to_value()
+  check array_data(r)[1] == 3.to_value()
+  check array_data(r)[2] == 4.to_value()
+
+test_vm """
+  (var data [{^name "a"} {^name "b"}])
+  ((@ * name) data)
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 2
+  check array_data(r)[0] == "a".to_value()
+  check array_data(r)[1] == "b".to_value()
+
+test_vm """
+  (var data {^a 1})
+  ((@ * a) data)
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 0
+
+test_vm """
+  (var data [[1] (./ {} "a")])
+  ((@ * 0) data)
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 1
+  check array_data(r)[0] == 1.to_value()
+
+test_vm_error """
+  (var data [[10] [20]])
+  ((@ * 1 !) data)
+"""
+
+test_vm """
+  (var m {^a 1 ^b 2})
+  ((@ ** (fnx [k v] [k (v + 10)]) @@) m)
+""", proc(r: Value) =
+  check r.kind == VkMap
+  check map_data(r)["a".to_key()] == 11.to_value()
+  check map_data(r)["b".to_key()] == 12.to_value()
+
+test_vm """
+  (var m {^a 1 ^b (./ {} "x")})
+  ((@ ** @@) m)
+""", proc(r: Value) =
+  check r.kind == VkMap
+  check map_data(r).len == 1
+  check map_data(r)["a".to_key()] == 1.to_value()
+
+test_vm """
+  (class C
+    (.ctor [x]
+      (/x = x)
+    )
+  )
+  (var c (new C 1))
+  ((@ ** @@) c)
+""", proc(r: Value) =
+  check r.kind == VkMap
+  check map_data(r)["x".to_key()] == 1.to_value()
 
 test_vm """
   (var data {^a 1})
