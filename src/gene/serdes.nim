@@ -109,9 +109,22 @@ proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
   true
 
 # Serialize only literal values; reject unsupported kinds early.
+#
+# Thread messaging only supports "literal" values - primitives and containers
+# with literal contents. This constraint exists because:
+# 1. Functions/closures may reference thread-local state
+# 2. Class/instance objects have complex object graphs
+# 3. Thread/Future handles are thread-specific
+#
+# Allowed types: nil, bool, int, float, char, string, symbol, byte, bytes,
+#                date, datetime, arrays/maps/genes with literal contents
+# Not allowed: functions, classes, instances, threads, futures, namespaces, etc.
 proc serialize_literal*(value: Value): Serialization {.gcsafe.} =
   if not is_literal_value(value):
-    not_allowed("Only literal values can be serialized for thread messages")
+    not_allowed("Thread message payload must be a literal value. Got " & $value.kind &
+                ". Allowed: primitives (nil/bool/int/float/char/string/symbol/byte/bytes/date/datetime) " &
+                "and containers (array/map/gene) with literal contents. " &
+                "Not allowed: functions, classes, instances, threads, futures.")
   serialize(value)
 
 proc deserialize_literal*(s: string): Value {.gcsafe.} =

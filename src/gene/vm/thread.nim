@@ -261,7 +261,11 @@ proc init_thread_class*() =
     msg.id = next_message_id
     msg.msg_type = if reply_requested: MtSendExpectReply else: MtSend
     msg.payload = NIL
-    # Serialize payload to isolate across threads; only literal values are allowed
+
+    # Serialize payload to isolate across threads
+    # NOTE: Only literal values are allowed (primitives, strings, and containers with literal contents).
+    # Functions, classes, instances, threads, futures are NOT allowed.
+    # See serialize_literal in serdes.nim for detailed rationale.
     let ser = serialize_literal(message_arg)
     let ser_str = block:
       {.cast(gcsafe).}:
