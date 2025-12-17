@@ -250,12 +250,9 @@
     (println "Starting HTTP server at port" /port "...")
 
     (var root_handler (.construct_handler 0))
-    (if genex/http
-      (genex/http/start_server /port root_handler)
-      (genex/http/run_forever)
-    else
-      (println "HTTP extension unavailable; skipping server start.")
-    )
+    (start_server /port root_handler)
+    (println "Server started, entering event loop...")
+    (run_forever)
   )
 )
 

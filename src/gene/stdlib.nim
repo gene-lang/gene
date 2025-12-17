@@ -1341,11 +1341,18 @@ proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   sleep(duration_ms)
   return NIL
 
-# Run event loop forever
+# Run Nim's async event loop forever
 proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  # Run the async event loop indefinitely
-  while hasPendingOperations():
-    poll(0)
+  # Run Nim's async event loop indefinitely, interleaved with Gene handler queue processing
+  # This is needed for HTTP servers and other async operations
+
+  while true:
+    # Process Nim's async events
+    try:
+      poll(10)  # Poll with 10ms timeout
+    except:
+      discard  # Ignore "No handles" exceptions
+
   return NIL
 
 # Environment variable functions

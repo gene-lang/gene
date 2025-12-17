@@ -685,19 +685,30 @@ initLock(queue_lock)
 proc process_handler_queue*(vm: ptr VirtualMachine) {.exportc, dynlib.} =
   {.cast(gcsafe).}:
     withLock(queue_lock):
+      echo "[DEBUG] process_handler_queue called, queue length: ", handler_queue.len
       while handler_queue.len > 0:
         let req = handler_queue.popFirst()
-        
+        echo "[DEBUG] Processing request from queue"
+
         # Execute the handler
         var result: Value
         if gene_handler_global.kind != VkNil:
-          result = execute_gene_function(vm, gene_handler_global, @[req.request])
+          echo "[DEBUG] Executing gene_handler_global, kind: ", gene_handler_global.kind
+          try:
+            result = execute_gene_function(vm, gene_handler_global, @[req.request])
+            echo "[DEBUG] Handler returned, result.kind: ", result.kind
+          except CatchableError as e:
+            echo "[DEBUG] Exception executing handler: ", e.msg
+            result = ("500 Internal Server Error").to_value()
         else:
+          echo "[DEBUG] No handler configured"
           result = ("404 Not Found").to_value()
-        
+
         # Send response back
+        echo "[DEBUG] Sending response to async handler"
         req.response[].send(result)
         req.completed[] = true
+        echo "[DEBUG] Request completed"
 
 # Execute a Gene function in VM context
 proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
@@ -770,77 +781,95 @@ proc create_server_request(req: asynchttpserver.Request): Value =
 
 proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
   {.cast(gcsafe).}:
+    echo "[DEBUG] handle_request called for: ", req.reqMethod, " ", req.url.path
     # Convert async request to Gene request
     let gene_req = create_server_request(req)
-    
+    echo "[DEBUG] gene_req created"
+
     # Call the handler
     var response: Value = NIL
-    
+
     # If we have a native handler, call it directly
+    echo "[DEBUG] Checking handlers - server_handler != nil: ", server_handler != nil, ", gene_handler_global.kind: ", gene_handler_global.kind
     if server_handler != nil:
+      echo "[DEBUG] Using server_handler (native)"
       try:
         response = server_handler(gene_req)
+        echo "[DEBUG] server_handler returned, response.kind: ", response.kind
       except CatchableError as e:
         # Return 500 error on exception
+        echo "[DEBUG] Exception in server_handler: ", e.msg
         await req.respond(Http500, "Internal Server Error: " & e.msg)
         return
     # If we have a Gene function handler, use the queue system
     elif gene_handler_global.kind != VkNil:
+      echo "[DEBUG] Using gene_handler_global (queue system)"
       # Create response channel
       var response_channel: Channel[Value]
       response_channel.open()
       var completed = false
-      
+
       # Queue the request
       let handler_req = HandlerRequest(
         request: gene_req,
         response: addr response_channel,
         completed: addr completed
       )
-      
+
       withLock(queue_lock):
         handler_queue.addLast(handler_req)
-      
+      echo "[DEBUG] Request queued, queue length: ", handler_queue.len
+
       # Wait for response (with timeout)
       var timeout = 0
       while not completed and timeout < 1000:  # 10 second timeout
         await sleepAsync(10)
         timeout += 1
-      
+
       if completed:
         response = response_channel.recv()
+        echo "[DEBUG] Got response from queue, response.kind: ", response.kind
       else:
+        echo "[DEBUG] Queue timeout after ", timeout * 10, "ms"
         response = ("504 Gateway Timeout").to_value()
-      
+
       response_channel.close()
+    else:
+      echo "[DEBUG] No handler configured!"
     
     # Handle the response
+    echo "[DEBUG] Handling response, response == NIL: ", response == NIL, ", response.kind: ", (if response == NIL: "NIL" else: $response.kind)
     if response == NIL:
       # No response, return 404
+      echo "[DEBUG] Sending 404 Not Found"
       await req.respond(Http404, "Not Found")
     elif response.kind == VkInstance:
       # Check if it's a ServerResponse
+      echo "[DEBUG] Response is VkInstance, extracting properties"
       let status_val = instance_props(response).getOrDefault("status".to_key(), 200.to_value())
       let body_val = instance_props(response).getOrDefault("body".to_key(), "".to_value())
       let headers_val = instance_props(response).getOrDefault("headers".to_key(), NIL)
-      
-      let status_code = if status_val.kind == VkInt: 
+
+      let status_code = if status_val.kind == VkInt:
         HttpCode(status_val.int64.int)
       else:
         Http200
-      
+
       let body = if body_val.kind == VkString: body_val.str else: $body_val
-      
+      echo "[DEBUG] Sending response: status=", status_code, ", body_length=", body.len
+
       # Prepare headers
       var headers = newHttpHeaders()
       if headers_val.kind == VkMap:
         for k, v in map_data(headers_val):
           if v.kind == VkString:
             headers[cast[Value](k).str] = v.str
-      
+
       await req.respond(status_code, body, headers)
+      echo "[DEBUG] Response sent"
     else:
       # Unknown response type
+      echo "[DEBUG] Invalid response type: ", response.kind, ", sending 500"
       await req.respond(Http500, "Invalid response type")
 
 # Start HTTP server
@@ -858,31 +887,42 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     # Store VM reference and handler globally for queue-based execution
     gene_vm_global = vm
     gene_handler_global = handler
-    
+    echo "[DEBUG] start_server called with port=", port, ", handler.kind=", handler.kind
+
     # Check handler type and set up appropriate handler
     case handler.kind:
     of VkNativeFn:
       # Native function - can be called directly
+      echo "[DEBUG] Setting up native function handler"
       let stored_vm = vm
       let stored_handler = handler
-      
+
       server_handler = proc(req: Value): Value {.gcsafe.} =
         return call_native_fn(stored_handler.ref.native_fn, stored_vm, [req])
     of VkFunction, VkClass, VkInstance:
       # Gene function/class/instance - use queue system
+      echo "[DEBUG] Setting up queue-based handler for ", handler.kind
       server_handler = nil  # Don't use native handler, will use queue
     of VkNil:
       # No handler
+      echo "[DEBUG] No handler provided"
       server_handler = nil
     else:
       # Other handler types - use queue system
+      echo "[DEBUG] Unknown handler type, using queue system: ", handler.kind
       server_handler = nil
   
   # Create and start server
   {.cast(gcsafe).}:
     http_server = newAsyncHttpServer()
     asyncCheck http_server.serve(Port(port), handle_request)
-  
+    # Give the event loop time to bind the server socket
+    echo "[DEBUG] Polling event loop to bind server socket..."
+    try:
+      poll(100)  # Wait up to 100ms for server to bind
+    except:
+      discard
+
   echo "HTTP server started on port ", port
   return NIL
 
