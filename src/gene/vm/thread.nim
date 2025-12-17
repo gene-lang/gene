@@ -80,7 +80,7 @@ type
     thread*: system.Thread[int]
     channel*: ThreadChannel
 
-var THREAD_DATA*: array[0..MAX_THREADS, ThreadDataObj]  # Shared across threads (channels are thread-safe)
+var THREAD_DATA*: array[MAX_THREADS, ThreadDataObj]  # Shared across threads (channels are thread-safe)
 var THREAD_CLASS_VALUE*: Value  # Cached thread class value for quick access across threads
 var THREAD_MESSAGE_CLASS_VALUE*: Value
 
@@ -95,7 +95,7 @@ proc init_thread_pool*() =
   next_message_id = 0
 
   # Terminate and clean up any existing worker threads/channels
-  for i in 1..MAX_THREADS:
+  for i in 1..<MAX_THREADS:
     if THREAD_DATA[i].channel != nil:
       # Ask the worker to exit and wait for it to finish
       var term: ThreadMessage
@@ -136,7 +136,7 @@ proc init_thread_pool*() =
   THREAD_DATA[0].channel.open(CHANNEL_LIMIT)
 
   # Initialize other thread slots as free
-  for i in 1..MAX_THREADS:
+  for i in 1..<MAX_THREADS:
     THREADS[i].id = i
     THREADS[i].state = TsFree
     THREADS[i].in_use = false
@@ -147,7 +147,7 @@ proc get_free_thread*(): int =
   acquire(thread_pool_lock)
   defer: release(thread_pool_lock)
 
-  for i in 1..MAX_THREADS:
+  for i in 1..<MAX_THREADS:
     if not THREADS[i].in_use and THREADS[i].state == TsFree:
       THREADS[i].in_use = true
       THREADS[i].state = TsBusy

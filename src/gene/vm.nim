@@ -217,7 +217,7 @@ proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj) 
             discard call_native_fn(callback.ref.native_fn, self, args_arr)
           else:
             discard
-      except:
+      except CatchableError:
         # If callback throws, mark future as failed
         future_obj.state = FsFailure
         future_obj.value = self.current_exception
@@ -237,7 +237,7 @@ proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj) 
             discard call_native_fn(callback.ref.native_fn, self, args_arr)
           else:
             discard
-      except:
+      except CatchableError:
         # If callback throws, keep failure state but replace value
         future_obj.value = self.current_exception
         break
@@ -252,68 +252,68 @@ proc poll_event_loop(self: ptr VirtualMachine) =
   self.event_loop_counter.inc()
   if self.event_loop_counter >= EVENT_LOOP_POLL_INTERVAL:
     self.event_loop_counter = 0
+    # Try to poll Nim async dispatcher, but ignore "no handles" error.
     try:
-      # Try to poll Nim async dispatcher, but ignore "no handles" error
-      try:
-        poll(0)  # Non-blocking poll - check for completed async operations
-      except:
-        # Ignore "No handles or timers registered" - this is normal when using Gene futures
-        discard
-
-      # Check for thread replies (non-blocking)
-      # Only check if we're the main thread (thread 0)
-      if THREADS[0].in_use:
-        while true:
-          let msg_opt = THREAD_DATA[0].channel.try_recv()
-          if msg_opt.isNone():
-            break
-
-          let msg = msg_opt.get()
-          if msg.msg_type == MtReply:
-            # Complete the future with the reply payload
-            if self.thread_futures.hasKey(msg.from_message_id):
-              let future_obj = self.thread_futures[msg.from_message_id]
-              var payload = msg.payload
-              if msg.payload_bytes.bytes.len > 0:
-                try:
-                  payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
-                except:
-                  payload = NIL
-              future_obj.state = FsSuccess
-              future_obj.value = payload
-              # Execute callbacks for the completed future
-              execute_future_callbacks(self, future_obj)
-              self.thread_futures.del(msg.from_message_id)
-
-      # Update all pending futures from their Nim futures
-      var i = 0
-      while i < self.pending_futures.len:
-        let future_obj = self.pending_futures[i]
-        let old_state = future_obj.state
-        update_future_from_nim(self, future_obj)
-
-        # Execute callbacks if:
-        # 1. Future just completed (transition from Pending), OR
-        # 2. Future is already completed but has callbacks (added after completion)
-        let needs_callback_execution =
-          (old_state == FsPending and future_obj.state != FsPending) or
-          (future_obj.state != FsPending and (future_obj.success_callbacks.len > 0 or future_obj.failure_callbacks.len > 0))
-
-        if needs_callback_execution:
-          execute_future_callbacks(self, future_obj)
-
-          # Remove completed futures after callbacks are executed
-          if future_obj.state != FsPending:
-            self.pending_futures.delete(i)
-            continue
-
-        i.inc()
-
-      if self.pending_futures.len == 0 and self.thread_futures.len == 0:
-        self.poll_enabled = false
-    except:
-      # If polling fails, ignore the error to keep the VM running
+      poll(0)  # Non-blocking poll - check for completed async operations
+    except ValueError:
+      # Ignore "No handles or timers registered" - this is normal when using Gene futures
       discard
+
+    # Check for thread replies (non-blocking)
+    # Only check if we're the main thread (thread 0)
+    if THREADS[0].in_use:
+      while true:
+        let msg_opt = THREAD_DATA[0].channel.try_recv()
+        if msg_opt.isNone():
+          break
+
+        let msg = msg_opt.get()
+        if msg.msg_type == MtReply:
+          # Complete the future with the reply payload
+          if self.thread_futures.hasKey(msg.from_message_id):
+            let future_obj = self.thread_futures[msg.from_message_id]
+            var payload = msg.payload
+            if msg.payload_bytes.bytes.len > 0:
+              try:
+                payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+              except CatchableError as ex:
+                future_obj.state = FsFailure
+                future_obj.value = wrap_nim_exception(ex, "thread reply decode")
+                execute_future_callbacks(self, future_obj)
+                self.thread_futures.del(msg.from_message_id)
+                continue
+            future_obj.state = FsSuccess
+            future_obj.value = payload
+            # Execute callbacks for the completed future
+            execute_future_callbacks(self, future_obj)
+            self.thread_futures.del(msg.from_message_id)
+
+    # Update all pending futures from their Nim futures
+    var i = 0
+    while i < self.pending_futures.len:
+      let future_obj = self.pending_futures[i]
+      let old_state = future_obj.state
+      update_future_from_nim(self, future_obj)
+
+      # Execute callbacks if:
+      # 1. Future just completed (transition from Pending), OR
+      # 2. Future is already completed but has callbacks (added after completion)
+      let needs_callback_execution =
+        (old_state == FsPending and future_obj.state != FsPending) or
+        (future_obj.state != FsPending and (future_obj.success_callbacks.len > 0 or future_obj.failure_callbacks.len > 0))
+
+      if needs_callback_execution:
+        execute_future_callbacks(self, future_obj)
+
+        # Remove completed futures after callbacks are executed
+        if future_obj.state != FsPending:
+          self.pending_futures.delete(i)
+          continue
+
+      i.inc()
+
+    if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+      self.poll_enabled = false
 
 proc print_profile*(self: ptr VirtualMachine) =
   if not self.profiling or self.profile_data.len == 0:
@@ -1747,10 +1747,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkNil:
             # Trying to set member on nil - likely namespace doesn't exist
             let symbol_index = cast[uint64](name) and PAYLOAD_MASK
-            let symbol_name = try:
-              get_symbol(symbol_index.int)
-            except:
-              "<invalid key>"
+            let symbol_name = get_symbol(symbol_index.int)
             not_allowed("Cannot set member '" & symbol_name & "' on nil (namespace or object doesn't exist)")
           of VkMap:
             map_data(target)[name] = value
@@ -1765,10 +1762,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkArray:
             # Arrays don't support named members, this is likely an error
             let symbol_index = cast[uint64](name) and PAYLOAD_MASK
-            let symbol_name = try:
-              get_symbol(symbol_index.int)
-            except:
-              "<invalid key>"
+            let symbol_name = get_symbol(symbol_index.int)
             not_allowed("Cannot set named member '" & symbol_name & "' on array")
           else:
             not_allowed("Cannot set member on value of type: " & $target.kind)
@@ -1814,7 +1808,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                     value.ref.ns[name] = ext_ns.to_value()
                     member = ext_ns.to_value()
                   except CatchableError:
-                    # Extension not found or failed to load
                     discard
               self.frame.push(member)
             else:
@@ -4592,8 +4585,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                       if msg.payload_bytes.bytes.len > 0:
                         try:
                           payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
-                        except:
-                          payload = NIL
+                        except CatchableError as ex:
+                          future_obj.state = FsFailure
+                          future_obj.value = wrap_nim_exception(ex, "thread reply decode")
+                          self.thread_futures.del(msg.from_message_id)
+                          continue
                       future_obj.state = FsSuccess
                       future_obj.value = payload
                       self.thread_futures.del(msg.from_message_id)

@@ -920,7 +920,7 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     echo "[DEBUG] Polling event loop to bind server socket..."
     try:
       poll(100)  # Wait up to 100ms for server to bind
-    except:
+    except ValueError:
       discard
 
   echo "HTTP server started on port ", port
