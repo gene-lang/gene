@@ -84,7 +84,7 @@ const CHANNEL_LIMIT* = 1000  # Maximum messages in channel
 const MAX_THREADS* = 64      # Maximum number of threads in pool
 
 # Thread pool is shared across all threads (protected by thread_pool_lock in vm/thread.nim)
-var THREADS*: array[0..MAX_THREADS, ThreadMetadata]
+var THREADS*: array[MAX_THREADS, ThreadMetadata]
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 

@@ -250,7 +250,7 @@ proc init_thread_class*() =
     let thread_secret = thread_arg.ref.thread.secret
 
     # Validate thread
-    if thread_id < 0 or thread_id > MAX_THREADS:
+    if thread_id < 0 or thread_id >= MAX_THREADS:
       raise new_exception(types.Exception, "Invalid thread ID")
     if not THREADS[thread_id].in_use or THREADS[thread_id].secret != thread_secret:
       raise new_exception(types.Exception, "Thread is no longer valid")
