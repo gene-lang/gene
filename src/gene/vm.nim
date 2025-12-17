@@ -1842,57 +1842,88 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.pop2(prop)
         var target: Value
         self.frame.pop2(target)
-        
-        let key = case prop.kind:
-          of VkString: prop.str.to_key()
-          of VkSymbol: prop.str.to_key()
-          of VkInt: ($prop.int64).to_key()
-          else: 
-            not_allowed("Invalid property type: " & $prop.kind)
-            "".to_key()  # Never reached, but satisfies type checker
-        
-        case target.kind:
-          of VkMap:
-            if key in map_data(target):
-              self.frame.push(map_data(target)[key])
-            else:
-              self.frame.push(NIL)
-          of VkGene:
-            if key in target.gene.props:
-              self.frame.push(target.gene.props[key])
-            else:
-              self.frame.push(NIL)
-          of VkNamespace:
-            if target.ref.ns.has_key(key):
-              self.frame.push(target.ref.ns[key])
-            else:
-              self.frame.push(NIL)
-          of VkClass:
-            if target.ref.class.ns.has_key(key):
-              self.frame.push(target.ref.class.ns[key])
-            else:
-              self.frame.push(NIL)
-          of VkInstance:
-            if key in instance_props(target):
-              self.frame.push(instance_props(target)[key])
-            else:
-              self.frame.push(NIL)
-          of VkArray:
-            # Handle array index access
-            if prop.kind == VkInt:
-              let idx = prop.int64
-              let arr = array_data(target)
-              if idx >= 0 and idx < arr.len:
-                self.frame.push(arr[idx])
-              elif idx < 0 and -idx <= arr.len:
-                # Negative indexing
-                self.frame.push(arr[arr.len + idx])
+
+        # Not found returns VOID by default. Use /! (IkAssertNotVoid) to throw.
+        if target == VOID or target == NIL:
+          self.frame.push(VOID)
+        else:
+          case target.kind:
+            of VkMap:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              self.frame.push(map_data(target).getOrDefault(key, VOID))
+            of VkGene:
+              if prop.kind == VkInt:
+                let idx64 = prop.int64
+                let children_len = target.gene.children.len.int64
+                var resolved = idx64
+                if resolved < 0:
+                  resolved = children_len + resolved
+                if resolved >= 0 and resolved < children_len:
+                  self.frame.push(target.gene.children[resolved.int])
+                else:
+                  self.frame.push(VOID)
               else:
-                self.frame.push(NIL)
+                let key = case prop.kind:
+                  of VkString, VkSymbol: prop.str.to_key()
+                  of VkInt: ($prop.int64).to_key()
+                  else:
+                    not_allowed("Invalid property type: " & $prop.kind)
+                    "".to_key()
+                if key in target.gene.props:
+                  self.frame.push(target.gene.props[key])
+                else:
+                  self.frame.push(VOID)
+            of VkNamespace:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              if target.ref.ns.has_key(key):
+                self.frame.push(target.ref.ns[key])
+              else:
+                self.frame.push(VOID)
+            of VkClass:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              if target.ref.class.ns.has_key(key):
+                self.frame.push(target.ref.class.ns[key])
+              else:
+                self.frame.push(VOID)
+            of VkInstance:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              self.frame.push(instance_props(target).getOrDefault(key, VOID))
+            of VkArray:
+              if prop.kind == VkInt:
+                let idx64 = prop.int64
+                let arr = array_data(target)
+                let arr_len = arr.len.int64
+                var resolved = idx64
+                if resolved < 0:
+                  resolved = arr_len + resolved
+                if resolved >= 0 and resolved < arr_len:
+                  self.frame.push(arr[resolved.int])
+                else:
+                  self.frame.push(VOID)
+              else:
+                self.frame.push(VOID)
             else:
-              self.frame.push(NIL)
-          else:
-            self.frame.push(NIL)
+              self.frame.push(VOID)
       
       of IkGetMemberDefault:
         # Pop default value, property/index, then target
@@ -1902,57 +1933,92 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.pop2(prop)
         var target: Value
         self.frame.pop2(target)
-        
-        let key = case prop.kind:
-          of VkString: prop.str.to_key()
-          of VkSymbol: prop.str.to_key()
-          of VkInt: ($prop.int64).to_key()
-          else: 
-            not_allowed("Invalid property type: " & $prop.kind)
-            "".to_key()  # Never reached, but satisfies type checker
-        
-        case target.kind:
-          of VkMap:
-            if key in map_data(target):
-              self.frame.push(map_data(target)[key])
-            else:
-              self.frame.push(default_val)
-          of VkGene:
-            if key in target.gene.props:
-              self.frame.push(target.gene.props[key])
-            else:
-              self.frame.push(default_val)
-          of VkNamespace:
-            if target.ref.ns.has_key(key):
-              self.frame.push(target.ref.ns[key])
-            else:
-              self.frame.push(default_val)
-          of VkClass:
-            if target.ref.class.ns.has_key(key):
-              self.frame.push(target.ref.class.ns[key])
-            else:
-              self.frame.push(default_val)
-          of VkInstance:
-            if key in instance_props(target):
-              self.frame.push(instance_props(target)[key])
-            else:
-              self.frame.push(default_val)
-          of VkArray:
-            # Handle array index access
-            if prop.kind == VkInt:
-              let idx = prop.int64.int
-              let arr = array_data(target)
-              if idx >= 0 and idx < arr.len:
-                self.frame.push(arr[idx])
-              elif idx < 0 and -idx <= arr.len:
-                # Negative indexing
-                self.frame.push(arr[arr.len + idx])
+
+        if target == VOID or target == NIL:
+          self.frame.push(default_val)
+        else:
+          case target.kind:
+            of VkMap:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              self.frame.push(map_data(target).getOrDefault(key, default_val))
+            of VkGene:
+              if prop.kind == VkInt:
+                let idx64 = prop.int64
+                let children_len = target.gene.children.len.int64
+                var resolved = idx64
+                if resolved < 0:
+                  resolved = children_len + resolved
+                if resolved >= 0 and resolved < children_len:
+                  self.frame.push(target.gene.children[resolved.int])
+                else:
+                  self.frame.push(default_val)
+              else:
+                let key = case prop.kind:
+                  of VkString, VkSymbol: prop.str.to_key()
+                  of VkInt: ($prop.int64).to_key()
+                  else:
+                    not_allowed("Invalid property type: " & $prop.kind)
+                    "".to_key()
+                if key in target.gene.props:
+                  self.frame.push(target.gene.props[key])
+                else:
+                  self.frame.push(default_val)
+            of VkNamespace:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              if target.ref.ns.has_key(key):
+                self.frame.push(target.ref.ns[key])
+              else:
+                self.frame.push(default_val)
+            of VkClass:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              if target.ref.class.ns.has_key(key):
+                self.frame.push(target.ref.class.ns[key])
+              else:
+                self.frame.push(default_val)
+            of VkInstance:
+              let key = case prop.kind:
+                of VkString, VkSymbol: prop.str.to_key()
+                of VkInt: ($prop.int64).to_key()
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  "".to_key()
+              self.frame.push(instance_props(target).getOrDefault(key, default_val))
+            of VkArray:
+              if prop.kind == VkInt:
+                let idx64 = prop.int64
+                let arr = array_data(target)
+                let arr_len = arr.len.int64
+                var resolved = idx64
+                if resolved < 0:
+                  resolved = arr_len + resolved
+                if resolved >= 0 and resolved < arr_len:
+                  self.frame.push(arr[resolved.int])
+                else:
+                  self.frame.push(default_val)
               else:
                 self.frame.push(default_val)
             else:
               self.frame.push(default_val)
-          else:
-            self.frame.push(default_val)
+
+      of IkAssertNotVoid:
+        let value = self.frame.current()
+        if value == VOID:
+          not_allowed("Selector did not match (VOID)")
 
       of IkSetChild:
         let i = inst.arg0.int64

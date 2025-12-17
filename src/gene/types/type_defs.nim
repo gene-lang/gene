@@ -647,6 +647,9 @@ type
     IkVarGeValue
     IkVarEqValue
 
+    # Selector helpers
+    IkAssertNotVoid  # Throw if top-of-stack is VOID (selector not found)
+
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object
     kind*: InstructionKind

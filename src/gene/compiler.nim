@@ -206,6 +206,10 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       proc add_segment(part: string) =
         if part.len == 0:
           not_allowed("@ selector segment cannot be empty")
+        if part == "!":
+          # Special path operator: assert not void (used by @a/!/b and @a/b/!)
+          segments.add("!".to_symbol_value())
+          return
         try:
           let index = parseInt(part)
           segments.add(index.to_value())
@@ -238,9 +242,13 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       else:
         self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
     for s in r.csymbol[1..^1]:
+      if s == "!":
+        self.emit(Instruction(kind: IkAssertNotVoid))
+        continue
       let (is_int, i) = to_int(s)
       if is_int:
-        self.emit(Instruction(kind: IkGetChild, arg0: i))
+        self.emit(Instruction(kind: IkPushValue, arg0: i.to_value()))
+        self.emit(Instruction(kind: IkGetMemberOrNil))
       elif s.starts_with("."):
         let method_value = s[1..^1].to_symbol_value()
         if self.method_access_mode == MamReference:
@@ -255,8 +263,8 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
         # For now, just treat it as a regular member access
         not_allowed("Spread operator (...) in complex symbols not supported")
       else:
-        let key = s.to_key()
-        self.emit(Instruction(kind: IkGetMember, arg0: cast[Value](key)))
+        self.emit(Instruction(kind: IkPushValue, arg0: s.to_symbol_value()))
+        self.emit(Instruction(kind: IkGetMemberOrNil))
 
 proc compile_symbol(self: Compiler, input: Value) =
   if self.quote_level > 0:
@@ -291,6 +299,9 @@ proc compile_symbol(self: Compiler, input: Value) =
         for part in prop_name.split("/"):
           if part.len == 0:
             not_allowed("@ selector segment cannot be empty")
+          if part == "!":
+            segments.add("!".to_symbol_value())
+            continue
           try:
             let index = parseInt(part)
             segments.add(index.to_value())
@@ -3154,6 +3165,8 @@ proc compile_set(self: Compiler, gene: ptr Gene) =
     for part in prop_name.split("/"):
       if part.len == 0:
         not_allowed("$set selector segment cannot be empty")
+      if part == "!":
+        not_allowed("$set selector cannot contain !")
       try:
         let index = parseInt(part)
         segments.add(index.to_value())

@@ -665,6 +665,8 @@ proc interpret_token(token: string): Value =
   case token
   of "nil":
     return NIL
+  of "void":
+    return VOID
   of "true":
     return TRUE
   of "false":

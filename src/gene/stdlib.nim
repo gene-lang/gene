@@ -1072,50 +1072,45 @@ proc init_selector_class(object_class: Class) =
     let default_value = if has_default: get_positional_arg(args, 2, has_keyword_args) else: NIL
 
     var current = target
-    var found = true
 
     for seg in selector_val.ref.selector_path:
-      if current.kind == VkNil:
-        found = false
-        break
+      # Special operator segment: /!
+      if seg.kind == VkSymbol and seg.str == "!":
+        if current == VOID:
+          not_allowed("Selector did not match (VOID)")
+        continue
+
+      if current == VOID:
+        continue
+      if current == NIL:
+        current = VOID
+        continue
 
       case seg.kind:
       of VkString, VkSymbol:
         let key = seg.str.to_key()
         case current.kind:
         of VkMap:
-          if key in map_data(current):
-            current = map_data(current)[key]
-          else:
-            found = false
-            break
+          current = map_data(current).getOrDefault(key, VOID)
         of VkGene:
           if key in current.gene.props:
             current = current.gene.props[key]
           else:
-            found = false
-            break
+            current = VOID
         of VkNamespace:
           if current.ref.ns.has_key(key):
             current = current.ref.ns[key]
           else:
-            found = false
-            break
+            current = VOID
         of VkClass:
           if current.ref.class.ns.has_key(key):
             current = current.ref.class.ns[key]
           else:
-            found = false
-            break
+            current = VOID
         of VkInstance:
-          if key in instance_props(current):
-            current = instance_props(current)[key]
-          else:
-            found = false
-            break
+          current = instance_props(current).getOrDefault(key, VOID)
         else:
-          found = false
-          break
+          current = VOID
       of VkInt:
         let idx64 = seg.int64
         case current.kind:
@@ -1127,8 +1122,7 @@ proc init_selector_class(object_class: Class) =
           if resolved >= 0 and resolved < arr_len:
             current = array_data(current)[resolved.int]
           else:
-            found = false
-            break
+            current = VOID
         of VkGene:
           let children_len = current.gene.children.len.int64
           var resolved = idx64
@@ -1137,22 +1131,14 @@ proc init_selector_class(object_class: Class) =
           if resolved >= 0 and resolved < children_len:
             current = current.gene.children[resolved.int]
           else:
-            found = false
-            break
+            current = VOID
         else:
-          found = false
-          break
+          current = VOID
       else:
         not_allowed("Invalid selector segment type: " & $seg.kind)
 
-      if not found:
-        break
-
-    if not found:
-      if has_default:
-        return default_value
-      return NIL
-
+    if current == VOID and has_default:
+      return default_value
     return current
 
   selector_class.def_native_method("call", selector_call)

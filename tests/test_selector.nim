@@ -109,11 +109,36 @@ test_vm """
 
 test_vm """
   (./ {} "a")
-""", NIL
+""", VOID
 
 test_vm """
   (./ {} "a" 1)
 """, 1
+
+test_vm """
+  (var x {})
+  x/a
+""", VOID
+
+test_vm_error """
+  (var x {})
+  x/a/!
+"""
+
+test_vm_error """
+  (var x {})
+  x/a/!/b
+"""
+
+test_vm """
+  (var x {^a {}})
+  x/a/!/b
+""", VOID
+
+test_vm_error """
+  (var x {^a {}})
+  x/a/b/!
+"""
 
 test_vm """
   ({^a "A"} ./a)
@@ -266,8 +291,8 @@ test_vm """
   a
 """, proc(r: Value) =
   check r.kind == VkArray
-  check r.ref.arr.len == 1
-  check r.ref.arr[0] == 1.to_value()
+  check array_data(r).len == 1
+  check array_data(r)[0] == 1.to_value()
 
 # test_vm """
 #   (class A)
