@@ -1962,8 +1962,14 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.pop2(target)
         case target.kind:
           of VkArray:
+            let arr_len = array_data(target).len.int64
+            if i < 0 or i >= arr_len:
+              not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
             array_data(target)[i] = new_value
           of VkGene:
+            let children_len = target.gene.children.len.int64
+            if i < 0 or i >= children_len:
+              not_allowed("Gene child index out of bounds: " & $i & " (len=" & $children_len & ")")
             target.gene.children[i] = new_value
           else:
             when not defined(release):
@@ -1978,8 +1984,14 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.pop2(value)
         case value.kind:
           of VkArray:
+            let arr_len = array_data(value).len.int64
+            if i < 0 or i >= arr_len:
+              not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
             self.frame.push(array_data(value)[i])
           of VkGene:
+            let children_len = value.gene.children.len.int64
+            if i < 0 or i >= children_len:
+              not_allowed("Gene child index out of bounds: " & $i & " (len=" & $children_len & ")")
             self.frame.push(value.gene.children[i])
           else:
             when not defined(release):
@@ -1999,8 +2011,14 @@ proc exec*(self: ptr VirtualMachine): Value =
             echo fmt"IkGetChildDynamic: collection={collection}, index={index}"
         case collection.kind:
           of VkArray:
+            let arr_len = array_data(collection).len
+            if i < 0 or i >= arr_len:
+              not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
             self.frame.push(array_data(collection)[i])
           of VkGene:
+            let children_len = collection.gene.children.len
+            if i < 0 or i >= children_len:
+              not_allowed("Gene child index out of bounds: " & $i & " (len=" & $children_len & ")")
             self.frame.push(collection.gene.children[i])
           of VkRange:
             # Calculate the i-th element in the range
