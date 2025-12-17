@@ -3138,15 +3138,29 @@ proc compile_at_selector(self: Compiler, gene: ptr Gene) =
     not_allowed("@ expects at least 1 argument for selector creation")
 
   var segments: seq[Value] = @[]
+  var all_literal = true
   for child in gene.children:
     case child.kind
     of VkString, VkSymbol, VkInt:
       segments.add(child)
     else:
-      not_allowed("Unsupported selector segment type: " & $child.kind)
+      all_literal = false
 
-  let selector_value = new_selector_value(segments)
-  self.emit(Instruction(kind: IkPushValue, arg0: selector_value))
+  if all_literal:
+    let selector_value = new_selector_value(segments)
+    self.emit(Instruction(kind: IkPushValue, arg0: selector_value))
+    return
+
+  # Dynamic selector: evaluate non-literal segments at runtime, but treat
+  # string/symbol/int children as literal selector segments (not variable lookups).
+  for child in gene.children:
+    case child.kind
+    of VkString, VkSymbol, VkInt:
+      self.emit(Instruction(kind: IkPushValue, arg0: child))
+    else:
+      self.compile(child)
+
+  self.emit(Instruction(kind: IkCreateSelector, arg1: gene.children.len.int32))
 
 proc compile_set(self: Compiler, gene: ptr Gene) =
   # ($set target @property value)

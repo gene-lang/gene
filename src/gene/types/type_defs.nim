@@ -1,6 +1,5 @@
 # Forward declarations for new types
 import tables, sets, asyncdispatch, dynlib
-import std/atomics  # For atomic reference counting in GC
 
 type
   Value* {.bycopy.} = object
@@ -649,6 +648,7 @@ type
 
     # Selector helpers
     IkAssertNotVoid  # Throw if top-of-stack is VOID (selector not found)
+    IkCreateSelector # Build selector from N segments on stack (arg1 = count)
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object

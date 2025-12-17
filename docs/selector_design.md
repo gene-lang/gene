@@ -18,6 +18,9 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
 - **Path access via infix `/`**  
   Examples: `m/x`, `arr/0`, `arr/-1`. The compiler rewrites these into prefix calls that emit `IkGetMemberOrNil`. Array indices accept positive and negative integers. Other keys are coerced to strings/symbols before lookup.
 
+- **Strict not-found assertion `/!`**
+  `.../!` throws if the current selector value is `void` (missing). This can appear mid-path (`a/!/b`) or at the end (`a/b/!`).
+
 - **Selector call `./`**  
   Form: `(./ target key [default])`. Compiles with `compile_selector` and executes using `IkGetMemberOrNil` or `IkGetMemberDefault`. Behaves like a function so it can be partially applied or embedded in macros.
 
@@ -35,12 +38,20 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
   ($set user @profile/name "Ada L.")
   ```
 
+- **Callable path segments (transform)**  
+  A selector path can include a function segment (usually created with `fnx`). The function receives the currently matched value and its return value is passed to the next segment. The return value is **not** automatically written back into the parent container; use `$set` (and future `$update`) for assignment-style updates. In-place mutation is still possible when the matched value is a mutable container.  
+  ```gene
+  (var data {^a 1})
+  ((@ a (fnx [item] (item + 1))) data)   # returns 2, does not change data/a
+  ((@ a (fnx [item] (item .append 10) item)) data)  # mutates item in place
+  ```
+
 ### Runtime Semantics
 
-- `IkGetMemberOrNil` is the workhorse instruction. It accepts string/symbol/int selectors and currently returns `nil` when the key/index is missing. Arrays support negative indexing. Gene properties, namespace members, class static members, and instance properties are all handled.
+- `IkGetMemberOrNil` is the workhorse instruction. It accepts string/symbol/int selectors and returns `void` when the key/index is missing. Arrays support negative indexing. Gene properties, namespace members, class static members, and instance properties are all handled.
 - `IkGetMemberDefault` mirrors the above but takes a default value. The compiler emits it automatically when a third argument is present in `(./ target key default)`.
 - `IkSetMember` and `IkSetChild` perform mutation for string/symbol keys and integer indices respectively.
-- No selector-aware instruction currently yields `void`, so absence and “empty” are not distinguished yet; see open issues below.
+- `IkAssertNotVoid` throws if the current value is `void`. This is the runtime primitive backing `/!`.
 
 ### Tests Exercising the Implementation
 
@@ -54,7 +65,6 @@ Many more scenarios are sketched but commented out, signalling the intended scop
 
 ## Gaps and Missing Features
 
-- **`void` vs `nil` semantics**: The VM always returns `nil` today. We need to propagate `void` for missing keys/indices and only produce `nil` when the value is explicitly stored as `nil`.
 - **Chained shorthand selectors**: Parsing for `@prop/child`, `@0/name`, `@.method`, `@*` aggregation, and composite selector lists is unfinished.
 - **Range, slices, and list selectors**: Index ranges (`(0 .. 2)`), lists (`@ [0 1]`), and composite selectors are commented out in tests and lack compiler/VM support.
 - **Map key patterns and property lists**: Regex/prefix matches, selecting multiple keys at once, and retrieving keys/properties as collections are unimplemented.

@@ -230,6 +230,38 @@ test_vm """
   (@0/name arr)
 """, "n"
 
+test_vm """
+  (var data {^a 1})
+  (var r ((@ a (fnx [item] (item + 1))) data))
+  [r data/a]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 2
+  check array_data(r)[0] == 2.to_value()
+  check array_data(r)[1] == 1.to_value()
+
+test_vm """
+  (var data {^a [1 2]})
+  ((@ a (fnx [item] (item .append 3) item)) data)
+  data/a/2
+""", 3
+
+test_vm """
+  (var data {^a {^b 1}})
+  (var r ((@ a (fnx [item] {^b 2}) b) data))
+  [r data/a/b]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 2
+  check array_data(r)[0] == 2.to_value()
+  check array_data(r)[1] == 1.to_value()
+
+test_vm """
+  (var data {})
+  ((@ a (fnx [item] 1)) data)
+  data/a
+""", VOID
+
 # This test uses @test shorthand which requires special parsing
 # For now, @test creates a selector that needs to be applied differently
 # test_vm """

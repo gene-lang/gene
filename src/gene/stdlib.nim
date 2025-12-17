@@ -1059,7 +1059,7 @@ proc init_selector_class(object_class: Class) =
   let selector_class = new_class("Selector")
   selector_class.parent = object_class
 
-  proc selector_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  proc selector_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if arg_count < 2:
       not_allowed("Selector.call expects a target value")
 
@@ -1073,6 +1073,9 @@ proc init_selector_class(object_class: Class) =
 
     var current = target
 
+    proc is_selector_callable(seg: Value): bool {.inline.} =
+      seg.kind in {VkFunction, VkNativeFn, VkBlock, VkBoundMethod, VkNativeMethod}
+
     for seg in selector_val.ref.selector_path:
       # Special operator segment: /!
       if seg.kind == VkSymbol and seg.str == "!":
@@ -1081,6 +1084,13 @@ proc init_selector_class(object_class: Class) =
         continue
 
       if current == VOID:
+        continue
+
+      if is_selector_callable(seg):
+        var updated: Value = NIL
+        {.cast(gcsafe).}:
+          updated = vm.exec_callable(seg, @[current])
+        current = updated
         continue
       if current == NIL:
         current = VOID

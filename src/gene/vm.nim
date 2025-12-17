@@ -1885,7 +1885,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              if target.ref.ns.has_key(key):
+              # Special handling for $ex (gene/ex)
+              if key == "ex".to_key() and target == App.app.gene_ns:
+                self.frame.push(self.current_exception)
+              elif target.ref.ns.has_key(key):
                 self.frame.push(target.ref.ns[key])
               else:
                 self.frame.push(VOID)
@@ -1898,6 +1901,17 @@ proc exec*(self: ptr VirtualMachine): Value =
                   "".to_key()
               if target.ref.class.ns.has_key(key):
                 self.frame.push(target.ref.class.ns[key])
+              else:
+                self.frame.push(VOID)
+            of VkEnum:
+              let member_name = case prop.kind:
+                of VkString, VkSymbol: prop.str
+                of VkInt: $prop.int64
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  ""
+              if member_name in target.ref.enum_def.members:
+                self.frame.push(target.ref.enum_def.members[member_name].to_value())
               else:
                 self.frame.push(VOID)
             of VkInstance:
@@ -1975,7 +1989,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              if target.ref.ns.has_key(key):
+              # Special handling for $ex (gene/ex)
+              if key == "ex".to_key() and target == App.app.gene_ns:
+                self.frame.push(self.current_exception)
+              elif target.ref.ns.has_key(key):
                 self.frame.push(target.ref.ns[key])
               else:
                 self.frame.push(default_val)
@@ -1988,6 +2005,17 @@ proc exec*(self: ptr VirtualMachine): Value =
                   "".to_key()
               if target.ref.class.ns.has_key(key):
                 self.frame.push(target.ref.class.ns[key])
+              else:
+                self.frame.push(default_val)
+            of VkEnum:
+              let member_name = case prop.kind:
+                of VkString, VkSymbol: prop.str
+                of VkInt: $prop.int64
+                else:
+                  not_allowed("Invalid property type: " & $prop.kind)
+                  ""
+              if member_name in target.ref.enum_def.members:
+                self.frame.push(target.ref.enum_def.members[member_name].to_value())
               else:
                 self.frame.push(default_val)
             of VkInstance:
@@ -2019,6 +2047,17 @@ proc exec*(self: ptr VirtualMachine): Value =
         let value = self.frame.current()
         if value == VOID:
           not_allowed("Selector did not match (VOID)")
+
+      of IkCreateSelector:
+        let count = inst.arg1
+        if count <= 0:
+          not_allowed("Selector requires at least one segment")
+        var segments = newSeq[Value](count)
+        for i in countdown(count - 1, 0):
+          var seg: Value
+          self.frame.pop2(seg)
+          segments[i] = seg
+        self.frame.push(new_selector_value(segments))
 
       of IkSetChild:
         let i = inst.arg0.int64
@@ -6388,6 +6427,62 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
   
   # The VM state should already be restored by return or IkEnd
   return result
+
+proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value =
+  ## Execute a callable from native code while preserving VM state.
+  ## This is safe to call from native functions/methods that need to invoke Gene callables.
+  case callable.kind:
+  of VkFunction:
+    return self.exec_function(callable, args)
+  of VkNativeFn:
+    return call_native_fn(callable.ref.native_fn, self, args)
+  of VkNativeMethod:
+    return call_native_fn(callable.ref.native_method, self, args)
+  of VkBoundMethod:
+    let bm = callable.ref.bound_method
+    return self.exec_callable(bm.`method`.callable, @[bm.self] & args)
+  of VkBlock:
+    let blk = callable.ref.block
+    if blk.body_compiled == nil:
+      blk.compile()
+
+    let saved_cu = self.cu
+    let saved_pc = self.pc
+    let saved_frame = self.frame
+
+    var scope: Scope
+    if blk.matcher.is_empty():
+      scope = blk.frame.scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(blk.scope_tracker, blk.frame.scope)
+
+    let new_frame = new_frame()
+    new_frame.kind = FkBlock
+    new_frame.target = callable
+    new_frame.scope = scope
+    new_frame.ns = blk.ns
+    if saved_frame != nil:
+      saved_frame.ref_count.inc()
+    new_frame.caller_frame = saved_frame
+    new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+    new_frame.from_exec_function = true
+
+    var args_gene = new_gene_value()
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+
+    if not blk.matcher.is_empty():
+      process_args(blk.matcher, args_gene, new_frame.scope)
+
+    self.frame = new_frame
+    self.cu = blk.body_compiled
+    self.pc = 0
+    return self.exec_continue()
+  else:
+    not_allowed("Value is not callable: " & $callable.kind)
 
 proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
   let compiled = parse_and_compile(code, module_name)
