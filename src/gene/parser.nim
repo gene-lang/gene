@@ -594,16 +594,11 @@ proc skip_ws(self: var Parser) {.gcsafe.} =
     of ' ', '\t', ',':
       inc(pos)
     of '\c':
-      # Handle CR
-      if pos + 1 < self.buf.len and self.buf[pos + 1] == '\L':
-        inc(pos, 2)
-      else:
-        inc(pos)
-      inc(self.line_number)
+      # Handle CR and keep lineStart in sync for column tracking
+      pos = lexbase.handleCR(self, pos)
     of '\L':
-      # Handle LF
-      inc(pos)
-      inc(self.line_number)
+      # Handle LF and keep lineStart in sync for column tracking
+      pos = lexbase.handleLF(self, pos)
     of '#':
       # Comments need special handling
       self.bufpos = pos
