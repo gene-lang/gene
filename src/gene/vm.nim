@@ -6376,6 +6376,95 @@ proc exec*(self: ptr VirtualMachine): Value =
           not_allowed("Unified method call with keywords not supported for " & $obj.kind)
         {.pop}
 
+      of IkDynamicMethodCall:
+        # Dynamic method call: method name is evaluated at runtime
+        # Stack before: [obj, method_name, arg1, arg2, ...]
+        # arg1 contains the argument count (excluding obj and method_name)
+        let arg_count = inst.arg1.int
+        
+        # Pop arguments in reverse order
+        var args = newSeq[Value](arg_count)
+        for i in countdown(arg_count - 1, 0):
+          args[i] = self.frame.pop()
+        
+        # Pop method name (evaluated expression result)
+        let method_name_val = self.frame.pop()
+        let method_name = case method_name_val.kind
+          of VkSymbol: method_name_val.str
+          of VkString: method_name_val.str
+          else: $method_name_val  # Try to convert to string
+        
+        # Pop object
+        let obj = self.frame.pop()
+        
+        case obj.kind:
+        of VkInstance, VkCustom:
+          let class = obj.get_object_class()
+          if class.is_nil:
+            not_allowed("Object has no class for dynamic method call")
+          
+          let meth = class.get_method(method_name)
+          if meth != nil:
+            case meth.callable.kind:
+            of VkFunction:
+              let f = meth.callable.ref.fn
+              if f.body_compiled == nil:
+                f.compile()
+              
+              var scope = new_scope(f.scope_tracker, f.parent_scope)
+              
+              # Set self in scope
+              if f.scope_tracker.mappings.hasKey("self".to_key()):
+                let self_idx = f.scope_tracker.mappings["self".to_key()]
+                while scope.members.len <= self_idx:
+                  scope.members.add(NIL)
+                scope.members[self_idx] = obj
+              
+              # Set arguments in scope
+              for i, arg in args:
+                if f.matcher.children.len > i + 1:  # +1 for self
+                  let param = f.matcher.children[i + 1]
+                  if param.kind == MatchData and f.scope_tracker.mappings.hasKey(param.name_key):
+                    let arg_idx = f.scope_tracker.mappings[param.name_key]
+                    while scope.members.len <= arg_idx:
+                      scope.members.add(NIL)
+                    scope.members[arg_idx] = arg
+              
+              var new_frame = new_frame()
+              new_frame.kind = FkMethod
+              new_frame.target = meth.callable
+              new_frame.scope = scope
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+              
+              let args_gene = new_gene_value()
+              args_gene.gene.children.add(obj)
+              for arg in args:
+                args_gene.gene.children.add(arg)
+              new_frame.args = args_gene
+              
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+              
+            of VkNativeFn:
+              var native_args = newSeq[Value](args.len + 1)
+              native_args[0] = obj
+              for i, arg in args:
+                native_args[i + 1] = arg
+              let result = meth.callable.ref.native_fn(self, cast[ptr UncheckedArray[Value]](native_args[0].addr), native_args.len, false)
+              self.frame.push(result)
+            else:
+              not_allowed("Method must be a function or native function")
+          else:
+            not_allowed("Method " & method_name & " not found on instance")
+        else:
+          not_allowed("Dynamic method call not supported for " & $obj.kind)
+
       else:
         not_allowed("Unsupported instruction: " & $inst.kind)
 

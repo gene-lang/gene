@@ -1961,6 +1961,31 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
 # self, method_name, arguments
 # self + method_name => bounded_method_object (is composed of self, class, method_object(is composed of name, logic))
 # (bounded_method_object ...arguments)
+
+# Dynamic method call: (obj . method_expr args...)
+# The method name is evaluated at runtime from method_expr
+proc compile_dynamic_method_call(self: Compiler, gene: ptr Gene) =
+  # gene.type = obj
+  # gene.children[0] = . (operator symbol)
+  # gene.children[1] = method_expr (to be evaluated for method name)
+  # gene.children[2..] = args
+  
+  if gene.children.len < 2:
+    not_allowed("Dynamic method call requires method expression: (obj . method_expr args...)")
+  
+  # Compile the object (will be on stack)
+  self.compile(gene.type)
+  
+  # Compile the method expression (result will be method name string/symbol)
+  self.compile(gene.children[1])
+  
+  # Compile additional arguments
+  let arg_count = gene.children.len - 2  # exclude . and method_expr
+  for i in 2..<gene.children.len:
+    self.compile(gene.children[i])
+  
+  # Emit dynamic method call instruction with arg count
+  self.emit(Instruction(kind: IkDynamicMethodCall, arg1: arg_count.int32))
 proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   var method_name: string
   var method_value: Value
@@ -2143,6 +2168,11 @@ proc compile_gene(self: Compiler, input: Value) =
           prefix_gene.children = @[`type`] & gene.children[1..^1]  # value and rest of args
           self.compile_gene(prefix_gene.to_gene_value())
           return
+      elif first_child.str == ".":
+        # Dynamic method call: (obj . method_expr args...)
+        # Compile: obj on stack, evaluate method_expr to get method name, then call
+        self.compile_dynamic_method_call(gene)
+        return
       elif first_child.str.starts_with("."):
         # This is a method call: (obj .method args...)
         # Transform to method call format

@@ -602,6 +602,7 @@ type
     IkUnifiedMethodCall2 # Two-argument method call
     IkUnifiedMethodCall  # Multi-argument method call
     IkUnifiedMethodCallKw # Method call with keyword arguments
+    IkDynamicMethodCall   # Dynamic method call: method name evaluated at runtime (stack: obj, method_name, args...)
     IkCallArgsStart      # mark start of call arguments (for dynamic arg counting)
     IkCallArgSpread      # spread argument values onto the stack for calls
 
