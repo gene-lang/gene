@@ -663,62 +663,80 @@ proc init_http_classes*() =
       run_forever_fn.native_fn = vm_run_forever
       App.app.gene_ns.ref.ns["run_forever".to_key()] = run_forever_fn.to_ref_value()
 
-# Queue-based handler execution system
+# Future-based handler execution system
 import locks, deques
 
 type
-  HandlerRequest = object
-    request: Value
-    response: ptr Channel[Value]
-    completed: ptr bool
+  PendingHttpRequest = object
+    request: Value              # The Gene request object
+    nim_future: Future[Value]   # Nim future to complete with response
+    processed: bool             # Whether handler has been executed
 
 # Global storage for handler and VM reference
 var gene_handler_global: Value = NIL
 var gene_vm_global: ptr VirtualMachine = nil
 
-# Queue for pending handler requests
-var handler_queue {.threadvar.}: Deque[HandlerRequest]
-var queue_lock: Lock
-initLock(queue_lock)
+# Pending HTTP requests awaiting handler execution
+var pending_http_requests: seq[PendingHttpRequest]
+var pending_lock: Lock
+initLock(pending_lock)
 
-# Process pending handler requests (called from VM main loop)
-proc process_handler_queue*(vm: ptr VirtualMachine) {.exportc, dynlib.} =
+# Process pending HTTP requests (called from VM's poll_event_loop via EventLoopCallbacks)
+# This executes the Gene handler and completes the Nim future
+proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.} =
   {.cast(gcsafe).}:
-    withLock(queue_lock):
-      echo "[DEBUG] process_handler_queue called, queue length: ", handler_queue.len
-      while handler_queue.len > 0:
-        let req = handler_queue.popFirst()
-        echo "[DEBUG] Processing request from queue"
+    if pending_http_requests.len == 0:
+      return
 
-        # Execute the handler
-        var result: Value
-        if gene_handler_global.kind != VkNil:
-          echo "[DEBUG] Executing gene_handler_global, kind: ", gene_handler_global.kind
-          try:
-            result = execute_gene_function(vm, gene_handler_global, @[req.request])
-            echo "[DEBUG] Handler returned, result.kind: ", result.kind
-          except CatchableError as e:
-            echo "[DEBUG] Exception executing handler: ", e.msg
-            result = ("500 Internal Server Error").to_value()
-        else:
-          echo "[DEBUG] No handler configured"
-          result = ("404 Not Found").to_value()
+    withLock(pending_lock):
+      var i = 0
+      while i < pending_http_requests.len:
+        var req = addr pending_http_requests[i]
+        if not req.processed:
+          req.processed = true
 
-        # Send response back
-        echo "[DEBUG] Sending response to async handler"
-        req.response[].send(result)
-        req.completed[] = true
-        echo "[DEBUG] Request completed"
+          # Execute the handler
+          var result: Value
+          if gene_handler_global.kind != VkNil:
+            try:
+              result = execute_gene_function(vm, gene_handler_global, @[req.request])
+              echo "[DEBUG] execute_gene_function returned successfully, result.kind: ", result.kind
+            except CatchableError as e:
+              # Create error response
+              echo "[DEBUG] Exception caught: type=", e.name, " msg=", e.msg
+              let error_response = block:
+                let instance_class = (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
+                let instance = new_instance_value(instance_class)
+                instance_props(instance)["status".to_key()] = 500.to_value()
+                instance_props(instance)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
+                instance_props(instance)["headers".to_key()] = new_map_value()
+                instance
+              result = error_response
+          else:
+            result = NIL
+          
+          # Complete the Nim future - this will wake up the async HTTP handler
+          req.nim_future.complete(result)
+          
+          # Remove from pending list
+          pending_http_requests.delete(i)
+          continue
+        
+        i.inc()
 
 # Execute a Gene function in VM context
 proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
   {.cast(gcsafe).}:
+    echo "[DEBUG] execute_gene_function: fn.kind=", fn.kind
     case fn.kind:
     of VkNativeFn:
       return call_native_fn(fn.ref.native_fn, vm, args)
     of VkFunction:
       # Execute Gene function using the VM's exec_function method
-      return vm.exec_function(fn, args)
+      echo "[DEBUG] execute_gene_function: calling exec_function for VkFunction"
+      let result = vm.exec_function(fn, args)
+      echo "[DEBUG] execute_gene_function: exec_function returned, result.kind=", result.kind
+      return result
     of VkClass:
       # If it's a class, try to call its `call` method
       if fn.ref.class.methods.contains("call".to_key()):
@@ -729,8 +747,10 @@ proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]):
     of VkInstance:
       # If it's an instance, try to call its `call` method
       let inst_class = instance_class(fn)
+      echo "[DEBUG] execute_gene_function: VkInstance, class=", inst_class.name
       if inst_class.methods.contains("call".to_key()):
         let call_method = inst_class.methods["call".to_key()].callable
+        echo "[DEBUG] execute_gene_function: found call method, callable.kind=", call_method.kind
         # Prepend instance as first argument
         var new_args = @[fn]
         new_args.add(args)
@@ -801,39 +821,27 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
         echo "[DEBUG] Exception in server_handler: ", e.msg
         await req.respond(Http500, "Internal Server Error: " & e.msg)
         return
-    # If we have a Gene function handler, use the queue system
+    # If we have a Gene function handler, add to pending requests
     elif gene_handler_global.kind != VkNil:
-      echo "[DEBUG] Using gene_handler_global (queue system)"
-      # Create response channel
-      var response_channel: Channel[Value]
-      response_channel.open()
-      var completed = false
-
-      # Queue the request
-      let handler_req = HandlerRequest(
+      # Create a Nim future to await the response
+      let nim_future = newFuture[Value]("http_handler")
+      
+      # Add to pending requests list
+      let pending_req = PendingHttpRequest(
         request: gene_req,
-        response: addr response_channel,
-        completed: addr completed
+        nim_future: nim_future,
+        processed: false
       )
-
-      withLock(queue_lock):
-        handler_queue.addLast(handler_req)
-      echo "[DEBUG] Request queued, queue length: ", handler_queue.len
-
-      # Wait for response (with timeout)
-      var timeout = 0
-      while not completed and timeout < 1000:  # 10 second timeout
-        await sleepAsync(10)
-        timeout += 1
-
-      if completed:
-        response = response_channel.recv()
-        echo "[DEBUG] Got response from queue, response.kind: ", response.kind
-      else:
-        echo "[DEBUG] Queue timeout after ", timeout * 10, "ms"
-        response = ("504 Gateway Timeout").to_value()
-
-      response_channel.close()
+      
+      withLock(pending_lock):
+        pending_http_requests.add(pending_req)
+      
+      # Await the Nim future (will be completed when process_pending_http_requests runs)
+      try:
+        response = await nim_future
+      except CatchableError as e:
+        await req.respond(Http500, "Internal Server Error: " & e.msg)
+        return
     else:
       echo "[DEBUG] No handler configured!"
     
@@ -1010,13 +1018,13 @@ proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 proc vm_run_forever(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   echo "Running event loop..."
 
-  # Start a timer to periodically process the handler queue
+  # Start a timer to periodically process pending HTTP requests
   proc process_queue() {.async, gcsafe.} =
     while true:
       {.cast(gcsafe).}:
         # Process any pending handler requests
         if gene_vm_global != nil:
-          process_handler_queue(gene_vm_global)
+          process_pending_http_requests(gene_vm_global)
       await sleepAsync(10)  # Check every 10ms
 
   asyncCheck process_queue()

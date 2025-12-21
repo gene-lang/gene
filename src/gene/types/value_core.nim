@@ -88,6 +88,10 @@ var THREADS*: array[MAX_THREADS, ThreadMetadata]
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 
+# Callbacks invoked on each event loop iteration (used by HTTP handler queue, etc.)
+type EventLoopCallback* = proc(vm: ptr VirtualMachine) {.gcsafe.}
+var EventLoopCallbacks*: seq[EventLoopCallback] = @[]
+
 # Flag to track if gene namespace has been initialized (thread-local for worker threads)
 var gene_namespace_initialized* {.threadvar.}: bool
 

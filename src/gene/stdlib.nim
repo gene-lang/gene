@@ -9,6 +9,8 @@ import ./stdlib/math as stdlib_math
 import ./stdlib/io as stdlib_io
 import ./stdlib/system as stdlib_system
 
+when not defined(noExtensions):
+  from ../genex/http import process_pending_http_requests
 # OpenAI API imports - functions are registered directly in vm.nim to avoid circular dependencies
 
 proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
@@ -1570,15 +1572,31 @@ proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 
 # Run Nim's async event loop forever
 proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  # Run Nim's async event loop indefinitely, interleaved with Gene handler queue processing
-  # This is needed for HTTP servers and other async operations
-
+  # Run Nim's async event loop indefinitely
+  # VM's poll_event_loop handles completed futures and sets up callbacks
+  
+  echo "[DEBUG] core_run_forever: Starting"
+  
+  # Enable polling
+  vm.poll_enabled = true
+  vm.event_loop_counter = 0
+  
+  echo "[DEBUG] core_run_forever: Entering loop"
+  
   while true:
-    # Process Nim's async events
+    # Process Nim's async events with 1ms timeout for responsiveness
     try:
-      poll(10)  # Poll with 10ms timeout
+      poll(1)
     except:
       discard  # Ignore "No handles" exceptions
+    
+    # Process pending HTTP requests (executes Gene handlers)
+    when not defined(noExtensions):
+      process_pending_http_requests(vm)
+    
+    # Note: NOT calling poll_event_loop here because we're in a native function
+    # The callback context switch design doesn't work from inside a native function
+    # vm.poll_event_loop()
 
   return NIL
 

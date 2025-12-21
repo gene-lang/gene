@@ -36,7 +36,7 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
 proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj)
 proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
 proc spawn_thread(code: ptr Gene, return_value: bool): Value
-proc poll_event_loop(self: ptr VirtualMachine)
+proc poll_event_loop*(self: ptr VirtualMachine)
 
 import ./vm/async
 
@@ -139,6 +139,9 @@ proc exit_function(self: ptr VirtualMachine) {.inline.} =
 
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
+  echo "[DEBUG] dispatch_exception called with value.kind=", value.kind
+  when not defined(release):
+    echo "[DEBUG] dispatch_exception: handler count=", self.exception_handlers.len
   self.current_exception = value
 
   if self.exception_handlers.len > 0:
@@ -244,8 +247,85 @@ proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj) 
     # Clear callbacks after execution
     future_obj.failure_callbacks.setLen(0)
 
-proc poll_event_loop(self: ptr VirtualMachine) =
+proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: Value): bool =
+  ## Sets up VM execution context for callback without executing it.
+  ## Returns true if callback was set up, false if callback type not supported.
+  ## After this returns true, the main exec loop will naturally run the callback.
+  
+  case callback.kind:
+  of VkFunction:
+    let f = callback.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+    
+    # Create scope for function
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      # Process the single argument
+      var args_arr = [arg]
+      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope)
+    
+    # Create new frame
+    var new_frame = new_frame()
+    new_frame.kind = FkFunction
+    let r = new_ref(VkFunction)
+    r.fn = f
+    new_frame.target = r.to_ref_value()
+    new_frame.scope = scope
+    new_frame.caller_frame = self.frame
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc)
+    new_frame.ns = f.ns
+    
+    # Switch to new frame - main loop will execute it
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+    
+  of VkBlock:
+    let blk = callback.ref.block
+    if blk.body_compiled == nil:
+      blk.compile()
+    
+    var scope: Scope
+    if blk.matcher.is_empty():
+      scope = blk.frame.scope
+    else:
+      scope = new_scope(blk.scope_tracker, blk.frame.scope)
+      var args_arr = [arg]
+      process_args_direct(blk.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope)
+    
+    var new_frame = new_frame()
+    new_frame.kind = FkBlock
+    let r = new_ref(VkBlock)
+    r.block = blk
+    new_frame.target = r.to_ref_value()
+    new_frame.scope = scope
+    new_frame.caller_frame = self.frame
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc)
+    new_frame.ns = blk.ns
+    
+    self.frame = new_frame
+    self.cu = blk.body_compiled
+    self.pc = 0
+    return true
+    
+  of VkNativeFn:
+    # Native functions can be called directly - they don't need frame setup
+    var args_arr = [arg]
+    discard call_native_fn(callback.ref.native_fn, self, args_arr)
+    return false  # Return false since we executed it directly
+    
+  else:
+    return false
+proc poll_event_loop*(self: ptr VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
+  ## If a callback needs to run, sets up VM context and returns (main loop runs it).
   if not self.poll_enabled:
     return
 
@@ -279,13 +359,22 @@ proc poll_event_loop(self: ptr VirtualMachine) =
               except CatchableError as ex:
                 future_obj.state = FsFailure
                 future_obj.value = wrap_nim_exception(ex, "thread reply decode")
-                execute_future_callbacks(self, future_obj)
+                # Process callbacks via context switch
+                if future_obj.failure_callbacks.len > 0:
+                  let callback = future_obj.failure_callbacks[0]
+                  future_obj.failure_callbacks.delete(0)
+                  if self.setup_callback_execution(callback, future_obj.value):
+                    return  # Let main loop run callback
                 self.thread_futures.del(msg.from_message_id)
                 continue
             future_obj.state = FsSuccess
             future_obj.value = payload
-            # Execute callbacks for the completed future
-            execute_future_callbacks(self, future_obj)
+            # Process callbacks via context switch
+            if future_obj.success_callbacks.len > 0:
+              let callback = future_obj.success_callbacks[0]
+              future_obj.success_callbacks.delete(0)
+              if self.setup_callback_execution(callback, future_obj.value):
+                return  # Let main loop run callback
             self.thread_futures.del(msg.from_message_id)
 
     # Update all pending futures from their Nim futures
@@ -295,20 +384,25 @@ proc poll_event_loop(self: ptr VirtualMachine) =
       let old_state = future_obj.state
       update_future_from_nim(self, future_obj)
 
-      # Execute callbacks if:
-      # 1. Future just completed (transition from Pending), OR
-      # 2. Future is already completed but has callbacks (added after completion)
-      let needs_callback_execution =
-        (old_state == FsPending and future_obj.state != FsPending) or
-        (future_obj.state != FsPending and (future_obj.success_callbacks.len > 0 or future_obj.failure_callbacks.len > 0))
-
-      if needs_callback_execution:
-        execute_future_callbacks(self, future_obj)
-
-        # Remove completed futures after callbacks are executed
-        if future_obj.state != FsPending:
-          self.pending_futures.delete(i)
-          continue
+      # Check if future completed and has callbacks to run
+      if future_obj.state == FsSuccess and future_obj.success_callbacks.len > 0:
+        let callback = future_obj.success_callbacks[0]
+        future_obj.success_callbacks.delete(0)
+        if self.setup_callback_execution(callback, future_obj.value):
+          return  # Let main loop run callback, will come back to process more
+          
+      elif future_obj.state == FsFailure and future_obj.failure_callbacks.len > 0:
+        let callback = future_obj.failure_callbacks[0]
+        future_obj.failure_callbacks.delete(0)
+        if self.setup_callback_execution(callback, future_obj.value):
+          return  # Let main loop run callback
+      
+      # Remove completed futures with no remaining callbacks
+      if future_obj.state != FsPending and 
+         future_obj.success_callbacks.len == 0 and 
+         future_obj.failure_callbacks.len == 0:
+        self.pending_futures.delete(i)
+        continue
 
       i.inc()
 
