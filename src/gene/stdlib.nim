@@ -9,9 +9,8 @@ import ./stdlib/math as stdlib_math
 import ./stdlib/io as stdlib_io
 import ./stdlib/system as stdlib_system
 
-when not defined(noExtensions):
-  from ../genex/http import process_pending_http_requests
-# OpenAI API imports - functions are registered directly in vm.nim to avoid circular dependencies
+# Note: Extensions register their poll handlers via register_scheduler_callback
+# This avoids direct dependency from core to extensions like HTTP
 
 proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
   case val.kind
@@ -1570,34 +1569,55 @@ proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   sleep(duration_ms)
   return NIL
 
-# Run Nim's async event loop forever
+# Run Nim's async event loop forever (scheduler mode)
 proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  # Run Nim's async event loop indefinitely
-  # VM's poll_event_loop handles completed futures and sets up callbacks
+  ## Run the scheduler loop indefinitely until stop_scheduler is called.
+  ## This polls Nim async events and calls registered extension callbacks.
+  ## Uses idle backoff to reduce CPU usage when no pending work.
   
-  echo "[DEBUG] core_run_forever: Starting"
-  
-  # Enable polling
+  # Enable polling and scheduler
   vm.poll_enabled = true
   vm.event_loop_counter = 0
+  vm.scheduler_running = true
   
-  echo "[DEBUG] core_run_forever: Entering loop"
+  # Idle backoff: increase poll timeout when no pending work
+  var idle_count = 0
+  const MAX_IDLE_BACKOFF = 50  # Max 50ms between polls when idle
   
-  while true:
-    # Process Nim's async events with 1ms timeout for responsiveness
+  while vm.scheduler_running:
+    # Check if there's pending work
+    let has_pending_work = vm.pending_futures.len > 0 or 
+                           vm.thread_futures.len > 0 or
+                           scheduler_callbacks.len > 0
+    
+    # Calculate poll timeout with backoff
+    let poll_timeout = if has_pending_work:
+      idle_count = 0
+      1  # 1ms when busy
+    else:
+      idle_count = min(idle_count + 1, MAX_IDLE_BACKOFF)
+      idle_count  # Gradually increase timeout when idle
+    
+    # Process Nim's async events
     try:
-      poll(1)
+      poll(poll_timeout)
     except:
       discard  # Ignore "No handles" exceptions
     
-    # Process pending HTTP requests (executes Gene handlers)
-    when not defined(noExtensions):
-      process_pending_http_requests(vm)
+    # Poll Gene futures and execute callbacks inline
+    vm.poll_event_loop()
     
-    # Note: NOT calling poll_event_loop here because we're in a native function
-    # The callback context switch design doesn't work from inside a native function
-    # vm.poll_event_loop()
+    # Call all registered scheduler callbacks (extensions like HTTP register here)
+    for callback in scheduler_callbacks:
+      callback(vm)
+  
+  vm.scheduler_running = false
+  return NIL
 
+# Stop the scheduler loop
+proc core_stop_scheduler*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  ## Stop the scheduler loop. The run_forever call will return.
+  vm.scheduler_running = false
   return NIL
 
 # Environment variable functions
@@ -2556,6 +2576,7 @@ proc init_stdlib*() =
   # Timing
   global_ns["sleep".to_key()] = core_sleep.to_value()
   global_ns["run_forever".to_key()] = core_run_forever.to_value()
+  global_ns["stop_scheduler".to_key()] = core_stop_scheduler.to_value()
 
   # Threading
   global_ns["keep_alive".to_key()] = keep_alive_fn.to_value()

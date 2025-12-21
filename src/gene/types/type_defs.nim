@@ -761,8 +761,13 @@ type
     thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
     message_callbacks*: seq[Value]  # List of callbacks for incoming messages
     thread_local_ns*: Namespace  # Thread-local namespace for $thread, $main_thread, etc.
+    # Scheduler mode
+    scheduler_running*: bool  # Set to true when run_forever is active, false to stop
 
   VmCallback* = proc() {.gcsafe.}
+  
+  # Scheduler callback - extensions register poll handlers here
+  SchedulerCallback* = proc(vm: ptr VirtualMachine) {.gcsafe.}
 
   FrameKind* {.size: sizeof(int16).} = enum
     FkPristine      # not initialized
@@ -1098,6 +1103,14 @@ type
     ref_count*: int
     instance_class*: Class
     instance_props*: Table[Key, Value]
+
+# Global list of scheduler poll callbacks - extensions register handlers here
+var scheduler_callbacks*: seq[SchedulerCallback] = @[]
+
+proc register_scheduler_callback*(callback: SchedulerCallback) =
+  ## Register a callback to be called during run_forever scheduler loop.
+  ## Extensions like HTTP use this to process pending requests.
+  scheduler_callbacks.add(callback)
 
 #################### GC Infrastructure (must be after type defs, before Value usage) #################
 

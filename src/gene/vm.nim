@@ -139,9 +139,6 @@ proc exit_function(self: ptr VirtualMachine) {.inline.} =
 
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
-  echo "[DEBUG] dispatch_exception called with value.kind=", value.kind
-  when not defined(release):
-    echo "[DEBUG] dispatch_exception: handler count=", self.exception_handlers.len
   self.current_exception = value
 
   if self.exception_handlers.len > 0:
@@ -325,7 +322,7 @@ proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: V
     return false
 proc poll_event_loop*(self: ptr VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
-  ## If a callback needs to run, sets up VM context and returns (main loop runs it).
+  ## Callbacks are executed inline via exec_function.
   if not self.poll_enabled:
     return
 
@@ -359,43 +356,25 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
               except CatchableError as ex:
                 future_obj.state = FsFailure
                 future_obj.value = wrap_nim_exception(ex, "thread reply decode")
-                # Process callbacks via context switch
-                if future_obj.failure_callbacks.len > 0:
-                  let callback = future_obj.failure_callbacks[0]
-                  future_obj.failure_callbacks.delete(0)
-                  if self.setup_callback_execution(callback, future_obj.value):
-                    return  # Let main loop run callback
+                # Execute callbacks inline
+                self.execute_future_callbacks(future_obj)
                 self.thread_futures.del(msg.from_message_id)
                 continue
             future_obj.state = FsSuccess
             future_obj.value = payload
-            # Process callbacks via context switch
-            if future_obj.success_callbacks.len > 0:
-              let callback = future_obj.success_callbacks[0]
-              future_obj.success_callbacks.delete(0)
-              if self.setup_callback_execution(callback, future_obj.value):
-                return  # Let main loop run callback
+            # Execute callbacks inline
+            self.execute_future_callbacks(future_obj)
             self.thread_futures.del(msg.from_message_id)
 
-    # Update all pending futures from their Nim futures
+    # Update all pending futures from their Nim futures and execute callbacks inline
     var i = 0
     while i < self.pending_futures.len:
       let future_obj = self.pending_futures[i]
-      let old_state = future_obj.state
       update_future_from_nim(self, future_obj)
 
-      # Check if future completed and has callbacks to run
-      if future_obj.state == FsSuccess and future_obj.success_callbacks.len > 0:
-        let callback = future_obj.success_callbacks[0]
-        future_obj.success_callbacks.delete(0)
-        if self.setup_callback_execution(callback, future_obj.value):
-          return  # Let main loop run callback, will come back to process more
-          
-      elif future_obj.state == FsFailure and future_obj.failure_callbacks.len > 0:
-        let callback = future_obj.failure_callbacks[0]
-        future_obj.failure_callbacks.delete(0)
-        if self.setup_callback_execution(callback, future_obj.value):
-          return  # Let main loop run callback
+      # Execute callbacks inline if future completed
+      if future_obj.state != FsPending:
+        self.execute_future_callbacks(future_obj)
       
       # Remove completed futures with no remaining callbacks
       if future_obj.state != FsPending and 
@@ -6520,6 +6499,80 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
   let result = self.exec_continue()
   
   # The VM state should already be restored by return or IkEnd
+  return result
+
+proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value]): Value {.exportc.} =
+  ## Execute a Gene method with given instance (self) and arguments.
+  ## This properly sets up a method frame with self bound in scope.
+  if fn.kind != VkFunction:
+    return NIL
+  
+  let f = fn.ref.fn
+  
+  # Compile if needed
+  if f.body_compiled == nil:
+    f.compile()
+  
+  # Save VM state
+  let saved_cu = self.cu
+  let saved_pc = self.pc
+  let saved_frame = self.frame
+  
+  # Create a new scope for the method
+  var scope: Scope
+  if f.matcher.is_empty():
+    scope = f.parent_scope
+    if scope != nil:
+      scope.ref_count.inc()
+  else:
+    scope = new_scope(f.scope_tracker, f.parent_scope)
+    # Explicitly set self in scope (critical for property access like /mappings, m/action)
+    if f.scope_tracker.mappings.hasKey("self".to_key()):
+      let self_idx = f.scope_tracker.mappings["self".to_key()]
+      while scope.members.len <= self_idx:
+        scope.members.add(NIL)
+      scope.members[self_idx] = instance
+  
+  # Create a new frame for the method
+  let new_frame = new_frame()
+  new_frame.kind = FkMethod  # Use FkMethod for proper method semantics
+  new_frame.target = fn
+  new_frame.scope = scope
+  new_frame.ns = f.ns
+  if saved_frame != nil:
+    saved_frame.ref_count.inc()
+  new_frame.caller_frame = saved_frame
+  new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+  new_frame.from_exec_function = true
+  
+  # Process additional arguments (excluding self)
+  if not f.matcher.is_empty() and args.len > 0:
+    # The matcher expects [self, arg1, arg2, ...], self is already set above
+    # Process remaining arguments starting from index 1 of matcher
+    for i, arg in args:
+      if f.matcher.children.len > i + 1:  # +1 because index 0 is self
+        let param = f.matcher.children[i + 1]
+        if param.kind == MatchData and f.scope_tracker.mappings.hasKey(param.name_key):
+          let arg_idx = f.scope_tracker.mappings[param.name_key]
+          while scope.members.len <= arg_idx:
+            scope.members.add(NIL)
+          scope.members[arg_idx] = arg
+  
+  # Set frame.args so IkSelf can access arguments (especially self in methods)
+  let args_gene = new_gene_value()
+  args_gene.gene.children.add(instance)
+  for arg in args:
+    args_gene.gene.children.add(arg)
+  new_frame.args = args_gene
+  
+  # Set up VM for method execution
+  self.frame = new_frame
+  self.cu = f.body_compiled
+  self.pc = 0
+  
+  # Execute the method
+  let result = self.exec_continue()
+  
   return result
 
 proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value =
