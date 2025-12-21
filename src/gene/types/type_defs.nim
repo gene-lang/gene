@@ -1124,7 +1124,7 @@ const REF_TAG*       = 0xFFFC_0000_0000_0000u64
 const STRING_TAG*    = 0xFFFD_0000_0000_0000u64
 
 # Fast managed check
-proc isManaged*(v: Value): bool {.inline.} =
+template isManaged*(v: Value): bool =
   ## Returns true if value is a managed (heap-allocated, ref-counted) type
   ## All managed types have tags >= 0xFFF8
   (v.raw and 0xFFF8_0000_0000_0000'u64) == 0xFFF8_0000_0000_0000'u64
@@ -1165,27 +1165,33 @@ proc retainManaged*(raw: uint64) {.gcsafe.} =
     of 0xFFF8:  # ARRAY_TAG
       let arr = cast[ptr ArrayObj](raw and PAYLOAD_MASK)
       if arr != nil:
-        atomicInc(arr.ref_count)
+        # atomicInc(arr.ref_count)
+        arr.ref_count.inc()
     of 0xFFF9:  # MAP_TAG
       let m = cast[ptr MapObj](raw and PAYLOAD_MASK)
       if m != nil:
-        atomicInc(m.ref_count)
+        # atomicInc(m.ref_count)
+        m.ref_count.inc()
     of 0xFFFA:  # INSTANCE_TAG
       let inst = cast[ptr InstanceObj](raw and PAYLOAD_MASK)
       if inst != nil:
-        atomicInc(inst.ref_count)
+        # atomicInc(inst.ref_count)
+        inst.ref_count.inc()
     of 0xFFFB:  # GENE_TAG
       let g = cast[ptr Gene](raw and PAYLOAD_MASK)
       if g != nil:
-        atomicInc(g.ref_count)
+        # atomicInc(g.ref_count)
+        g.ref_count.inc()
     of 0xFFFC:  # REF_TAG
       let ref_obj = cast[ptr Reference](raw and PAYLOAD_MASK)
       if ref_obj != nil:
-        atomicInc(ref_obj.ref_count)
+        # atomicInc(ref_obj.ref_count)
+        ref_obj.ref_count.inc()
     of 0xFFFD:  # STRING_TAG
       let s = cast[ptr String](raw and PAYLOAD_MASK)
       if s != nil:
-        atomicInc(s.ref_count)
+        # atomicInc(s.ref_count)
+        s.ref_count.inc()
     else:
       discard
 
@@ -1260,7 +1266,7 @@ proc `=default`*(v: var Value) {.inline.} =
 proc `=destroy`*(v: var Value) =
   ## Called when Value goes out of scope
   ## Decrements ref count for managed types
-  if v.raw != 0 and isManaged(v):
+  if isManaged(v):
     releaseManaged(v.raw)
 
 proc `=copy`*(dest: var Value; src: Value) =
@@ -1268,14 +1274,14 @@ proc `=copy`*(dest: var Value; src: Value) =
   ## Must destroy old dest, copy bits, then retain new value
 
   # Release old dest value if it's a managed type
-  if dest.raw != 0 and isManaged(dest):
+  if isManaged(dest):
     releaseManaged(dest.raw)
 
   # Bitwise copy
   dest.raw = src.raw
 
   # Retain new value (if managed)
-  if src.raw != 0 and isManaged(src):
+  if isManaged(src):
     retainManaged(src.raw)
 
 proc `=sink`*(dest: var Value; src: Value) =
@@ -1283,7 +1289,7 @@ proc `=sink`*(dest: var Value; src: Value) =
   ## Transfers ownership without retain/release
 
   # Release old dest value if it's a managed type
-  if dest.raw != 0 and isManaged(dest):
+  if isManaged(dest):
     releaseManaged(dest.raw)
 
   # Transfer ownership (no retain - src won't be destroyed)
