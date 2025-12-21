@@ -2160,7 +2160,7 @@ template pop2*(self: var Frame, to: var Value) =
   {.push boundChecks: off, overflowChecks: off.}
   self.stack_index.dec()
   # If to already has a managed value, release it first
-  if to.raw != 0 and isManaged(to):
+  if isManaged(to):
     releaseManaged(to.raw)
   # Move value out of stack slot using raw copy (no retain)
   copyMem(addr to, addr self.stack[self.stack_index], sizeof(Value))

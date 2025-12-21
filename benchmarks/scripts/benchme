@@ -14,7 +14,7 @@ rm -f bin/fibonacci 2>/dev/null
 
 # Compile with modern memory management and suppress warnings
 echo "Compiling fibonacci benchmark..."
-CMD="nim c --hints:off --mm:orc -d:release -d:ssl --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
+CMD="nim c --hints:off --mm:orc -d:release -d:danger -d:ssl --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
 $CMD 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate libraries" || true
 
 # Run benchmark
