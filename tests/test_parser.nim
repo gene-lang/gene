@@ -162,8 +162,8 @@ test_parser "#[[1] [2]]", proc(r: Value) =
   check r.ref.stream.len == 2
   for idx, item in r.ref.stream:
     check item.kind == VkArray
-    check item.ref.arr.len == 1
-    check item.ref.arr[0].to_int() == idx + 1
+    check array_data(item).len == 1
+    check array_data(item)[0].to_int() == idx + 1
 
 test_parser "#[1 2 3 4 5 6 7 8 9 10]", proc(r: Value) =
   check r.kind == VkStream
@@ -441,10 +441,10 @@ test_parser """
 """, 1
 
 test_parser "[a/[1 2]]", proc(r: Value) =
-  check r.ref.arr[0].ref.csymbol[0] == "a"
-  check r.ref.arr[0].ref.csymbol[1] == ""
-  check r.ref.arr[1].ref.arr[0] == 1
-  check r.ref.arr[1].ref.arr[1] == 2
+  check array_data(r)[0].ref.csymbol[0] == "a"
+  check array_data(r)[0].ref.csymbol[1] == ""
+  check array_data(array_data(r)[1])[0] == 1
+  check array_data(array_data(r)[1])[1] == 2
 
 test_parser """
   #< comment ># 1
@@ -493,8 +493,8 @@ test_parser """
 test_parser "\"\"\"a\"\"\"", "a"
 test_parser "[\"\"\"a\"\"\"]", proc(r: Value) =
   check r.kind == VkArray
-  check r.ref.arr.len == 1
-  check r.ref.arr[0] == "a"
+  check array_data(r).len == 1
+  check array_data(r)[0] == "a"
 
 test_parser "\"\"\"a\"b\"\"\"", "a\"b"
 
@@ -640,3 +640,74 @@ test_parser "\"\"\"a\n   \"\"\"", "a\n"
 #     (#Ref "x" 2) # Should trigger parser error
 #   ]
 # """
+
+# Semicolon chaining tests: (a; b; c) = (((a) b) c)
+# This creates left-associative chaining where each semicolon
+# wraps the previous expression as the type of a new gene
+
+test_parser """
+  (a; b)
+""", proc(r: Value) =
+  # (a; b) = ((a) b)
+  check r.kind == VkGene
+  # The type should be (a)
+  check r.gene.type.kind == VkGene
+  check r.gene.type.gene.type == to_symbol_value("a")
+  check r.gene.type.gene.children.len == 0
+  # The child should be b
+  check r.gene.children.len == 1
+  check r.gene.children[0] == to_symbol_value("b")
+
+test_parser """
+  (a; b; c)
+""", proc(r: Value) =
+  # (a; b; c) = (((a) b) c)
+  check r.kind == VkGene
+  # The type should be ((a) b)
+  check r.gene.type.kind == VkGene
+  let inner = r.gene.type
+  # inner = ((a) b), its type should be (a)
+  check inner.gene.type.kind == VkGene
+  check inner.gene.type.gene.type == to_symbol_value("a")
+  # inner's child should be b
+  check inner.gene.children.len == 1
+  check inner.gene.children[0] == to_symbol_value("b")
+  # Outer child should be c
+  check r.gene.children.len == 1
+  check r.gene.children[0] == to_symbol_value("c")
+
+test_parser """
+  (a x; b y; c z)
+""", proc(r: Value) =
+  # (a x; b y; c z) = (((a x) b y) c z)
+  check r.kind == VkGene
+  # Outer children: [c, z]
+  check r.gene.children.len == 2
+  check r.gene.children[0] == to_symbol_value("c")
+  check r.gene.children[1] == to_symbol_value("z")
+  # Type is ((a x) b y)
+  check r.gene.type.kind == VkGene
+  let middle = r.gene.type
+  check middle.gene.children.len == 2
+  check middle.gene.children[0] == to_symbol_value("b")
+  check middle.gene.children[1] == to_symbol_value("y")
+  # Middle type is (a x)
+  check middle.gene.type.kind == VkGene
+  let inner = middle.gene.type
+  check inner.gene.type == to_symbol_value("a")
+  check inner.gene.children.len == 1
+  check inner.gene.children[0] == to_symbol_value("x")
+
+test_parser """
+  (1; 2; 3)
+""", proc(r: Value) =
+  # (1; 2; 3) = (((1) 2) 3)
+  check r.kind == VkGene
+  check r.gene.children.len == 1
+  check r.gene.children[0] == 3
+  check r.gene.type.kind == VkGene
+  let middle = r.gene.type
+  check middle.gene.children.len == 1
+  check middle.gene.children[0] == 2
+  check middle.gene.type.kind == VkGene
+  check middle.gene.type.gene.type == 1

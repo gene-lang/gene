@@ -92,6 +92,9 @@ type
   DelimitedListResult = object
     list: seq[Value]
     map: Table[Key, Value]
+    is_semicolon_chain: bool          # True when (a; b; c) syntax was used
+    segments: seq[seq[Value]]         # Semicolon-separated segments
+    segment_props: seq[Table[Key, Value]]  # Props for each segment
 
   Handler = proc(self: var Parser, input: Value): Value {.gcsafe.}
 
@@ -516,8 +519,8 @@ proc read_token(self: var Parser, lead_constituent: bool, chars_allowed: openarr
           break
       else:
         break
-    elif ch == EndOfFile or is_space_ascii(ch) or ch == ',' or (is_terminating_macro(ch) and ch notin chars_allowed):
-      # Token ends
+    elif ch == EndOfFile or is_space_ascii(ch) or ch == ',' or ch == ';' or (is_terminating_macro(ch) and ch notin chars_allowed):
+      # Token ends (semicolon terminates tokens for chaining syntax)
       break
     elif non_constituent(ch):
       raise new_exception(ParseError, "Invalid constituent character: " & ch)
@@ -816,6 +819,13 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
   var in_gene = delimiter == ')'
   var map_found = false
   var count = 0
+  
+  # For semicolon chaining: track segments separated by ';'
+  # Each segment becomes (prev_segment current_items...)
+  var has_semicolons = false
+  var segments: seq[seq[Value]] = @[@[]]  # Start with one empty segment
+  var segment_props: seq[Table[Key, Value]] = @[initTable[Key, Value]()]
+  
   while true:
     self.skip_ws()
     var pos = self.bufpos
@@ -836,13 +846,27 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
         raise new_exception(ParseError, format(msg, delimiter, self.filename, self.line_number))
       else:
         map_found = true
-        result.map = self.read_map(MkGene)
+        let props = self.read_map(MkGene)
+        # Add props to current segment
+        for k, v in props:
+          segment_props[^1][k] = v
         continue
 
     if ch == delimiter:
       inc(pos)
       self.bufpos = pos
       break
+    
+    # Handle semicolon for chaining: (a; b; c) = (((a) b) c)
+    if in_gene and ch == ';':
+      inc(pos)
+      self.bufpos = pos
+      has_semicolons = true
+      # Start a new segment
+      segments.add(@[])
+      segment_props.add(initTable[Key, Value]())
+      map_found = false  # Reset for new segment
+      continue
 
     if is_macro(ch):
       let m = get_macro(ch)
@@ -852,15 +876,24 @@ proc read_delimited_list(self: var Parser, delimiter: char, is_recursive: bool):
       if node != PARSER_IGNORE:
         inc(count)
         if self.options["debug"]: echo $node, "\n"
-        list.add(node)
+        segments[^1].add(node)
     else:
       let node = self.read()
       if node != PARSER_IGNORE:
         inc(count)
         if self.options["debug"]: echo $node, "\n"
-        list.add(node)
+        segments[^1].add(node)
 
-  result.list = list
+  # Return segments for semicolon chains, let caller handle chaining
+  if has_semicolons:
+    result.list = @[]
+    result.is_semicolon_chain = true
+    result.segments = segments
+    result.segment_props = segment_props
+  else:
+    # No semicolons - return normal list from first (only) segment
+    result.list = segments[0]
+    result.map = segment_props[0]
 
 proc add_line_col(self: var Parser, gene: ptr Gene, start_pos: int) =
   if gene.is_nil:
@@ -896,6 +929,48 @@ proc read_gene(self: var Parser): Value {.gcsafe.} =
   defer: self.leave_trace()
   gene.type = self.read_gene_type()
   var result_list = self.read_delimited_list(')', true)
+  
+  # Handle semicolon chaining: (a; b; c) = (((a) b) c)
+  if result_list.is_semicolon_chain:
+    # gene.type contains the first element (e.g., 'a')
+    # result_list.segments contains segments after gene.type:
+    #   segments[0] = [] (empty, before first ;)
+    #   segments[1] = [b] (after first ;)
+    #   segments[2] = [c] (after second ;)
+    # We build: (((gene.type) segments[1]...) segments[2]...) ...
+    
+    let segments = result_list.segments
+    let segment_props = result_list.segment_props
+    
+    # Start with gene.type wrapped in a gene: (gene.type)
+    var current_gene: Value
+    if segments.len > 0 and segments[0].len > 0:
+      # First segment has content - build (gene.type segment[0]...)
+      let g = new_gene(gene.type)
+      for item in segments[0]:
+        g.children.add(item)
+      for k, v in segment_props[0]:
+        g.props[k] = v
+      current_gene = g.to_gene_value()
+    else:
+      # First segment is empty - just wrap gene.type: (gene.type)
+      current_gene = new_gene(gene.type).to_gene_value()
+    
+    # Process remaining segments
+    for i in 1..<segments.len:
+      let segment = segments[i]
+      let seg_props = segment_props[i]
+      # Wrap current_gene as type, add segment items as children
+      let g = new_gene(current_gene)
+      for item in segment:
+        g.children.add(item)
+      for k, v in seg_props:
+        g.props[k] = v
+      current_gene = g.to_gene_value()
+    
+    result = current_gene
+    return result
+  
   gene.props = result_list.map
   gene.children = result_list.list
   if not gene.type.is_nil() and gene.type.kind == VkSymbol:
