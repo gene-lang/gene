@@ -1,8 +1,8 @@
-#!/usr/bin/env gene --repl-on-error
+#!/usr/bin/env gene run --repl-on-error
 
 #< Run like
 examples/repl-on-error.gene
-gene --repl-on-error examples/repl-on-error.gene
+gene run --repl-on-error examples/repl-on-error.gene
 
 # If we run like
 gene examples/repl-on-error.gene
