@@ -139,6 +139,11 @@ proc exit_function(self: ptr VirtualMachine) {.inline.} =
 
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
+  echo "DEBUG dispatch_exception: value.kind=", value.kind
+  if value.kind == VkInstance:
+    echo "DEBUG dispatch_exception: instance class=", value.instance_class.name
+    if value.instance_props.hasKey("message".to_key()):
+      echo "DEBUG dispatch_exception: message=", value.instance_props["message".to_key()]
   self.current_exception = value
 
   if self.exception_handlers.len > 0:
@@ -1337,7 +1342,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
-          if not skip_return:
+          if not skip_return and not ending_exec_function:
             self.frame.push(result_val)
           
           # If we were in exec_function, stop the exec loop by returning
@@ -1634,7 +1639,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(cache.ns.members[name])
               else:
                 # Cache miss - do full lookup
-                var value = self.frame.ns[name]
+                if self.frame.ns == nil:
+                  echo "DEBUG IkResolveSymbol: frame.ns is NIL for symbol lookup"
+                var value = if self.frame.ns != nil: self.frame.ns[name] else: NIL
                 var found_ns = self.frame.ns
                 if value == NIL:
                   # Try thread-local namespace first (for $thread, $main_thread, etc.)
@@ -1672,7 +1679,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.cu.inline_caches.add(InlineCache())
               
               # Do full lookup
-              var value = self.frame.ns[name]
+              if self.frame.ns == nil:
+                echo "DEBUG IkResolveSymbol path2: frame.ns is NIL"
+              var value = if self.frame.ns != nil: self.frame.ns[name] else: NIL
               var found_ns = self.frame.ns
               if value == NIL:
                 # Try thread-local namespace first (for $thread, $main_thread, etc.)
@@ -1703,6 +1712,14 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.cu.inline_caches[self.pc].version = found_ns.version
                 self.cu.inline_caches[self.pc].value = value
               
+              # Debug: trace if value is still NIL after all lookups
+              if value == NIL:
+                let sym_str = $name
+                if sym_str.contains("Todo"):
+                  echo "DEBUG IkResolveSymbol: Symbol ", sym_str, " not found after all lookups"
+                  if self.frame.ns != nil:
+                    echo "  frame.ns exists, has Todo? ", self.frame.ns.has_key("Todo".to_key())
+                  echo "  global_ns has Todo? ", App.app.global_ns.ref.ns.has_key("Todo".to_key())
               self.frame.push(value)
 
       of IkSelf:
@@ -1841,6 +1858,61 @@ proc exec*(self: ptr VirtualMachine): Value =
             not_allowed("Cannot set member on value of type: " & $target.kind)
         self.frame.push(value)
 
+      of IkSetMemberDynamic:
+        var value: Value
+        self.frame.pop2(value)
+        var prop: Value
+        self.frame.pop2(prop)
+        var target: Value
+        self.frame.pop2(target)
+
+        if target == NIL:
+          not_allowed("Cannot set member on nil (namespace or object doesn't exist)")
+
+        case target.kind:
+        of VkMap, VkNamespace, VkClass, VkInstance:
+          let key = case prop.kind:
+            of VkString, VkSymbol: prop.str.to_key()
+            of VkInt: ($prop.int64).to_key()
+            else:
+              not_allowed("Invalid property type: " & $prop.kind)
+              "".to_key()
+          case target.kind:
+            of VkMap:
+              map_data(target)[key] = value
+            of VkNamespace:
+              target.ref.ns[key] = value
+            of VkClass:
+              target.ref.class.ns[key] = value
+            of VkInstance:
+              instance_props(target)[key] = value
+            else:
+              discard
+        of VkGene:
+          case prop.kind:
+            of VkInt:
+              let idx = prop.int64
+              let children_len = target.gene.children.len.int64
+              if idx < 0 or idx >= children_len:
+                not_allowed("Gene child index out of bounds: " & $idx & " (len=" & $children_len & ")")
+              target.gene.children[idx.int] = value
+            of VkString, VkSymbol:
+              target.gene.props[prop.str.to_key()] = value
+            else:
+              not_allowed("Invalid property type: " & $prop.kind)
+        of VkArray:
+          if prop.kind != VkInt:
+            not_allowed("Array index must be an integer")
+          let idx = prop.int64
+          let arr_len = array_data(target).len.int64
+          if idx < 0 or idx >= arr_len:
+            not_allowed("Array index out of bounds: " & $idx & " (len=" & $arr_len & ")")
+          array_data(target)[idx.int] = value
+        else:
+          not_allowed("Cannot set member on value of type: " & $target.kind)
+
+        self.frame.push(value)
+
       of IkGetMember:
         # arg0 contains a symbol Value - use it directly as Key
         let symbol_value = inst.arg0
@@ -1859,9 +1931,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             # Already handled above, but needed for exhaustive case
             discard
           of VkMap:
-            self.frame.push(map_data(value)[name])
+            let member = map_data(value)[name]
+            retain(member)
+            self.frame.push(member)
           of VkGene:
-            self.frame.push(value.gene.props[name])
+            let member = value.gene.props[name]
+            retain(member)
+            self.frame.push(member)
           of VkNamespace:
             # Special handling for $ex (gene/ex)
             if name == "ex".to_key() and value == App.app.gene_ns:
@@ -1882,26 +1958,32 @@ proc exec*(self: ptr VirtualMachine): Value =
                     member = ext_ns.to_value()
                   except CatchableError:
                     discard
+              retain(member)
               self.frame.push(member)
             else:
-              self.frame.push(value.ref.ns[name])
+              let member = value.ref.ns[name]
+              retain(member)
+              self.frame.push(member)
           of VkClass:
             # Check members first (static methods), then ns (namespace members)
             let member = value.ref.class.get_member(name)
-            if member != NIL:
-              self.frame.push(member)
-            else:
-              self.frame.push(value.ref.class.ns[name])
+            let resolved = if member != NIL: member else: value.ref.class.ns[name]
+            retain(resolved)
+            self.frame.push(resolved)
           of VkEnum:
             # Access enum member
             let member_name = $name
             if member_name in value.ref.enum_def.members:
-              self.frame.push(value.ref.enum_def.members[member_name].to_value())
+              let member = value.ref.enum_def.members[member_name].to_value()
+              retain(member)
+              self.frame.push(member)
             else:
               not_allowed("enum " & value.ref.enum_def.name & " has no member " & member_name)
           of VkInstance:
             if name in instance_props(value):
-              self.frame.push(instance_props(value)[name])
+              let member = instance_props(value)[name]
+              retain(member)
+              self.frame.push(member)
             else:
               self.frame.push(NIL)
           else:
@@ -1928,7 +2010,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              self.frame.push(map_data(target).getOrDefault(key, VOID))
+              let member = map_data(target).getOrDefault(key, VOID)
+              retain(member)
+              self.frame.push(member)
             of VkGene:
               if prop.kind == VkInt:
                 let idx64 = prop.int64
@@ -1937,7 +2021,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if resolved < 0:
                   resolved = children_len + resolved
                 if resolved >= 0 and resolved < children_len:
-                  self.frame.push(target.gene.children[resolved.int])
+                  let member = target.gene.children[resolved.int]
+                  retain(member)
+                  self.frame.push(member)
                 else:
                   self.frame.push(VOID)
               else:
@@ -1948,7 +2034,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                     not_allowed("Invalid property type: " & $prop.kind)
                     "".to_key()
                 if key in target.gene.props:
-                  self.frame.push(target.gene.props[key])
+                  let member = target.gene.props[key]
+                  retain(member)
+                  self.frame.push(member)
                 else:
                   self.frame.push(VOID)
             of VkNamespace:
@@ -1960,9 +2048,13 @@ proc exec*(self: ptr VirtualMachine): Value =
                   "".to_key()
               # Special handling for $ex (gene/ex)
               if key == "ex".to_key() and target == App.app.gene_ns:
-                self.frame.push(self.current_exception)
+                let member = self.current_exception
+                retain(member)
+                self.frame.push(member)
               elif target.ref.ns.has_key(key):
-                self.frame.push(target.ref.ns[key])
+                let member = target.ref.ns[key]
+                retain(member)
+                self.frame.push(member)
               else:
                 self.frame.push(VOID)
             of VkClass:
@@ -1973,7 +2065,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
               if target.ref.class.ns.has_key(key):
-                self.frame.push(target.ref.class.ns[key])
+                let member = target.ref.class.ns[key]
+                retain(member)
+                self.frame.push(member)
               else:
                 self.frame.push(VOID)
             of VkEnum:
@@ -1984,7 +2078,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                   not_allowed("Invalid property type: " & $prop.kind)
                   ""
               if member_name in target.ref.enum_def.members:
-                self.frame.push(target.ref.enum_def.members[member_name].to_value())
+                let member = target.ref.enum_def.members[member_name].to_value()
+                retain(member)
+                self.frame.push(member)
               else:
                 self.frame.push(VOID)
             of VkInstance:
@@ -1994,7 +2090,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              self.frame.push(instance_props(target).getOrDefault(key, VOID))
+              let member = instance_props(target).getOrDefault(key, VOID)
+              retain(member)
+              self.frame.push(member)
             of VkArray:
               if prop.kind == VkInt:
                 let idx64 = prop.int64
@@ -2004,7 +2102,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if resolved < 0:
                   resolved = arr_len + resolved
                 if resolved >= 0 and resolved < arr_len:
-                  self.frame.push(arr[resolved.int])
+                  let member = arr[resolved.int]
+                  retain(member)
+                  self.frame.push(member)
                 else:
                   self.frame.push(VOID)
               else:
@@ -2022,6 +2122,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.pop2(target)
 
         if target == VOID or target == NIL:
+          retain(default_val)
           self.frame.push(default_val)
         else:
           case target.kind:
@@ -2032,7 +2133,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              self.frame.push(map_data(target).getOrDefault(key, default_val))
+              let member = map_data(target).getOrDefault(key, default_val)
+              retain(member)
+              self.frame.push(member)
             of VkGene:
               if prop.kind == VkInt:
                 let idx64 = prop.int64
@@ -2041,8 +2144,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if resolved < 0:
                   resolved = children_len + resolved
                 if resolved >= 0 and resolved < children_len:
-                  self.frame.push(target.gene.children[resolved.int])
+                  let member = target.gene.children[resolved.int]
+                  retain(member)
+                  self.frame.push(member)
                 else:
+                  retain(default_val)
                   self.frame.push(default_val)
               else:
                 let key = case prop.kind:
@@ -2052,8 +2158,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                     not_allowed("Invalid property type: " & $prop.kind)
                     "".to_key()
                 if key in target.gene.props:
-                  self.frame.push(target.gene.props[key])
+                  let member = target.gene.props[key]
+                  retain(member)
+                  self.frame.push(member)
                 else:
+                  retain(default_val)
                   self.frame.push(default_val)
             of VkNamespace:
               let key = case prop.kind:
@@ -2064,10 +2173,15 @@ proc exec*(self: ptr VirtualMachine): Value =
                   "".to_key()
               # Special handling for $ex (gene/ex)
               if key == "ex".to_key() and target == App.app.gene_ns:
-                self.frame.push(self.current_exception)
+                let member = self.current_exception
+                retain(member)
+                self.frame.push(member)
               elif target.ref.ns.has_key(key):
-                self.frame.push(target.ref.ns[key])
+                let member = target.ref.ns[key]
+                retain(member)
+                self.frame.push(member)
               else:
+                retain(default_val)
                 self.frame.push(default_val)
             of VkClass:
               let key = case prop.kind:
@@ -2077,8 +2191,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
               if target.ref.class.ns.has_key(key):
-                self.frame.push(target.ref.class.ns[key])
+                let member = target.ref.class.ns[key]
+                retain(member)
+                self.frame.push(member)
               else:
+                retain(default_val)
                 self.frame.push(default_val)
             of VkEnum:
               let member_name = case prop.kind:
@@ -2088,8 +2205,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                   not_allowed("Invalid property type: " & $prop.kind)
                   ""
               if member_name in target.ref.enum_def.members:
-                self.frame.push(target.ref.enum_def.members[member_name].to_value())
+                let member = target.ref.enum_def.members[member_name].to_value()
+                retain(member)
+                self.frame.push(member)
               else:
+                retain(default_val)
                 self.frame.push(default_val)
             of VkInstance:
               let key = case prop.kind:
@@ -2098,7 +2218,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              self.frame.push(instance_props(target).getOrDefault(key, default_val))
+              let member = instance_props(target).getOrDefault(key, default_val)
+              retain(member)
+              self.frame.push(member)
             of VkArray:
               if prop.kind == VkInt:
                 let idx64 = prop.int64
@@ -2108,12 +2230,17 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if resolved < 0:
                   resolved = arr_len + resolved
                 if resolved >= 0 and resolved < arr_len:
-                  self.frame.push(arr[resolved.int])
+                  let member = arr[resolved.int]
+                  retain(member)
+                  self.frame.push(member)
                 else:
+                  retain(default_val)
                   self.frame.push(default_val)
               else:
+                retain(default_val)
                 self.frame.push(default_val)
             else:
+              retain(default_val)
               self.frame.push(default_val)
 
       of IkAssertNotVoid:
@@ -2165,12 +2292,16 @@ proc exec*(self: ptr VirtualMachine): Value =
             let arr_len = array_data(value).len.int64
             if i < 0 or i >= arr_len:
               not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
-            self.frame.push(array_data(value)[i])
+            let child = array_data(value)[i]
+            retain(child)
+            self.frame.push(child)
           of VkGene:
             let children_len = value.gene.children.len.int64
             if i < 0 or i >= children_len:
               not_allowed("Gene child index out of bounds: " & $i & " (len=" & $children_len & ")")
-            self.frame.push(value.gene.children[i])
+            let child = value.gene.children[i]
+            retain(child)
+            self.frame.push(child)
           else:
             when not defined(release):
               if self.trace:
@@ -2192,12 +2323,16 @@ proc exec*(self: ptr VirtualMachine): Value =
             let arr_len = array_data(collection).len
             if i < 0 or i >= arr_len:
               not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
-            self.frame.push(array_data(collection)[i])
+            let child = array_data(collection)[i]
+            retain(child)
+            self.frame.push(child)
           of VkGene:
             let children_len = collection.gene.children.len
             if i < 0 or i >= children_len:
               not_allowed("Gene child index out of bounds: " & $i & " (len=" & $children_len & ")")
-            self.frame.push(collection.gene.children[i])
+            let child = collection.gene.children[i]
+            retain(child)
+            self.frame.push(child)
           of VkRange:
             # Calculate the i-th element in the range
             let start = collection.ref.range_start.int64
@@ -2309,7 +2444,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkPushValue:
-        self.frame.push(inst.arg0)
+        if inst.arg0.kind == VkString:
+          # String literals are mutable; avoid mutating shared constants.
+          self.frame.push(new_str_value(inst.arg0.str))
+        else:
+          self.frame.push(inst.arg0)
       of IkPushNil:
         self.frame.push(NIL)
       of IkPop:
@@ -3989,7 +4128,8 @@ proc exec*(self: ptr VirtualMachine): Value =
           inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
-          self.frame.push(v)
+          if not returning_from_exec_function:
+            self.frame.push(v)
           
           # If we were in exec_function, stop the exec loop by returning
           if returning_from_exec_function:
@@ -4323,6 +4463,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         let class = new_class(class_name)
         if parent_class.kind == VkClass:
           class.parent = parent_class.ref.class
+          # Inherit parent class namespace to access class members (and module via parent)
+          class.ns.parent = class.parent.ns
         else:
           not_allowed("Parent must be a class, got " & $parent_class.kind)
         let r = new_ref(VkClass)
@@ -5774,14 +5916,18 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if scope != nil:
                   scope.ref_count.inc()
               else:
-                # SLOW PATH: Create new scope and manually set self
+                # SLOW PATH: Create new scope and bind arguments
                 scope = new_scope(f.scope_tracker, f.parent_scope)
-                # Manual argument matching: set self in scope without Gene objects
-                if f.scope_tracker.mappings.len > 0 and f.scope_tracker.mappings.hasKey("self".to_key()):
-                  let self_idx = f.scope_tracker.mappings["self".to_key()]
-                  while scope.members.len <= self_idx:
-                    scope.members.add(NIL)
-                  scope.members[self_idx] = obj
+                if f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 1:
+                  # Manual argument matching: set self in scope without Gene objects
+                  if f.scope_tracker.mappings.len > 0 and f.scope_tracker.mappings.hasKey("self".to_key()):
+                    let self_idx = f.scope_tracker.mappings["self".to_key()]
+                    while scope.members.len <= self_idx:
+                      scope.members.add(NIL)
+                    scope.members[self_idx] = obj
+                else:
+                  let args_arr = [obj]
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope)
 
               # ULTRA-OPTIMIZED: Minimal frame creation (like original IkCallMethod1)
               var new_frame = new_frame()
@@ -5911,11 +6057,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if scope != nil:
                   scope.ref_count.inc()
               else:
-                # SLOW PATH: Create new scope and manually set self and arg
+                # SLOW PATH: Create new scope and bind arguments
                 scope = new_scope(f.scope_tracker, f.parent_scope)
-                # Manual argument matching: set self and arg in scope without Gene objects
-                # Matcher should have 2 params: [self, arg_name]
-                if f.matcher.children.len >= 2:
+                if f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 2:
+                  # Manual argument matching: set self and arg in scope without Gene objects
                   if f.scope_tracker.mappings.hasKey("self".to_key()):
                     let self_idx = f.scope_tracker.mappings["self".to_key()]
                     while scope.members.len <= self_idx:
@@ -5928,6 +6073,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                     while scope.members.len <= arg_idx:
                       scope.members.add(NIL)
                     scope.members[arg_idx] = arg
+                else:
+                  let args_arr = [obj, arg]
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 2, false, scope)
 
               # ULTRA-OPTIMIZED: Minimal frame creation (like IkUnifiedMethodCall0)
               var new_frame = new_frame()
@@ -6060,11 +6208,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if scope != nil:
                   scope.ref_count.inc()
               else:
-                # SLOW PATH: Create new scope and manually set self and args
+                # SLOW PATH: Create new scope and bind arguments
                 scope = new_scope(f.scope_tracker, f.parent_scope)
-                # Manual argument matching: set self and 2 args in scope without Gene objects
-                # Matcher should have 3 params: [self, arg1_name, arg2_name]
-                if f.matcher.children.len >= 3:
+                if f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 3:
+                  # Manual argument matching: set self and 2 args in scope without Gene objects
                   if f.scope_tracker.mappings.hasKey("self".to_key()):
                     let self_idx = f.scope_tracker.mappings["self".to_key()]
                     while scope.members.len <= self_idx:
@@ -6084,6 +6231,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                     while scope.members.len <= arg2_idx:
                       scope.members.add(NIL)
                     scope.members[arg2_idx] = arg2
+                else:
+                  let args_arr = [obj, arg1, arg2]
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 3, false, scope)
 
               # ULTRA-OPTIMIZED: Minimal frame creation
               var new_frame = new_frame()
@@ -6437,7 +6587,10 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-              new_frame.ns = f.ns
+              # Use function's namespace if available, otherwise fall back to current frame's ns or global
+              new_frame.ns = if f.ns != nil: f.ns 
+                             elif self.frame != nil and self.frame.ns != nil: self.frame.ns
+                             else: App.app.global_ns.ref.ns
               
               let args_gene = new_gene_value()
               args_gene.gene.children.add(obj)

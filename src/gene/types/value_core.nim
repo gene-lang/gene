@@ -712,7 +712,7 @@ converter to_value*(v: float64): Value {.inline.} =
   result = cast[Value](v)
 
 converter to_bool*(v: Value): bool {.inline.} =
-  not (v == FALSE or v == NIL)
+  not (v == FALSE or v == NIL or v == VOID)
 
 converter to_value*(v: bool): Value {.inline.} =
   if v:
@@ -2056,6 +2056,8 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.scope = nil
   self.target = NIL
   self.args = NIL
+  self.from_exec_function = false
+  self.is_generator = false
 
   # GC: Clear the stack using raw memory operations to avoid triggering =copy hooks
   # The VM's pop operations already handle reference counting, so we just need to

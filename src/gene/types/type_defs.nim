@@ -650,6 +650,7 @@ type
     # Selector helpers
     IkAssertNotVoid  # Throw if top-of-stack is VOID (selector not found)
     IkCreateSelector # Build selector from N segments on stack (arg1 = count)
+    IkSetMemberDynamic # Set member using key/index from stack
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object

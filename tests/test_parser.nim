@@ -711,3 +711,23 @@ test_parser """
   check middle.gene.children[0] == 2
   check middle.gene.type.kind == VkGene
   check middle.gene.type.gene.type == 1
+
+# Test semicolon chaining with properties
+test_parser """
+  (a ^b c d; ^e f g)
+""", proc(r: Value) =
+  # (a ^b c d; ^e f g) = ((a ^b c d) ^e f g)
+  check r.kind == VkGene
+  # Outer gene: type=((a ^b c d)), props={e: f}, children=[g]
+  check r.gene.props.len == 1
+  check r.gene.props["e".to_key()] == to_symbol_value("f")
+  check r.gene.children.len == 1
+  check r.gene.children[0] == to_symbol_value("g")
+  # Inner gene: type=a, props={b: c}, children=[d]
+  check r.gene.type.kind == VkGene
+  let inner = r.gene.type
+  check inner.gene.type == to_symbol_value("a")
+  check inner.gene.props.len == 1
+  check inner.gene.props["b".to_key()] == to_symbol_value("c")
+  check inner.gene.children.len == 1
+  check inner.gene.children[0] == to_symbol_value("d")

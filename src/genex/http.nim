@@ -710,7 +710,12 @@ proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.} =
               result = error_response
           else:
             result = NIL
-          
+
+          when not defined(release):
+            if result.kind == VkArray:
+              let items = array_data(result)
+              let first_kind = if items.len > 0: $items[0].kind else: "empty"
+
           # Complete the Nim future - this will wake up the async HTTP handler
           req.nim_future.complete(result)
           
@@ -834,6 +839,8 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
     if response == NIL:
       # No response, return 404
       await req.respond(Http404, "Not Found")
+    elif response.kind == VkString:
+      await req.respond(Http200, response.str)
     elif response.kind == VkInstance:
       # Check if it's a ServerResponse
       let status_val = instance_props(response).getOrDefault("status".to_key(), 200.to_value())
@@ -857,7 +864,7 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       await req.respond(status_code, body, headers)
     else:
       # Unknown response type
-      await req.respond(Http500, "Invalid response type")
+      await req.respond(Http500, "Invalid response type: " & $response.kind)
 
 # Start HTTP server
 proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =

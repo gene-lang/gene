@@ -572,9 +572,9 @@
     (var todos (Todo/all Todo))
     (.render
       (UL ^class "list-reset"
-        (... (todos .map (todo ->
+        (todos .map (todo ->
           todo/.to_html
-        )))
+        )) ...
       )
     )
   )

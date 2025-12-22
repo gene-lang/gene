@@ -47,35 +47,18 @@ proc props_to_attrs(props: Table[Key, Value]): string =
 proc html_tag(tag_name: string, vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   var attrs = ""
   var content = ""
+  let pos_count = get_positional_count(arg_count, has_keyword_args)
+  # Keyword args are passed as a map at args[0] when present
+  if has_keyword_args and arg_count > 0 and args[0].kind == VkMap:
+    attrs = props_to_attrs(map_data(args[0]))
 
-  # Check for keyword args (props)
-  if has_keyword_args and arg_count > 0:
-    let props_arg = args[arg_count - 1]
-    if props_arg.kind == VkMap:
-      attrs = props_to_attrs(map_data(props_arg))
-      # Content comes from positional args before the props
-      for i in 0..<(arg_count - 1):
-        let arg = get_positional_arg(args, i, has_keyword_args)
-        if arg.kind == VkString:
-          content &= arg.str
-        else:
-          content &= $arg
+  # All positional args are content
+  for i in 0..<pos_count:
+    let arg = get_positional_arg(args, i, has_keyword_args)
+    if arg.kind == VkString:
+      content &= arg.str
     else:
-      # All args are content
-      for i in 0..<arg_count:
-        let arg = get_positional_arg(args, i, has_keyword_args)
-        if arg.kind == VkString:
-          content &= arg.str
-        else:
-          content &= $arg
-  else:
-    # All args are content
-    for i in 0..<arg_count:
-      let arg = get_positional_arg(args, i, has_keyword_args)
-      if arg.kind == VkString:
-        content &= arg.str
-      else:
-        content &= $arg
+      content &= $arg
 
   let html = "<" & tag_name & attrs & ">" & content & "</" & tag_name & ">"
   return new_str_value(html)
@@ -85,10 +68,8 @@ proc html_self_closing_tag(tag_name: string, vm: ptr VirtualMachine, args: ptr U
   var attrs = ""
 
   # Check for keyword args (props)
-  if has_keyword_args and arg_count > 0:
-    let props_arg = args[arg_count - 1]
-    if props_arg.kind == VkMap:
-      attrs = props_to_attrs(map_data(props_arg))
+  if has_keyword_args and arg_count > 0 and args[0].kind == VkMap:
+    attrs = props_to_attrs(map_data(args[0]))
 
   let html = "<" & tag_name & attrs & " />"
   return new_str_value(html)
@@ -142,38 +123,43 @@ proc init_html_module*() =
       # Create tags namespace for wildcard import
       var tags_ns = new_namespace("tags")
 
+      proc register_tag(name: string, fn: NativeFn) =
+        let tag_val = wrap_native_fn(fn)
+        tags_ns[name.to_key()] = tag_val
+        App.app.global_ns.ref.ns[name.to_key()] = tag_val
+
       # Register all tag functions in tags namespace
-      tags_ns["HTML".to_key()] = wrap_native_fn(tag_HTML)
-      tags_ns["HEAD".to_key()] = wrap_native_fn(tag_HEAD)
-      tags_ns["TITLE".to_key()] = wrap_native_fn(tag_TITLE)
-      tags_ns["BODY".to_key()] = wrap_native_fn(tag_BODY)
-      tags_ns["DIV".to_key()] = wrap_native_fn(tag_DIV)
-      tags_ns["SPAN".to_key()] = wrap_native_fn(tag_SPAN)
-      tags_ns["P".to_key()] = wrap_native_fn(tag_P)
-      tags_ns["H1".to_key()] = wrap_native_fn(tag_H1)
-      tags_ns["H2".to_key()] = wrap_native_fn(tag_H2)
-      tags_ns["H3".to_key()] = wrap_native_fn(tag_H3)
-      tags_ns["UL".to_key()] = wrap_native_fn(tag_UL)
-      tags_ns["OL".to_key()] = wrap_native_fn(tag_OL)
-      tags_ns["LI".to_key()] = wrap_native_fn(tag_LI)
-      tags_ns["FORM".to_key()] = wrap_native_fn(tag_FORM)
-      tags_ns["INPUT".to_key()] = wrap_native_fn(tag_INPUT)
-      tags_ns["BUTTON".to_key()] = wrap_native_fn(tag_BUTTON)
-      tags_ns["LABEL".to_key()] = wrap_native_fn(tag_LABEL)
-      tags_ns["A".to_key()] = wrap_native_fn(tag_A)
-      tags_ns["IMG".to_key()] = wrap_native_fn(tag_IMG)
-      tags_ns["TABLE".to_key()] = wrap_native_fn(tag_TABLE)
-      tags_ns["TR".to_key()] = wrap_native_fn(tag_TR)
-      tags_ns["TD".to_key()] = wrap_native_fn(tag_TD)
-      tags_ns["TH".to_key()] = wrap_native_fn(tag_TH)
-      tags_ns["HEADER".to_key()] = wrap_native_fn(tag_HEADER)
-      tags_ns["FOOTER".to_key()] = wrap_native_fn(tag_FOOTER)
-      tags_ns["SCRIPT".to_key()] = wrap_native_fn(tag_SCRIPT)
-      tags_ns["STYLE".to_key()] = wrap_native_fn(tag_STYLE)
-      tags_ns["LINK".to_key()] = wrap_native_fn(tag_LINK)
-      tags_ns["META".to_key()] = wrap_native_fn(tag_META)
-      tags_ns["SVG".to_key()] = wrap_native_fn(tag_SVG)
-      tags_ns["LINE".to_key()] = wrap_native_fn(tag_LINE)
+      register_tag("HTML", tag_HTML)
+      register_tag("HEAD", tag_HEAD)
+      register_tag("TITLE", tag_TITLE)
+      register_tag("BODY", tag_BODY)
+      register_tag("DIV", tag_DIV)
+      register_tag("SPAN", tag_SPAN)
+      register_tag("P", tag_P)
+      register_tag("H1", tag_H1)
+      register_tag("H2", tag_H2)
+      register_tag("H3", tag_H3)
+      register_tag("UL", tag_UL)
+      register_tag("OL", tag_OL)
+      register_tag("LI", tag_LI)
+      register_tag("FORM", tag_FORM)
+      register_tag("INPUT", tag_INPUT)
+      register_tag("BUTTON", tag_BUTTON)
+      register_tag("LABEL", tag_LABEL)
+      register_tag("A", tag_A)
+      register_tag("IMG", tag_IMG)
+      register_tag("TABLE", tag_TABLE)
+      register_tag("TR", tag_TR)
+      register_tag("TD", tag_TD)
+      register_tag("TH", tag_TH)
+      register_tag("HEADER", tag_HEADER)
+      register_tag("FOOTER", tag_FOOTER)
+      register_tag("SCRIPT", tag_SCRIPT)
+      register_tag("STYLE", tag_STYLE)
+      register_tag("LINK", tag_LINK)
+      register_tag("META", tag_META)
+      register_tag("SVG", tag_SVG)
+      register_tag("LINE", tag_LINE)
 
       # Register tags namespace
       html_ns["tags".to_key()] = tags_ns.to_value()

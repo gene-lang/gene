@@ -236,27 +236,28 @@ proc init_string_class(object_class: Class) =
 
   # append method
   proc string_append(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    if get_positional_count(arg_count, has_keyword_args) < 2:
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
       not_allowed("String.append requires a value to append")
 
     var self_arg = get_positional_arg(args, 0, has_keyword_args)
-    let append_arg = get_positional_arg(args, 1, has_keyword_args)
-
     if self_arg.kind != VkString:
       not_allowed("append must be called on a string")
-
-    var addition: string
-    if append_arg.kind == VkString:
-      addition = append_arg.str
-    else:
-      addition = display_value(append_arg, true)
 
     self_arg = ensure_mutable_string(vm, args, has_keyword_args)
     let ptr_addr = cast[uint64](self_arg) and PAYLOAD_MASK
     if ptr_addr == 0:
       not_allowed("append must be called on a string")
     let str_ref = cast[ptr String](ptr_addr)
-    str_ref.str.add(addition)
+    var i = 1
+    while i < pos_count:
+      let append_arg = get_positional_arg(args, i, has_keyword_args)
+      let addition = if append_arg.kind == VkString:
+        append_arg.str
+      else:
+        display_value(append_arg, true)
+      str_ref.str.add(addition)
+      i.inc()
     self_arg
 
   var append_fn = new_ref(VkNativeFn)
@@ -680,20 +681,14 @@ proc init_collection_classes(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var mapped: seq[Value] = @[]
     case callback.kind
-    of VkFunction:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
       for item in array_data(arr):
         var mapped_value: Value
         {.cast(gcsafe).}:
-          mapped_value = vm.exec_function(callback, @[item])
-        mapped.add(mapped_value)
-    of VkNativeFn:
-      for item in array_data(arr):
-        var mapped_value: Value
-        {.cast(gcsafe).}:
-          mapped_value = call_native_fn(callback.ref.native_fn, vm, [item])
+          mapped_value = vm.exec_callable(callback, @[item])
         mapped.add(mapped_value)
     else:
-      not_allowed("map callback must be a function")
+      not_allowed("map callback must be a function, got " & $callback.kind)
     var result = new_array_value()
     array_data(result) = mapped
     result
@@ -1569,7 +1564,23 @@ proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   sleep(duration_ms)
   return NIL
 
-# Run Nim's async event loop forever (scheduler mode)
+# Helper proc to call scheduler callbacks - isolates gcsafe access
+proc call_scheduler_callbacks(vm: ptr VirtualMachine) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    for callback in scheduler_callbacks:
+      callback(vm)
+
+# Helper to check scheduler_callbacks length
+proc scheduler_callbacks_len(): int {.gcsafe.} =
+  {.cast(gcsafe).}:
+    return scheduler_callbacks.len
+
+# Helper to call poll_event_loop without gcsafe inference issue
+proc do_poll_event_loop(vm: ptr VirtualMachine) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    vm.poll_event_loop()
+
+# Run Nim's async event loop forever (scheduler mode)  
 proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   ## Run the scheduler loop indefinitely until stop_scheduler is called.
   ## This polls Nim async events and calls registered extension callbacks.
@@ -1588,7 +1599,7 @@ proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
     # Check if there's pending work
     let has_pending_work = vm.pending_futures.len > 0 or 
                            vm.thread_futures.len > 0 or
-                           scheduler_callbacks.len > 0
+                           scheduler_callbacks_len() > 0
     
     # Calculate poll timeout with backoff
     let poll_timeout = if has_pending_work:
@@ -1605,11 +1616,10 @@ proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
       discard  # Ignore "No handles" exceptions
     
     # Poll Gene futures and execute callbacks inline
-    vm.poll_event_loop()
+    do_poll_event_loop(vm)
     
     # Call all registered scheduler callbacks (extensions like HTTP register here)
-    for callback in scheduler_callbacks:
-      callback(vm)
+    call_scheduler_callbacks(vm)
   
   vm.scheduler_running = false
   return NIL

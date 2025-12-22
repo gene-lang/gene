@@ -846,14 +846,25 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
     not_allowed("for expects at least 2 arguments (variable and collection)")
   
   let var_node = gene.children[0]
-  if var_node.kind != VkSymbol:
-    not_allowed("for loop variable must be a symbol")
+  var index_name: string = ""
+  var value_name: string = ""
+  case var_node.kind
+  of VkSymbol:
+    value_name = var_node.str
+  of VkArray:
+    let items = array_data(var_node)
+    if items.len != 2 or items[0].kind != VkSymbol or items[1].kind != VkSymbol:
+      not_allowed("for loop variable must be a symbol or [index value]")
+    index_name = items[0].str
+    value_name = items[1].str
+  else:
+    not_allowed("for loop variable must be a symbol or [index value]")
   
   # Check for 'in' keyword
   if gene.children.len < 3 or gene.children[1].kind != VkSymbol or gene.children[1].str != "in":
     not_allowed("for loop requires 'in' keyword")
   
-  let var_name = var_node.str
+  let var_name = value_name
   let collection = gene.children[2]
   
   # Create a scope for the entire for loop to hold temporary variables
@@ -909,14 +920,28 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   # Get element
   self.emit(Instruction(kind: IkGetChildDynamic))
   
+  # Store index in loop variable if requested
+  if index_name.len > 0 and index_name != "_":
+    self.emit(Instruction(kind: IkVarResolve, arg0: index_var.to_value()))
+    let idx_var = self.scope_tracker.next_index
+    self.scope_tracker.mappings[index_name.to_key()] = idx_var
+    self.add_scope_start()
+    self.scope_tracker.next_index.inc()
+    self.emit(Instruction(kind: IkVar, arg0: idx_var.to_value()))
+    self.emit(Instruction(kind: IkPop))
+
   # Store element in loop variable
-  let var_index = self.scope_tracker.next_index
-  self.scope_tracker.mappings[var_name.to_key()] = var_index
-  self.add_scope_start()
-  self.scope_tracker.next_index.inc()
-  self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-  # Remove the element value that IkVar leaves on the stack
-  self.emit(Instruction(kind: IkPop))
+  if var_name != "_":
+    let var_index = self.scope_tracker.next_index
+    self.scope_tracker.mappings[var_name.to_key()] = var_index
+    self.add_scope_start()
+    self.scope_tracker.next_index.inc()
+    self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+    # Remove the element value that IkVar leaves on the stack
+    self.emit(Instruction(kind: IkPop))
+  else:
+    # Drop the element when the value is ignored
+    self.emit(Instruction(kind: IkPop))
   
   # Compile body (remaining children after 'in' and collection)
   if gene.children.len > 3:
@@ -1687,7 +1712,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
       self.emit(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
       
-      # The object is still on the stack - add it as the first child
+      # Swap so obj is on top, then add it as the first child
+      self.emit(Instruction(kind: IkSwap))
       self.emit(Instruction(kind: IkGeneAddChild))
       
       # Add any explicit arguments
@@ -1860,18 +1886,34 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     return
   elif gene.props.len > 0 and gene.type.kind == VkSymbol and not gene.type.str.ends_with("!"):
     # Keyword argument fast path for eager functions (no spreads)
-    # Preserve evaluation order: properties first, then positional children
-    for k, v in gene.props:
-      self.emit(Instruction(kind: IkPushValue, arg0: cast[Value](k)))
-      self.compile(v)
+    var has_spread = false
+    for k, _ in gene.props:
+      if ($k).startsWith("..."):
+        has_spread = true
+        break
+    if not has_spread:
+      var i = 0
+      while i < gene.children.len:
+        let child = gene.children[i]
+        if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
+           (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
+          has_spread = true
+          break
+        i.inc()
 
-    for child in gene.children:
-      self.compile(child)
+    if not has_spread:
+      # Preserve evaluation order: properties first, then positional children
+      for k, v in gene.props:
+        self.emit(Instruction(kind: IkPushValue, arg0: cast[Value](k)))
+        self.compile(v)
 
-    let kw_count = gene.props.len.int32
-    let total_items = (gene.children.len + gene.props.len * 2).int32
-    self.emit(Instruction(kind: IkUnifiedCallKw, arg0: kw_count.to_value(), arg1: total_items))
-    return
+      for child in gene.children:
+        self.compile(child)
+
+      let kw_count = gene.props.len.int32
+      let total_items = (gene.children.len + gene.props.len * 2).int32
+      self.emit(Instruction(kind: IkUnifiedCallKw, arg0: kw_count.to_value(), arg1: total_items))
+      return
 
   # Dual-branch compilation:
   # - Macro branch (quoted args): for VkFunction with is_macro_like=true - continues to next instruction
@@ -2008,6 +2050,102 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
 
   # Check if this is a macro-like method (ends with !)
   let is_macro_like_method = method_name.ends_with("!")
+
+  # Spread operator requires building a gene call (unified method calls don't support spreads)
+  var has_spread = false
+  for k, _ in gene.props:
+    if ($k).startsWith("..."):
+      has_spread = true
+      break
+  if not has_spread:
+    var i = start_index
+    while i < gene.children.len:
+      let child = gene.children[i]
+      if (i + 1 < gene.children.len and gene.children[i + 1].kind == VkSymbol and gene.children[i + 1].str == "...") or
+         (child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3):
+        has_spread = true
+        break
+      i += 1
+
+  if has_spread:
+    # Resolve method to a callable, then build args via gene add/spread.
+    # This mirrors compile_gene_unknown's macro/function branching.
+    self.emit(Instruction(kind: IkResolveMethod, arg0: method_value))
+    let fn_label = new_label()
+    let end_label = new_label()
+    self.emit(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
+
+    # Macro branch: quoted arguments
+    self.emit(Instruction(kind: IkSwap))
+    self.emit(Instruction(kind: IkGeneAddChild))
+    self.quote_level.inc()
+    for k, v in gene.props:
+      let key_str = $k
+      if key_str.startsWith("..."):
+        self.compile(v)
+        self.emit(Instruction(kind: IkGenePropsSpread))
+      else:
+        self.compile(v)
+        self.emit(Instruction(kind: IkGeneSetProp, arg0: k))
+
+    block:
+      var i = start_index
+      let children = gene.children
+      while i < children.len:
+        let child = children[i]
+        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+          self.compile(child)
+          self.emit(Instruction(kind: IkGeneAddSpread))
+          i += 2
+          continue
+        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+          let base_symbol = child.str[0..^4].to_symbol_value()
+          self.compile(base_symbol)
+          self.emit(Instruction(kind: IkGeneAddSpread))
+          i += 1
+          continue
+        self.compile(child)
+        self.emit(Instruction(kind: IkGeneAddChild))
+        i += 1
+
+    self.quote_level.dec()
+    self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
+
+    # Function branch: evaluated arguments
+    self.emit(Instruction(kind: IkNoop, label: fn_label))
+    self.emit(Instruction(kind: IkSwap))
+    self.emit(Instruction(kind: IkGeneAddChild))
+    for k, v in gene.props:
+      let key_str = $k
+      if key_str.startsWith("..."):
+        self.compile(v)
+        self.emit(Instruction(kind: IkGenePropsSpread))
+      else:
+        self.compile(v)
+        self.emit(Instruction(kind: IkGeneSetProp, arg0: k))
+
+    block:
+      var i = start_index
+      let children = gene.children
+      while i < children.len:
+        let child = children[i]
+        if i + 1 < children.len and children[i + 1].kind == VkSymbol and children[i + 1].str == "...":
+          self.compile(child)
+          self.emit(Instruction(kind: IkGeneAddSpread))
+          i += 2
+          continue
+        if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
+          let base_symbol = child.str[0..^4].to_symbol_value()
+          self.compile(base_symbol)
+          self.emit(Instruction(kind: IkGeneAddSpread))
+          i += 1
+          continue
+        self.compile(child)
+        self.emit(Instruction(kind: IkGeneAddChild))
+        i += 1
+
+    self.emit(Instruction(kind: IkGeneEnd, label: end_label))
+    return
 
   if gene.props.len == 0:
     # Fast path: positional arguments only
@@ -2159,7 +2297,7 @@ proc compile_gene(self: Compiler, input: Value) =
     if first_child.kind == VkSymbol:
       if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
         # Don't convert if the type is already an operator or special form
-        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "$", ".", "->", "@"]:
+        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->", "@"]:
           # Convert infix to prefix notation and compile
           # (6 / 2) becomes (/ 6 2)
           # (i + 1) becomes (+ i 1)
@@ -2180,7 +2318,7 @@ proc compile_gene(self: Compiler, input: Value) =
         return
     elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == "":
       # Don't convert if the type is already an operator or special form
-      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "$", ".", "->"]:
+      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->"]:
         # Convert infix to prefix notation and compile
         # (6 / 2) becomes (/ 6 2)
         # (i + 1) becomes (+ i 1)
@@ -2356,11 +2494,6 @@ proc compile_gene(self: Compiler, input: Value) =
           self.compile(gene.children[1])
           self.emit(Instruction(kind: IkOr))
           return
-        of "not":
-          if gene.children.len != 1:
-            not_allowed("not expects exactly 1 argument")
-          self.compile_unary_not(gene.children[0])
-          return
         of "..":
           self.compile_range_operator(gene)
           return
@@ -2403,6 +2536,12 @@ proc compile_gene(self: Compiler, input: Value) =
         return
       of "not":
         if gene.children.len != 1:
+          when not defined(release):
+            let trace = self.current_trace()
+            if trace != nil:
+              echo "DEBUG not arity (type): ", trace_location(trace)
+            else:
+              echo "DEBUG not arity (type): <no-trace>"
           not_allowed("not expects exactly 1 argument")
         self.compile_unary_not(gene.children[0])
         return
@@ -3203,6 +3342,8 @@ proc compile_set(self: Compiler, gene: ptr Gene) =
   
   let selector_arg = gene.children[1]
   var segments: seq[Value] = @[]
+  var dynamic_selector = false
+  var dynamic_expr: Value = NIL
 
   if selector_arg.kind == VkSymbol and selector_arg.str.startsWith("@") and selector_arg.str.len > 1:
     let prop_name = selector_arg.str[1..^1]
@@ -3219,17 +3360,37 @@ proc compile_set(self: Compiler, gene: ptr Gene) =
   elif selector_arg.kind == VkGene and selector_arg.gene.type == "@".to_symbol_value():
     if selector_arg.gene.children.len == 0:
       not_allowed("$set selector requires at least one segment")
-    for child in selector_arg.gene.children:
+    if selector_arg.gene.children.len == 1:
+      let child = selector_arg.gene.children[0]
       case child.kind
       of VkString, VkSymbol, VkInt:
         segments.add(child)
       else:
-        not_allowed("Unsupported selector segment type: " & $child.kind)
+        dynamic_selector = true
+        dynamic_expr = child
+    else:
+      for child in selector_arg.gene.children:
+        case child.kind
+        of VkString, VkSymbol, VkInt:
+          segments.add(child)
+        else:
+          not_allowed("Unsupported selector segment type: " & $child.kind)
   else:
     not_allowed("$set expects a selector (@property) as second argument")
 
-  if segments.len != 1:
-    not_allowed("$set selector must have exactly one property")
+  if dynamic_selector:
+    if selector_arg.gene.children.len != 1:
+      not_allowed("$set selector must have exactly one dynamic segment")
+  else:
+    if segments.len != 1:
+      not_allowed("$set selector must have exactly one property")
+
+  if dynamic_selector:
+    # Compile dynamic selector key and value
+    self.compile(dynamic_expr)
+    self.compile(gene.children[2])
+    self.emit(Instruction(kind: IkSetMemberDynamic))
+    return
 
   let prop = segments[0]
 

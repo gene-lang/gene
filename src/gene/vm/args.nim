@@ -94,11 +94,19 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
         pos_index.inc()
       scope.members[i] = rest_array
       has_value_splat = true
+    elif param.has_default():
+      if pos_index < pos_count:
+        let remaining = pos_count - pos_index
+        if remaining > param.min_left:
+          scope.members[i] = positional[pos_index]
+          pos_index.inc()
+        else:
+          scope.members[i] = param.default_value
+      else:
+        scope.members[i] = param.default_value
     elif pos_index < pos_count:
       scope.members[i] = positional[pos_index]
       pos_index.inc()
-    elif param.has_default():
-      scope.members[i] = param.default_value
     elif param.required():
       raise new_exception(types.Exception, "Expected " & $(i + 1) & " arguments, got " & $pos_count)
 
