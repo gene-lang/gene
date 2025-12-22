@@ -1614,14 +1614,14 @@ proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
   
   # Idle backoff: increase poll timeout when no pending work
   var idle_count = 0
-  const MAX_IDLE_BACKOFF = 50  # Max 50ms between polls when idle
-  
+  const MAX_IDLE_BACKOFF = 32  # Max 32ms between polls when idle
+
   while vm.scheduler_running:
     # Check if there's pending work
-    let has_pending_work = vm.pending_futures.len > 0 or 
+    let has_pending_work = vm.pending_futures.len > 0 or
                            vm.thread_futures.len > 0 or
                            scheduler_callbacks_len() > 0
-    
+
     # Calculate poll timeout with backoff
     let poll_timeout = if has_pending_work:
       idle_count = 0
@@ -1629,7 +1629,7 @@ proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
     else:
       idle_count = min(idle_count + 1, MAX_IDLE_BACKOFF)
       idle_count  # Gradually increase timeout when idle
-    
+
     # Process Nim's async events
     try:
       poll(poll_timeout)

@@ -139,11 +139,6 @@ proc exit_function(self: ptr VirtualMachine) {.inline.} =
 
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
-  echo "DEBUG dispatch_exception: value.kind=", value.kind
-  if value.kind == VkInstance:
-    echo "DEBUG dispatch_exception: instance class=", value.instance_class.name
-    if value.instance_props.hasKey("message".to_key()):
-      echo "DEBUG dispatch_exception: message=", value.instance_props["message".to_key()]
   self.current_exception = value
 
   if self.exception_handlers.len > 0:
