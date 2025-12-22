@@ -695,6 +695,27 @@ proc init_collection_classes(object_class: Class) =
 
   array_class.def_native_method("map", vm_array_map)
 
+  proc vm_array_join(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 1:
+      not_allowed("Array.join requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("join must be called on an array")
+    let sep = if pos_count > 1:
+      let sep_arg = get_positional_arg(args, 1, has_keyword_args)
+      if sep_arg.kind != VkString:
+        not_allowed("Array.join separator must be a string")
+      sep_arg.str
+    else:
+      ""
+    var parts: seq[string] = @[]
+    for item in array_data(arr):
+      parts.add(display_value(item, true))
+    parts.join(sep).to_value()
+
+  array_class.def_native_method("join", vm_array_join)
+
   let map_class = new_class("Map")
   map_class.parent = object_class
   r = new_ref(VkClass)
