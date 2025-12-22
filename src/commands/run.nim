@@ -4,6 +4,7 @@ import ../gene/types
 import ../gene/vm
 import ../gene/compiler
 import ../gene/gir
+import ../gene/repl_session
 import ./base
 
 const DEFAULT_COMMAND = "run"
@@ -30,6 +31,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult
 proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
   manager.add_help("run <file>: parse and execute <file>")
+  manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
 
 let short_no_val = {'d'}
 let long_no_val = @[
@@ -92,6 +94,12 @@ proc parse_options(args: seq[string]): Options =
 proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)
   setup_logger(options.debugging)
+  proc handle_exec_error(e: ref CatchableError): CommandResult =
+    if options.repl_on_error and VM.current_exception != NIL and VM.frame != nil:
+      stderr.writeLine("Error: " & e.msg)
+      discard run_repl_on_error(VM, VM.current_exception)
+      return failure("")
+    return failure(e.msg)
 
   var file = options.file
   var code: string
@@ -130,28 +138,32 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   # Handle .gir files first (no caching logic)
   if file.endsWith(".gir"):
     let start = cpu_time()
+    var compiled: CompilationUnit
     try:
-      let compiled = load_gir(file)
-
-      if options.compile or options.debugging:
-        echo "=== Loaded GIR: " & file & " ==="
-        echo "Instructions: " & $compiled.instructions.len
-
-      if VM.frame == nil:
-        VM.frame = new_frame(new_namespace(file))
-      VM.cu = compiled
-      discard VM.exec()
-
-      let elapsed = cpu_time() - start
-      if options.profile:
-        VM.print_profile()
-      if options.profile_instructions:
-        VM.print_instruction_profile()
-      if options.benchmark:
-        echo fmt"Execution time: {elapsed * 1000:.3f} ms"
-      return success()
+      compiled = load_gir(file)
     except CatchableError as e:
       return failure("Loading GIR file: " & e.msg)
+
+    if options.compile or options.debugging:
+      echo "=== Loaded GIR: " & file & " ==="
+      echo "Instructions: " & $compiled.instructions.len
+
+    if VM.frame == nil:
+      VM.frame = new_frame(new_namespace(file))
+    VM.cu = compiled
+    try:
+      discard VM.exec()
+    except CatchableError as e:
+      return handle_exec_error(e)
+
+    let elapsed = cpu_time() - start
+    if options.profile:
+      VM.print_profile()
+    if options.profile_instructions:
+      VM.print_instruction_profile()
+    if options.benchmark:
+      echo fmt"Execution time: {elapsed * 1000:.3f} ms"
+    return success()
 
   # Regular .gene file - check for cached GIR
   if not options.no_gir_cache and not options.force_compile:
@@ -161,13 +173,20 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         echo "Using cached GIR: " & gir_path
 
       let start = cpu_time()
+      var compiled: CompilationUnit
       try:
-        let compiled = load_gir(gir_path)
+        compiled = load_gir(gir_path)
+      except CatchableError:
+        compiled = nil
 
+      if not compiled.isNil:
         if VM.frame == nil:
           VM.frame = new_frame(new_namespace(file))
         VM.cu = compiled
-        discard VM.exec()
+        try:
+          discard VM.exec()
+        except CatchableError as e:
+          return handle_exec_error(e)
 
         let elapsed = cpu_time() - start
         if options.profile:
@@ -177,72 +196,72 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         if options.benchmark:
           echo fmt"Execution time: {elapsed * 1000:.3f} ms (from cache)"
         return success()
-      except CatchableError:
-        discard
 
   let start = cpu_time()
   var value: Value
-
-  if options.trace_instruction:
-    # For trace/debug modes, we need to read the file into memory
-    # so we can inspect compilation output and then execute
-    let code = if code != "": code else: readFile(file)
-    echo "=== Compilation Output ==="
-    let compiled = parse_and_compile(code, file)
-    echo "Instructions:"
-    for i, instr in compiled.instructions:
-      echo fmt"{i:04X} {instr}"
-    echo ""
-    echo "=== Execution Trace ==="
-    VM.trace = true
-    # Initialize frame if needed
-    if VM.frame == nil:
-      let ns = new_namespace(file)
-      ns["__module_name__".to_key()] = file.to_value()
-      ns["__is_main__".to_key()] = TRUE
-      ns["gene".to_key()] = App.app.gene_ns
-      App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
-      VM.frame = new_frame(ns)
-    else:
-      let ns = new_namespace(file)
-      ns["__module_name__".to_key()] = file.to_value()
-      ns["__is_main__".to_key()] = TRUE
-      ns["gene".to_key()] = App.app.gene_ns
-      App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
-      VM.frame.update(new_frame(ns))
-    VM.cu = compiled
-    value = VM.exec()
-  elif options.compile or options.debugging:
-    # For trace/debug modes, we need to read the file into memory
-    let code = if code != "": code else: readFile(file)
-    echo "=== Compilation Output ==="
-    let compiled = parse_and_compile(code, file)
-    echo "Instructions:"
-    for i, instr in compiled.instructions:
-      echo fmt"{i:03d}: {instr}"
-    echo ""
-
-    if not options.trace:  # If not tracing, just show compilation
+  try:
+    if options.trace_instruction:
+      # For trace/debug modes, we need to read the file into memory
+      # so we can inspect compilation output and then execute
+      let code = if code != "": code else: readFile(file)
+      echo "=== Compilation Output ==="
+      let compiled = parse_and_compile(code, file)
+      echo "Instructions:"
+      for i, instr in compiled.instructions:
+        echo fmt"{i:04X} {instr}"
+      echo ""
+      echo "=== Execution Trace ==="
+      VM.trace = true
+      # Initialize frame if needed
+      if VM.frame == nil:
+        let ns = new_namespace(file)
+        ns["__module_name__".to_key()] = file.to_value()
+        ns["__is_main__".to_key()] = TRUE
+        ns["gene".to_key()] = App.app.gene_ns
+        App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
+        VM.frame = new_frame(ns)
+      else:
+        let ns = new_namespace(file)
+        ns["__module_name__".to_key()] = file.to_value()
+        ns["__is_main__".to_key()] = TRUE
+        ns["gene".to_key()] = App.app.gene_ns
+        App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
+        VM.frame.update(new_frame(ns))
       VM.cu = compiled
       value = VM.exec()
+    elif options.compile or options.debugging:
+      # For trace/debug modes, we need to read the file into memory
+      let code = if code != "": code else: readFile(file)
+      echo "=== Compilation Output ==="
+      let compiled = parse_and_compile(code, file)
+      echo "Instructions:"
+      for i, instr in compiled.instructions:
+        echo fmt"{i:03d}: {instr}"
+      echo ""
+
+      if not options.trace:  # If not tracing, just show compilation
+        VM.cu = compiled
+        value = VM.exec()
+      else:
+        echo "=== Execution Trace ==="
+        VM.cu = compiled
+      value = VM.exec()
     else:
-      echo "=== Execution Trace ==="
-      VM.cu = compiled
-    value = VM.exec()
-  else:
-    # Normal execution
-    # Check if code was already read (from stdin or --eval)
-    if code != "":
-      # Code already in memory - use string-based execution
-      value = VM.exec(code, file)
-    else:
-      # Read from file using streaming for memory efficiency
-      let stream = newFileStream(file, fmRead)
-      if stream.isNil:
-        stderr.writeLine("Error: Failed to open file: " & file)
-        return failure("Failed to open file")
-      defer: stream.close()
-      value = VM.exec(stream, file)
+      # Normal execution
+      # Check if code was already read (from stdin or --eval)
+      if code != "":
+        # Code already in memory - use string-based execution
+        value = VM.exec(code, file)
+      else:
+        # Read from file using streaming for memory efficiency
+        let stream = newFileStream(file, fmRead)
+        if stream.isNil:
+          stderr.writeLine("Error: Failed to open file: " & file)
+          return failure("Failed to open file")
+        defer: stream.close()
+        value = VM.exec(stream, file)
+  except CatchableError as e:
+    return handle_exec_error(e)
   
   if options.print_result:
     echo value

@@ -9,6 +9,7 @@ Goals:
 - Use a child scope that can read and update variables in the caller scope.
 - Persist variables across inputs in `gene repl`.
 - Return the last evaluated REPL expression to the caller.
+- Allow `gene run` and `gene eval` to enter a REPL on unhandled Gene exceptions with `$ex` populated.
 
 Non-Goals:
 - Full debugger features (breakpoints, step-through, etc.).
@@ -20,6 +21,7 @@ Non-Goals:
 - **Session-scope compilation**: Add a `parse_and_compile_repl` path that reuses a persistent `ScopeTracker` and skips top-level `start_scope`/`end_scope` for each input.
 - **Manual scope setup**: The REPL session creates a runtime scope once (a child of the caller scope) and reuses it across inputs. The compiler uses the same `ScopeTracker` for variable resolution across inputs.
 - **Return last value**: The REPL loop tracks the last non-void evaluation result and returns it from `($repl)` (or `NIL` if nothing was evaluated).
+- **CLI error hook**: `run`/`eval` call a shared `run_repl_on_error` helper that reuses the current frame scope, preserves `current_exception`, and avoids resetting exception state.
 
 ## Risks / Trade-offs
 
@@ -32,6 +34,7 @@ Non-Goals:
 2. Update `gene repl` to create a persistent session scope and reuse the compiler path for each input.
 3. Add a native `$repl` function that enters the same REPL loop with the caller scope as parent.
 4. Add tests for REPL scope persistence and return values (using a scripted REPL session or direct compile/exec path).
+5. Add `--repl-on-error` to `gene run` and `gene eval`, invoking a REPL with `$ex` when an unhandled Gene exception occurs.
 
 ## Open Questions
 

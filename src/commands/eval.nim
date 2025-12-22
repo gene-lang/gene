@@ -2,6 +2,7 @@ import parseopt, strutils, strformat
 import ../gene/types
 import ../gene/vm
 import ../gene/compiler
+import ../gene/repl_session
 import ./base
 
 const DEFAULT_COMMAND = "eval"
@@ -17,6 +18,7 @@ type
     trace: bool
     trace_instruction: bool
     compile: bool
+    repl_on_error: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -25,6 +27,7 @@ proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
   manager.add_help("eval <code>: evaluate <code> as a gene expression")
   manager.add_help("  -d, --debug: enable debug output")
+  manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --csv: print result as CSV")
   manager.add_help("  --gene: print result as gene expression")
   manager.add_help("  --line: evaluate as a single line")
@@ -34,6 +37,7 @@ let long_no_val = @[
   "csv",
   "gene",
   "line",
+  "repl-on-error",
   "trace",
   "trace-instruction",
   "compile",
@@ -61,6 +65,8 @@ proc parse_options(args: seq[string]): Options =
         result.gene = true
       of "line":
         result.line = true
+      of "repl-on-error":
+        result.repl_on_error = true
       of "trace":
         result.trace = true
       of "trace-instruction":
@@ -77,6 +83,12 @@ proc parse_options(args: seq[string]): Options =
 proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)
   setup_logger(options.debugging)
+  proc handle_exec_error(e: ref CatchableError): CommandResult =
+    if options.repl_on_error and VM.current_exception != NIL and VM.frame != nil:
+      stderr.writeLine("Error: " & e.msg)
+      discard run_repl_on_error(VM, VM.current_exception)
+      return failure("")
+    return failure(e.msg)
   
   var code = options.code
   
@@ -147,8 +159,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       let value = VM.exec(code, "<eval>")
       echo $value
         
-  except ValueError as e:
-    return failure(e.msg)
+  except CatchableError as e:
+    return handle_exec_error(e)
   
   return success()
 

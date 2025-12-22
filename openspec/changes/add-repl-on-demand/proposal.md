@@ -9,8 +9,9 @@ The current REPL evaluates each line in a fresh top-level scope, so variables an
 - Add a `$repl` native function that starts an interactive session bound to the caller scope and returns the last evaluated value.
 - Keep a persistent session scope for `gene repl`, so variables survive across inputs.
 - Add a REPL-specific compile/exec path that reuses a scope tracker and avoids auto-closing the root scope per input.
+- Add `--repl-on-error` for `gene run` and `gene eval` to drop into a REPL with `$ex` populated when a Gene exception escapes.
 
 ## Impact
 
 - Affected specs: repl (new)
-- Affected code: `src/commands/repl.nim`, `src/gene/compiler.nim`, `src/gene/vm.nim`, `src/gene/stdlib.nim`
+- Affected code: `src/commands/repl.nim`, `src/commands/run.nim`, `src/commands/eval.nim`, `src/gene/compiler.nim`, `src/gene/repl_session.nim`, `src/gene/stdlib.nim`

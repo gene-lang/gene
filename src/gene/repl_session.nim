@@ -133,3 +133,38 @@ proc run_repl_script*(vm: ptr VirtualMachine, inputs: seq[string], scope_tracker
     last_value = exec_repl_compiled(vm, compiled, scope, ns, caller_frame, return_cu, caller_pc, repl_frame)
 
   return last_value
+
+proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt = "gene> "): Value =
+  ## Start a REPL session using the current frame scope and expose $ex.
+  if vm.isNil or exception_value == NIL or vm.frame.isNil:
+    return NIL
+
+  let parent_scope = vm.frame.scope
+  let parent_tracker = if parent_scope != nil: parent_scope.tracker else: nil
+  let scope_tracker = new_scope_tracker(parent_tracker)
+  let scope = new_scope(scope_tracker, parent_scope)
+  let ns = if vm.frame.ns != nil:
+    vm.frame.ns
+  else:
+    new_namespace(App.app.global_ns.ref.ns, "repl")
+
+  let saved_frame = vm.frame
+  let saved_cu = vm.cu
+  let saved_pc = vm.pc
+  let saved_exec_depth = vm.exec_depth
+  let saved_exception = vm.current_exception
+
+  vm.current_exception = exception_value
+  if vm.exec_depth == 0:
+    vm.exec_depth = 1
+
+  let repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true)
+
+  vm.exec_depth = saved_exec_depth
+  vm.current_exception = saved_exception
+  vm.frame = saved_frame
+  vm.cu = saved_cu
+  vm.pc = saved_pc
+  scope.free()
+
+  return repl_value

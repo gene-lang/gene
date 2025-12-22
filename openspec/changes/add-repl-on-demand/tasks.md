@@ -11,3 +11,7 @@
 ## 3. Tests and Docs
 - [x] 3.1 Add tests for REPL scope persistence (definitions survive across inputs).
 - [x] 3.2 Add tests for `($repl)` scope behavior and return values.
+
+## 4. REPL on Error
+- [x] 4.1 Add a `run_repl_on_error` helper that reuses the current frame scope and preserves `$ex`.
+- [x] 4.2 Add `--repl-on-error` to `gene run` and `gene eval` to enter the REPL on unhandled Gene exceptions.

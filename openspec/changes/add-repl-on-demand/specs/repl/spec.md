@@ -20,3 +20,10 @@ The `($repl)` call SHALL return the last evaluated REPL expression, or `NIL` whe
 #### Scenario: Return last expression
 - **WHEN** the user enters `(+ 1 2)` and then exits the REPL
 - **THEN** `($repl)` returns `3`
+
+### Requirement: REPL on Error (CLI)
+When `gene run` or `gene eval` is invoked with `--repl-on-error`, the runtime SHALL drop into an interactive REPL if a Gene exception escapes, and `$ex` SHALL reference the exception.
+
+#### Scenario: Run error opens REPL
+- **WHEN** a program run with `gene run --repl-on-error` throws an unhandled Gene exception
+- **THEN** an interactive REPL starts and `$ex` is available for inspection
