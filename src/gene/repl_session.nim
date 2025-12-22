@@ -1,4 +1,4 @@
-import strutils
+import strutils, terminal
 
 import ./types
 import ./compiler
@@ -55,12 +55,26 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
   var last_value = NIL
   var repl_frame: Frame = nil
 
+  var input_file = stdin
+  var close_input = false
+  if stdin.isatty():
+    var tty: File
+    if open(tty, "/dev/tty", fmRead):
+      input_file = tty
+      close_input = true
+
+  defer:
+    if close_input:
+      input_file.close()
+
   while true:
     stdout.write(prompt)
     stdout.flushFile()
 
     var input: string
-    if not stdin.readLine(input):
+    if not input_file.readLine(input):
+      if prompt.len > 0:
+        echo ""
       break
 
     let trimmed = input.strip()

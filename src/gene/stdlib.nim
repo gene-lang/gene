@@ -1652,7 +1652,7 @@ proc core_stop_scheduler*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value
   vm.scheduler_running = false
   return NIL
 
-proc core_repl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+proc core_repl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   let parent_scope = if vm.frame != nil: vm.frame.scope else: nil
   let parent_tracker = if parent_scope != nil: parent_scope.tracker else: nil
 
@@ -1667,8 +1667,10 @@ proc core_repl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   let saved_cu = vm.cu
   let saved_pc = vm.pc
 
-  let result = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
-                                saved_frame, saved_cu, saved_pc)
+  let result = ({.cast(gcsafe).}:
+    run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
+                     saved_frame, saved_cu, saved_pc)
+  )
   scope.free()
   return result
 
@@ -2444,6 +2446,7 @@ proc init_gene_core_functions() =
   App.app.gene_ns.ns["with".to_key()] = vm_with.to_value()    # $with translates to gene/with
   App.app.gene_ns.ns["tap".to_key()] = vm_tap.to_value()      # $tap translates to gene/tap
   App.app.gene_ns.ns["eval".to_key()] = vm_eval.to_value()    # eval function
+  App.app.gene_ns.ns["repl".to_key()] = NativeFn(core_repl).to_value()  # $repl translates to gene/repl
 
   var sleep_ref = new_ref(VkNativeFn)
   sleep_ref.native_fn = gene_sleep
@@ -2645,7 +2648,7 @@ proc init_stdlib*() =
   # Utility functions
   global_ns["$tap".to_key()] = core_tap.to_value()
   global_ns["$if_main".to_key()] = core_if_main.to_value()
-  global_ns["$repl".to_key()] = core_repl.to_value()
+  global_ns["$repl".to_key()] = NativeFn(core_repl).to_value()
 
   # OpenAI API functions - moved to vm.nim to avoid circular dependencies
 # when not defined(noExtensions) and not defined(noai):

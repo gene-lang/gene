@@ -15,10 +15,20 @@ proc current_trace(self: ptr VirtualMachine): SourceTrace =
 proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string =
   let trace = self.current_trace()
   let location = trace_location(trace)
+  var detail = $value
+  if value.kind == VkInstance:
+    let exception_class_val = App.app.exception_class
+    if exception_class_val.kind == VkClass and value.instance_class == exception_class_val.ref.class:
+      if "message".to_key() in instance_props(value):
+        let msg_val = instance_props(value)["message".to_key()]
+        if msg_val.kind == VkString:
+          detail = msg_val.str
+        else:
+          detail = $msg_val
   if location.len > 0:
-    "Gene exception at " & location & ": " & $value
+    "Gene exception at " & location & ": " & detail
   else:
-    "Gene exception: " & $value
+    "Gene exception: " & detail
 
 proc ensure_frame_pool() =
   ## Lazily allocate the shared frame pool for this thread.
