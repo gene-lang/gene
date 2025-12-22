@@ -1,6 +1,6 @@
 #!/usr/bin/env gene run
 
-# (repl) to open a repl at the current location
+# ($repl) to open a repl at the current location
 # if some global option is set, open repl on exception
 
 (var a 1)
@@ -8,7 +8,7 @@
 (println "Check a and b in REPL.")
 (println "Expect `c` to be defined by the REPL.")
 (println "And `d` will have the last value from REPL.")
-(var d (repl))
+(var d ($repl))
 (println)
 (println "a + b =" (a + b))
 (println "c =" c)

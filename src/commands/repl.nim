@@ -1,6 +1,7 @@
-import parseopt, strutils
+import parseopt
 import ../gene/types
 import ../gene/vm
+import ../gene/repl_session
 import ./base
 
 const DEFAULT_COMMAND = "repl"
@@ -40,46 +41,11 @@ proc start_repl(debugging: bool) =
   setup_logger(debugging)
   init_app_and_vm()
   init_stdlib()
-  
-  echo "Gene REPL - Interactive Gene Language Shell"
-  echo "Type 'exit' or 'quit' to exit, 'help' for help"
-  echo ""
-  
-  var line_number = 1
-  
-  while true:
-    stdout.write("gene> ")
-    stdout.flushFile()
-    
-    var input: string
-    if read_line(stdin, input):
-      let trimmed = input.strip()
-      
-      if trimmed.len == 0:
-        continue
-        
-      if trimmed == "exit" or trimmed == "quit":
-        break
-        
-      if trimmed == "help":
-        echo "Gene REPL Help:"
-        echo "  exit, quit: Exit the REPL"
-        echo "  help: Show this help message"
-        echo "  Any other input is evaluated as Gene code"
-        continue
-      
-      try:
-        let value = VM.exec(trimmed, "<repl>")
-        # Only print return value if it's not nil/void and not from print/println statements
-        if not value.is_nil() and value.kind != VkVoid and not trimmed.starts_with("(print") and not trimmed.starts_with("(println"):
-          echo $value
-      except ValueError as e:
-        echo "Error: ", e.msg
-        
-      inc(line_number)
-    else:
-      # EOF (Ctrl+D)
-      break
+
+  let ns = new_namespace(App.app.global_ns.ref.ns, "repl")
+  let scope_tracker = new_scope_tracker()
+  let scope = new_scope(scope_tracker)
+  discard run_repl_session(VM, scope_tracker, scope, ns, "<repl>", "gene> ", true)
 
 proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)

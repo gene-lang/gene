@@ -419,6 +419,9 @@ proc start_scope(self: Compiler) =
   # ScopeStart is added when the first variable is declared
 proc add_scope_start(self: Compiler) =
   if self.scope_tracker.next_index == 0:
+    if self.skip_root_scope_start and self.scope_trackers.len == 1:
+      self.scope_tracker.scope_started = true
+      return
     self.emit(Instruction(kind: IkScopeStart, arg0: self.scope_tracker.to_value()))
     # Mark that we added a scope start, even for empty scopes
     self.scope_tracker.scope_started = true
@@ -3545,6 +3548,62 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
   
+  return self.output
+
+proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: ScopeTracker, eager_functions = false): CompilationUnit =
+  ## Parse and compile Gene code for REPL inputs with a persistent scope tracker.
+  ## The REPL root scope is created outside of compiled code.
+
+  var parser = new_parser()
+  var stream = new_string_stream(input)
+  parser.open(stream, filename)
+  defer: parser.close()
+
+  var root_tracker = scope_tracker
+  if root_tracker.isNil:
+    root_tracker = new_scope_tracker()
+  root_tracker.scope_started = true
+
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall,
+    scope_trackers: @[root_tracker],
+    skip_root_scope_start: true
+  )
+  self.emit(Instruction(kind: IkStart))
+
+  var is_first = true
+
+  try:
+    while true:
+      let node = parser.read()
+      if node != PARSER_IGNORE:
+        if not is_first:
+          self.emit(Instruction(kind: IkClearStack))
+
+        self.last_error_trace = nil
+        try:
+          self.compile(node)
+          is_first = false
+        except CatchableError as e:
+          var trace = self.last_error_trace
+          if trace.is_nil and node.kind == VkGene:
+            trace = node.gene.trace
+          let location = trace_location(trace)
+          let message = if location.len > 0: location & ": " & e.msg else: e.msg
+          raise new_exception(types.Exception, message)
+  except ParseEofError:
+    discard
+
+  self.emit(Instruction(kind: IkEnd))
+  self.output.optimize_noops()
+  self.output.update_jumps()
+  self.output.ensure_trace_capacity()
+  self.output.trace_root = parser.trace_root
+
   return self.output
 
 proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false): CompilationUnit =

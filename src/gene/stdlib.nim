@@ -3,6 +3,7 @@ import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile, 
 import ./types
 import ./parser
 import ./compiler
+import ./repl_session
 import ./vm/async
 import ./vm/thread
 import ./stdlib/math as stdlib_math
@@ -1651,6 +1652,26 @@ proc core_stop_scheduler*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value
   vm.scheduler_running = false
   return NIL
 
+proc core_repl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  let parent_scope = if vm.frame != nil: vm.frame.scope else: nil
+  let parent_tracker = if parent_scope != nil: parent_scope.tracker else: nil
+
+  let scope_tracker = new_scope_tracker(parent_tracker)
+  let scope = new_scope(scope_tracker, parent_scope)
+  let ns = if vm.frame != nil and vm.frame.ns != nil:
+    vm.frame.ns
+  else:
+    new_namespace(App.app.global_ns.ref.ns, "repl")
+
+  let saved_frame = vm.frame
+  let saved_cu = vm.cu
+  let saved_pc = vm.pc
+
+  let result = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
+                                saved_frame, saved_cu, saved_pc)
+  scope.free()
+  return result
+
 # Environment variable functions
 proc core_get_env*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -2624,6 +2645,7 @@ proc init_stdlib*() =
   # Utility functions
   global_ns["$tap".to_key()] = core_tap.to_value()
   global_ns["$if_main".to_key()] = core_if_main.to_value()
+  global_ns["$repl".to_key()] = core_repl.to_value()
 
   # OpenAI API functions - moved to vm.nim to avoid circular dependencies
 # when not defined(noExtensions) and not defined(noai):

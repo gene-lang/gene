@@ -440,6 +440,7 @@ type
     output*: CompilationUnit
     quote_level*: int
     scope_trackers*: seq[ScopeTracker]
+    skip_root_scope_start*: bool
     loop_stack*: seq[LoopInfo]
     tail_position*: bool  # Track if we're in tail position for tail call optimization
     eager_functions*: bool
