@@ -235,7 +235,8 @@ proc get_macro(ch: char): MacroReader =
 ### === ERROR HANDLING UTILS ===
 
 proc err_info(self: Parser): ParseInfo =
-  result = (self.line_number, self.get_col_number(self.bufpos))
+  # get_col_number returns 0-indexed, convert to 1-indexed for display
+  result = (self.line_number, self.get_col_number(self.bufpos) + 1)
 
 proc current_trace(self: Parser): SourceTrace =
   if self.trace_stack.len == 0:
@@ -457,19 +458,38 @@ proc read_unquoted(self: var Parser): Value =
   result = r.to_ref_value()
 
 proc skip_block_comment(self: var Parser) {.gcsafe.} =
+  # Block comments: #< ... ># (can span multiple lines)
+  # Also supports nested: #<< ... >># etc.
   var pos = self.bufpos
-  while true:
-    case self.buf[pos]
+  var prev_char: char = '\0'
+  
+  while pos < self.buf.len:
+    let ch = self.buf[pos]
+    case ch
+    of '\L':
+      # Track newlines for correct line numbers after block comment
+      pos = lexbase.handleLF(self, pos)
+      prev_char = '\L'
+      continue
+    of '\c':
+      pos = lexbase.handleCR(self, pos)
+      prev_char = '\c'
+      continue
     of '#':
-      if self.buf[pos-1] == '>' and self.buf[pos-2] != '>':
-        inc(pos)
-        break
-      else:
-        inc(pos)
+      # Check for end of block comment: >#
+      if prev_char == '>' and pos >= 2:
+        # Make sure it's not >>>#
+        if self.buf[pos-2] != '>':
+          inc(pos)
+          break
+      inc(pos)
+      prev_char = '#'
     of EndOfFile:
       break
     else:
+      prev_char = ch
       inc(pos)
+  
   self.bufpos = pos
   self.str = ""
 
@@ -900,11 +920,12 @@ proc add_line_col(self: var Parser, gene: ptr Gene, start_pos: int) =
     return
 
   let parent_trace = self.current_trace()
+  # get_col_number returns 0-indexed column, convert to 1-indexed for display
   var column =
     if start_pos >= 0:
-      self.get_col_number(start_pos)
+      self.get_col_number(start_pos) + 1
     else:
-      self.get_col_number(self.bufpos)
+      self.get_col_number(self.bufpos) + 1
 
   if column < 1:
     column = 1
@@ -1428,7 +1449,8 @@ proc read*(self: var Parser): Value =
   var token: string
   case ch
   of EndOfFile:
-    let position = (self.line_number, self.get_col_number(self.bufpos))
+    # get_col_number returns 0-indexed, convert to 1-indexed for display
+    let position = (self.line_number, self.get_col_number(self.bufpos) + 1)
     raise new_exception(ParseEofError, "EOF while reading " & $position)
   of '0'..'9':
     return read_number(self)
