@@ -48,8 +48,8 @@ proc level_rank(level: LogLevel): int =
 proc level_to_string*(level: LogLevel): string =
   case level
   of LlError: "ERROR"
-  of LlWarn: "WARN"
-  of LlInfo: "INFO"
+  of LlWarn: "WARN "
+  of LlInfo: "INFO "
   of LlDebug: "DEBUG"
   of LlTrace: "TRACE"
 
