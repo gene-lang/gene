@@ -11,7 +11,7 @@ bin           = @["gene"]
 
 # Dependencies
 requires "nim >= 1.4.0"
-requires "db_connector"
+requires "db_connector >= 0.1.0"
 
 task speedy, "Optimized build for maximum performance":
   exec "mkdir -p bin"
@@ -24,6 +24,7 @@ task buildext, "Build extension modules":
   exec "mkdir -p build"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp.dylib src/genex/http.nim"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libsqlite.dylib src/genex/sqlite.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libpostgres.dylib src/genex/postgres.nim"
 
 task buildllm, "Build LLM runtime dependencies":
   exec "./tools/build_llama_runtime.sh"
@@ -91,6 +92,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_stdlib_json.nim"
   exec "nim c -r tests/test_stdlib_datetime.nim"
   exec "nim c -r tests/test_stdlib_sqlite.nim"
+  exec "nim c -d:postgresTest -r tests/test_stdlib_postgres.nim"
   exec "nim c -r tests/test_stdlib_os.nim"
   # exec "nim c -r tests/test_stdlib_os.nim"
   # exec "nim c -r tests/test_ffi.nim"

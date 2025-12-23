@@ -36,7 +36,7 @@ suite "SQLite stdlib":
 
 test_vm """
   (var db (genex/sqlite/open "/tmp/gene-test.db"))
-  (var rows (db .exec "select * from table_a order by id"))
+  (var rows (db .query "select * from table_a order by id"))
   (db .close)
   rows
 """, proc(result: Value) =
@@ -49,3 +49,16 @@ test_vm """
   check array_data(row1)[1].str == "John"
   check array_data(row2)[0].str == "2"
   check array_data(row2)[1].str == "Mark"
+
+test_vm """
+  (var db (genex/sqlite/open "/tmp/gene-test.db"))
+  (db .exec "insert into table_a (id, name) values (?, ?)" 3 "Alice")
+  (var rows (db .query "select name from table_a where id = ?" 3))
+  (db .close)
+  rows
+""", proc(result: Value) =
+  check result.kind == VkArray
+  check array_data(result).len == 1
+  let row1 = array_data(result)[0]
+  check array_data(row1).len == 1
+  check array_data(row1)[0].str == "Alice"

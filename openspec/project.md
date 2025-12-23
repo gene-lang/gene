@@ -8,7 +8,7 @@ Gene is a Lisp-like programming language with S-expression syntax, implemented i
 - **Build System**: Nimble
 - **VM Architecture**: Stack-based bytecode VM with frame pool
 - **Type System**: Discriminated union (Value) with 100+ value types
-- **Extensions**: HTTP, SQLite (buildext target)
+- **Extensions**: HTTP, SQLite, PostgreSQL (buildext target)
 
 ## Project Conventions
 
@@ -68,7 +68,9 @@ Gene is a Lisp-like programming language with S-expression syntax, implemented i
 
 ## External Dependencies
 - **Nim Standard Library**: core, os, strutils, tables, etc.
-- **Optional Extensions**: HTTP client, SQLite (built separately via `nimble buildext`)
+- **Database**: db_connector >= 0.1.0 (includes db_sqlite, db_postgres)
+- **PostgreSQL**: libpq (system library - install via package manager)
+- **Optional Extensions**: HTTP client, SQLite, PostgreSQL (built separately via `nimble buildext`)
 - **Build Requirements**: Nim compiler, Nimble package manager
 
 ## CLI & Tooling

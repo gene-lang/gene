@@ -1,7 +1,7 @@
 {.push warning[ResultShadowed]: off.}
 import db_connector/db_sqlite
 import db_connector/sqlite3 as sqlite3mod
-import tables
+import ./db
 
 # For static linking, don't include boilerplate to avoid duplicate set_globals
 when defined(noExtensions):
@@ -12,18 +12,17 @@ else:
 
 # Global Connection class
 var connection_class_global: Class
-var statement_class_global: Class
 
 # Custom wrapper for SQLite connection
 type
-  ConnectionWrapper* = ref object of RootObj
+  SQLiteConnection* = ref object of DatabaseConnection
     conn*: DbConn
-    closed*: bool
 
 # Global table to store connections by ID
-var connection_table {.threadvar.}: Table[system.int64, ConnectionWrapper]
+var connection_table {.threadvar.}: Table[system.int64, SQLiteConnection]
 var next_conn_id {.threadvar.}: system.int64
 
+# Convert Gene Value to SQLite parameter
 proc bind_gene_param(stmt: SqlPrepared, idx: int, value: Value) =
   case value.kind
   of VkNil:
@@ -39,18 +38,12 @@ proc bind_gene_param(stmt: SqlPrepared, idx: int, value: Value) =
   else:
     stmt.bindParam(idx, $value)
 
+# Bind multiple parameters to a prepared statement
 proc bind_gene_params(stmt: SqlPrepared, params: seq[Value]) =
   for i, param in params:
     bind_gene_param(stmt, i + 1, param)
 
-proc collect_params(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, start_idx: int): seq[Value] =
-  let positional = get_positional_count(arg_count, has_keyword_args)
-  if positional <= start_idx:
-    return @[]
-  result = @[]
-  for i in start_idx..<positional:
-    result.add(get_positional_arg(args, i, has_keyword_args))
-
+# Finalize a prepared statement
 proc finalize_stmt(stmt: SqlPrepared) =
   discard sqlite3mod.finalize(stmt.PStmt)
 
@@ -73,7 +66,7 @@ proc vm_open(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
     raise new_exception(types.Exception, "Failed to open database: " & getCurrentExceptionMsg())
 
   # Create wrapper
-  var wrapper = ConnectionWrapper(conn: conn, closed: false)
+  var wrapper = SQLiteConnection(conn: conn, closed: false)
 
   # Store in global table
   let conn_id = next_conn_id
@@ -91,14 +84,14 @@ proc vm_open(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
 
   return instance
 
-# Execute a SQL statement and return results
-proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+# Execute a SQL query and return results (SELECT)
+proc vm_query(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 2:
-    raise new_exception(types.Exception, "exec requires self and SQL statement")
+    raise new_exception(types.Exception, "query requires self and SQL statement")
 
   let self = get_positional_arg(args, 0, has_keyword_args)
   if self.kind != VkInstance:
-    raise new_exception(types.Exception, "exec must be called on a Connection instance")
+    raise new_exception(types.Exception, "query must be called on a Connection instance")
 
   let conn_id_key = "__conn_id__".to_key()
   if not instance_props(self).hasKey(conn_id_key):
@@ -136,14 +129,14 @@ proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
 
   return result
 
-# Execute a SQL statement without returning results (for INSERT, UPDATE, DELETE, etc.)
-proc vm_execute(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+# Execute a SQL statement without returning results (INSERT, UPDATE, DELETE)
+proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 2:
-    raise new_exception(types.Exception, "execute requires self and SQL statement")
+    raise new_exception(types.Exception, "exec requires self and SQL statement")
 
   let self = get_positional_arg(args, 0, has_keyword_args)
   if self.kind != VkInstance:
-    raise new_exception(types.Exception, "execute must be called on a Connection instance")
+    raise new_exception(types.Exception, "exec must be called on a Connection instance")
 
   let conn_id_key = "__conn_id__".to_key()
   if not instance_props(self).hasKey(conn_id_key):
@@ -213,7 +206,7 @@ proc vm_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
 # Initialize SQLite classes and functions
 proc init_sqlite_classes*() =
   # Initialize connection table
-  connection_table = initTable[system.int64, ConnectionWrapper]()
+  connection_table = initTable[system.int64, SQLiteConnection]()
   next_conn_id = 1
 
   VmCreatedCallbacks.add proc() =
@@ -224,21 +217,14 @@ proc init_sqlite_classes*() =
     # Create Connection class
     {.cast(gcsafe).}:
       connection_class_global = new_class("Connection")
+      connection_class_global.def_native_method("query", vm_query)
       connection_class_global.def_native_method("exec", vm_exec)
-      connection_class_global.def_native_method("execute", vm_execute)
       connection_class_global.def_native_method("close", vm_close)
 
-    # Create Statement class (placeholder for future implementation)
-    {.cast(gcsafe).}:
-      statement_class_global = new_class("Statement")
-
-    # Store classes in gene namespace
+    # Store class in gene namespace
     let connection_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
       connection_class_ref.class = connection_class_global
-    let statement_class_ref = new_ref(VkClass)
-    {.cast(gcsafe).}:
-      statement_class_ref.class = statement_class_global
 
     if App.app.genex_ns.kind == VkNamespace:
       # Create a sqlite namespace under genex
@@ -250,9 +236,8 @@ proc init_sqlite_classes*() =
       open_fn.native_fn = vm_open
       sqlite_ns.ns["open".to_key()] = open_fn.to_ref_value()
 
-      # Add classes to sqlite namespace
+      # Add Connection class to sqlite namespace
       sqlite_ns.ns["Connection".to_key()] = connection_class_ref.to_ref_value()
-      sqlite_ns.ns["Statement".to_key()] = statement_class_ref.to_ref_value()
 
       # Attach to genex namespace
       App.app.genex_ns.ref.ns["sqlite".to_key()] = sqlite_ns.to_ref_value()

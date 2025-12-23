@@ -113,6 +113,59 @@ When adding new instructions: extend the enum, teach the compiler (emit case), a
 - `./testsuite/run_tests.sh` drives Gene source programs and expects `bin/gene` to exist.
 - When adding language features, mirror coverage in both Nim tests and Gene test programs.
 
+## Database Clients
+
+Gene provides SQLite and PostgreSQL client support through the `genex/sqlite` and `genex/postgres` namespaces.
+
+### API Overview
+
+```gene
+# Open connections
+(var db (genex/sqlite/open "/path/to/db.sqlite"))
+(var pg (genex/postgres/open "host=localhost port=5432 dbname=mydb user=postgres"))
+
+# Query - returns results (SELECT)
+(var rows (db .query "SELECT * FROM users WHERE active = ?" true))
+# PostgreSQL uses $1, $2 for parameters
+(var pg_rows (pg .query "SELECT * FROM users WHERE active = $1" true))
+
+# Exec - executes without returning results (INSERT/UPDATE/DELETE)
+(db .exec "INSERT INTO users (name, age) VALUES (?, ?)" "Alice" 30)
+
+# PostgreSQL transactions
+(pg .begin)
+(pg .exec "UPDATE accounts SET balance = balance - $1 WHERE id = $2" 100 1)
+(pg .exec "UPDATE accounts SET balance = balance + $1 WHERE id = $2" 100 2)
+(pg .commit)
+# or rollback: (pg .rollback)
+
+# Close connection
+(db .close)
+```
+
+### Parameter Syntax Differences
+
+- **SQLite**: Uses `?` for parameters: `WHERE id = ?`
+- **PostgreSQL**: Uses `$1`, `$2` for parameters: `WHERE id = $1`
+
+### Result Format
+
+Both clients return results as arrays of arrays:
+```gene
+[[id1 name1 age1] [id2 name2 age2] ...]
+```
+
+Column values are converted to Gene types: `VkString`, `VkInt`, `VkFloat`, `VkBool`, `NIL` (for NULL).
+
+### Building Database Extensions
+
+```bash
+# Build extension modules
+nimble buildext
+
+# Output: build/libsqlite.dylib, build/libpostgres.dylib
+```
+
 ## Known Hazards
 
 - **Exception handling**: use `catch *`; naming the exception (`catch ex`) still panics on macOS.
