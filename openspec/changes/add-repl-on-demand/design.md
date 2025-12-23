@@ -21,7 +21,7 @@ Non-Goals:
 - **Session-scope compilation**: Add a `parse_and_compile_repl` path that reuses a persistent `ScopeTracker` and skips top-level `start_scope`/`end_scope` for each input.
 - **Manual scope setup**: The REPL session creates a runtime scope once (a child of the caller scope) and reuses it across inputs. The compiler uses the same `ScopeTracker` for variable resolution across inputs.
 - **Return last value**: The REPL loop tracks the last non-void evaluation result and returns it from `($repl)` (or `NIL` if nothing was evaluated).
-- **Throw-site pause**: `dispatch_exception` opens a REPL before normal exception handling. Exiting REPL suppresses the exception; a top-level `(throw ...)` inside the REPL rethrows and continues through standard handlers.
+- **Throw-site pause**: `dispatch_exception` opens a REPL before normal exception handling. Exiting REPL suppresses the exception and, for explicit `throw`, uses the last REPL value as the expression result; a top-level `(throw ...)` inside the REPL rethrows and continues through standard handlers.
 
 ## Risks / Trade-offs
 

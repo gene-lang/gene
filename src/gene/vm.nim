@@ -146,11 +146,14 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
     self.repl_skip_on_throw = false
   elif self.repl_on_error and not self.repl_active and repl_on_throw_callback != nil:
     self.repl_ran = false
+    self.repl_resume_value = NIL
     let repl_thrown = repl_on_throw_callback(self, exception_value)
     if self.repl_ran:
       if repl_thrown == NIL:
         if inst.kind == IkThrow:
-          self.frame.push(NIL)
+          let resume_value = self.repl_resume_value
+          self.repl_resume_value = NIL
+          self.frame.push(resume_value)
         self.current_exception = NIL
         let next_pc = self.pc + 1
         if next_pc < self.cu.instructions.len:

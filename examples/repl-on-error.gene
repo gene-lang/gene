@@ -10,7 +10,7 @@ gene examples/repl-on-error.gene
 #>#
 
 (fn f _
-  (throw)
+  (var a (throw))
 )
 (println (f))
 (println "Done.")

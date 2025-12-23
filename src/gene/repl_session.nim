@@ -247,18 +247,22 @@ proc run_repl_on_throw*(vm: ptr VirtualMachine, exception_value: Value): Value =
 
   vm.repl_active = true
   vm.repl_ran = true
+  vm.repl_resume_value = NIL
   vm.exception_handlers = @[]
   vm.repl_exception = exception_value
   vm.current_exception = NIL
 
   var thrown_exception = NIL
+  var repl_value = NIL
   try:
-    discard run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
-                             nil, nil, 0, true, true)
+    repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
+                                  nil, nil, 0, true, true)
   except CatchableError:
     if vm.current_exception != NIL:
       thrown_exception = vm.current_exception
       vm.repl_skip_on_throw = true
+  if thrown_exception == NIL:
+    vm.repl_resume_value = repl_value
 
   vm.exception_handlers = saved_exception_handlers
   vm.current_exception = saved_exception

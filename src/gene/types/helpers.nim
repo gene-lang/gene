@@ -20,6 +20,7 @@ proc new_vm_ptr*(): ptr VirtualMachine =
   result[].repl_active = false
   result[].repl_skip_on_throw = false
   result[].repl_ran = false
+  result[].repl_resume_value = NIL
   result[].symbols = addr SYMBOLS
   result[].poll_enabled = false
   result[].pending_futures = @[]

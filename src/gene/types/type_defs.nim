@@ -752,6 +752,7 @@ type
     repl_active*: bool
     repl_skip_on_throw*: bool
     repl_ran*: bool
+    repl_resume_value*: Value
     current_generator*: GeneratorObj  # Currently executing generator
     symbols*: ptr ManagedSymbols  # Pointer to global symbol table
     # Profiling

@@ -31,3 +31,7 @@ When `gene run` or `gene eval` is invoked with `--repl-on-error`, the runtime SH
 #### Scenario: Throw from REPL
 - **WHEN** the user enters a top-level `(throw ...)` inside the repl-on-error session
 - **THEN** the new exception is raised and handled by the VM as usual
+
+#### Scenario: Resume value from REPL
+- **WHEN** the repl-on-error session exits without rethrowing
+- **THEN** the last evaluated REPL expression is used as the value of the original `throw` expression

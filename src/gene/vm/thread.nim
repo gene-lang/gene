@@ -200,6 +200,7 @@ proc reset_vm_state*() =
   VM.repl_active = false
   VM.repl_skip_on_throw = false
   VM.repl_ran = false
+  VM.repl_resume_value = NIL
 
   # Clear generator state
   VM.current_generator = nil
