@@ -22,8 +22,12 @@ The `($repl)` call SHALL return the last evaluated REPL expression, or `NIL` whe
 - **THEN** `($repl)` returns `3`
 
 ### Requirement: REPL on Error (CLI)
-When `gene run` or `gene eval` is invoked with `--repl-on-error`, the runtime SHALL drop into an interactive REPL if a Gene exception escapes, and `$ex` SHALL reference the exception.
+When `gene run` or `gene eval` is invoked with `--repl-on-error`, the runtime SHALL open an interactive REPL at the throw site before exception handling continues, with `$ex` set to the thrown exception.
 
-#### Scenario: Run error opens REPL
-- **WHEN** a program run with `gene run --repl-on-error` throws an unhandled Gene exception
-- **THEN** an interactive REPL starts and `$ex` is available for inspection
+#### Scenario: Break on throw and continue
+- **WHEN** a program run with `gene run --repl-on-error` throws a Gene exception
+- **THEN** an interactive REPL starts at the throw site with `$ex` available, and exiting the REPL resumes execution without automatically rethrowing
+
+#### Scenario: Throw from REPL
+- **WHEN** the user enters a top-level `(throw ...)` inside the repl-on-error session
+- **THEN** the new exception is raised and handled by the VM as usual

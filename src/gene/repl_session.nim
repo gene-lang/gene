@@ -1,8 +1,9 @@
-import strutils, terminal
+import strutils, terminal, streams
 
 import ./types
 import ./compiler
 import ./vm
+import ./parser
 
 proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope: Scope, ns: Namespace,
                         caller_frame: Frame, caller_cu: CompilationUnit, caller_pc: int,
@@ -34,10 +35,43 @@ proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope
 
   return vm.exec_continue()
 
+proc is_throw_form(input: string, filename: string): bool =
+  var parser = new_parser()
+  var stream = new_string_stream(input)
+  parser.open(stream, filename)
+  defer: parser.close()
+
+  var first: Value = NIL
+  try:
+    while true:
+      let node = parser.read()
+      if node == PARSER_IGNORE:
+        continue
+      first = node
+      break
+  except ParseEofError:
+    return false
+  except ParseError:
+    return false
+
+  if first.kind != VkGene or first.gene.type != "throw".to_symbol_value():
+    return false
+
+  try:
+    while true:
+      let node = parser.read()
+      if node == PARSER_IGNORE:
+        continue
+      return false
+  except ParseEofError:
+    return true
+  except ParseError:
+    return false
+
 proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scope: Scope, ns: Namespace,
                        filename = "<repl>", prompt = "gene> ", show_banner = true,
                        caller_frame: Frame = nil, caller_cu: CompilationUnit = nil, caller_pc: int = 0,
-                       print_results = true): Value =
+                       print_results = true, propagate_exceptions = false): Value =
   if vm.isNil:
     return NIL
 
@@ -46,6 +80,10 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
 
   scope_tracker.scope_started = true
   let return_cu = if not caller_cu.isNil: caller_cu else: vm.cu
+  let saved_repl_active = vm.repl_active
+  vm.repl_active = true
+  defer:
+    vm.repl_active = saved_repl_active
 
   if show_banner:
     echo "Gene REPL - Interactive Gene Language Shell"
@@ -91,6 +129,8 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
       echo "  Any other input is evaluated as Gene code"
       continue
 
+    let propagate_this = propagate_exceptions and is_throw_form(trimmed, filename)
+
     try:
       let compiled = parse_and_compile_repl(trimmed, filename, scope_tracker)
       let value = exec_repl_compiled(vm, compiled, scope, ns, caller_frame, return_cu, caller_pc, repl_frame)
@@ -100,7 +140,10 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
            not trimmed.starts_with("(print") and not trimmed.starts_with("(println"):
           echo $value
     except CatchableError as e:
+      if propagate_this and vm.current_exception != NIL:
+        raise
       echo "Error: ", e.msg
+      vm.current_exception = NIL
 
   return last_value
 
@@ -153,17 +196,79 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
   let saved_pc = vm.pc
   let saved_exception = vm.current_exception
   let saved_repl_exception = vm.repl_exception
+  let saved_repl_active = vm.repl_active
+  let saved_exception_handlers = vm.exception_handlers
 
+  vm.repl_active = true
+  vm.exception_handlers = @[]
   vm.repl_exception = exception_value
   vm.current_exception = NIL
 
-  let repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true)
+  var repl_value = NIL
+  try:
+    repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true)
+  except CatchableError:
+    vm.current_exception = NIL
 
   vm.current_exception = saved_exception
   vm.repl_exception = saved_repl_exception
+  vm.exception_handlers = saved_exception_handlers
+  vm.repl_active = saved_repl_active
   vm.frame = saved_frame
   vm.cu = saved_cu
   vm.pc = saved_pc
   scope.free()
 
   return repl_value
+
+proc run_repl_on_throw*(vm: ptr VirtualMachine, exception_value: Value): Value =
+  ## Start a REPL session at the throw site; return a thrown exception or NIL.
+  if vm.isNil or vm.frame.isNil:
+    return NIL
+  if not stdin.isatty():
+    return exception_value
+
+  let parent_scope = vm.frame.scope
+  let parent_tracker = if parent_scope != nil: parent_scope.tracker else: nil
+  let scope_tracker = new_scope_tracker(parent_tracker)
+  let scope = new_scope(scope_tracker, parent_scope)
+  let ns = if vm.frame.ns != nil:
+    vm.frame.ns
+  else:
+    new_namespace(App.app.global_ns.ref.ns, "repl")
+
+  let saved_frame = vm.frame
+  let saved_cu = vm.cu
+  let saved_pc = vm.pc
+  let saved_exception = vm.current_exception
+  let saved_repl_exception = vm.repl_exception
+  let saved_repl_active = vm.repl_active
+  let saved_exception_handlers = vm.exception_handlers
+
+  vm.repl_active = true
+  vm.repl_ran = true
+  vm.exception_handlers = @[]
+  vm.repl_exception = exception_value
+  vm.current_exception = NIL
+
+  var thrown_exception = NIL
+  try:
+    discard run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
+                             nil, nil, 0, true, true)
+  except CatchableError:
+    if vm.current_exception != NIL:
+      thrown_exception = vm.current_exception
+      vm.repl_skip_on_throw = true
+
+  vm.exception_handlers = saved_exception_handlers
+  vm.current_exception = saved_exception
+  vm.repl_exception = saved_repl_exception
+  vm.repl_active = saved_repl_active
+  vm.frame = saved_frame
+  vm.cu = saved_cu
+  vm.pc = saved_pc
+  scope.free()
+
+  return thrown_exception
+
+repl_on_throw_callback = run_repl_on_throw

@@ -139,7 +139,28 @@ proc exit_function(self: ptr VirtualMachine) {.inline.} =
 
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
-  self.current_exception = value
+  var exception_value = value
+  self.current_exception = exception_value
+
+  if self.repl_skip_on_throw:
+    self.repl_skip_on_throw = false
+  elif self.repl_on_error and not self.repl_active and repl_on_throw_callback != nil:
+    self.repl_ran = false
+    let repl_thrown = repl_on_throw_callback(self, exception_value)
+    if self.repl_ran:
+      if repl_thrown == NIL:
+        if inst.kind == IkThrow:
+          self.frame.push(NIL)
+        self.current_exception = NIL
+        let next_pc = self.pc + 1
+        if next_pc < self.cu.instructions.len:
+          self.pc = next_pc
+        else:
+          self.pc = self.cu.instructions.len - 1
+        inst = self.cu.instructions[self.pc].addr
+        return true
+      exception_value = repl_thrown
+      self.current_exception = exception_value
 
   if self.exception_handlers.len > 0:
     let handler = self.exception_handlers[^1]
@@ -149,7 +170,7 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
 
       let future_val = new_future_value()
       let future_obj = future_val.ref.future
-      future_obj.fail(value)
+      future_obj.fail(exception_value)
       self.frame.push(future_val)
 
       while self.pc < self.cu.instructions.len and self.cu.instructions[self.pc].kind != IkAsyncEnd:
@@ -164,7 +185,7 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
 
       let future_val = new_future_value()
       let future_obj = future_val.ref.future
-      future_obj.fail(value)
+      future_obj.fail(exception_value)
 
       if self.frame.caller_frame != nil:
         self.cu = self.frame.caller_address.cu
@@ -198,7 +219,7 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
         raise new_exception(types.Exception, "Invalid catch PC: " & $self.pc)
 
   else:
-    raise new_exception(types.Exception, self.format_runtime_exception(value))
+    raise new_exception(types.Exception, self.format_runtime_exception(exception_value))
 
   return true
 
@@ -4595,7 +4616,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           # Re-throw the exception
           let value = self.current_exception
           self.current_exception = NIL  # Clear before rethrowing
-          
+
           if self.dispatch_exception(value, inst):
             continue
 

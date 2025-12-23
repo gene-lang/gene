@@ -748,6 +748,10 @@ type
     exception_handlers*: seq[ExceptionHandler]
     current_exception*: Value
     repl_exception*: Value
+    repl_on_error*: bool
+    repl_active*: bool
+    repl_skip_on_throw*: bool
+    repl_ran*: bool
     current_generator*: GeneratorObj  # Currently executing generator
     symbols*: ptr ManagedSymbols  # Pointer to global symbol table
     # Profiling
@@ -769,6 +773,8 @@ type
     scheduler_running*: bool  # Set to true when run_forever is active, false to stop
 
   VmCallback* = proc() {.gcsafe.}
+
+  ReplOnThrowCallback* = proc(vm: ptr VirtualMachine, exception_value: Value): Value {.nimcall.}
   
   # Scheduler callback - extensions register poll handlers here
   SchedulerCallback* = proc(vm: ptr VirtualMachine) {.gcsafe.}
@@ -1110,6 +1116,8 @@ type
 
 # Global list of scheduler poll callbacks - extensions register handlers here
 var scheduler_callbacks*: seq[SchedulerCallback] = @[]
+
+var repl_on_throw_callback*: ReplOnThrowCallback = nil
 
 proc register_scheduler_callback*(callback: SchedulerCallback) =
   ## Register a callback to be called during run_forever scheduler loop.
