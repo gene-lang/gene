@@ -1,5 +1,6 @@
 {.push warning[ResultShadowed]: off.}
 import db_connector/db_postgres
+import strutils
 import ./db
 
 # For static linking, don't include boilerplate to avoid duplicate set_globals
@@ -21,27 +22,39 @@ type
 var connection_table {.threadvar.}: Table[system.int64, PostgresConnection]
 var next_conn_id {.threadvar.}: system.int64
 
-# Convert Gene Value to PostgreSQL parameter string
+# Convert Gene Value to PostgreSQL parameter string (with proper quoting)
 proc gene_value_to_pg_string(value: Value): string =
   case value.kind
   of VkNil:
-    result = ""
+    result = "NULL"
   of VkBool:
-    result = if value.to_bool: "t" else: "f"
+    result = if value.to_bool: "true" else: "false"
   of VkInt:
     result = $value.int64
   of VkFloat:
     result = $value.float
   of VkString:
-    result = value.str
+    # Escape single quotes by doubling them
+    let escaped = value.str.replace("'", "''")
+    result = "'" & escaped & "'"
   else:
-    result = $value
+    # Convert other types to string and quote
+    let escaped = $value
+    let escaped2 = escaped.replace("'", "''")
+    result = "'" & escaped2 & "'"
 
 # Convert seq[Value] to seq[string] for PostgreSQL
 proc gene_values_to_pg_strings(params: seq[Value]): seq[string] =
   result = @[]
   for param in params:
     result.add(gene_value_to_pg_string(param))
+
+# Substitute $1, $2, etc. placeholders in SQL with parameter values
+proc substitute_params(sql_text: string, params: seq[string]): string =
+  result = sql_text
+  for i, param in params:
+    let placeholder = "$" & intToStr(i + 1)
+    result = result.replace(placeholder, param)
 
 # Open a PostgreSQL database connection
 proc vm_open(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -111,40 +124,13 @@ proc vm_query(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
 
   try:
     var result = new_array_value(@[])
-    # Use getAllRows with varargs[string] for parameterized queries
-    case param_strings.len
-    of 0:
-      for row in wrapper.conn.getAllRows(sql(stmt_text)):
-        var row_array = new_array_value(@[])
-        for col in row:
-          row_array.array_data.add(col.to_value())
-        result.array_data.add(row_array)
-    of 1:
-      for row in wrapper.conn.getAllRows(sql(stmt_text), param_strings[0]):
-        var row_array = new_array_value(@[])
-        for col in row:
-          row_array.array_data.add(col.to_value())
-        result.array_data.add(row_array)
-    of 2:
-      for row in wrapper.conn.getAllRows(sql(stmt_text), param_strings[0], param_strings[1]):
-        var row_array = new_array_value(@[])
-        for col in row:
-          row_array.array_data.add(col.to_value())
-        result.array_data.add(row_array)
-    of 3:
-      for row in wrapper.conn.getAllRows(sql(stmt_text), param_strings[0], param_strings[1], param_strings[2]):
-        var row_array = new_array_value(@[])
-        for col in row:
-          row_array.array_data.add(col.to_value())
-        result.array_data.add(row_array)
-    of 4:
-      for row in wrapper.conn.getAllRows(sql(stmt_text), param_strings[0], param_strings[1], param_strings[2], param_strings[3]):
-        var row_array = new_array_value(@[])
-        for col in row:
-          row_array.array_data.add(col.to_value())
-        result.array_data.add(row_array)
-    else:
-      raise new_exception(types.Exception, "Too many parameters (max 4 supported)")
+    # Substitute parameters into SQL
+    let final_sql = substitute_params(stmt_text, param_strings)
+    for row in wrapper.conn.getAllRows(sql(final_sql)):
+      var row_array = new_array_value(@[])
+      for col in row:
+        row_array.array_data.add(col.to_value())
+      result.array_data.add(row_array)
     return result
   except DbError as e:
     raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
@@ -179,20 +165,9 @@ proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
   let param_strings = gene_values_to_pg_strings(params)
 
   try:
-    # Use exec with sql() macro for parameterized queries
-    case param_strings.len
-    of 0:
-      wrapper.conn.exec(sql(stmt_text))
-    of 1:
-      wrapper.conn.exec(sql(stmt_text), param_strings[0])
-    of 2:
-      wrapper.conn.exec(sql(stmt_text), param_strings[0], param_strings[1])
-    of 3:
-      wrapper.conn.exec(sql(stmt_text), param_strings[0], param_strings[1], param_strings[2])
-    of 4:
-      wrapper.conn.exec(sql(stmt_text), param_strings[0], param_strings[1], param_strings[2], param_strings[3])
-    else:
-      raise new_exception(types.Exception, "Too many parameters (max 4 supported)")
+    # Substitute parameters into SQL and execute
+    let final_sql = substitute_params(stmt_text, param_strings)
+    wrapper.conn.exec(sql(final_sql))
   except DbError as e:
     raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
 
