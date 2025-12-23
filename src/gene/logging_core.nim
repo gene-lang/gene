@@ -17,14 +17,25 @@ var root_level* = DefaultRootLevel
 var logger_levels* = initTable[string, LogLevel]()
 var last_log_line* = ""
 
-var log_lock: Lock
+var config_lock: Lock  # Protects logging_loaded, root_level, logger_levels
+var log_lock: Lock     # Protects echo and last_log_line
+initLock(config_lock)
 initLock(log_lock)
 
 proc reset_logging_config*() =
-  root_level = DefaultRootLevel
-  logger_levels = initTable[string, LogLevel]()
-  logging_loaded = false
-  last_log_line = ""
+  acquire(config_lock)
+  try:
+    root_level = DefaultRootLevel
+    logger_levels = initTable[string, LogLevel]()
+    logging_loaded = false
+  finally:
+    release(config_lock)
+  # last_log_line is protected by log_lock, not config_lock
+  acquire(log_lock)
+  try:
+    last_log_line = ""
+  finally:
+    release(log_lock)
 
 proc level_rank(level: LogLevel): int =
   case level
@@ -84,51 +95,76 @@ proc load_logging_config*(config_path: string = "") =
     else:
       joinPath(getCurrentDir(), "config", "logging.gene")
 
-  root_level = DefaultRootLevel
-  logger_levels = initTable[string, LogLevel]()
-  logging_loaded = true
+  acquire(config_lock)
+  try:
+    root_level = DefaultRootLevel
+    logger_levels = initTable[string, LogLevel]()
+    logging_loaded = true
+  finally:
+    release(config_lock)
 
   if not fileExists(path):
+    # Silent if using default path, warning if explicit path provided
+    if config_path.len > 0:
+      stderr.writeLine("Warning: Logging config file not found: " & path)
     return
 
   let content = readFile(path)
   var nodes: seq[Value]
   try:
     nodes = read_all(content)
-  except CatchableError:
+  except CatchableError as e:
+    stderr.writeLine("Warning: Failed to parse logging config: " & path & " - " & e.msg)
     return
   if nodes.len == 0:
+    stderr.writeLine("Warning: Empty logging config: " & path)
     return
   let config_val = nodes[0]
   if config_val.kind != VkMap:
+    stderr.writeLine("Warning: Logging config must be a map: " & path)
     return
 
   let config_map = map_data(config_val)
-  root_level = log_level_from_value(config_map.getOrDefault("level".to_key(), NIL), root_level)
+  var new_root_level = DefaultRootLevel
+  var new_logger_levels = initTable[string, LogLevel]()
+
+  new_root_level = log_level_from_value(config_map.getOrDefault("level".to_key(), NIL), new_root_level)
 
   let loggers_val = config_map.getOrDefault("loggers".to_key(), NIL)
-  if loggers_val.kind != VkMap:
-    return
+  if loggers_val.kind == VkMap:
+    for key, entry in map_data(loggers_val):
+      let logger_name = key_to_string(key)
+      var level = new_root_level
+      case entry.kind
+      of VkMap:
+        let entry_level = map_data(entry).getOrDefault("level".to_key(), NIL)
+        level = log_level_from_value(entry_level, new_root_level)
+      of VkString, VkSymbol:
+        level = log_level_from_value(entry, new_root_level)
+      else:
+        discard
+      new_logger_levels[logger_name] = level
 
-  for key, entry in map_data(loggers_val):
-    let logger_name = key_to_string(key)
-    var level = root_level
-    case entry.kind
-    of VkMap:
-      let entry_level = map_data(entry).getOrDefault("level".to_key(), NIL)
-      level = log_level_from_value(entry_level, root_level)
-    of VkString, VkSymbol:
-      level = log_level_from_value(entry, root_level)
-    else:
-      discard
-    logger_levels[logger_name] = level
+  # Update globals atomically under lock
+  acquire(config_lock)
+  try:
+    root_level = new_root_level
+    logger_levels = new_logger_levels
+  finally:
+    release(config_lock)
 
 proc ensure_logging_loaded() =
-  if not logging_loaded:
+  acquire(config_lock)
+  let loaded = logging_loaded
+  release(config_lock)
+  if not loaded:
     load_logging_config()
 
 proc effective_level*(logger_name: string): LogLevel =
   ensure_logging_loaded()
+  acquire(config_lock)
+  defer: release(config_lock)
+
   if logger_name.len == 0:
     return root_level
 
@@ -161,11 +197,10 @@ proc format_log_line*(level: LogLevel, logger_name: string, message: string): st
   format_log_line(level, logger_name, message, now())
 
 proc log_message*(level: LogLevel, logger_name: string, message: string) {.gcsafe.} =
-  var should_log = false
+  # log_enabled() internally acquires config_lock, so it's thread-safe
   {.cast(gcsafe).}:
-    should_log = log_enabled(level, logger_name)
-  if not should_log:
-    return
+    if not log_enabled(level, logger_name):
+      return
 
   let line = format_log_line(level, logger_name, message)
   acquire(log_lock)

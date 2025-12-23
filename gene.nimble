@@ -70,6 +70,8 @@ task test, "Runs the test suite":
   # exec "nim c -r tests/test_selector.nim"
   exec "nim c -r tests/test_template.nim"
   # exec "nim c -r tests/test_serdes.nim"
+  exec "nim c -r tests/test_repl.nim"
+  exec "nim c -r tests/test_logging.nim"
   exec "nim c -r tests/test_native.nim"
   exec "nim c -r tests/test_ext.nim"
   exec "nim c -r tests/test_custom_value.nim"

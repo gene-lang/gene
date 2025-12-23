@@ -64,12 +64,20 @@ proc namespace_segments(ns: Namespace): seq[string] =
   result.reverse()
 
 proc looks_like_module_path(name: string): bool =
+  # More conservative detection: only treat as module path if it has file extensions
+  # or is explicitly marked with __module_name__. Namespace segments can contain
+  # "/" (e.g., "path/to" is valid), so we can't rely solely on slash detection.
   if name.len == 0:
     return false
-  if name.contains("/") or name.contains("\\"):
-    return true
   let lower = name.toLowerAscii()
-  lower.endsWith(".gene") or lower.endsWith(".gir")
+  # Explicit module file extensions
+  if lower.endsWith(".gene") or lower.endsWith(".gir"):
+    return true
+  # Absolute paths are likely module paths
+  if name.isAbsolute:
+    return true
+  # Conservative: don't treat arbitrary slash-containing strings as modules
+  false
 
 proc normalize_module_path(path: string): string =
   if path.len == 0:
@@ -120,13 +128,17 @@ proc logger_name_from_namespace(ns: Namespace, fallback_module: string = ""): st
     module_path = normalize_module_path(fallback_module)
   join_logger_parts(@[module_path] & ns_parts)
 
-proc logger_name_from_class(cls: Class, fallback_module: string = ""): string =
+proc logger_name_from_class(cls: Class, parent_ns: Namespace = nil, fallback_module: string = ""): string =
   if cls.is_nil:
     return "unknown"
   var module_path = ""
   var ns_parts: seq[string] = @[]
-  if cls.ns != nil and cls.ns.parent != nil:
-    let segments = namespace_segments(cls.ns.parent)
+
+  # Use provided parent_ns if available, otherwise check cls.ns.parent
+  let effective_parent = if parent_ns != nil: parent_ns elif cls.ns != nil: cls.ns.parent else: nil
+
+  if effective_parent != nil:
+    let segments = namespace_segments(effective_parent)
     var (module_candidate, parts) = split_module_segments(segments)
     module_path = module_candidate
     ns_parts = parts
@@ -164,12 +176,15 @@ proc logger_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
     case target.kind
     of VkClass:
       let cls = target.ref.class
+      # Determine parent namespace without mutating the class
+      var parent_ns: Namespace = nil
       if not cls.is_nil and cls.ns != nil and cls.ns.parent.is_nil and vm != nil and vm.frame != nil:
+        # Class has no parent, infer from calling context
         if vm.frame.caller_frame != nil and vm.frame.caller_frame.ns != nil:
-          cls.ns.parent = vm.frame.caller_frame.ns
+          parent_ns = vm.frame.caller_frame.ns
         elif vm.frame.ns != nil and vm.frame.ns.parent != nil:
-          cls.ns.parent = vm.frame.ns.parent
-      logger_name_from_class(cls, fallback_module)
+          parent_ns = vm.frame.ns.parent
+      logger_name_from_class(cls, parent_ns, fallback_module)
     of VkNamespace:
       logger_name_from_namespace(target.ref.ns, fallback_module)
     else:

@@ -33,28 +33,39 @@ test "Logging resolves longest prefix":
   check effective_level("other") == LlInfo
 
 test "Logging format includes level and name":
-  current_thread_id = 0
-  let line = format_log_line(LlInfo, "examples/app.gene", "hello")
-  check line.startsWith("T00 INFO ")
-  check line.contains(" examples/app.gene ")
-  check line.endsWith(" hello")
+  # Save and restore global state to avoid test pollution
+  let saved_thread_id = current_thread_id
+  try:
+    current_thread_id = 0
+    let line = format_log_line(LlInfo, "examples/app.gene", "hello")
+    # Verify pattern: "T## INFO <timestamp> <logger_name> <message>"
+    check line.startsWith("T00 INFO ")
+    check line.contains(" examples/app.gene ")
+    check line.endsWith(" hello")
+  finally:
+    current_thread_id = saved_thread_id
 
 test "Gene Logger emits log line":
   init_all()
   reset_logging_config()
   load_logging_config(joinPath(getTempDir(), "missing_logging.gene"))
-  current_thread_id = 0
-  last_log_line = ""
-  discard VM.exec("""
-  (class A
-    (/logger = (new genex/logging/Logger self))
-    (.fn m []
-      (logger .info "hello")
+  # Save and restore global state to avoid test pollution
+  let saved_thread_id = current_thread_id
+  try:
+    current_thread_id = 0
+    last_log_line = ""
+    discard VM.exec("""
+    (class A
+      (/logger = (new genex/logging/Logger self))
+      (.fn m []
+        (logger .info "hello")
+      )
     )
-  )
-  (var a (new A))
-  (a .m)
-  """, "test_code.gene")
-  check last_log_line.contains(" INFO ")
-  check last_log_line.contains("test_code.gene/A")
-  check last_log_line.endsWith(" hello")
+    (var a (new A))
+    (a .m)
+    """, "test_code.gene")
+    check last_log_line.contains(" INFO ")
+    check last_log_line.contains("test_code.gene/A")
+    check last_log_line.endsWith(" hello")
+  finally:
+    current_thread_id = saved_thread_id
