@@ -151,17 +151,16 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
   let saved_frame = vm.frame
   let saved_cu = vm.cu
   let saved_pc = vm.pc
-  let saved_exec_depth = vm.exec_depth
   let saved_exception = vm.current_exception
+  let saved_repl_exception = vm.repl_exception
 
-  vm.current_exception = exception_value
-  if vm.exec_depth == 0:
-    vm.exec_depth = 1
+  vm.repl_exception = exception_value
+  vm.current_exception = NIL
 
   let repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true)
 
-  vm.exec_depth = saved_exec_depth
   vm.current_exception = saved_exception
+  vm.repl_exception = saved_repl_exception
   vm.frame = saved_frame
   vm.cu = saved_cu
   vm.pc = saved_pc

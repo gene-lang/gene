@@ -195,6 +195,7 @@ proc reset_vm_state*() =
   # Clear exception handlers
   VM.exception_handlers.setLen(0)
   VM.current_exception = NIL
+  VM.repl_exception = NIL
 
   # Clear generator state
   VM.current_generator = nil

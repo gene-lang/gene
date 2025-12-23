@@ -13,3 +13,4 @@ gene examples/repl-on-error.gene
   (throw)
 )
 (println (f))
+(println "Done.")

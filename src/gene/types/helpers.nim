@@ -15,6 +15,7 @@ proc new_vm_ptr*(): ptr VirtualMachine =
   result[].exec_depth = 0
   result[].exception_handlers = @[]
   result[].current_exception = NIL
+  result[].repl_exception = NIL
   result[].symbols = addr SYMBOLS
   result[].poll_enabled = false
   result[].pending_futures = @[]
@@ -186,4 +187,3 @@ proc wrap_nim_exception*(ex: ref CatchableError, location: string = ""): Value =
     props["location".to_key()] = NIL
 
   result = new_instance_value(cls, props)
-

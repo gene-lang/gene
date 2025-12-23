@@ -1666,11 +1666,19 @@ proc core_repl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
   let saved_frame = vm.frame
   let saved_cu = vm.cu
   let saved_pc = vm.pc
+  let saved_exception = vm.current_exception
+  let saved_repl_exception = vm.repl_exception
+
+  if saved_exception != NIL:
+    vm.repl_exception = saved_exception
+    vm.current_exception = NIL
 
   let result = ({.cast(gcsafe).}:
     run_repl_session(vm, scope_tracker, scope, ns, "<repl>", "gene> ", true,
                      saved_frame, saved_cu, saved_pc)
   )
+  vm.current_exception = saved_exception
+  vm.repl_exception = saved_repl_exception
   scope.free()
   return result
 

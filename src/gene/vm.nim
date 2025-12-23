@@ -1936,8 +1936,9 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkNamespace:
             # Special handling for $ex (gene/ex)
             if name == "ex".to_key() and value == App.app.gene_ns:
-              # Return current exception
-              self.frame.push(self.current_exception)
+              # Return current exception if set, otherwise the REPL exception
+              let ex_value = if self.current_exception != NIL: self.current_exception else: self.repl_exception
+              self.frame.push(ex_value)
             elif value.ref.ns == App.app.genex_ns.ref.ns:
               # Auto-load extensions when accessing genex/name
               var member = value.ref.ns[name]
@@ -2043,7 +2044,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   "".to_key()
               # Special handling for $ex (gene/ex)
               if key == "ex".to_key() and target == App.app.gene_ns:
-                let member = self.current_exception
+                let member = if self.current_exception != NIL: self.current_exception else: self.repl_exception
                 retain(member)
                 self.frame.push(member)
               elif target.ref.ns.has_key(key):

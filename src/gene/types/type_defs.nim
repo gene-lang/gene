@@ -747,6 +747,7 @@ type
     exec_depth*: int           # Tracks nested exec() invocations
     exception_handlers*: seq[ExceptionHandler]
     current_exception*: Value
+    repl_exception*: Value
     current_generator*: GeneratorObj  # Currently executing generator
     symbols*: ptr ManagedSymbols  # Pointer to global symbol table
     # Profiling
