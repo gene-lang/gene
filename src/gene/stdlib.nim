@@ -6,6 +6,7 @@ import ./compiler
 import ./repl_session
 import ./vm/async
 import ./vm/thread
+import ./logging_core
 import ./stdlib/math as stdlib_math
 import ./stdlib/io as stdlib_io
 import ./stdlib/system as stdlib_system
@@ -2657,6 +2658,8 @@ proc init_stdlib*() =
   global_ns["$tap".to_key()] = core_tap.to_value()
   global_ns["$if_main".to_key()] = core_if_main.to_value()
   global_ns["$repl".to_key()] = NativeFn(core_repl).to_value()
+
+  load_logging_config()
 
   # OpenAI API functions - moved to vm.nim to avoid circular dependencies
 # when not defined(noExtensions) and not defined(noai):

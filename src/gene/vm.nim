@@ -7065,6 +7065,7 @@ when not defined(noExtensions):
   import "../genex/http"
   import "../genex/sqlite"
   import "../genex/html"
+  import "../genex/logging"
   import "../genex/ai/bindings"
   when defined(geneLLM):
     import "../genex/llm"
