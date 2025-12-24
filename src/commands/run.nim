@@ -95,9 +95,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)
   setup_logger(options.debugging)
   proc handle_exec_error(e: ref CatchableError): CommandResult =
-    if options.repl_on_error:
-      return failure(e.msg)
-    if VM.current_exception != NIL and VM.frame != nil:
+    if options.repl_on_error and VM.current_exception != NIL and VM.frame != nil:
       stderr.writeLine("Error: " & e.msg)
       discard run_repl_on_error(VM, VM.current_exception)
       return failure("")
