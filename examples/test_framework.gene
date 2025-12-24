@@ -1,0 +1,120 @@
+#!/usr/bin/env gene run
+
+# Gene Unit Test Framework Example
+# Demonstrates the test/suite API with ^^skip support
+#
+# Usage:
+#   (suite! "name" ...)           - Define a test suite
+#   (suite! ^^skip "name" ...)    - Skip an entire suite
+#   (test! "name" body...)        - Define a test
+#   (test! ^^skip "name" body...) - Skip a test
+#   (check expr)                  - Assert expr is truthy
+#   (check expr "message")        - Assert with custom failure message
+#   (fail)                        - Fail unconditionally
+#   (fail "message")              - Fail with message
+
+# (import genex/test/*)
+(var suite! genex/test/suite!)
+(var test! genex/test/test!)
+(var check genex/test/check)
+(var fail genex/test/fail)
+
+(println "")
+(println "=== Gene Unit Test Framework Demo ===")
+(println "")
+
+# === Basic Tests ===
+
+(suite! "Basic Assertions"
+  (test! "check with truthy values"
+    (check true)
+    (check 1)
+    (check "non-empty string")
+  )
+
+  (test! "arithmetic checks"
+    (check ((+ 1 2) == 3))
+    (check ((- 5 3) == 2))
+    (check ((* 2 4) == 8))
+  )
+
+  (test! ^^skip "not implemented yet"
+    (fail "This should not run")
+  )
+)
+
+# === Nested Suites ===
+
+(suite! "String Operations"
+  (suite! "Length Tests"
+    (test! "string length"
+      (check (("hello" .length) == 5))
+    )
+  )
+
+  (suite! "Comparison Tests"
+    (test! "string equality"
+      (check ("abc" == "abc"))
+    )
+
+    (test! "string inequality"
+      (check ("abc" != "xyz"))
+    )
+  )
+)
+
+# === Skipped Suite ===
+
+(suite! ^^skip "Performance Tests"
+  (test! "benchmark 1"
+    (fail "Should not run - suite is skipped")
+  )
+  (test! "benchmark 2"
+    (fail "Should not run - suite is skipped")
+  )
+)
+
+# === Failing Test Demo ===
+
+(suite! "Error Handling"
+  (test! "failing check is caught"
+    # This test passes because check failures are caught by the test macro
+    (var result "not set")
+    (try
+      (check false "intentional failure")
+    catch *
+      (result = "caught")
+    )
+    (check (result == "caught") "Exception should have been caught")
+  )
+
+  (test! "fail function works"
+    (var result "not set")
+    (try
+      (fail "intentional fail")
+    catch *
+      (result = "caught")
+    )
+    (check (result == "caught"))
+  )
+)
+
+# === Test with Variables ===
+
+(suite! "Variable Scoping"
+  (var counter 0)
+
+  (test! "first increment"
+    (counter = (+ counter 1))
+    (check (counter == 1))
+  )
+
+  (test! "second increment"
+    (counter = (+ counter 1))
+    (check (counter == 2))
+  )
+)
+
+(println "")
+(println "=== Test Framework Demo Complete ===")
+(println "")
