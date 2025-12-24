@@ -75,6 +75,10 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
   if vm.isNil:
     return NIL
 
+  # Prevent recursive REPL entry
+  if vm.repl_active:
+    return NIL
+
   if scope_tracker.isNil or scope.isNil or ns.isNil:
     not_allowed("run_repl_session requires scope tracker, scope, and namespace")
 
@@ -208,7 +212,9 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
 
   var repl_value = NIL
   try:
-    repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true)
+    # Pass propagate_exceptions=false to prevent throws from exiting the REPL
+    repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true,
+                                  nil, nil, 0, true, false)
   except CatchableError:
     vm.current_exception = NIL
 
