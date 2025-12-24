@@ -1,4 +1,4 @@
-import parseopt, times, strformat, terminal, os, strutils, streams
+import parseopt, times, strformat, terminal, os, strutils, streams, tables
 
 import ../gene/types
 import ../gene/vm
@@ -97,7 +97,28 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   proc handle_exec_error(e: ref CatchableError): CommandResult =
     if options.repl_on_error and VM.current_exception != NIL and VM.frame != nil:
       stderr.writeLine("Error: " & e.msg)
+      let original_exception = VM.current_exception
       discard run_repl_on_error(VM, VM.current_exception)
+      # Check if a new exception was thrown from the REPL
+      if VM.current_exception != NIL and VM.current_exception != original_exception:
+        # Format the exception message
+        var msg = "Gene exception"
+        if VM.current_exception.kind == VkString:
+          msg = msg & ": " & VM.current_exception.str
+        elif VM.current_exception.kind == VkInstance:
+          # Try to extract message from exception instance
+          let msg_key = "message".to_key()
+          if msg_key in instance_props(VM.current_exception):
+            let msg_val = instance_props(VM.current_exception)[msg_key]
+            if msg_val.kind == VkString:
+              msg = msg_val.str
+            else:
+              msg = $msg_val
+          else:
+            msg = $VM.current_exception
+        else:
+          msg = msg & ": " & $VM.current_exception
+        return failure(msg)
       return failure("")
     return failure(e.msg)
 

@@ -210,11 +210,13 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
   vm.current_exception = NIL
 
   var repl_value = NIL
+  var thrown_exception = NIL
   try:
     repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true,
                                   nil, nil, 0, true, true)  # propagate_exceptions = true
   except CatchableError:
-    vm.current_exception = NIL
+    # Capture exception thrown from REPL so we can restore it after cleanup
+    thrown_exception = vm.current_exception
 
   vm.current_exception = saved_exception
   vm.repl_exception = saved_repl_exception
@@ -225,6 +227,10 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
   vm.cu = saved_cu
   vm.pc = saved_pc
   scope.free()
+
+  # If an exception was thrown from the REPL, restore it so caller can handle it
+  if thrown_exception != NIL:
+    vm.current_exception = thrown_exception
 
   return repl_value
 
