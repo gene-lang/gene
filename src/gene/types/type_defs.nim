@@ -150,6 +150,7 @@ type
     VkEnum
     VkEnumMember
     VkNativeFn
+    VkNativeMacro    # Native macro (receives unevaluated args)
     VkNativeMethod
 
     # Exception handling
@@ -891,6 +892,11 @@ type
 
   NativeFn* = proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.}
 
+  # Native macro function - receives unevaluated Gene AST and caller frame for context
+  # gene_value: The raw Gene value with unevaluated children (args)
+  # caller_frame: The frame from which the macro was called (for $caller_eval-like evaluation)
+  NativeMacroFn* = proc(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe, nimcall.}
+
   # Unified Callable System
   CallableKind* = enum
     CkFunction          # Regular Gene function
@@ -1059,6 +1065,8 @@ type
         enum_member*: EnumMember
       of VkNativeFn:
         native_fn*: NativeFn
+      of VkNativeMacro:
+        native_macro*: NativeMacroFn
       of VkNativeMethod:
         native_method*: NativeFn
 

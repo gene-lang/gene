@@ -1337,10 +1337,14 @@ proc exec*(self: ptr VirtualMachine): Value =
 
           return v
         else:
-          let skip_return = self.cu.skip_return
-          # Check if we're ending a function called by exec_function
+          # Check if we're ending a function called by exec_function (e.g. from $caller_eval)
+          # This must be checked BEFORE restoring cu/pc since caller_address may not be set
           let ending_exec_function = self.frame.from_exec_function
-          
+          if ending_exec_function:
+            return v
+
+          let skip_return = self.cu.skip_return
+
           # Check if we're returning from an async function before updating frame
           var result_val = v
           if is_function_like(self.frame.kind) and self.frame.target.kind == VkFunction:
@@ -1351,24 +1355,19 @@ proc exec*(self: ptr VirtualMachine): Value =
               let future_obj = future_val.ref.future
               future_obj.complete(result_val)
               result_val = future_val
-          
+
           # Profile function exit
           if self.profiling:
             self.exit_function()
-          
+
           self.cu = self.frame.caller_address.cu
           self.pc = self.frame.caller_address.pc
           inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
-          if not skip_return and not ending_exec_function:
+          if not skip_return:
             self.frame.push(result_val)
-          
-          # If we were in exec_function, stop the exec loop by returning
-          if ending_exec_function:
-            result = result_val
-            return result
-          
+
           continue
         {.pop.}
 
@@ -1384,13 +1383,15 @@ proc exec*(self: ptr VirtualMachine): Value =
         else:
           not_allowed("IkScopeStart: expected ScopeTracker or Nil, got " & $inst.arg0.kind)
       of IkScopeEnd:
-        var old_scope = self.frame.scope
-        self.frame.scope = self.frame.scope.parent
-        # Decrement ref_count and free if no more references
-        # This prevents use-after-free bugs with async code that may hold scope references
-        # Note: free() will decrement ref_count internally, so we just call it directly
-        old_scope.free()
-        # Scope will only be deallocated if ref_count reaches 0 inside free()
+        # Scope can be nil after exception handling unwinds frames
+        if not self.frame.scope.isNil:
+          var old_scope = self.frame.scope
+          self.frame.scope = self.frame.scope.parent
+          # Decrement ref_count and free if no more references
+          # This prevents use-after-free bugs with async code that may hold scope references
+          # Note: free() will decrement ref_count internally, so we just call it directly
+          old_scope.free()
+          # Scope will only be deallocated if ref_count reaches 0 inside free()
 
       of IkVar:
         {.push checks: off.}
@@ -1658,8 +1659,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(cache.ns.members[name])
               else:
                 # Cache miss - do full lookup
-                if self.frame.ns == nil:
-                  echo "DEBUG IkResolveSymbol: frame.ns is NIL for symbol lookup"
                 var value = if self.frame.ns != nil: self.frame.ns[name] else: NIL
                 var found_ns = self.frame.ns
                 if value == NIL:
@@ -1698,8 +1697,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.cu.inline_caches.add(InlineCache())
               
               # Do full lookup
-              if self.frame.ns == nil:
-                echo "DEBUG IkResolveSymbol path2: frame.ns is NIL"
               var value = if self.frame.ns != nil: self.frame.ns[name] else: NIL
               var found_ns = self.frame.ns
               if value == NIL:
@@ -1731,14 +1728,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.cu.inline_caches[self.pc].version = found_ns.version
                 self.cu.inline_caches[self.pc].value = value
               
-              # Debug: trace if value is still NIL after all lookups
-              if value == NIL:
-                let sym_str = $name
-                if sym_str.contains("Todo"):
-                  echo "DEBUG IkResolveSymbol: Symbol ", sym_str, " not found after all lookups"
-                  if self.frame.ns != nil:
-                    echo "  frame.ns exists, has Todo? ", self.frame.ns.has_key("Todo".to_key())
-                  echo "  global_ns has Todo? ", App.app.global_ns.ref.ns.has_key("Todo".to_key())
               self.frame.push(value)
 
       of IkSelf:
@@ -2722,7 +2711,16 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc = inst.arg0.int64.int
             inst = self.cu.instructions[self.pc].addr
             continue
-            
+
+          of VkNativeMacro:
+            # Native macro: collect unevaluated args like a generator
+            # Store the native macro as the Gene's type so IkGeneEnd can call it
+            self.frame.push(new_gene_value())
+            self.frame.current().gene.type = gene_type
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
           of VkBoundMethod:
             # Handle bound method calls
             let bm = gene_type.ref.bound_method
@@ -3161,12 +3159,14 @@ proc exec*(self: ptr VirtualMachine): Value =
                   f.compile()
 
                 self.pc.inc()
-                frame.caller_frame.update(self.frame)
+                # Pop the VkFrame value from the stack before switching context
+                discard self.frame.pop()
+                # Set up caller info and switch to the new frame
+                frame.caller_frame = self.frame
+                self.frame.ref_count.inc()  # Increment ref count since we're storing a reference
                 frame.caller_address = Address(cu: self.cu, pc: self.pc)
                 frame.ns = f.ns
-                # Pop the frame from the stack before switching context
-                discard self.frame.pop()
-                self.frame.update(frame)
+                self.frame = frame
                 self.cu = f.body_compiled
 
                 # Process arguments if matcher exists
@@ -3183,18 +3183,20 @@ proc exec*(self: ptr VirtualMachine): Value =
                   b.compile()
 
                 self.pc.inc()
-                frame.caller_frame.update(self.frame)
+                # Pop the VkFrame value from the stack before switching context
+                discard self.frame.pop()
+                # Set up caller info and switch to the new frame
+                frame.caller_frame = self.frame
+                self.frame.ref_count.inc()  # Increment ref count since we're storing a reference
                 frame.caller_address = Address(cu: self.cu, pc: self.pc)
                 frame.ns = b.ns
-                # Pop the frame from the stack before switching context
-                discard self.frame.pop()
-                self.frame.update(frame)
+                self.frame = frame
                 self.cu = b.body_compiled
-                
+
                 # Process arguments if matcher exists
                 if not b.matcher.is_empty():
                   process_args(b.matcher, frame.args, frame.scope)
-                
+
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
                 continue
@@ -3229,6 +3231,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             elif value.kind == VkGene and value.gene.type.kind == VkNativeFn:
               let f = value.gene.type.ref.native_fn
               self.frame.replace(call_native_fn(f, self, value.gene.children))
+            elif value.kind == VkGene and value.gene.type.kind == VkNativeMacro:
+              # Native macro receives unevaluated Gene value and caller frame
+              let f = value.gene.type.ref.native_macro
+              let result = f(self, value, self.frame)
+              self.frame.replace(result)
             else:
               discard
           
@@ -4808,36 +4815,40 @@ proc exec*(self: ptr VirtualMachine): Value =
             # For complex expressions, compile and execute
             # This will have issues with local variables, but at least handles globals
             let compiled = compile_init(expr_to_eval)
-            
+
             # Save current state
             let saved_frame = self.frame
             let saved_cu = self.cu
             let saved_pc = self.pc
-            
-            # Create a new frame that inherits from caller's frame
-            let eval_frame = new_frame(caller_frame, Address(cu: saved_cu, pc: saved_pc))
+
+            # Create a new frame for evaluation
+            # Link caller_frame to macro frame so exception handlers can unwind correctly
+            let eval_frame = new_frame()
+            eval_frame.caller_frame = self.frame
+            self.frame.ref_count.inc()  # Increment since we're storing a reference
             eval_frame.ns = caller_frame.ns
             # Copy caller_context so nested $caller_eval calls work
-            # Use the caller_context we found during the traversal
             if current_frame != nil and current_frame.caller_context != nil:
               eval_frame.caller_context = current_frame.caller_context
-            # Self is now passed as argument, copy args from caller
+            # Copy args and scope from caller
             eval_frame.args = caller_frame.args
             eval_frame.scope = caller_frame.scope
-            
+            # Mark this so IkEnd knows to return
+            eval_frame.from_exec_function = true
+
             # Switch to evaluation context
             self.frame = eval_frame
             self.cu = compiled
-            
+
             # Execute in caller's context
             let r = self.exec()
-            
+
             # Restore macro context
             self.frame = saved_frame
             self.cu = saved_cu
             self.pc = saved_pc
             inst = self.cu.instructions[self.pc].addr
-            
+
             # Push r back to macro's stack
             self.frame.push(r)
         {.pop.}
@@ -7066,6 +7077,7 @@ when not defined(noExtensions):
   import "../genex/sqlite"
   import "../genex/html"
   import "../genex/logging"
+  import "../genex/test"
   import "../genex/ai/bindings"
   when defined(geneLLM):
     import "../genex/llm"

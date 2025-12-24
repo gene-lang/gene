@@ -2970,6 +2970,10 @@ proc compile*(f: Function, eager_functions: bool) =
       self.emit(Instruction(kind: IkThrow))
     self.emit(Instruction(kind: IkNoop, label: label))
 
+  # Set next_index to reflect the number of parameters so child scopes can find them
+  if f.matcher.children.len > 0:
+    self.scope_tracker.next_index = f.matcher.children.len.int16
+
   # Mark that we're in tail position for the function body
   self.tail_position = true
   self.compile(f.body)
@@ -3018,6 +3022,10 @@ proc compile*(b: Block, eager_functions: bool) =
     else:
       self.emit(Instruction(kind: IkThrow))
     self.emit(Instruction(kind: IkNoop, label: label))
+
+  # Set next_index to reflect the number of parameters so child scopes can find them
+  if b.matcher.children.len > 0:
+    self.scope_tracker.next_index = b.matcher.children.len.int16
 
   self.compile(b.body)
 

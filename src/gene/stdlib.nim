@@ -10,6 +10,7 @@ import ./logging_core
 import ./stdlib/math as stdlib_math
 import ./stdlib/io as stdlib_io
 import ./stdlib/system as stdlib_system
+import ../genex/ai/ai
 
 # Note: Extensions register their poll handlers via register_scheduler_callback
 # This avoids direct dependency from core to extensions like HTTP
@@ -2661,30 +2662,34 @@ proc init_stdlib*() =
 
   load_logging_config()
 
-  # OpenAI API functions - moved to vm.nim to avoid circular dependencies
-# when not defined(noExtensions) and not defined(noai):
-#   # Create OpenAI namespace
-#   let ai_ns = new_namespace("ai")
-#
-#   # OpenAI client creation and operations
-#   ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
-#   ai_ns["chat".to_key()] = vm_openai_chat.to_value()
-#   ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
-#   ai_ns["respond".to_key()] = vm_openai_respond.to_value()
-#   ai_ns["stream".to_key()] = vm_openai_stream.to_value()
-#
-#   # Register the AI namespace in genex namespace
-#   App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
-#
-#   # Also register in global namespace for direct access
-#   global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
-#   global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
-#   global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
-#   global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
-#   global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()
-#
-#   # Convenience aliases
-#   global_ns["OpenAIClient".to_key()] = ai_ns.to_value()
-#   App.app.global_ns.ns["OpenAIClient".to_key()] = ai_ns.to_value()
+  load_logging_config()
+
+  # OpenAI API functions
+  when not defined(noExtensions) and not defined(noai):
+    # Create OpenAI namespace
+    let ai_ns = new_namespace("ai")
+
+    # OpenAI client creation and operations
+    ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
+    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
+    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
+    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
+    ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+
+    # Register the AI namespace in genex namespace
+    if App.app.genex_ns.kind == VkNamespace:
+      App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
+
+    # Also register in global namespace for direct access
+    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
+    global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
+    global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
+    global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
+    global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()
+
+    # Convenience aliases
+    global_ns["OpenAIClient".to_key()] = ai_ns.to_value()
+    # App.app.global_ns.ns["OpenAIClient".to_key()] = ai_ns.to_value()
+
 
 {.pop.}
