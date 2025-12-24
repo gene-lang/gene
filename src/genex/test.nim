@@ -110,89 +110,33 @@ proc eval_in_caller_context(vm: ptr VirtualMachine, expr: Value, caller_frame: F
     return eval_in_caller_context(vm, expr.ref.quote, caller_frame)
 
   of VkGene:
-    # For gene expressions (function calls, etc.), we need to evaluate
-    # First resolve the function/macro being called
-    let gene_type = expr.gene.type
+    # For gene expressions, just compile and execute in caller's context
+    # The compiler will handle operators, complex symbols, etc. correctly
+    {.cast(gcsafe).}:
+      let compiled = compile_init(expr)
 
-    # Check if the gene type is a symbol that needs resolution
-    var resolved_type = gene_type
-    if gene_type.kind == VkSymbol:
-      resolved_type = resolve_symbol_in_caller(caller_frame, gene_type.str)
-      if resolved_type == NIL:
-        # Symbol not found - might be an operator or special form
-        # Evaluate children first, then compile with evaluated values
-        var eval_gene = new_gene(gene_type)  # Keep original symbol
-        eval_gene.props = expr.gene.props
+      let saved_frame = vm.frame
+      let saved_cu = vm.cu
+      let saved_pc = vm.pc
 
-        # Evaluate children in caller context
-        for child in expr.gene.children:
-          let eval_child = eval_in_caller_context(vm, child, caller_frame)
-          eval_gene.children.add(eval_child)
+      let eval_frame = new_frame()
+      eval_frame.caller_frame = vm.frame
+      vm.frame.ref_count.inc()
+      eval_frame.ns = caller_frame.ns
+      eval_frame.scope = caller_frame.scope
+      if caller_frame.scope != nil:
+        caller_frame.scope.ref_count.inc()
+      eval_frame.from_exec_function = true
 
-        # Compile and execute with evaluated children
-        {.cast(gcsafe).}:
-          let compiled = compile_init(eval_gene.to_gene_value())
+      vm.frame = eval_frame
+      vm.cu = compiled
+      vm.pc = 0
+      result = vm.exec()
 
-          let saved_frame = vm.frame
-          let saved_cu = vm.cu
-          let saved_pc = vm.pc
-
-          let eval_frame = new_frame()
-          eval_frame.caller_frame = vm.frame
-          vm.frame.ref_count.inc()
-          eval_frame.ns = caller_frame.ns
-          eval_frame.scope = caller_frame.scope
-          if caller_frame.scope != nil:
-            caller_frame.scope.ref_count.inc()
-          eval_frame.from_exec_function = true
-
-          vm.frame = eval_frame
-          vm.cu = compiled
-          vm.pc = 0
-          result = vm.exec()
-
-          vm.frame = saved_frame
-          vm.cu = saved_cu
-          vm.pc = saved_pc
-          return result
-
-    # For known callables, evaluate args and call directly
-    case resolved_type.kind:
-    of VkFunction, VkNativeFn:
-      # Evaluate children in caller context
-      var eval_args: seq[Value] = @[]
-      for child in expr.gene.children:
-        let eval_child = eval_in_caller_context(vm, child, caller_frame)
-        eval_args.add(eval_child)
-
-      return call_in_caller_context(vm, resolved_type, eval_args, caller_frame)
-
-    else:
-      # For other types (classes, etc.), compile and execute
-      {.cast(gcsafe).}:
-        let compiled = compile_init(expr)
-
-        let saved_frame = vm.frame
-        let saved_cu = vm.cu
-        let saved_pc = vm.pc
-
-        let eval_frame = new_frame()
-        eval_frame.caller_frame = vm.frame
-        vm.frame.ref_count.inc()
-        eval_frame.ns = caller_frame.ns
-        eval_frame.scope = caller_frame.scope
-        if caller_frame.scope != nil:
-          caller_frame.scope.ref_count.inc()
-        eval_frame.from_exec_function = true
-
-        vm.frame = eval_frame
-        vm.cu = compiled
-        vm.pc = 0
-        result = vm.exec()
-
-        vm.frame = saved_frame
-        vm.cu = saved_cu
-        vm.pc = saved_pc
+      vm.frame = saved_frame
+      vm.cu = saved_cu
+      vm.pc = saved_pc
+      return result
 
   else:
     # For other types, compile and execute directly
