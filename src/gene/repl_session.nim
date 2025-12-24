@@ -81,9 +81,12 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
   scope_tracker.scope_started = true
   let return_cu = if not caller_cu.isNil: caller_cu else: vm.cu
   let saved_repl_active = vm.repl_active
+  let saved_repl_on_error = vm.repl_on_error
   vm.repl_active = true
+  vm.repl_on_error = false
   defer:
     vm.repl_active = saved_repl_active
+    vm.repl_on_error = saved_repl_on_error
 
   if show_banner:
     echo "Gene REPL - Interactive Gene Language Shell"
@@ -197,16 +200,19 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
   let saved_exception = vm.current_exception
   let saved_repl_exception = vm.repl_exception
   let saved_repl_active = vm.repl_active
+  let saved_repl_on_error = vm.repl_on_error
   let saved_exception_handlers = vm.exception_handlers
 
   vm.repl_active = true
+  vm.repl_on_error = false
   vm.exception_handlers = @[]
   vm.repl_exception = exception_value
   vm.current_exception = NIL
 
   var repl_value = NIL
   try:
-    repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true)
+    repl_value = run_repl_session(vm, scope_tracker, scope, ns, "<repl>", prompt, true,
+                                  nil, nil, 0, true, true)  # propagate_exceptions = true
   except CatchableError:
     vm.current_exception = NIL
 
@@ -214,6 +220,7 @@ proc run_repl_on_error*(vm: ptr VirtualMachine, exception_value: Value, prompt =
   vm.repl_exception = saved_repl_exception
   vm.exception_handlers = saved_exception_handlers
   vm.repl_active = saved_repl_active
+  vm.repl_on_error = saved_repl_on_error
   vm.frame = saved_frame
   vm.cu = saved_cu
   vm.pc = saved_pc
@@ -243,9 +250,11 @@ proc run_repl_on_throw*(vm: ptr VirtualMachine, exception_value: Value): Value =
   let saved_exception = vm.current_exception
   let saved_repl_exception = vm.repl_exception
   let saved_repl_active = vm.repl_active
+  let saved_repl_on_error = vm.repl_on_error
   let saved_exception_handlers = vm.exception_handlers
 
   vm.repl_active = true
+  vm.repl_on_error = false
   vm.repl_ran = true
   vm.repl_resume_value = NIL
   vm.exception_handlers = @[]
@@ -268,6 +277,7 @@ proc run_repl_on_throw*(vm: ptr VirtualMachine, exception_value: Value): Value =
   vm.current_exception = saved_exception
   vm.repl_exception = saved_repl_exception
   vm.repl_active = saved_repl_active
+  vm.repl_on_error = saved_repl_on_error
   vm.frame = saved_frame
   vm.cu = saved_cu
   vm.pc = saved_pc

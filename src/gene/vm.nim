@@ -144,26 +144,30 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
 
   if self.repl_skip_on_throw:
     self.repl_skip_on_throw = false
-  elif self.repl_on_error and not self.repl_active and repl_on_throw_callback != nil:
-    self.repl_ran = false
-    self.repl_resume_value = NIL
-    let repl_thrown = repl_on_throw_callback(self, exception_value)
-    if self.repl_ran:
-      if repl_thrown == NIL:
-        if inst.kind == IkThrow:
-          let resume_value = self.repl_resume_value
-          self.repl_resume_value = NIL
-          self.frame.push(resume_value)
-        self.current_exception = NIL
-        let next_pc = self.pc + 1
-        if next_pc < self.cu.instructions.len:
-          self.pc = next_pc
-        else:
-          self.pc = self.cu.instructions.len - 1
-        inst = self.cu.instructions[self.pc].addr
-        return true
-      exception_value = repl_thrown
-      self.current_exception = exception_value
+  # NOTE: repl_on_error VM flag is used by --repl-on-error command-line option
+  # which should only trigger REPL at the command-line error handler level,
+  # not during VM exception dispatch. The ^^repl decorator feature for on-throw
+  # REPL is not currently implemented.
+  # elif self.repl_on_error and not self.repl_active and repl_on_throw_callback != nil:
+  #   self.repl_ran = false
+  #   self.repl_resume_value = NIL
+  #   let repl_thrown = repl_on_throw_callback(self, exception_value)
+  #   if self.repl_ran:
+  #     if repl_thrown == NIL:
+  #       if inst.kind == IkThrow:
+  #         let resume_value = self.repl_resume_value
+  #         self.repl_resume_value = NIL
+  #         self.frame.push(resume_value)
+  #       self.current_exception = NIL
+  #       let next_pc = self.pc + 1
+  #       if next_pc < self.cu.instructions.len:
+  #         self.pc = next_pc
+  #       else:
+  #         self.pc = self.cu.instructions.len - 1
+  #       inst = self.cu.instructions[self.pc].addr
+  #       return true
+  #     exception_value = repl_thrown
+  #     self.current_exception = exception_value
 
   if self.exception_handlers.len > 0:
     let handler = self.exception_handlers[^1]
