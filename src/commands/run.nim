@@ -96,10 +96,11 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   setup_logger(options.debugging)
   proc handle_exec_error(e: ref CatchableError): CommandResult =
     if options.repl_on_error:
-      if VM.current_exception != NIL and VM.frame != nil:
-        stderr.writeLine("Error: " & e.msg)
-        discard run_repl_on_error(VM, VM.current_exception)
-        return failure("")
+      return failure(e.msg)
+    if VM.current_exception != NIL and VM.frame != nil:
+      stderr.writeLine("Error: " & e.msg)
+      discard run_repl_on_error(VM, VM.current_exception)
+      return failure("")
     return failure(e.msg)
 
   var file = options.file
