@@ -228,6 +228,9 @@ proc run_repl_on_throw*(vm: ptr VirtualMachine, exception_value: Value): Value =
   ## Start a REPL session at the throw site; return a thrown exception or NIL.
   if vm.isNil or vm.frame.isNil:
     return NIL
+  # Don't enter REPL if already in REPL or if repl_on_error is not set
+  if vm.repl_active or not vm.repl_on_error:
+    return exception_value
   if not stdin.isatty():
     return exception_value
 
