@@ -2022,6 +2022,244 @@ proc class_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   else:
     not_allowed()
 
+# AOP Aspect macro
+# (aspect A [m1 m2]
+#   (before m1 [args...] body...)
+#   (after m2 [args...] body...)
+# )
+proc normalize_advice_args(args_val: Value): Value =
+  var normalized = new_array_value()
+  case args_val.kind
+  of VkArray:
+    let src = array_data(args_val)
+    if src.len == 0:
+      array_data(normalized).add("self".to_symbol_value())
+    elif src[0].kind == VkSymbol and src[0].str == "self":
+      for arg in src:
+        array_data(normalized).add(arg)
+    else:
+      array_data(normalized).add("self".to_symbol_value())
+      for arg in src:
+        array_data(normalized).add(arg)
+  of VkSymbol:
+    if args_val.str == "_" or args_val.str == "self":
+      array_data(normalized).add("self".to_symbol_value())
+    else:
+      array_data(normalized).add("self".to_symbol_value())
+      array_data(normalized).add(args_val)
+  else:
+    not_allowed("advice arguments must be an array or symbol")
+  normalized
+
+proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let gene = gene_value.gene
+    if gene.children.len < 2:
+      not_allowed("aspect requires a name and method parameters")
+    
+    # First child is the aspect name
+    let name_val = gene.children[0]
+    if name_val.kind != VkSymbol:
+      not_allowed("aspect name must be a symbol")
+    let name = name_val.str
+    
+    # Second child is the method parameters list [m1 m2]
+    let params_val = gene.children[1]
+    if params_val.kind != VkArray:
+      not_allowed("aspect parameter list must be an array")
+    
+    var param_names: seq[string] = @[]
+    for p in array_data(params_val):
+      if p.kind == VkSymbol:
+        param_names.add(p.str)
+      else:
+        not_allowed("aspect parameter must be a symbol")
+    
+    # Create the Aspect
+    let aspect = Aspect(
+      name: name,
+      param_names: param_names,
+      before_advices: initTable[string, seq[Value]](),
+      after_advices: initTable[string, seq[Value]](),
+      around_advices: initTable[string, Value](),
+      before_filter_advices: initTable[string, seq[Value]](),
+      enabled: true
+    )
+    
+    # Parse advice definitions (children 2+)
+    for i in 2..<gene.children.len:
+      let advice_def = gene.children[i]
+      if advice_def.kind != VkGene:
+        not_allowed("advice definition must be a gene expression")
+      
+      let advice_gene = advice_def.gene
+      if advice_gene.children.len < 3:
+        not_allowed("advice requires type, target method, args, and body")
+      
+      # advice_gene.type is the advice type (before, after, around, etc.)
+      let advice_type = advice_gene.type
+      if advice_type.kind != VkSymbol:
+        not_allowed("advice type must be a symbol")
+      let advice_type_str = advice_type.str
+      
+      # First child is the target method param
+      let target = advice_gene.children[0]
+      if target.kind != VkSymbol:
+        not_allowed("advice target must be a method parameter symbol")
+      let target_name = target.str
+      
+      # Validate target is in param_names
+      if not (target_name in param_names):
+        not_allowed("advice target '" & target_name & "' is not a defined method parameter")
+      
+      # Create the advice function from remaining children
+      # children[1] is the args matcher, children[2..] is the body
+      let matcher = new_arg_matcher()
+      let matcher_args = normalize_advice_args(advice_gene.children[1])
+      matcher.parse(matcher_args)
+      matcher.check_hint()
+      
+      var body: seq[Value] = @[]
+      for j in 2..<advice_gene.children.len:
+        body.add(advice_gene.children[j])
+      
+      let advice_fn = new_fn(advice_type_str & "_advice", matcher, body)
+      advice_fn.ns = caller_frame.ns
+      advice_fn.parent_scope = caller_frame.scope
+      
+      # Create scope_tracker with parameter mappings so exec_function can bind args
+      var scope_tracker = new_scope_tracker()
+      for m in matcher.children:
+        if m.kind == MatchData and m.name_key != Key(0):
+          scope_tracker.add(m.name_key)
+      advice_fn.scope_tracker = scope_tracker
+      
+      let advice_fn_ref = new_ref(VkFunction)
+      advice_fn_ref.fn = advice_fn
+      let advice_val = advice_fn_ref.to_ref_value()
+      
+      # Add to appropriate advice table
+      case advice_type_str:
+      of "before":
+        if not aspect.before_advices.hasKey(target_name):
+          aspect.before_advices[target_name] = @[]
+        aspect.before_advices[target_name].add(advice_val)
+      of "after":
+        if not aspect.after_advices.hasKey(target_name):
+          aspect.after_advices[target_name] = @[]
+        aspect.after_advices[target_name].add(advice_val)
+      of "around":
+        if aspect.around_advices.hasKey(target_name):
+          not_allowed("around advice already defined for '" & target_name & "'")
+        aspect.around_advices[target_name] = advice_val
+      of "before_filter":
+        if not aspect.before_filter_advices.hasKey(target_name):
+          aspect.before_filter_advices[target_name] = @[]
+        aspect.before_filter_advices[target_name].add(advice_val)
+      else:
+        not_allowed("unknown advice type: " & advice_type_str)
+    
+    # Create Value for the aspect
+    let aspect_ref = new_ref(VkAspect)
+    aspect_ref.aspect = aspect
+    let aspect_val = aspect_ref.to_ref_value()
+    
+    # Define the aspect in caller's namespace
+    caller_frame.ns[name.to_key()] = aspect_val
+    
+    return aspect_val
+
+# Aspect.apply - apply aspect to a class
+# (A .apply C "m1" "m2")
+proc aspect_apply(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if arg_count < 2:
+    not_allowed("aspect.apply requires self and class arguments")
+  
+  let self = get_positional_arg(args, 0, has_keyword_args)
+  if self.kind != VkAspect:
+    not_allowed("apply must be called on an aspect")
+  
+  let aspect = self.ref.aspect
+  
+  let class_arg = get_positional_arg(args, 1, has_keyword_args)
+  if class_arg.kind != VkClass:
+    not_allowed("aspect.apply requires a class argument")
+  
+  let class = class_arg.ref.class
+  
+  # Map param names to actual method names from remaining args  
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional - 2 != aspect.param_names.len:
+    not_allowed("aspect.apply requires " & $aspect.param_names.len & " method name arguments")
+  
+  var param_to_method: Table[string, string] = initTable[string, string]()
+  for i in 0..<aspect.param_names.len:
+    let method_name_val = get_positional_arg(args, i + 2, has_keyword_args)
+    case method_name_val.kind
+    of VkString, VkSymbol:
+      param_to_method[aspect.param_names[i]] = method_name_val.str
+    else:
+      not_allowed("method name must be a string or symbol")
+  
+  # Wrap each mapped method with intercepted behavior
+  for param_name, method_name in param_to_method:
+    let method_key = method_name.to_key()
+    if not class.methods.hasKey(method_key):
+      not_allowed("class does not have method: " & method_name)
+    
+    let original_method = class.methods[method_key]
+    var original_callable = original_method.callable
+    if original_callable.kind == VkInterception:
+      original_callable = original_callable.ref.interception.original
+    
+    # Create Interception wrapper with proper fields
+    let interception = Interception(
+      original: original_callable,
+      aspect: self,
+      param_name: param_name
+    )
+    
+    let interception_ref = new_ref(VkInterception)
+    interception_ref.interception = interception
+    
+    # Update the method's callable to use the interception
+    class.methods[method_key].callable = interception_ref.to_ref_value()
+  
+  return NIL
+
+proc call_aop(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if vm == nil or vm.aop_contexts.len == 0:
+    not_allowed("call_aop requires an active around advice")
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    not_allowed("call_aop requires a wrapped callable argument")
+  let wrapped = get_positional_arg(args, 0, has_keyword_args)
+  let ctx = vm.aop_contexts[^1]
+  if cast[uint64](wrapped) != cast[uint64](ctx.wrapped):
+    not_allowed("call_aop wrapped value does not match current advice context")
+
+  case ctx.wrapped.kind
+  of VkFunction:
+    if ctx.kw_pairs.len > 0:
+      let result = ({.cast(gcsafe).}: vm.exec_method_kw(ctx.wrapped, ctx.instance, ctx.args, ctx.kw_pairs))
+      return result
+    let result = ({.cast(gcsafe).}: vm.exec_method(ctx.wrapped, ctx.instance, ctx.args))
+    return result
+  of VkNativeFn:
+    let has_kw = ctx.kw_pairs.len > 0
+    let offset = if has_kw: 1 else: 0
+    var call_args = newSeq[Value](ctx.args.len + 1 + offset)
+    if has_kw:
+      var kw_map = new_map_value()
+      for (k, v) in ctx.kw_pairs:
+        map_data(kw_map)[k] = v
+      call_args[0] = kw_map
+    call_args[offset] = ctx.instance
+    for i, arg in ctx.args:
+      call_args[i + offset + 1] = arg
+    return call_native_fn(ctx.wrapped.ref.native_fn, vm, call_args, has_kw)
+  else:
+    not_allowed("call_aop wrapped callable must be a function or native function")
+
 proc vm_compile(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
@@ -2659,6 +2897,21 @@ proc init_stdlib*() =
   global_ns["$tap".to_key()] = core_tap.to_value()
   global_ns["$if_main".to_key()] = core_if_main.to_value()
   global_ns["$repl".to_key()] = NativeFn(core_repl).to_value()
+  
+  # AOP - Aspect macro (native macro)
+  var aspect_macro_ref = new_ref(VkNativeMacro)
+  aspect_macro_ref.native_macro = aspect_macro
+  global_ns["aspect".to_key()] = aspect_macro_ref.to_ref_value()
+  
+  # Create Aspect class with apply method
+  let aspect_class = new_class("Aspect")
+  aspect_class.def_native_method("apply", aspect_apply)
+  var aspect_class_ref = new_ref(VkClass)
+  aspect_class_ref.class = aspect_class
+  App.app.aspect_class = aspect_class_ref.to_ref_value()
+  App.app.gene_ns.ns["Aspect".to_key()] = App.app.aspect_class
+  global_ns["Aspect".to_key()] = App.app.aspect_class
+  global_ns["call_aop".to_key()] = NativeFn(call_aop).to_value()
 
   load_logging_config()
 

@@ -38,7 +38,27 @@ type
     GsDone               # Exhausted
 
   ExceptionData* = ref object
+  
   Interception* = ref object
+    original*: Value      # Original callable (method/function)
+    aspect*: Value        # The aspect that created this interception
+    param_name*: string   # Which aspect param this method maps to
+
+  # AOP Aspect type
+  Aspect* = ref object
+    name*: string
+    param_names*: seq[string]                  # Method placeholders [m1, m2]
+    before_advices*: Table[string, seq[Value]] # param -> [advice fns]
+    after_advices*: Table[string, seq[Value]]
+    around_advices*: Table[string, Value]      # param -> single around advice
+    before_filter_advices*: Table[string, seq[Value]]
+    enabled*: bool
+
+  AopContext* = object
+    wrapped*: Value
+    instance*: Value
+    args*: seq[Value]
+    kw_pairs*: seq[(Key, Value)]
 
   # Threading support types
   ThreadMessageType* = enum
@@ -156,6 +176,7 @@ type
     # Exception handling
     VkException = 128    # Start exceptions at 128
     VkInterception       # AOP interception
+    VkAspect             # AOP aspect definition
 
     # Concurrency types
 
@@ -284,6 +305,7 @@ type
     thread_class*   : Value
     thread_message_class* : Value
     thread_message_type_class* : Value
+    aspect_class*   : Value
 
   Package* = ref object
     dir*: string          # Where the package assets are installed
@@ -773,6 +795,7 @@ type
     thread_local_ns*: Namespace  # Thread-local namespace for $thread, $main_thread, etc.
     # Scheduler mode
     scheduler_running*: bool  # Set to true when run_forever is active, false to stop
+    aop_contexts*: seq[AopContext]  # Stack of active around advice contexts
 
   VmCallback* = proc() {.gcsafe.}
 
@@ -1074,6 +1097,8 @@ type
         exception_data*: ExceptionData
       of VkInterception:
         interception*: Interception
+      of VkAspect:
+        aspect*: Aspect
 
       # Concurrency types
 

@@ -86,6 +86,11 @@ proc get_class*(val: Value): Class {.inline.} =
         return App.ref.app.generator_class.ref.class
       else:
         return nil
+    of VkAspect:
+      if App.ref.app.aspect_class.kind == VkClass:
+        return App.ref.app.aspect_class.ref.class
+      else:
+        return nil
     # of VkThread:
     #   return App.ref.app.thread_class.ref.class
     # of VkThreadMessage:

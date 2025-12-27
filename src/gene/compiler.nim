@@ -1836,7 +1836,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   # Fast path optimizations for regular function calls (no properties, not macro-like, no spreads)
   if gene.props.len == 0 and gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    if (not func_name.ends_with("!")) and func_name notin ["return", "break", "continue", "throw"]:
+    if (not func_name.ends_with("!")) and func_name notin ["return", "break", "continue", "throw", "aspect"]:
       var has_spread = false
       for k, _ in gene.props:
         if ($k).startsWith("..."):

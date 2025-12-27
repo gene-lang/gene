@@ -1,0 +1,42 @@
+# Expected: before m1 1
+# Expected: m1 1
+# Expected: after m1 1
+# Expected: result1 2
+# Expected: around m2 2
+# Expected: m2 2
+# Expected: result2 4
+# Expected: result3 nil
+
+(aspect A [m1 m2]
+  (before m1 [x]
+    (println "before m1" x)
+  )
+  (after m1 [x]
+    (println "after m1" x)
+  )
+  (before_filter m2 [x]
+    (x > 0)
+  )
+  (around m2 [x wrapped]
+    (println "around m2" x)
+    (call_aop wrapped)
+  )
+)
+
+(class C
+  (.fn m1 [x]
+    (println "m1" x)
+    (x + 1)
+  )
+  (.fn m2 [x]
+    (println "m2" x)
+    (x + 2)
+  )
+)
+
+(A .apply C "m1" "m2")
+
+(var c (new C))
+(println "result1" (c .m1 1))
+(println "result2" (c .m2 2))
+(println "result3" (c .m2 -1))
