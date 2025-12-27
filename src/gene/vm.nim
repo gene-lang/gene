@@ -1341,13 +1341,9 @@ proc exec*(self: ptr VirtualMachine): Value =
 
           return v
         else:
-          # Check if we're ending a function called by exec_function (e.g. from $caller_eval)
-          # This must be checked BEFORE restoring cu/pc since caller_address may not be set
-          let ending_exec_function = self.frame.from_exec_function
-          if ending_exec_function:
-            return v
-
           let skip_return = self.cu.skip_return
+          # Check if we're ending a function called by exec_function (e.g. from $caller_eval)
+          let ending_exec_function = self.frame.from_exec_function
 
           # Check if we're returning from an async function before updating frame
           var result_val = v
@@ -1369,6 +1365,11 @@ proc exec*(self: ptr VirtualMachine): Value =
           inst = self.cu.instructions[self.pc].addr
           self.frame.update(self.frame.caller_frame)
           self.frame.ref_count.dec()  # The frame's ref_count was incremented unnecessarily.
+          
+          # If we were in exec_function, return without pushing to stack
+          if ending_exec_function:
+            return result_val
+          
           if not skip_return:
             self.frame.push(result_val)
 
