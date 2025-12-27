@@ -43,6 +43,12 @@
     (/conn = conn)  # Store connection as instance variable
   )
 
+  # For SELECT queries - returns results
+  (.fn query [query params...]
+    (/conn .query query/.to_s params...)
+  )
+
+  # For INSERT/UPDATE/DELETE - returns nil
   (.fn exec [query params...]
     (/conn .exec query/.to_s params...)
   )
@@ -119,7 +125,7 @@
   (fn /find [self id]
     (var query (new Query /table))
     (query .where "id = ?")
-    (var data (/orm .exec query id))
+    (var data (/orm .query query id))
     (if ((data .size) == 0)
       (throw #"Not found: #{id}")
     else
@@ -130,7 +136,7 @@
   # Query all and convert each row to an instance of the model class
   (fn /all [self]
     (var query (new Query /table))
-    (var data (/orm .exec query))
+    (var data (/orm .query query))
     (data .map (row ->
       (var props {})
       (for [i v] in row
