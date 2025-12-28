@@ -1,5 +1,7 @@
 # Expected: before m1 1
+# Expected: before m1 1
 # Expected: m1 1
+# Expected: after m1 1
 # Expected: after m1 1
 # Expected: result1 2
 # Expected: around m2 2
@@ -10,6 +12,12 @@
 (aspect A [m1 m2]
   (before m1 [x]
     (println "before m1" x)
+  )
+  (before m1 [x]
+    (println "before m1" x)
+  )
+  (after m1 [x]
+    (println "after m1" x)
   )
   (after m1 [x]
     (println "after m1" x)
