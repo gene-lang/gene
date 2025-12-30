@@ -2080,7 +2080,7 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
       name: name,
       param_names: param_names,
       before_advices: initTable[string, seq[Value]](),
-      after_advices: initTable[string, seq[Value]](),
+      after_advices: initTable[string, seq[AopAfterAdvice]](),
       around_advices: initTable[string, Value](),
       before_filter_advices: initTable[string, seq[Value]](),
       enabled: true
@@ -2101,7 +2101,15 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
       if advice_type.kind != VkSymbol:
         not_allowed("advice type must be a symbol")
       let advice_type_str = advice_type.str
-      
+
+      var replace_result = false
+      let replace_key = "replace_result".to_key()
+      if advice_gene.props.has_key(replace_key):
+        let replace_val = advice_gene.props[replace_key]
+        replace_result = (replace_val == NIL or replace_val == PLACEHOLDER) or replace_val.to_bool()
+        if replace_result and advice_type_str != "after":
+          not_allowed("replace_result is only allowed for after advices")
+
       # First child is the target method param
       let target = advice_gene.children[0]
       if target.kind != VkSymbol:
@@ -2147,7 +2155,10 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
       of "after":
         if not aspect.after_advices.hasKey(target_name):
           aspect.after_advices[target_name] = @[]
-        aspect.after_advices[target_name].add(advice_val)
+        aspect.after_advices[target_name].add(AopAfterAdvice(
+          callable: advice_val,
+          replace_result: replace_result
+        ))
       of "around":
         if aspect.around_advices.hasKey(target_name):
           not_allowed("around advice already defined for '" & target_name & "'")
@@ -2234,6 +2245,8 @@ proc call_aop(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     not_allowed("call_aop requires a wrapped callable argument")
   let wrapped = get_positional_arg(args, 0, has_keyword_args)
   let ctx = vm.aop_contexts[^1]
+  if not ctx.in_around:
+    not_allowed("call_aop can only be used inside an around advice")
   if cast[uint64](wrapped) != cast[uint64](ctx.wrapped):
     not_allowed("call_aop wrapped value does not match current advice context")
 
@@ -2259,6 +2272,7 @@ proc call_aop(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     return call_native_fn(ctx.wrapped.ref.native_fn, vm, call_args, has_kw)
   else:
     not_allowed("call_aop wrapped callable must be a function or native function")
+
 
 proc vm_compile(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:

@@ -45,11 +45,15 @@ type
     param_name*: string   # Which aspect param this method maps to
 
   # AOP Aspect type
+  AopAfterAdvice* = object
+    callable*: Value
+    replace_result*: bool
+
   Aspect* = ref object
     name*: string
     param_names*: seq[string]                  # Method placeholders [m1, m2]
     before_advices*: Table[string, seq[Value]] # param -> [advice fns]
-    after_advices*: Table[string, seq[Value]]
+    after_advices*: Table[string, seq[AopAfterAdvice]]
     around_advices*: Table[string, Value]      # param -> single around advice
     before_filter_advices*: Table[string, seq[Value]]
     enabled*: bool
@@ -59,6 +63,7 @@ type
     instance*: Value
     args*: seq[Value]
     kw_pairs*: seq[(Key, Value)]
+    in_around*: bool
 
   # Threading support types
   ThreadMessageType* = enum

@@ -1128,11 +1128,45 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     not_allowed("Aspect interception requires a VkAspect")
   let aspect = aspect_val.ref.aspect
   let param_name = interception.param_name
+  let ctx = AopContext(
+    wrapped: interception.original,
+    instance: instance,
+    args: args,
+    kw_pairs: kw_pairs,
+    in_around: false
+  )
+  self.aop_contexts.add(ctx)
+  defer:
+    discard self.aop_contexts.pop()
 
   var method_args = newSeq[Value](args.len + 1)
   method_args[0] = instance
   for i, arg in args:
     method_args[i + 1] = arg
+
+  proc matcher_positional_bounds(matcher: RootMatcher): tuple[minc: int, maxc: int, has_splat: bool] =
+    var minc = 0
+    var maxc = 0
+    var has_splat = false
+    for param in matcher.children:
+      if param.kind == MatchProp or param.is_prop:
+        continue
+      if param.is_splat:
+        has_splat = true
+      else:
+        maxc += 1
+        if param.required():
+          minc += 1
+    (minc, maxc, has_splat)
+
+  proc advice_accepts_result(advice_fn: Value, base_count: int): bool =
+    if advice_fn.kind != VkFunction:
+      return true
+    let bounds = matcher_positional_bounds(advice_fn.ref.fn.matcher)
+    if bounds.has_splat:
+      return true
+    let desired = base_count + 1
+    desired <= bounds.maxc
 
   if aspect.enabled:
     if aspect.before_filter_advices.hasKey(param_name):
@@ -1148,20 +1182,22 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   var result: Value
   if aspect.enabled and aspect.around_advices.hasKey(param_name):
     let around_fn = aspect.around_advices[param_name]
-    let ctx = AopContext(wrapped: interception.original, instance: instance, args: args, kw_pairs: kw_pairs)
-    self.aop_contexts.add(ctx)
-    try:
-      var around_args = method_args
-      around_args.add(ctx.wrapped)
-      result = self.exec_function(around_fn, around_args)
-    finally:
-      discard self.aop_contexts.pop()
+    let ctx_idx = self.aop_contexts.len - 1
+    self.aop_contexts[ctx_idx].in_around = true
+    let around_args = method_args & @[self.aop_contexts[ctx_idx].wrapped]
+    result = self.exec_function(around_fn, around_args)
+    self.aop_contexts[ctx_idx].in_around = false
   else:
     result = self.call_interception_original(interception.original, instance, args, kw_pairs)
 
   if aspect.enabled and aspect.after_advices.hasKey(param_name):
     for advice_fn in aspect.after_advices[param_name]:
-      discard self.exec_function(advice_fn, method_args)
+      var after_args = method_args
+      if advice_accepts_result(advice_fn.callable, method_args.len):
+        after_args = method_args & @[result]
+      let advice_result = self.exec_function(advice_fn.callable, after_args)
+      if advice_fn.replace_result:
+        result = advice_result
 
   result
 

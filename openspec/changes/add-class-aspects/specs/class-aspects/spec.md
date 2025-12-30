@@ -15,11 +15,15 @@ The system SHALL apply a class aspect in place via `(A .apply <Class> <method-na
 - **THEN** method calls to `C.m1` and `C.m2` are intercepted by aspect `A`.
 
 ### Requirement: Execute before/before_filter/after advices
-The system SHALL execute `before_filter`, `before`, and `after` advices in FIFO order around the original method, with implicit `self` as the first argument.
+The system SHALL execute `before_filter`, `before`, and `after` advices in FIFO order around the original method, with implicit `self` as the first argument. After advices SHALL receive the method result as the final argument and MAY override the return value when declared with `^^replace_result`.
 
 #### Scenario: Before filter aborts
 - **WHEN** a `before_filter` advice returns `false`
 - **THEN** the original method and `before`/`after` advices are not executed and the call returns `NIL`.
+
+#### Scenario: After advice overrides result
+- **WHEN** an `after` advice is declared as `(after ^^replace_result m [x result] (result + 1))`
+- **THEN** the caller receives the overridden value.
 
 ### Requirement: Execute around advice
 The system SHALL allow a single `around` advice per placeholder, receiving implicit `self`, method arguments, and a wrapped callable that can be invoked via `(call_aop wrapped ...)`.

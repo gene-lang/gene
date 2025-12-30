@@ -1,9 +1,9 @@
 # Expected: before m1 1
 # Expected: before m1 1
 # Expected: m1 1
+# Expected: after m1 1 2
 # Expected: after m1 1
-# Expected: after m1 1
-# Expected: result1 2
+# Expected: result1 3
 # Expected: around m2 2
 # Expected: m2 2
 # Expected: result2 4
@@ -16,8 +16,9 @@
   (before m1 [x]
     (println "before m1" x)
   )
-  (after m1 [x]
-    (println "after m1" x)
+  (after ^^replace_result m1 [x result]
+    (println "after m1" x result)
+    (result + 1)
   )
   (after m1 [x]
     (println "after m1" x)
