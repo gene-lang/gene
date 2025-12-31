@@ -148,6 +148,11 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
   var exception_value = value
   self.current_exception = exception_value
 
+  if self.aop_contexts.len > 0:
+    let ctx_idx = self.aop_contexts.len - 1
+    if self.exception_handlers.len == 0 or self.exception_handlers.len - 1 < self.aop_contexts[ctx_idx].handler_depth:
+      self.aop_contexts[ctx_idx].exception_escaped = true
+
   if self.repl_skip_on_throw:
     self.repl_skip_on_throw = false
   # NOTE: repl_on_error VM flag is used by --repl-on-error command-line option
@@ -1152,7 +1157,9 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     args: args,
     kw_pairs: kw_pairs,
     in_around: false,
-    caller_context: self.frame
+    caller_context: self.frame,
+    handler_depth: self.exception_handlers.len,
+    exception_escaped: false
   )
   self.aop_contexts.add(ctx)
   defer:
@@ -1192,6 +1199,11 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     if aspect.before_advices.hasKey(param_name):
       for advice_fn in aspect.before_advices[param_name]:
         discard self.exec_method(advice_fn, instance, args)
+    if aspect.invariant_advices.hasKey(param_name):
+      for advice_fn in aspect.invariant_advices[param_name]:
+        discard self.exec_method(advice_fn, instance, args)
+    if self.aop_contexts[^1].exception_escaped:
+      return NIL
 
   var result: Value
   if aspect.enabled and aspect.around_advices.hasKey(param_name):
@@ -1204,7 +1216,12 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   else:
     result = self.call_interception_original(interception.original, instance, args, kw_pairs)
 
-  if aspect.enabled and aspect.after_advices.hasKey(param_name):
+  let exception_escaped = self.aop_contexts[^1].exception_escaped
+  if not exception_escaped and aspect.enabled and aspect.invariant_advices.hasKey(param_name):
+    for advice_fn in aspect.invariant_advices[param_name]:
+      discard self.exec_method(advice_fn, instance, args)
+
+  if not exception_escaped and aspect.enabled and aspect.after_advices.hasKey(param_name):
     for advice_fn in aspect.after_advices[param_name]:
       var after_args = args
       if advice_accepts_result(advice_fn.callable, args.len + 1):

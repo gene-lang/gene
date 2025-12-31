@@ -1,0 +1,97 @@
+# Expected: before m1 1
+# Expected: inv1 m1 1
+# Expected: inv2 m1 1
+# Expected: around m1 1
+# Expected: m1 1
+# Expected: inv1 m1 1
+# Expected: inv2 m1 1
+# Expected: after m1 2
+# Expected: result1 2
+# Expected: before_filter m2 -1
+# Expected: result2 nil
+# Expected: before m3 1
+# Expected: inv1 m3 1
+# Expected: inv2 m3 1
+# Expected: around m3 1
+# Expected: m3 1
+# Expected: caught
+
+(aspect A [m1 m2 m3]
+  (before m1 [x]
+    (println "before m1" x)
+  )
+  (invariant m1 [x]
+    (println "inv1 m1" x)
+  )
+  (invariant m1 [x]
+    (println "inv2 m1" x)
+  )
+  (around m1 [x wrapped]
+    (println "around m1" x)
+    (wrapped x)
+  )
+  (after m1 [x result]
+    (println "after m1" result)
+  )
+
+  (before_filter m2 [x]
+    (println "before_filter m2" x)
+    false
+  )
+  (invariant m2 [x]
+    (println "inv1 m2" x)
+  )
+  (before m2 [x]
+    (println "before m2" x)
+  )
+  (around m2 [x wrapped]
+    (println "around m2" x)
+    (wrapped x)
+  )
+  (after m2 [x result]
+    (println "after m2" result)
+  )
+
+  (before m3 [x]
+    (println "before m3" x)
+  )
+  (invariant m3 [x]
+    (println "inv1 m3" x)
+  )
+  (invariant m3 [x]
+    (println "inv2 m3" x)
+  )
+  (around m3 [x wrapped]
+    (println "around m3" x)
+    (wrapped x)
+  )
+  (after m3 [x result]
+    (println "after m3" result)
+  )
+)
+
+(class C
+  (.fn m1 [x]
+    (println "m1" x)
+    (x + 1)
+  )
+  (.fn m2 [x]
+    (println "m2" x)
+    (x + 2)
+  )
+  (.fn m3 [x]
+    (println "m3" x)
+    (throw "boom")
+  )
+)
+
+(A .apply C "m1" "m2" "m3")
+
+(var c (new C))
+(println "result1" (c .m1 1))
+(println "result2" (c .m2 -1))
+(try
+  (c .m3 1)
+catch *
+  (println "caught")
+)

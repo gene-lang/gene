@@ -11,7 +11,9 @@ Class aspects are defined in Gene using `(aspect ...)` and applied in place via 
 3. VM method dispatch detects `VkInterception` and:
    - Executes `before_filter` advices in order; any falsy return aborts invocation and returns NIL.
    - Executes `before` advices in order (FIFO).
+   - Executes `invariant` advices in order (FIFO) immediately before the around/original call.
    - Executes the original method (Gene or native) with implicit `self` and args.
+   - Executes `invariant` advices in order (FIFO) immediately after the around/original call.
    - Executes `after` advices in order (FIFO), passing the same args plus the return value as the final argument; `after` can be marked with `^^replace_result` to replace the return value with the advice result.
    - If an `around` advice is configured, it receives `self`, args, and a wrapped bound method; invoking `(wrapped ...)` executes the original method.
 
@@ -22,6 +24,7 @@ Class aspects are defined in Gene using `(aspect ...)` and applied in place via 
 ## VM Integration
 - Interceptions are checked in unified method call paths (0/1/2/varargs/keyword/selector) to ensure consistency.
 - Return value propagation is handled so `after` advice runs for both native and Gene methods.
+- Invariant advices are skipped entirely when `before_filter` aborts; post-invariants do not run if the around/original call raises.
 
 ## Non-Goals (v1)
 - Function aspects.

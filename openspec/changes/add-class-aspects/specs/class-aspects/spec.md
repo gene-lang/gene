@@ -25,6 +25,21 @@ The system SHALL execute `before_filter`, `before`, and `after` advices in FIFO 
 - **WHEN** an `after` advice is declared as `(after ^^replace_result m [x result] (result + 1))`
 - **THEN** the caller receives the overridden value.
 
+### Requirement: Execute invariant advices
+The system SHALL execute `invariant` advices in FIFO order immediately before the around/original call and in FIFO order immediately after it, with implicit `self` as the first argument and only the method arguments (no result argument).
+
+#### Scenario: Invariant ordering
+- **WHEN** two invariants are defined for a method and an around advice is present
+- **THEN** they run in FIFO order before the around/original call and in FIFO order immediately after it, before any `after` advices.
+
+#### Scenario: Invariants skipped on before_filter
+- **WHEN** a `before_filter` advice returns `false`
+- **THEN** invariant advices are not executed and the call returns `NIL`.
+
+#### Scenario: Invariants not executed after exceptions
+- **WHEN** the around/original call raises an exception
+- **THEN** the post-invariant advices are not executed.
+
 ### Requirement: Execute around advice
 The system SHALL allow a single `around` advice per placeholder, receiving implicit `self`, method arguments, and a wrapped bound method that can be invoked via `(wrapped ...)`.
 

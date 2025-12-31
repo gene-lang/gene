@@ -2080,6 +2080,7 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
       name: name,
       param_names: param_names,
       before_advices: initTable[string, seq[Value]](),
+      invariant_advices: initTable[string, seq[Value]](),
       after_advices: initTable[string, seq[AopAfterAdvice]](),
       around_advices: initTable[string, Value](),
       before_filter_advices: initTable[string, seq[Value]](),
@@ -2159,6 +2160,10 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
           callable: advice_val,
           replace_result: replace_result
         ))
+      of "invariant":
+        if not aspect.invariant_advices.hasKey(target_name):
+          aspect.invariant_advices[target_name] = @[]
+        aspect.invariant_advices[target_name].add(advice_val)
       of "around":
         if aspect.around_advices.hasKey(target_name):
           not_allowed("around advice already defined for '" & target_name & "'")

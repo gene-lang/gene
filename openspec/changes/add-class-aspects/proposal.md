@@ -3,7 +3,7 @@ Gene needs class-level AOP to attach before/after/before_filter/around behavior 
 
 ## What Changes
 - Introduce a class-aspect capability with `(aspect ...)` definition and `(Aspect.apply ...)` runtime application.
-- Intercept method calls to run before/after/before_filter/around advices with implicit `self` and method args.
+- Intercept method calls to run before/after/before_filter/around/invariant advices with implicit `self` and method args.
 - Apply aspects in place to class methods using the mapping supplied to `apply`.
 
 ## Impact

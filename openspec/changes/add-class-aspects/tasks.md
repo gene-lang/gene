@@ -9,10 +9,12 @@
 ## 3. VM Interception Runtime
 - [x] 3.1 Intercept method calls across all arities and keyword/dynamic call paths.
 - [x] 3.2 Execute before_filter/before/after/around advices with correct argument passing and return value handling.
+- [x] 3.3 Execute invariant advices around the around/original call with correct ordering and skip semantics.
 
 ## 4. Tests
 - [x] 4.1 Add Gene-level tests for before/after/before_filter/around on class methods.
 - [x] 4.2 Add coverage for method name mapping and implicit self.
+- [x] 4.3 Add Gene-level tests for invariant ordering and before_filter/exception skip behavior.
 
 ## 5. Validation
 - [ ] 5.1 Run `nimble test`.

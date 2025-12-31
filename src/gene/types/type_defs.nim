@@ -53,6 +53,7 @@ type
     name*: string
     param_names*: seq[string]                  # Method placeholders [m1, m2]
     before_advices*: Table[string, seq[Value]] # param -> [advice fns]
+    invariant_advices*: Table[string, seq[Value]]
     after_advices*: Table[string, seq[AopAfterAdvice]]
     around_advices*: Table[string, Value]      # param -> single around advice
     before_filter_advices*: Table[string, seq[Value]]
@@ -65,6 +66,8 @@ type
     kw_pairs*: seq[(Key, Value)]
     in_around*: bool
     caller_context*: Frame
+    handler_depth*: int
+    exception_escaped*: bool
 
   # Threading support types
   ThreadMessageType* = enum

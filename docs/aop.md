@@ -119,3 +119,12 @@ A: we can use any of those. They must be resolved to a list of methods at apply-
 
 Implementation approach: The doc mentions IkUnifiedCall* checking for aspect instances. Would it be simpler to compile aspects into the callable at apply-time (like we discussed earlier with WrappedCallable), avoiding runtime dispatch overhead?
 A: no it has to be runtime because Gene is too flexible. However we can minimize overhead by having new type of callables for intercepted functions / methods.
+
+## Here are the main gaps still remaining for class AOP as it stands:
+
+  - No constructor interception: Aspect.apply only wraps entries in class.methods, so .ctor/.ctor! can’t be intercepted today.
+  - No per‑instance enable/disable or unapply/reset; once applied it’s permanent and class‑wide.
+  - Only one around advice per placeholder; no stacking/priority/ordering controls beyond FIFO for before/after.
+  - Advices only receive positional args; original keyword args aren’t exposed or auto‑forwarded.
+  - No function-level AOP (only instance methods on classes).
+  - No async advice isolation or special error handling; advice exceptions just propagate.
