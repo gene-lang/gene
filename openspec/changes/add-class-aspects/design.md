@@ -8,7 +8,8 @@ Class aspects are defined in Gene using `(aspect ...)` and applied in place via 
 ## Execution Model
 1. `(aspect ...)` expands to a native macro that builds an `Aspect` value and stores it in the caller namespace.
 2. `(Aspect.apply C "m1" "m2")` maps placeholders to concrete method names and replaces each method callable with a `VkInterception` wrapper.
-3. VM method dispatch detects `VkInterception` and:
+3. Advice entries can be inline logic blocks (compiled to functions) or existing callables referenced by symbol at aspect definition time.
+4. VM method dispatch detects `VkInterception` and:
    - Executes `before_filter` advices in order; any falsy return aborts invocation and returns NIL.
    - Executes `before` advices in order (FIFO).
    - Executes `invariant` advices in order (FIFO) immediately before the around/original call.
@@ -20,6 +21,7 @@ Class aspects are defined in Gene using `(aspect ...)` and applied in place via 
 ## Argument Conventions
 - Advices are methods with implicit `self` as the first argument, matching method semantics.
 - The advice argument matcher is built from the `[args...]` list in the aspect definition.
+- Callable-based advices receive the same arguments as inline advices, including the wrapped bound method for `around` and the result for `after`.
 
 ## VM Integration
 - Interceptions are checked in unified method call paths (0/1/2/varargs/keyword/selector) to ensure consistency.

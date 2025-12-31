@@ -2051,6 +2051,27 @@ proc normalize_advice_args(args_val: Value): Value =
     not_allowed("advice arguments must be an array or symbol")
   normalized
 
+proc resolve_advice_callable(callable_val: Value, caller_frame: Frame): Value =
+  case callable_val.kind
+  of VkFunction, VkNativeFn:
+    return callable_val
+  of VkSymbol:
+    let key = callable_val.str.to_key()
+    var resolved = if caller_frame.ns != nil: caller_frame.ns[key] else: NIL
+    if resolved == NIL:
+      resolved = App.app.global_ns.ref.ns[key]
+    if resolved == NIL:
+      resolved = App.app.gene_ns.ref.ns[key]
+    if resolved == NIL:
+      resolved = App.app.genex_ns.ref.ns[key]
+    if resolved == NIL:
+      not_allowed("advice callable not found: " & callable_val.str)
+    if resolved.kind notin {VkFunction, VkNativeFn}:
+      not_allowed("advice callable must be a function or native function")
+    return resolved
+  else:
+    not_allowed("advice callable must be a symbol")
+
 proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     let gene = gene_value.gene
@@ -2094,8 +2115,8 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
         not_allowed("advice definition must be a gene expression")
       
       let advice_gene = advice_def.gene
-      if advice_gene.children.len < 3:
-        not_allowed("advice requires type, target method, args, and body")
+      if advice_gene.children.len < 2:
+        not_allowed("advice requires type and target")
       
       # advice_gene.type is the advice type (before, after, around, etc.)
       let advice_type = advice_gene.type
@@ -2120,33 +2141,37 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
       # Validate target is in param_names
       if not (target_name in param_names):
         not_allowed("advice target '" & target_name & "' is not a defined method parameter")
-      
-      # Create the advice function from remaining children
-      # children[1] is the args matcher, children[2..] is the body
-      let matcher = new_arg_matcher()
-      let matcher_args = normalize_advice_args(advice_gene.children[1])
-      matcher.parse(matcher_args)
-      matcher.check_hint()
-      
-      var body: seq[Value] = @[]
-      for j in 2..<advice_gene.children.len:
-        body.add(advice_gene.children[j])
-      
-      let advice_fn = new_fn(advice_type_str & "_advice", matcher, body)
-      advice_fn.ns = caller_frame.ns
-      advice_fn.parent_scope = caller_frame.scope
-      
-      # Create scope_tracker with parameter mappings so exec_function can bind args
-      var scope_tracker = new_scope_tracker()
-      for m in matcher.children:
-        if m.kind == MatchData and m.name_key != Key(0):
-          scope_tracker.add(m.name_key)
-      advice_fn.scope_tracker = scope_tracker
-      
-      let advice_fn_ref = new_ref(VkFunction)
-      advice_fn_ref.fn = advice_fn
-      let advice_val = advice_fn_ref.to_ref_value()
-      
+
+      var advice_val: Value
+      if advice_gene.children.len == 2:
+        advice_val = resolve_advice_callable(advice_gene.children[1], caller_frame)
+      else:
+        # Create the advice function from remaining children
+        # children[1] is the args matcher, children[2..] is the body
+        let matcher = new_arg_matcher()
+        let matcher_args = normalize_advice_args(advice_gene.children[1])
+        matcher.parse(matcher_args)
+        matcher.check_hint()
+
+        var body: seq[Value] = @[]
+        for j in 2..<advice_gene.children.len:
+          body.add(advice_gene.children[j])
+
+        let advice_fn = new_fn(advice_type_str & "_advice", matcher, body)
+        advice_fn.ns = caller_frame.ns
+        advice_fn.parent_scope = caller_frame.scope
+
+        # Create scope_tracker with parameter mappings so exec_function can bind args
+        var scope_tracker = new_scope_tracker()
+        for m in matcher.children:
+          if m.kind == MatchData and m.name_key != Key(0):
+            scope_tracker.add(m.name_key)
+        advice_fn.scope_tracker = scope_tracker
+
+        let advice_fn_ref = new_ref(VkFunction)
+        advice_fn_ref.fn = advice_fn
+        advice_val = advice_fn_ref.to_ref_value()
+
       # Add to appropriate advice table
       case advice_type_str:
       of "before":

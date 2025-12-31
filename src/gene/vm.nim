@@ -1189,19 +1189,33 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     let desired = base_count + 1
     desired <= bounds.maxc
 
+  proc call_advice(advice_fn: Value, instance: Value, args: seq[Value]): Value =
+    case advice_fn.kind
+    of VkFunction:
+      return self.exec_method(advice_fn, instance, args)
+    of VkNativeFn:
+      var call_args = newSeq[Value](args.len + 1)
+      call_args[0] = instance
+      for i, arg in args:
+        call_args[i + 1] = arg
+      return call_native_fn(advice_fn.ref.native_fn, self, call_args, false)
+    else:
+      not_allowed("Advice callable must be a function or native function")
+      return NIL
+
   if aspect.enabled:
     if aspect.before_filter_advices.hasKey(param_name):
       for advice_fn in aspect.before_filter_advices[param_name]:
-        let ok = self.exec_method(advice_fn, instance, args)
+        let ok = call_advice(advice_fn, instance, args)
         if not ok.to_bool():
           return NIL
 
     if aspect.before_advices.hasKey(param_name):
       for advice_fn in aspect.before_advices[param_name]:
-        discard self.exec_method(advice_fn, instance, args)
+        discard call_advice(advice_fn, instance, args)
     if aspect.invariant_advices.hasKey(param_name):
       for advice_fn in aspect.invariant_advices[param_name]:
-        discard self.exec_method(advice_fn, instance, args)
+        discard call_advice(advice_fn, instance, args)
     if self.aop_contexts[^1].exception_escaped:
       return NIL
 
@@ -1211,7 +1225,7 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     let ctx_idx = self.aop_contexts.len - 1
     self.aop_contexts[ctx_idx].in_around = true
     let around_args = args & @[wrapped_value]
-    result = self.exec_method(around_fn, instance, around_args)
+    result = call_advice(around_fn, instance, around_args)
     self.aop_contexts[ctx_idx].in_around = false
   else:
     result = self.call_interception_original(interception.original, instance, args, kw_pairs)
@@ -1219,14 +1233,14 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   let exception_escaped = self.aop_contexts[^1].exception_escaped
   if not exception_escaped and aspect.enabled and aspect.invariant_advices.hasKey(param_name):
     for advice_fn in aspect.invariant_advices[param_name]:
-      discard self.exec_method(advice_fn, instance, args)
+      discard call_advice(advice_fn, instance, args)
 
   if not exception_escaped and aspect.enabled and aspect.after_advices.hasKey(param_name):
     for advice_fn in aspect.after_advices[param_name]:
       var after_args = args
       if advice_accepts_result(advice_fn.callable, args.len + 1):
         after_args = args & @[result]
-      let advice_result = self.exec_method(advice_fn.callable, instance, after_args)
+      let advice_result = call_advice(advice_fn.callable, instance, after_args)
       if advice_fn.replace_result:
         result = advice_result
 

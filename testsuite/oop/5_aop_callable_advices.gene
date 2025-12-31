@@ -1,0 +1,33 @@
+# Expected: before_fn 1
+# Expected: VkInstance 1
+# Expected: m1 1
+# Expected: after_fn 2
+# Expected: VkInstance 1 2
+# Expected: result1 2
+
+(fn before_fn [self x]
+  (println "before_fn" x)
+)
+
+(fn after_fn [self x result]
+  (println "after_fn" result)
+)
+
+(aspect A [m1]
+  (before m1 before_fn)
+  (before m1 println)
+  (after m1 after_fn)
+  (after m1 println)
+)
+
+(class C
+  (.fn m1 [x]
+    (println "m1" x)
+    (x + 1)
+  )
+)
+
+(A .apply C "m1")
+
+(var c (new C))
+(println "result1" (c .m1 1))

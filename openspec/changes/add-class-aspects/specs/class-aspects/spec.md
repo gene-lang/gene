@@ -40,6 +40,13 @@ The system SHALL execute `invariant` advices in FIFO order immediately before th
 - **WHEN** the around/original call raises an exception
 - **THEN** the post-invariant advices are not executed.
 
+### Requirement: Reference advice callables
+The system SHALL allow advice definitions to reference existing Gene or native functions using `(before <placeholder> <callable>)`, `(after <placeholder> <callable>)`, `(before_filter <placeholder> <callable>)`, `(around <placeholder> <callable>)`, or `(invariant <placeholder> <callable>)`, where the callable is resolved at aspect definition time.
+
+#### Scenario: Callable-based before advice
+- **WHEN** an aspect defines `(before m log_fn)` and `log_fn` is a function in the current namespace
+- **THEN** calls to the intercepted method invoke `log_fn` with implicit `self` and the method arguments.
+
 ### Requirement: Execute around advice
 The system SHALL allow a single `around` advice per placeholder, receiving implicit `self`, method arguments, and a wrapped bound method that can be invoked via `(wrapped ...)`.
 
