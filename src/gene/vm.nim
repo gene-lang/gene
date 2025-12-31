@@ -1139,11 +1139,6 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   defer:
     discard self.aop_contexts.pop()
 
-  var method_args = newSeq[Value](args.len + 1)
-  method_args[0] = instance
-  for i, arg in args:
-    method_args[i + 1] = arg
-
   proc matcher_positional_bounds(matcher: RootMatcher): tuple[minc: int, maxc: int, has_splat: bool] =
     var minc = 0
     var maxc = 0
@@ -1171,31 +1166,31 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   if aspect.enabled:
     if aspect.before_filter_advices.hasKey(param_name):
       for advice_fn in aspect.before_filter_advices[param_name]:
-        let ok = self.exec_function(advice_fn, method_args)
+        let ok = self.exec_method(advice_fn, instance, args)
         if not ok.to_bool():
           return NIL
 
     if aspect.before_advices.hasKey(param_name):
       for advice_fn in aspect.before_advices[param_name]:
-        discard self.exec_function(advice_fn, method_args)
+        discard self.exec_method(advice_fn, instance, args)
 
   var result: Value
   if aspect.enabled and aspect.around_advices.hasKey(param_name):
     let around_fn = aspect.around_advices[param_name]
     let ctx_idx = self.aop_contexts.len - 1
     self.aop_contexts[ctx_idx].in_around = true
-    let around_args = method_args & @[self.aop_contexts[ctx_idx].wrapped]
-    result = self.exec_function(around_fn, around_args)
+    let around_args = args & @[self.aop_contexts[ctx_idx].wrapped]
+    result = self.exec_method(around_fn, instance, around_args)
     self.aop_contexts[ctx_idx].in_around = false
   else:
     result = self.call_interception_original(interception.original, instance, args, kw_pairs)
 
   if aspect.enabled and aspect.after_advices.hasKey(param_name):
     for advice_fn in aspect.after_advices[param_name]:
-      var after_args = method_args
-      if advice_accepts_result(advice_fn.callable, method_args.len):
-        after_args = method_args & @[result]
-      let advice_result = self.exec_function(advice_fn.callable, after_args)
+      var after_args = args
+      if advice_accepts_result(advice_fn.callable, args.len + 1):
+        after_args = args & @[result]
+      let advice_result = self.exec_method(advice_fn.callable, instance, after_args)
       if advice_fn.replace_result:
         result = advice_result
 

@@ -1,4 +1,5 @@
 # Expected: before m1 1
+# Expected: self tag ok
 # Expected: before m1 1
 # Expected: m1 1
 # Expected: after m1 1 2
@@ -12,6 +13,7 @@
 (aspect A [m1 m2]
   (before m1 [x]
     (println "before m1" x)
+    (println "self tag" /tag)
   )
   (before m1 [x]
     (println "before m1" x)
@@ -46,6 +48,7 @@
 (A .apply C "m1" "m2")
 
 (var c (new C))
+(c/tag = "ok")
 (println "result1" (c .m1 1))
 (println "result2" (c .m2 2))
 (println "result3" (c .m2 -1))
