@@ -35,6 +35,8 @@ proc exec*(self: ptr VirtualMachine): Value
 proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Value
 proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value]): Value
 proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], kw_pairs: seq[(Key, Value)]): Value
+proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], caller_context: Frame): Value
+proc exec_method_kw_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], kw_pairs: seq[(Key, Value)], caller_context: Frame): Value
 proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj)
 proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
 proc spawn_thread(code: ptr Gene, return_value: bool): Value
@@ -845,6 +847,8 @@ proc call_instance_method(self: ptr VirtualMachine, instance: Value, method_name
     new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
     new_frame.target = meth.callable
     new_frame.scope = scope
+    if f.is_macro_like:
+      new_frame.caller_context = self.frame
     let args_gene = new_gene_value()
     args_gene.gene.children.add(instance)
     for arg in args:
@@ -947,6 +951,8 @@ proc call_super_method_resolved(self: ptr VirtualMachine, parent_class: Class, i
     new_frame.kind = if expect_macro: FkMacroMethod else: FkMethod
     new_frame.target = meth.callable
     new_frame.scope = scope
+    if expect_macro:
+      new_frame.caller_context = self.frame
     let args_gene = new_gene_value()
     args_gene.gene.children.add(instance)
     for arg in args:
@@ -1145,7 +1151,8 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     instance: instance,
     args: args,
     kw_pairs: kw_pairs,
-    in_around: false
+    in_around: false,
+    caller_context: self.frame
   )
   self.aop_contexts.add(ctx)
   defer:
@@ -1212,11 +1219,18 @@ proc call_bound_method(self: ptr VirtualMachine, target: Value, args: seq[Value]
                        kw_pairs: seq[(Key, Value)] = @[]): Value =
   let bm = target.ref.bound_method
   let callable = bm.`method`.callable
+  var caller_ctx = self.frame
+  if callable.kind == VkFunction and callable.ref.fn.is_macro_like and self.aop_contexts.len > 0:
+    let ctx = self.aop_contexts[^1]
+    if ctx.in_around and ctx.caller_context != nil and
+       same_value_identity(bm.self, ctx.instance) and
+       same_value_identity(callable, ctx.wrapped):
+      caller_ctx = ctx.caller_context
   case callable.kind
   of VkFunction:
     if kw_pairs.len > 0:
-      return self.exec_method_kw(callable, bm.self, args, kw_pairs)
-    return self.exec_method(callable, bm.self, args)
+      return self.exec_method_kw_impl(callable, bm.self, args, kw_pairs, caller_ctx)
+    return self.exec_method_impl(callable, bm.self, args, caller_ctx)
   of VkNativeFn:
     let has_kw = kw_pairs.len > 0
     let offset = if has_kw: 1 else: 0
@@ -2906,6 +2920,8 @@ proc exec*(self: ptr VirtualMachine): Value =
                 r.frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
                 r.frame.target = target
                 r.frame.scope = scope
+                if f.is_macro_like:
+                  r.frame.caller_context = self.frame
                 # Prepare args with self as first argument
                 let args_gene = new_gene(NIL)
                 args_gene.children.add(bm.self)
@@ -2963,6 +2979,8 @@ proc exec*(self: ptr VirtualMachine): Value =
                   r.frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
                   r.frame.target = target
                   r.frame.scope = scope
+                  if f.is_macro_like:
+                    r.frame.caller_context = self.frame
                   # Initialize args with instance as first argument (self)
                   # Additional arguments will be collected by IkGeneAddChild
                   let args_gene = new_gene(NIL)
@@ -5403,6 +5421,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = init_method.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(instance)  # Add self as first argument
               if not f.matcher.is_empty():
@@ -6154,6 +6174,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -6305,6 +6327,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -6466,6 +6490,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -6579,6 +6605,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(obj)  # Add self as first argument
               for arg in args:
@@ -6704,6 +6732,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
 
               # Process arguments with keyword support
               if not f.matcher.is_empty():
@@ -6817,9 +6847,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                     scope.members[arg_idx] = arg
               
               var new_frame = new_frame()
-              new_frame.kind = FkMethod
+              new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
               new_frame.target = meth.callable
               new_frame.scope = scope
+              if f.is_macro_like:
+                new_frame.caller_context = self.frame
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -6982,7 +7014,8 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
   # The VM state should already be restored by return or IkEnd
   return result
 
-proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value]): Value {.exportc.} =
+proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value],
+                      caller_context: Frame): Value =
   ## Execute a Gene method with given instance (self) and arguments.
   ## This properly sets up a method frame with self bound in scope.
   if fn.kind != VkFunction:
@@ -7016,10 +7049,14 @@ proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: se
   
   # Create a new frame for the method
   let new_frame = new_frame()
-  new_frame.kind = FkMethod  # Use FkMethod for proper method semantics
+  new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
   new_frame.target = fn
   new_frame.scope = scope
   new_frame.ns = f.ns
+  if f.is_macro_like:
+    let ctx = if caller_context != nil: caller_context else: saved_frame
+    if ctx != nil:
+      new_frame.caller_context = ctx
   if saved_frame != nil:
     saved_frame.ref_count.inc()
   new_frame.caller_frame = saved_frame
@@ -7056,8 +7093,11 @@ proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: se
   
   return result
 
-proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value],
-                     kw_pairs: seq[(Key, Value)]): Value {.exportc.} =
+proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value]): Value {.exportc.} =
+  return self.exec_method_impl(fn, instance, args, self.frame)
+
+proc exec_method_kw_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value],
+                         kw_pairs: seq[(Key, Value)], caller_context: Frame): Value =
   ## Execute a Gene method with keyword arguments.
   if fn.kind != VkFunction:
     return NIL
@@ -7088,10 +7128,14 @@ proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args:
     process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
 
   let new_frame = new_frame()
-  new_frame.kind = FkMethod
+  new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
   new_frame.target = fn
   new_frame.scope = scope
   new_frame.ns = f.ns
+  if f.is_macro_like:
+    let ctx = if caller_context != nil: caller_context else: saved_frame
+    if ctx != nil:
+      new_frame.caller_context = ctx
   if saved_frame != nil:
     saved_frame.ref_count.inc()
   new_frame.caller_frame = saved_frame
@@ -7110,6 +7154,10 @@ proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args:
 
   let result = self.exec_continue()
   return result
+
+proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value],
+                     kw_pairs: seq[(Key, Value)]): Value {.exportc.} =
+  return self.exec_method_kw_impl(fn, instance, args, kw_pairs, self.frame)
 
 proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value =
   ## Execute a callable from native code while preserving VM state.

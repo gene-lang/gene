@@ -64,6 +64,7 @@ type
     args*: seq[Value]
     kw_pairs*: seq[(Key, Value)]
     in_around*: bool
+    caller_context*: Frame
 
   # Threading support types
   ThreadMessageType* = enum
