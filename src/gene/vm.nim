@@ -1128,6 +1128,18 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     not_allowed("Aspect interception requires a VkAspect")
   let aspect = aspect_val.ref.aspect
   let param_name = interception.param_name
+  let wrapped_method = Method(
+    class: nil,
+    name: param_name,
+    callable: interception.original,
+    is_macro: false
+  )
+  let wrapped_ref = new_ref(VkBoundMethod)
+  wrapped_ref.bound_method = BoundMethod(
+    self: instance,
+    `method`: wrapped_method
+  )
+  let wrapped_value = wrapped_ref.to_ref_value()
   let ctx = AopContext(
     wrapped: interception.original,
     instance: instance,
@@ -1179,7 +1191,7 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     let around_fn = aspect.around_advices[param_name]
     let ctx_idx = self.aop_contexts.len - 1
     self.aop_contexts[ctx_idx].in_around = true
-    let around_args = args & @[self.aop_contexts[ctx_idx].wrapped]
+    let around_args = args & @[wrapped_value]
     result = self.exec_method(around_fn, instance, around_args)
     self.aop_contexts[ctx_idx].in_around = false
   else:
@@ -1195,6 +1207,46 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
         result = advice_result
 
   result
+
+proc call_bound_method(self: ptr VirtualMachine, target: Value, args: seq[Value],
+                       kw_pairs: seq[(Key, Value)] = @[]): Value =
+  let bm = target.ref.bound_method
+  let callable = bm.`method`.callable
+  case callable.kind
+  of VkFunction:
+    if kw_pairs.len > 0:
+      return self.exec_method_kw(callable, bm.self, args, kw_pairs)
+    return self.exec_method(callable, bm.self, args)
+  of VkNativeFn:
+    let has_kw = kw_pairs.len > 0
+    let offset = if has_kw: 1 else: 0
+    var call_args = newSeq[Value](args.len + 1 + offset)
+    if has_kw:
+      var kw_map = new_map_value()
+      for (k, v) in kw_pairs:
+        map_data(kw_map)[k] = v
+      call_args[0] = kw_map
+    call_args[offset] = bm.self
+    for i, arg in args:
+      call_args[i + offset + 1] = arg
+    return call_native_fn(callable.ref.native_fn, self, call_args, has_kw)
+  of VkNativeMethod:
+    let has_kw = kw_pairs.len > 0
+    let offset = if has_kw: 1 else: 0
+    var call_args = newSeq[Value](args.len + 1 + offset)
+    if has_kw:
+      var kw_map = new_map_value()
+      for (k, v) in kw_pairs:
+        map_data(kw_map)[k] = v
+      call_args[0] = kw_map
+    call_args[offset] = bm.self
+    for i, arg in args:
+      call_args[i + offset + 1] = arg
+    return call_native_fn(callable.ref.native_method, self, call_args, has_kw)
+  of VkInterception:
+    return self.run_intercepted_method(callable.ref.interception, bm.self, args, kw_pairs)
+  else:
+    not_allowed("Bound method must wrap a function or native function")
 
 proc current_self_value(frame: Frame): Value =
   if frame == nil:
@@ -5291,6 +5343,10 @@ proc exec*(self: ptr VirtualMachine): Value =
           let result = target.ref.native_fn(self, nil, 0, false)
           self.frame.push(result)
 
+        of VkBoundMethod:
+          let result = self.call_bound_method(target, @[], @[])
+          self.frame.push(result)
+
         of VkBlock:
           let b = target.ref.block
           if b.body_compiled == nil:
@@ -5455,6 +5511,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkNativeFn:
           # Single argument - use new signature with helper
           let result = call_native_fn(target.ref.native_fn, self, [arg])
+          self.frame.push(result)
+
+        of VkBoundMethod:
+          let result = self.call_bound_method(target, @[arg], @[])
           self.frame.push(result)
 
         of VkBlock:
@@ -5645,6 +5705,10 @@ proc exec*(self: ptr VirtualMachine): Value =
           let result = call_native_fn(target.ref.native_fn, self, args)
           self.frame.push(result)
 
+        of VkBoundMethod:
+          let result = self.call_bound_method(target, args, @[])
+          self.frame.push(result)
+
         of VkInstance, VkCustom:
           # Forward to 'call' method if it exists
           if call_instance_method(self, target, "call", args):
@@ -5793,6 +5857,10 @@ proc exec*(self: ptr VirtualMachine): Value =
           let result = call_native_fn(target.ref.native_fn, self, native_args, kw_pairs.len > 0)
           self.frame.push(result)
 
+        of VkBoundMethod:
+          let result = self.call_bound_method(target, args, kw_pairs)
+          self.frame.push(result)
+
         of VkInstance, VkCustom:
           if call_instance_method(self, target, "call", args, kw_pairs):
             inst = self.cu.instructions[self.pc].addr
@@ -5910,6 +5978,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkNativeFn:
           # Multi-argument - use new signature with helper
           let result = call_native_fn(target.ref.native_fn, self, args)
+          self.frame.push(result)
+
+        of VkBoundMethod:
+          let result = self.call_bound_method(target, args, @[])
           self.frame.push(result)
 
         of VkInstance, VkCustom:

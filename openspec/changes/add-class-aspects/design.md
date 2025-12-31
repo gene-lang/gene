@@ -13,7 +13,7 @@ Class aspects are defined in Gene using `(aspect ...)` and applied in place via 
    - Executes `before` advices in order (FIFO).
    - Executes the original method (Gene or native) with implicit `self` and args.
    - Executes `after` advices in order (FIFO), passing the same args plus the return value as the final argument; `after` can be marked with `^^replace_result` to replace the return value with the advice result.
-   - If an `around` advice is configured, it receives `self`, args, and a wrapped callable; `call_aop` is used to invoke the wrapped callable.
+   - If an `around` advice is configured, it receives `self`, args, and a wrapped bound method; invoking `(wrapped ...)` executes the original method.
 
 ## Argument Conventions
 - Advices are methods with implicit `self` as the first argument, matching method semantics.

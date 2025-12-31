@@ -26,8 +26,8 @@ The system SHALL execute `before_filter`, `before`, and `after` advices in FIFO 
 - **THEN** the caller receives the overridden value.
 
 ### Requirement: Execute around advice
-The system SHALL allow a single `around` advice per placeholder, receiving implicit `self`, method arguments, and a wrapped callable that can be invoked via `(call_aop wrapped ...)`.
+The system SHALL allow a single `around` advice per placeholder, receiving implicit `self`, method arguments, and a wrapped bound method that can be invoked via `(wrapped ...)`.
 
 #### Scenario: Around wraps a method
-- **WHEN** an `around` advice calls `(call_aop wrapped ...)`
+- **WHEN** an `around` advice calls `(wrapped ...)`
 - **THEN** the original method runs and its return value is propagated back to the caller.

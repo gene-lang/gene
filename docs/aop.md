@@ -106,7 +106,7 @@ before_filter vs before: The doc mentions "Before / before filter" but doesn't d
 A: before_filter is a before advice that can skip execution, before always proceeds
 
 Around advice and wrapped: How does around call the wrapped target? Is there a special variable like wrapped, or a proceed function?
-A: use a special construct like (call_aop wrapped). Wrapped is a regular argument passed to the around advice at the end.
+A: call the wrapped bound method directly like (wrapped ...). Wrapped is a regular argument passed to the around advice at the end.
 
 Advice ordering with multiple aspects: If multiple aspects are applied, what's the execution order? LIFO (last applied runs first) or FIFO?
 A: before and after are FIFO, there should be only one around advice per aspect instance.

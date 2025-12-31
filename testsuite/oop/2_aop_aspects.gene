@@ -30,7 +30,7 @@
   )
   (around m2 [x wrapped]
     (println "around m2" x)
-    (call_aop wrapped)
+    (wrapped x)
   )
 )
 

@@ -2238,42 +2238,6 @@ proc aspect_apply(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   
   return NIL
 
-proc call_aop(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-  if vm == nil or vm.aop_contexts.len == 0:
-    not_allowed("call_aop requires an active around advice")
-  if get_positional_count(arg_count, has_keyword_args) < 1:
-    not_allowed("call_aop requires a wrapped callable argument")
-  let wrapped = get_positional_arg(args, 0, has_keyword_args)
-  let ctx = vm.aop_contexts[^1]
-  if not ctx.in_around:
-    not_allowed("call_aop can only be used inside an around advice")
-  if cast[uint64](wrapped) != cast[uint64](ctx.wrapped):
-    not_allowed("call_aop wrapped value does not match current advice context")
-
-  case ctx.wrapped.kind
-  of VkFunction:
-    if ctx.kw_pairs.len > 0:
-      let result = ({.cast(gcsafe).}: vm.exec_method_kw(ctx.wrapped, ctx.instance, ctx.args, ctx.kw_pairs))
-      return result
-    let result = ({.cast(gcsafe).}: vm.exec_method(ctx.wrapped, ctx.instance, ctx.args))
-    return result
-  of VkNativeFn:
-    let has_kw = ctx.kw_pairs.len > 0
-    let offset = if has_kw: 1 else: 0
-    var call_args = newSeq[Value](ctx.args.len + 1 + offset)
-    if has_kw:
-      var kw_map = new_map_value()
-      for (k, v) in ctx.kw_pairs:
-        map_data(kw_map)[k] = v
-      call_args[0] = kw_map
-    call_args[offset] = ctx.instance
-    for i, arg in ctx.args:
-      call_args[i + offset + 1] = arg
-    return call_native_fn(ctx.wrapped.ref.native_fn, vm, call_args, has_kw)
-  else:
-    not_allowed("call_aop wrapped callable must be a function or native function")
-
-
 proc vm_compile(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if arg_count < 1:
@@ -2925,7 +2889,6 @@ proc init_stdlib*() =
   App.app.aspect_class = aspect_class_ref.to_ref_value()
   App.app.gene_ns.ns["Aspect".to_key()] = App.app.aspect_class
   global_ns["Aspect".to_key()] = App.app.aspect_class
-  global_ns["call_aop".to_key()] = NativeFn(call_aop).to_value()
 
   load_logging_config()
 
