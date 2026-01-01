@@ -1846,6 +1846,7 @@ proc parse_json_string(json_str: string): Value {.gcsafe.} =
     return parse_json_node(parsed)
 
 proc value_to_json(val: Value): string {.gcsafe.} =
+  # Note: json.escapeJson already adds surrounding quotes
   case val.kind
   of VkNil:
     result = "null"
@@ -1856,9 +1857,9 @@ proc value_to_json(val: Value): string {.gcsafe.} =
   of VkFloat:
     result = $val.to_float
   of VkString:
-    result = "\"" & json.escapeJson(val.str) & "\""
+    result = json.escapeJson(val.str)
   of VkSymbol:
-    result = "\"" & json.escapeJson(val.str) & "\""
+    result = json.escapeJson(val.str)
   of VkArray:
     var items: seq[string] = @[]
     for item in array_data(val):
@@ -1878,10 +1879,10 @@ proc value_to_json(val: Value): string {.gcsafe.} =
           $key_val.to_float
         else:
           $key_val
-      items.add("\"" & json.escapeJson(key_str) & "\":" & value_to_json(v))
+      items.add(json.escapeJson(key_str) & ":" & value_to_json(v))
     result = "{" & items.join(",") & "}"
   else:
-    result = "\"" & json.escapeJson($val) & "\""
+    result = json.escapeJson($val)
 
 # Show the code
 # JIT the code (create a temporary block, reuse the frame)
