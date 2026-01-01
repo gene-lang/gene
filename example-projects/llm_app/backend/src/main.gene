@@ -6,24 +6,16 @@
 # Configuration
 (var PORT 3000)
 (var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
-(var model NIL)
-(var session NIL)
+(var model)
+(var session)
 
 # Initialize LLM if model path is configured
 (fn init_llm []
   (if (MODEL_PATH != "")
-    (do
-      (println "Loading LLM model from:" MODEL_PATH)
-      (try
-        (model = (genex/llm/load_model MODEL_PATH))
-        (session = (model .new_session {^max_tokens 512}))
-        (println "LLM model loaded successfully")
-      catch *
-        (println "Failed to load LLM model:" ($ex .message))
-        (model = NIL)
-        (session = NIL)
-      )
-    )
+    (println "Loading LLM model from:" MODEL_PATH)
+    (model = (genex/llm/load_model MODEL_PATH))
+    (session = (model .new_session {^max_tokens 512}))
+    (println "LLM model loaded successfully")
   else
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   )
@@ -34,7 +26,7 @@
 
 # Escape string for JSON
 (fn escape_json [s]
-  (if (s == NIL)
+  (if (s == nil)
     (return "null")
   )
   (var result (s .replace "\\" "\\\\"))
@@ -49,11 +41,11 @@
 (fn parse_response [text]
   (var think_start (text .index "<think>"))
   (if (think_start < 0)
-    (return [NIL (text .trim)])
+    (return [nil (text .trim)])
   )
   (var think_end (text .index "</think>"))
   (if (think_end < 0)
-    (return [NIL (text .trim)])
+    (return [nil (text .trim)])
   )
   # substr takes (start, length), not (start, end)
   (var think_len ((think_end - think_start) - 7))
@@ -64,7 +56,7 @@
 
 # Health check endpoint
 (fn handle_health [req]
-  (var is_loaded (model != NIL))
+  (var is_loaded (model != nil))
   (var loaded_str "false")
   (if is_loaded
     (loaded_str = "true")
@@ -78,7 +70,7 @@
   (var req_body req/body)
 
   # Parse JSON body
-  (var parsed NIL)
+  (var parsed nil)
   (try
     (parsed = (gene/json/parse req_body))
   catch *
@@ -88,7 +80,7 @@
 
   # Extract message
   (var message (parsed .get "message"))
-  (if (message == NIL)
+  (if (message == nil)
     (var err_body #"{#{Q}error#{Q}:#{Q}Missing 'message' field#{Q}}")
     (return (respond 400 err_body {^Content-Type "application/json"}))
   )
@@ -96,27 +88,23 @@
   # Generate response
   (var response_text "")
   (var tokens_used 0)
-  (var thinking NIL)
+  (var thinking)
 
-  (if (session != NIL)
-    (do
-      # Use actual LLM with chat format
-      (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
-      (var result (session .infer prompt))
-      (var raw_text (result .get "text"))
-      (var tokens (result .get "tokens"))
-      (tokens_used = (tokens .size))
-      # Parse thinking vs answer
-      (var parsed_resp (parse_response raw_text))
-      (thinking = (parsed_resp .get 0))
-      (response_text = (parsed_resp .get 1))
-    )
+  (if session
+    # Use actual LLM with chat format
+    (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+    (var result (session .infer prompt))
+    (var raw_text (result .get "text"))
+    (var tokens (result .get "tokens"))
+    (tokens_used = (tokens .size))
+    # Parse thinking vs answer
+    (var parsed_resp (parse_response raw_text))
+    (thinking = (parsed_resp .get 0))
+    (response_text = (parsed_resp .get 1))
   else
-    (do
-      # Mock response when no model is loaded
-      (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
-      (tokens_used = 15)
-    )
+    # Mock response when no model is loaded
+    (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
+    (tokens_used = 15)
   )
 
   # Build JSON response
