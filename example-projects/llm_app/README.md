@@ -2,6 +2,79 @@
 
 A simple chat application demonstrating Gene's HTTP server capabilities with LLM integration.
 
+## The Gene Language
+
+Gene is a Lisp-like programming language with a unique data structure at its core.
+
+### The Gene Data Type (Central Concept)
+
+The **Gene data structure** is what makes this language unique. Every Gene expression combines three components:
+
+```
+( type  ^prop1 val1 ^prop2 val2  child1 child2 ... )
+  └type┘└─────properties────────┘└──children─────┘
+```
+
+For example: `(Person ^name "Alice" ^age 30 child1 child2)`
+- **Type**: `Person` - the head/operator
+- **Properties**: `{^name "Alice" ^age 30}` - named attributes
+- **Children**: `[child1 child2]` - positional elements
+
+This unified structure means **code IS data** (homoiconicity), enabling powerful metaprogramming.
+
+### Key Syntax Features
+
+```gene
+# Variables
+(var x 10)                    # Declaration
+(x = 20)                      # Assignment
+
+# Functions
+(fn add [a b] (a + b))        # Definition
+(add 1 2)                     # Call
+
+# Maps with ^ prefix for keys
+(var m {^name "Alice" ^age 30})
+m/name                        # Access: "Alice"
+
+# Arrays
+(var arr [1 2 3])
+arr/0                         # Access: 1
+
+# Control flow
+(if (x > 5)
+  "big"
+elif (x == 5)
+  "equal"
+else
+  "small"
+)
+
+# Classes
+(class Point
+  (.ctor [x y]
+    (/x = x)                  # / for self properties
+    (/y = y)
+  )
+  (.fn distance _
+    (sqrt ((/x * /x) + (/y * /y)))
+  )
+)
+
+# Method calls
+(var p (new Point 3 4))
+p/.distance                   # Shorthand for no-arg methods
+(p .move 1 2)                 # Method with arguments
+```
+
+### Why Gene?
+
+- **Homoiconic**: Code is represented as Gene data structures, enabling macros and metaprogramming
+- **Expressive**: Combines Lisp elegance with modern syntax conveniences
+- **Integrated**: Built-in HTTP server, LLM support, and async capabilities
+
+See `examples/full.gene` for a comprehensive syntax reference.
+
 ## Architecture
 
 ```

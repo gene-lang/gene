@@ -352,6 +352,11 @@ proc to_symbol_value*(s: string): Value =
 proc to_key*(s: string): Key {.inline.} =
   cast[Key](to_symbol_value(s))
 
+# Extract symbol index from Key for symbol table lookup
+# Key is a symbol value cast to int64, so we need to extract the symbol index
+proc symbol_index*(k: Key): int {.inline.} =
+  int(cast[uint64](k) and PAYLOAD_MASK)
+
 
 #################### Value ######################
 
@@ -1174,7 +1179,7 @@ proc to_gene_value*(v: ptr Gene): Value {.inline.} =
 proc `$`*(self: ptr Gene): string =
   result = "(" & $self.type
   for k, v in self.props:
-    result &= " ^" & get_symbol(k.int64) & " " & $v
+    result &= " ^" & get_symbol(k.symbol_index) & " " & $v
   for child in self.children:
     result &= " " & $child
   result &= ")"

@@ -1,6 +1,37 @@
 #!/usr/bin/env gene run
 # Gene Programming Language - Complete Syntax Reference
 
+# ===== THE GENE DATA TYPE (Central to the Language!) =====
+# The Gene data structure is unique and fundamental to the language.
+# It combines THREE components: Type, Properties, and Children
+#
+# Syntax: ( type  ^prop1 val1 ^prop2 val2  child1 child2 ... )
+#          └type┘└─────properties────────┘└──children─────┘
+#
+# Example: (Person ^name "Alice" ^age 30 child1 child2)
+#   - Type: Person
+#   - Properties: {^name "Alice" ^age 30}
+#   - Children: [child1 child2]
+
+# Create a Gene value using the : (quote) prefix
+# This prevents evaluation, preserving the structure as data
+(var p
+  :(Person ^name "Alice" ^age 30
+    child1 child2 (Person ^name "Bob" ^age 25)))
+(println "Gene value:" p)
+(println "  type    =" p/.type)
+(println "  props   =" p/.props)
+(println "  children=" p/.children)
+
+# More complex example - a quoted if expression
+(var expr :(if (x > 0) "positive" else "non-positive"))
+(println "If expression:" expr)
+(println "  type    =" expr/.type)       # => if
+(println "  children=" expr/.children)   # => [(x > 0) "positive" ...]
+
+# Gene is homoiconic - code IS data
+# This makes metaprogramming natural
+
 # ===== 1. VARIABLES & ASSIGNMENT =====
 (var x 10)                    # Declaration
 (x = 20)                      # Assignment
