@@ -1,0 +1,140 @@
+#!/usr/bin/env gene run
+
+# LLM Chat Backend Server
+# Provides REST API endpoints for chat with a local LLM
+
+# Configuration
+(var PORT 3000)
+(var MODEL_PATH (or ($env .get "GENE_LLM_MODEL") ""))
+(var model NIL)
+(var session NIL)
+
+# Initialize LLM if model path is configured
+(fn init_llm []
+  (if (MODEL_PATH != "")
+    (do
+      (println "Loading LLM model from:" MODEL_PATH)
+      (try
+        (model = (genex/llm/load_model MODEL_PATH))
+        (session = (model .new_session {^max_tokens 512}))
+        (println "LLM model loaded successfully")
+      catch *
+        (println "Failed to load LLM model:" ($ex .message))
+        (model = NIL)
+        (session = NIL)
+      )
+    )
+  else
+    (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
+  )
+)
+
+# CORS headers for cross-origin requests
+(fn add_cors_headers [headers]
+  (var result {})
+  (for key in (headers .keys)
+    (result .set key (headers .get key))
+  )
+  (result .set "Access-Control-Allow-Origin" "*")
+  (result .set "Access-Control-Allow-Methods" "GET, POST, OPTIONS")
+  (result .set "Access-Control-Allow-Headers" "Content-Type")
+  result
+)
+
+# JSON response helper
+(fn json_response [status data]
+  (var body (data .to_json))
+  (respond status body (add_cors_headers {^Content-Type "application/json"}))
+)
+
+# Handle OPTIONS preflight requests
+(fn handle_options [req]
+  (respond 204 "" (add_cors_headers {}))
+)
+
+# Health check endpoint
+(fn handle_health [req]
+  (var status {
+    ^status "ok"
+    ^model_loaded (model != NIL)
+  })
+  (json_response 200 status)
+)
+
+# Chat endpoint
+(fn handle_chat [req]
+  (var body req/body)
+
+  # Parse JSON body
+  (var parsed NIL)
+  (try
+    (parsed = (gene/json/parse body))
+  catch *
+    (return (json_response 400 {^error "Invalid JSON"}))
+  )
+
+  # Extract message
+  (var message (parsed .get "message"))
+  (if (message == NIL)
+    (return (json_response 400 {^error "Missing 'message' field"}))
+  )
+
+  # Generate response
+  (var response_text "")
+  (var tokens_used 0)
+
+  (if (session != NIL)
+    (do
+      # Use actual LLM
+      (var result (session .infer message))
+      (response_text = (result .get "text"))
+      (var tokens (result .get "tokens"))
+      (tokens_used = (tokens .size))
+    )
+  else
+    (do
+      # Mock response when no model is loaded
+      (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
+      (tokens_used = 15)
+    )
+  )
+
+  (json_response 200 {
+    ^response response_text
+    ^tokens_used tokens_used
+  })
+)
+
+# Main request router
+(fn handle_request [req]
+  (var path req/path)
+  (var method req/method)
+
+  (println method path)
+
+  # Handle CORS preflight
+  (if (method == "OPTIONS")
+    (return (handle_options req))
+  )
+
+  # Route requests
+  (if (path == "/api/health")
+    (handle_health req)
+  elif (and (path == "/api/chat") (method == "POST"))
+    (handle_chat req)
+  else
+    (json_response 404 {^error "Not found"})
+  )
+)
+
+# Start server
+(println "=== LLM Chat Backend ===")
+(init_llm)
+(println "Starting server on http://localhost:" PORT)
+(println "Endpoints:")
+(println "  GET  /api/health - Health check")
+(println "  POST /api/chat   - Send chat message")
+(println)
+
+(start_server PORT handle_request)
+(gene/run_forever)

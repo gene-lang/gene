@@ -27,6 +27,8 @@ cachegrind.*
 scratch*
 .aider*
 
+models/
+
 # Test executables
 tests/test_*
 !tests/test_*.nim

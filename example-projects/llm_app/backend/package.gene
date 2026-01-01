@@ -1,0 +1,11 @@
+^name "llm_chat_backend"
+^version "0.1.0"
+^license "MIT"
+^author [
+  "Gene Team"
+]
+^gene-version "*"
+^main-module "main"
+^source-dir "src"
+^homepage "https://github.com/gcao/gene"
+^repository "https://github.com/gcao/gene.git"
