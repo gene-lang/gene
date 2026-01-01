@@ -17,4 +17,4 @@
 ## 3. Integration & Documentation
 
 - [x] 3.1 Add README in `example-projects/llm_app/` with setup instructions
-- [ ] 3.2 Test end-to-end chat flow
+- [x] 3.2 Test end-to-end chat flow

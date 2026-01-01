@@ -62,7 +62,7 @@ All HTTP requests return Futures that can be awaited:
 (start_server 8080 handler)
 
 # Run event loop
-(gene/run_forever)
+(run_forever)
 ```
 
 #### 2. Creating Responses
@@ -224,7 +224,7 @@ Get `http_server.gene` fully working with:
 ```gene
 # Currently requires native function handler
 (start_server 8080 nil)  # All requests return 404
-(gene/run_forever)
+(run_forever)
 ```
 
 ### Client Example (Working)

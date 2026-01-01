@@ -1,10 +1,10 @@
 ## ADDED Requirements
 
 ### Requirement: Scheduler Mode
-The VM SHALL provide a scheduler mode that keeps the main loop running to poll async events and execute callbacks inline when `gene/run_forever` is called.
+The VM SHALL provide a scheduler mode that keeps the main loop running to poll async events and execute callbacks inline when `run_forever` is called.
 
 #### Scenario: Scheduler keeps running
-- **WHEN** `gene/run_forever` is invoked and no callbacks are immediately pending
+- **WHEN** `run_forever` is invoked and no callbacks are immediately pending
 - **THEN** the VM continues to poll and remain active until work arrives or the scheduler is stopped
 
 ### Requirement: Polling Executes Callbacks Inline
@@ -51,11 +51,11 @@ HTTP request handling SHALL invoke the Gene handler inline and send the response
 - **THEN** the handler executes inline and the response is sent on return
 
 ### Requirement: Unified run_forever
-Only the stdlib `gene/run_forever` entrypoint SHALL run the scheduler loop; extensions SHALL delegate or remove duplicate loops.
+Only the stdlib `run_forever` entrypoint SHALL run the scheduler loop; extensions SHALL delegate or remove duplicate loops.
 
 #### Scenario: Extension delegates to stdlib
 - **WHEN** an extension needs a run-forever loop
-- **THEN** it uses the stdlib `gene/run_forever` scheduler instead of starting its own loop
+- **THEN** it uses the stdlib `run_forever` scheduler instead of starting its own loop
 
 ### Requirement: Idle Backoff
 When scheduler mode has no pending work, the VM SHALL yield or sleep to avoid busy waiting.

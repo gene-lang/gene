@@ -138,5 +138,5 @@
   (println "Press Ctrl+C to stop")
 
   # Run forever
-  (gene/run_forever)
+  (run_forever)
 )

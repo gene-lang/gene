@@ -29,10 +29,10 @@ llm_app/
 cd backend
 
 # Run with the included Qwen3-14B model
-GENE_LLM_MODEL=models/Qwen3-14B-Q4_K_M.gguf ../../bin/gene run src/main.gene
+GENE_LLM_MODEL=models/Qwen3-14B-Q4_K_M.gguf ../../../bin/gene run src/main.gene
 
 # Or run in mock mode (no model needed)
-../../bin/gene run src/main.gene
+../../../bin/gene run src/main.gene
 ```
 
 The backend will start on http://localhost:3000

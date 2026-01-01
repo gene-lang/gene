@@ -578,9 +578,9 @@ else:
       for i in 0..<completion.token_count:
         let token_ptr = completion.tokens[i]
         if token_ptr != nil:
-        array_data(token_array).add(($token_ptr).to_value())
-      else:
-        array_data(token_array).add("".to_value())
+          array_data(token_array).add(($token_ptr).to_value())
+        else:
+          array_data(token_array).add("".to_value())
     map_table["tokens".to_key()] = token_array
 
     let finish_symbol =

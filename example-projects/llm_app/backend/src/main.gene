@@ -5,7 +5,7 @@
 
 # Configuration
 (var PORT 3000)
-(var MODEL_PATH (or ($env .get "GENE_LLM_MODEL") ""))
+(var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
 (var model NIL)
 (var session NIL)
 
@@ -29,67 +29,87 @@
   )
 )
 
-# CORS headers for cross-origin requests
-(fn add_cors_headers [headers]
-  (var result {})
-  (for key in (headers .keys)
-    (result .set key (headers .get key))
+# Quote character for JSON building
+(var Q "\"")
+
+# Escape string for JSON
+(fn escape_json [s]
+  (if (s == NIL)
+    (return "null")
   )
-  (result .set "Access-Control-Allow-Origin" "*")
-  (result .set "Access-Control-Allow-Methods" "GET, POST, OPTIONS")
-  (result .set "Access-Control-Allow-Headers" "Content-Type")
-  result
+  (var result (s .replace "\\" "\\\\"))
+  (result = (result .replace Q "\\\""))
+  (result = (result .replace "\n" "\\n"))
+  (result = (result .replace "\r" "\\r"))
+  (result = (result .replace "\t" "\\t"))
+  #"#{Q}#{result}#{Q}"
 )
 
-# JSON response helper
-(fn json_response [status data]
-  (var body (data .to_json))
-  (respond status body (add_cors_headers {^Content-Type "application/json"}))
-)
-
-# Handle OPTIONS preflight requests
-(fn handle_options [req]
-  (respond 204 "" (add_cors_headers {}))
+# Strip <think>...</think> tags from response, return [thinking, answer]
+(fn parse_response [text]
+  (var think_start (text .index "<think>"))
+  (if (think_start < 0)
+    (return [NIL (text .trim)])
+  )
+  (var think_end (text .index "</think>"))
+  (if (think_end < 0)
+    (return [NIL (text .trim)])
+  )
+  # substr takes (start, length), not (start, end)
+  (var think_len ((think_end - think_start) - 7))
+  (var thinking (text .substr (think_start + 7) think_len))
+  (var answer (text .substr (think_end + 8)))
+  [(thinking .trim) (answer .trim)]
 )
 
 # Health check endpoint
 (fn handle_health [req]
-  (var status {
-    ^status "ok"
-    ^model_loaded (model != NIL)
-  })
-  (json_response 200 status)
+  (var is_loaded (model != NIL))
+  (var loaded_str "false")
+  (if is_loaded
+    (loaded_str = "true")
+  )
+  (var body #"{#{Q}status#{Q}:#{Q}ok#{Q},#{Q}model_loaded#{Q}:#{loaded_str}}")
+  (respond 200 body {^Content-Type "application/json"})
 )
 
 # Chat endpoint
 (fn handle_chat [req]
-  (var body req/body)
+  (var req_body req/body)
 
   # Parse JSON body
   (var parsed NIL)
   (try
-    (parsed = (gene/json/parse body))
+    (parsed = (gene/json/parse req_body))
   catch *
-    (return (json_response 400 {^error "Invalid JSON"}))
+    (var err_body #"{#{Q}error#{Q}:#{Q}Invalid JSON#{Q}}")
+    (return (respond 400 err_body {^Content-Type "application/json"}))
   )
 
   # Extract message
   (var message (parsed .get "message"))
   (if (message == NIL)
-    (return (json_response 400 {^error "Missing 'message' field"}))
+    (var err_body #"{#{Q}error#{Q}:#{Q}Missing 'message' field#{Q}}")
+    (return (respond 400 err_body {^Content-Type "application/json"}))
   )
 
   # Generate response
   (var response_text "")
   (var tokens_used 0)
+  (var thinking NIL)
 
   (if (session != NIL)
     (do
-      # Use actual LLM
-      (var result (session .infer message))
-      (response_text = (result .get "text"))
+      # Use actual LLM with chat format
+      (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+      (var result (session .infer prompt))
+      (var raw_text (result .get "text"))
       (var tokens (result .get "tokens"))
       (tokens_used = (tokens .size))
+      # Parse thinking vs answer
+      (var parsed_resp (parse_response raw_text))
+      (thinking = (parsed_resp .get 0))
+      (response_text = (parsed_resp .get 1))
     )
   else
     (do
@@ -99,10 +119,11 @@
     )
   )
 
-  (json_response 200 {
-    ^response response_text
-    ^tokens_used tokens_used
-  })
+  # Build JSON response
+  (var think_json (escape_json thinking))
+  (var resp_json (escape_json response_text))
+  (var resp_body #"{#{Q}response#{Q}:#{resp_json},#{Q}thinking#{Q}:#{think_json},#{Q}tokens_used#{Q}:#{tokens_used}}")
+  (respond 200 resp_body {^Content-Type "application/json"})
 )
 
 # Main request router
@@ -112,18 +133,14 @@
 
   (println method path)
 
-  # Handle CORS preflight
-  (if (method == "OPTIONS")
-    (return (handle_options req))
-  )
-
   # Route requests
   (if (path == "/api/health")
     (handle_health req)
-  elif (and (path == "/api/chat") (method == "POST"))
+  elif ((path == "/api/chat") && (method == "POST"))
     (handle_chat req)
   else
-    (json_response 404 {^error "Not found"})
+    (var err_body #"{#{Q}error#{Q}:#{Q}Not found#{Q}}")
+    (respond 404 err_body {^Content-Type "application/json"})
   )
 )
 
@@ -137,4 +154,4 @@
 (println)
 
 (start_server PORT handle_request)
-(gene/run_forever)
+(run_forever)

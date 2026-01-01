@@ -1,8 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
 
-const API_URL = 'http://localhost:3000'
-
 function App() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -22,7 +20,7 @@ function App() {
 
   const checkHealth = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/health`)
+      const response = await fetch('/api/health')
       const data = await response.json()
       setStatus({ connected: true, modelLoaded: data.model_loaded })
     } catch (error) {
@@ -40,7 +38,7 @@ function App() {
     setLoading(true)
 
     try {
-      const response = await fetch(`${API_URL}/api/chat`, {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage })

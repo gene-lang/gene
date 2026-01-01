@@ -197,7 +197,7 @@ class App
 
     var root_handler (.construct_handler 0)
     start_server /port root_handler ^websocket /websocket
-    gene/run_forever
+    run_forever
 
 # Base class for controllers
 class Controller

@@ -3,8 +3,8 @@
 ## Why
 
 Gene currently has multiple event-loop drivers and inconsistent execution paths between VM code, native functions, and async callbacks:
-- `gene/run_forever` (stdlib) spins its own loop and directly calls HTTP processing.
-- `genex/http` also defines `gene/run_forever` with another loop.
+- `run_forever` (stdlib) spins its own loop and directly calls HTTP processing.
+- `genex/http` also defines `run_forever` with another loop.
 - HTTP handlers are executed inside native async loops via `exec_function`, not via the VM main loop.
 - `poll_event_loop` only checks futures, and `EventLoopCallbacks` are unused.
 - Native callbacks can re-enter the VM to call Gene methods (e.g., `.to_s`) without a unified scheduling rule.
