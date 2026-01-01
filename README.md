@@ -2,7 +2,6 @@
 
 Gene is a general-purpose, homoiconic language with a Lisp-like surface syntax.  
 This repository hosts the bytecode virtual machine (VM) implementation written in Nim.  
-The original tree-walking interpreter lives in `gene-new/` and serves as the language reference.
 
 ## Repository Layout
 
@@ -13,7 +12,6 @@ The original tree-walking interpreter lives in `gene-new/` and serves as the lan
 - `tests/` — Nim-based unit and integration tests for the VM  
 - `testsuite/` — black-box Gene programs with an expectation harness  
 - `examples/` — sample Gene source files  
-- `gene-new/` — reference interpreter implementation (feature-complete)
 
 ## VM Status
 
@@ -28,8 +26,58 @@ The original tree-walking interpreter lives in `gene-new/` and serves as the lan
 - **In progress / known limitations**
   - Pattern matching beyond argument binders is still experimental
   - Many class features (constructors, method dispatch, inheritance) need more coverage
-  - Module/import system and package management are not yet available
-  - Async primitives execute synchronously; scope lifetime bugs still surface in nested async code (see `IkScopeEnd` in `src/gene/vm.nim`)
+  - Module/import system and package management are not complete
+  - ...
+
+## Major Features
+
+### The Gene Data Structure — The Heart of Gene
+
+The Gene data structure is **unique and central** to the language. Unlike JSON or S-expressions, Gene combines three structural components into one unified type:
+
+```gene
+(type ^prop1 value1 ^prop2 value2 child1 child2 child3)
+```
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| **Type** | The first element, identifying what kind of data this is. <br>Type can be any Gene data. | `if`, `fn`, <br>`(fn f [a b] (+ a b))` |
+| **Properties** | Key-value pairs (prefixed with `^`). <br>Keys are strings. Values can be any Gene data. | `^name "Alice"`, `^age 30` |
+| **Children** | Positional elements after the type. <br>Children can be any Gene data. | `child1 child2 child3` |
+
+This unified structure enables:
+- **Homoiconicity**: Code and data share the same representation
+- **Macros**: Transform code as data before evaluation
+- **Self-describing data**: Type information is always present
+- **Flexible DSLs**: Build domain-specific languages naturally
+
+**Example - Data as Code:**
+```gene
+# This is data:
+(Person ^name "Alice" ^age 30)
+
+# This is code (same structure!):
+(class Person < Object
+  ^final true
+
+  (.ctor [name age]
+    (/name = name)
+    (/age = age))
+
+  (.fn greet []
+    (print "Hello, my name is " /name)))
+```
+
+### Other Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Lisp-like Syntax** | S-expression based, but with Gene's unique type/props/children structure |
+| **Homoiconic** | Code is data, data is code — enabling powerful metaprogramming |
+| **Macro System** | Transform code at compile-time with full access to the AST |
+| **Class System** | OOP with classes, inheritance, constructors, and methods |
+| **Async/Await** | Pseudo-async primitives for concurrent-style programming |
+| **NaN-boxed Values** | Efficient 8-byte value representation for performance |
 
 ## Building
 
