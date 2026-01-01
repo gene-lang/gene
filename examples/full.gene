@@ -7,7 +7,7 @@
 (var name "Gene")             # String
 (var pi 3.14159)              # Float
 (var flag true)               # Boolean
-(var nothing nil)             # Nil
+(var nothing)                 # nil
 
 # ===== 2. FUNCTIONS =====
 # Basic function with no parameters

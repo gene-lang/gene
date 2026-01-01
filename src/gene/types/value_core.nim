@@ -1332,16 +1332,41 @@ proc on_member_missing*(vm_data: ptr VirtualMachine, args: Value): Value =
 
 #################### Scope #######################
 
+# Scope pooling for performance (like Frame pooling)
+var SCOPES* {.threadvar.}: seq[Scope]
+var SCOPE_ALLOCS* {.threadvar.}: int
+var SCOPE_REUSES* {.threadvar.}: int
 
+proc reset_scope*(self: Scope) {.inline.} =
+  ## Reset a scope for reuse from pool
+  self.tracker = nil
+  self.parent = nil
+  self.members.setLen(0)  # Clear members but keep capacity
 
 proc free*(self: Scope) =
   {.push checks: off, optimization: speed.}
   self.ref_count.dec()
   if self.ref_count == 0:
+    # Free parent first
     if self.parent != nil:
-      # When this scope is destroyed, release the reference to parent
-      self.parent.free()  # This will decrement parent's ref_count and free if needed
-    dealloc(self)
+      self.parent.free()
+    # Return to pool instead of deallocating
+    self.reset_scope()
+    SCOPES.add(self)
+  {.pop.}
+
+proc new_scope*(tracker: ScopeTracker): Scope {.inline.} =
+  {.push checks: off, optimization: speed.}
+  if SCOPES.len > 0:
+    result = SCOPES.pop()
+    SCOPE_REUSES.inc()
+  else:
+    result = cast[Scope](alloc0(sizeof(ScopeObj)))
+    result.members = newSeq[Value]()  # Only allocate members seq on first creation
+    SCOPE_ALLOCS.inc()
+  result.ref_count = 1
+  result.tracker = tracker
+  result.parent = nil
   {.pop.}
 
 proc update*(self: var Scope, scope: Scope) {.inline.} =
@@ -1359,13 +1384,6 @@ proc max*(self: Scope): int16 {.inline.} =
 proc set_parent*(self: Scope, parent: Scope) {.inline.} =
   parent.ref_count.inc()
   self.parent = parent
-
-proc new_scope*(tracker: ScopeTracker): Scope =
-  result = cast[Scope](alloc0(sizeof(ScopeObj)))
-  result.ref_count = 1
-  result.tracker = tracker
-  result.members = newSeq[Value]()  # Initialize members sequence explicitly
-  result.parent = nil  # Explicitly initialize parent
 
 proc new_scope*(tracker: ScopeTracker, parent: Scope): Scope =
   result = new_scope(tracker)

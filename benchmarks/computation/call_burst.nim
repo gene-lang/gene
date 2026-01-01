@@ -59,3 +59,11 @@ when isMainModule:
   """
 
   runBenchmark(oneArgCode, "one-arg function call")
+
+  let fourArgCode = fmt"""
+    (fn call_four [a b c d] nil)
+    (repeat {repeats}
+{callBlock("(call_four 1 2 3 4)")})
+  """
+
+  runBenchmark(fourArgCode, "four-arg function call")
