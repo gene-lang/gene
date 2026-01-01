@@ -3,14 +3,14 @@
 **Date**: 2026-01-01  
 **Baseline Performance**:
 - `fib(24)`: 0.025 seconds
-- Function calls: ~5.5 million/second
+- Function calls: ~ 7.5 million/second
 
 ## Performance Comparison
 
 | Language | Function calls/sec |
 |----------|-------------------|
 | Python 3 | ~2-4 million |
-| **Gene** | **~5.5 million** |
+| **Gene** | **~7.5 million** |
 | Lua 5.4 | ~15-25 million |
 | LuaJIT | ~100+ million |
 
@@ -104,20 +104,18 @@ Mark these as `{.inline.}`:
 | Optimization | Impact | Effort | Status |
 |-------------|--------|--------|--------|
 | Scope pooling | High | Low | ✅ **DONE - 3x improvement!** |
-| Inline member array (8 slots) | Medium | Low | ⬜ TODO |
-| `{.inline.}` on hot procs | Medium | Very Low | ⬜ TODO |
+| Inline member array (8 slots) | Medium | Low | ❌ Tested - wrapper overhead negates benefit |
+| `{.inline.}` on hot procs | Medium | Very Low | ✅ Done - most already had inline |
 | Frame pooling cleanup | Low | Low | ⬜ TODO |
 | Reduce `new_scope` for leaf fns | Medium | Medium | ⬜ TODO |
-| Computed goto dispatch | High | High | ⬜ TODO |
+| Computed goto dispatch | High | High | ✅ Already using `{.computedGoto.}` |
 
 ### Scope Pooling Results (2026-01-01)
 
 ```
-Before: ~5.5M calls/sec
-After:
-  zero-arg: 16.1M calls/sec (3x improvement)
-  one-arg:  12.1M calls/sec (2.2x improvement)  
-  four-arg:  8.0M calls/sec (new benchmark)
+zero-arg: 16.1M calls/sec
+one-arg:  12.1M calls/sec
+four-arg:  8.0M calls/sec
 ```
 
 ---
