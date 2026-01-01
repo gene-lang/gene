@@ -13,6 +13,7 @@
 .vagrant
 .Xauthority
 *.dSYM/
+.vite/
 tmp/
 bin/
 build/
