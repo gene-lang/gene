@@ -2927,8 +2927,15 @@ proc init_stdlib*() =
 
   # OpenAI API functions
   when not defined(noExtensions) and not defined(noai):
-    # Create OpenAI namespace
-    let ai_ns = new_namespace("ai")
+    var ai_ns_val = NIL
+    if App.app.genex_ns.kind == VkNamespace:
+      ai_ns_val = App.app.genex_ns.ref.ns["ai".to_key()]
+
+    var ai_ns: Namespace
+    if ai_ns_val.kind == VkNamespace:
+      ai_ns = ai_ns_val.ref.ns
+    else:
+      ai_ns = new_namespace("ai")
 
     # OpenAI client creation and operations
     ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
@@ -2936,6 +2943,16 @@ proc init_stdlib*() =
     ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
     ai_ns["respond".to_key()] = vm_openai_respond.to_value()
     ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+
+    let documents_ns = new_namespace("documents")
+    documents_ns["extract_pdf".to_key()] = vm_ai_documents_extract_pdf.to_value()
+    documents_ns["extract_image".to_key()] = vm_ai_documents_extract_image.to_value()
+    documents_ns["chunk".to_key()] = vm_ai_documents_chunk.to_value()
+    documents_ns["extract_and_chunk".to_key()] = vm_ai_documents_extract_and_chunk.to_value()
+    documents_ns["save_upload".to_key()] = vm_ai_documents_save_upload.to_value()
+    documents_ns["validate_upload".to_key()] = vm_ai_documents_validate_upload.to_value()
+    documents_ns["extract_upload".to_key()] = vm_ai_documents_extract_upload.to_value()
+    ai_ns["documents".to_key()] = documents_ns.to_value()
 
     # Register the AI namespace in genex namespace
     if App.app.genex_ns.kind == VkNamespace:

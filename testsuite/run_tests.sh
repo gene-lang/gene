@@ -157,10 +157,12 @@ else
     run_category "Async Support" "async"
     run_category "Futures" "futures"
     run_category "Generators" "generators"
+    run_category "Stdlib" "stdlib"
     run_category "Stdlib Core" "stdlib/core"
     run_category "Stdlib Strings" "stdlib/strings"
     run_category "Stdlib Arrays" "stdlib/arrays"
-    # run_category "Stdlib IO" "stdlib/io"
+    run_category "AI Documents" "ai/documents"
+    run_category "Stdlib IO" "stdlib/io"
     # run_category "Stdlib Time" "stdlib/time"
 fi
 

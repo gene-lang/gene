@@ -2,8 +2,7 @@
 ## Exports all OpenAI functionality to Gene
 
 import bindings, openai_client, streaming
-import ../../gene/vm
-import ../../gene/types
+import documents, vectordb, conversation, tools, rag, utils
 
 # Export the native functions that will be registered with the VM
 export vm_openai_new_client
@@ -17,6 +16,8 @@ export OpenAIConfig, OpenAIError, StreamingChunk, StreamEvent
 export buildOpenAIConfig, geneValueToJson, jsonToGeneValue
 export buildChatPayload, buildEmbeddingsPayload, buildResponsesPayload
 export redactSecret, getEnvVar
+export documents
+export vectordb, conversation, tools, rag, utils
 
 # Module initialization function
 proc init_ai_module*() =

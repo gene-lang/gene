@@ -11,15 +11,16 @@
 
 # Initialize LLM if model path is configured
 (fn init_llm []
-  (if (MODEL_PATH != "")
-    (do
-      (println "Loading LLM model from:" MODEL_PATH)
-      (model = (genex/llm/load_model MODEL_PATH))
-      (session = (model .new_session {^max_tokens 512}))
-      (println "LLM model loaded successfully")
-    )
-  else
+  (var model_path_len (if (MODEL_PATH == nil) 0 else (MODEL_PATH .length)))
+  (if (model_path_len == 0)
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
+  elif genex/llm
+    (println "Loading LLM model from:" MODEL_PATH)
+    (model = (genex/llm/load_model MODEL_PATH))
+    (session = (model .new_session {^max_tokens 512}))
+    (println "LLM model loaded successfully")
+  else
+    (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
   )
 )
 
@@ -53,20 +54,74 @@
 
 # Chat endpoint
 (fn handle_chat [req]
-  (var req_body req/body)
+(var req_body req/.body)
+(var body_str (if (req_body == nil) "" else req_body))
+(var content_type ((req/.headers .get "content-type" "") .to_lower))
+  (var message)
+  (var document_text)
+  (var document_chunks 0)
+  (var document_used false)
 
-  # Parse JSON body
-  (var parsed)
-  (try
-    (parsed = (gene/json/parse req_body))
-  catch *
-    (return (json_response 400 {^error "Invalid JSON"}))
+  (if ((content_type .index "multipart/form-data") >= 0)
+    (try
+      (ai/documents/validate_upload req {^allowed_types ["pdf" "png" "jpg" "jpeg" "bmp" "tiff" "tif"]})
+    catch *
+      (return (json_response 400 {^error $ex/message}))
+    )
+    (try
+      (document_text = (ai/documents/extract_upload req))
+    catch *
+      (return (json_response 400 {^error $ex/message}))
+    )
+    (message = ((req/.params .get "message" "Summarize the document.") .trim))
+    (document_used = true)
+  else
+    (var trimmed_body (body_str .trim))
+    (if ((trimmed_body .length) == 0)
+      (message = (req/.params .get "message"))
+      (if ((message == nil) || ((message .length) == 0))
+        (return (json_response 400 {^error "Missing 'message' field"}))
+      )
+    else
+      # Parse JSON body
+      (var parsed)
+      (try
+        (parsed = (gene/json/parse req_body))
+      catch *
+        (return (json_response 400 {^error "Invalid JSON"}))
+      )
+
+      # Extract message
+      (message = (parsed .get "message"))
+      (if (message == nil)
+        (return (json_response 400 {^error "Missing 'message' field"}))
+      )
+    )
   )
 
-  # Extract message
-  (var message (parsed .get "message"))
-  (if (message == nil)
-    (return (json_response 400 {^error "Missing 'message' field"}))
+  (if (document_text != nil)
+    (var chunks (ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
+    (document_chunks = (chunks .size))
+    (var context_parts [])
+    (var i 0)
+    (var max_chunks 3)
+    (loop
+      (if ((i >= (chunks .size)) || (i >= max_chunks))
+        (break)
+      )
+      (context_parts .append chunks/i/text)
+      (i += 1)
+    )
+    (var context (context_parts .join "\n\n"))
+    (message = #"""
+You are given extracted document context.
+
+Context:
+#{context}
+
+User request:
+#{message}
+""")
   )
 
   # Generate response
@@ -75,40 +130,36 @@
   (var thinking)
 
   (if session
-    (do
-      # Use actual LLM with chat format
-      (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
-      (var result (session .infer prompt))
-      (var raw_text (result .get "text"))
-      (var tokens (result .get "tokens"))
-      (tokens_used = tokens/.size)
-      # Parse thinking vs answer
-      (var parsed_resp (parse_response raw_text))
-      (thinking = (parsed_resp .get 0))
-      (response_text = (parsed_resp .get 1))
-    )
+    # Use actual LLM with chat format
+    (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+    (var result (session .infer prompt))
+    (var raw_text (result .get "text"))
+    (var tokens (result .get "tokens"))
+    (tokens_used = tokens/.size)
+    # Parse thinking vs answer
+    (var parsed_resp (parse_response raw_text))
+    (thinking = (parsed_resp .get 0))
+    (response_text = (parsed_resp .get 1))
   else
-    (do
-      # Mock response when no model is loaded
-      (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
-      (tokens_used = 15)
-    )
+    # Mock response when no model is loaded
+    (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
+    (tokens_used = 15)
   )
 
-  (json_response 200 {^response response_text ^thinking thinking ^tokens_used tokens_used})
+  (json_response 200 {^response response_text ^thinking thinking ^tokens_used tokens_used ^document_used document_used ^document_chunks document_chunks})
 )
 
 # Main request router
 (fn handle_request [req]
-  (var path req/path)
-  (var method req/method)
+(var path req/.path)
+(var method req/.method)
 
   (println method path)
 
   # Route requests
   (if (path == "/api/health")
     (handle_health req)
-  elif ((path == "/api/chat") && (method == "POST"))
+  elif ((path == "/api/chat") && ((method == "POST") || (method == "GET")))
     (handle_chat req)
   else
     (json_response 404 {^error "Not found"})

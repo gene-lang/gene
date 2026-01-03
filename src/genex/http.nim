@@ -474,8 +474,22 @@ proc request_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   # Set headers
   if headers.kind == VkMap:
     for k, v in map_data(headers):
-      if v.kind == VkString:
-        client.headers[cast[Value](k).str] = v.str
+      let header_name = cast[Value](k).str
+      case v.kind
+      of VkString:
+        client.headers[header_name] = v.str
+      of VkArray:
+        var values: seq[string] = @[]
+        for item in array_data(v):
+          case item.kind
+          of VkString, VkSymbol:
+            values.add(item.str)
+          else:
+            values.add($item)
+        if values.len > 0:
+          client.headers[header_name] = values
+      else:
+        client.headers[header_name] = $v
   
   # Prepare body
   var bodyStr = ""
@@ -534,7 +548,13 @@ proc request_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   let headers_map = new_map_value()
   map_data(headers_map) = Table[Key, Value]()
   for k, v in response.headers.table:
-    map_data(headers_map)[k.to_key()] = v[0].to_value()  # Take first value for multi-value headers
+    if v.len == 1:
+      map_data(headers_map)[k.to_key()] = v[0].to_value()
+    else:
+      let values = new_array_value()
+      for item in v:
+        array_data(values).add(item.to_value())
+      map_data(headers_map)[k.to_key()] = values
   instance_props(response_instance)["headers".to_key()] = headers_map
   
   # Create completed future with response
@@ -771,7 +791,6 @@ proc create_server_request(req: asynchttpserver.Request): Value =
   
   # Parse query parameters
   let params_map = new_map_value()
-  map_data(params_map) = Table[Key, Value]()
   if req.url.query != "":
     for key, val in decodeData(req.url.query):
       map_data(params_map)[key.to_key()] = val.to_value()
@@ -779,9 +798,14 @@ proc create_server_request(req: asynchttpserver.Request): Value =
   
   # Convert headers to Gene map
   let headers_map = new_map_value()
-  map_data(headers_map) = Table[Key, Value]()
   for k, v in req.headers.table:
-    map_data(headers_map)[k.to_key()] = v[0].to_value()  # Take first value
+    if v.len == 1:
+      map_data(headers_map)[k.to_key()] = v[0].to_value()
+    else:
+      let values = new_array_value()
+      for item in v:
+        array_data(values).add(item.to_value())
+      map_data(headers_map)[k.to_key()] = values
   instance_props(instance)["headers".to_key()] = headers_map
   
   # Store body if present
@@ -858,8 +882,22 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       var headers = newHttpHeaders()
       if headers_val.kind == VkMap:
         for k, v in map_data(headers_val):
-          if v.kind == VkString:
-            headers[cast[Value](k).str] = v.str
+          let header_name = cast[Value](k).str
+          case v.kind
+          of VkString:
+            headers[header_name] = v.str
+          of VkArray:
+            var values: seq[string] = @[]
+            for item in array_data(v):
+              case item.kind
+              of VkString, VkSymbol:
+                values.add(item.str)
+              else:
+                values.add($item)
+            if values.len > 0:
+              headers[header_name] = values
+          else:
+            headers[header_name] = $v
 
       await req.respond(status_code, body, headers)
     else:

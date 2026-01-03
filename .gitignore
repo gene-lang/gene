@@ -50,3 +50,5 @@ gene-rust/
 ruby/
 lua/
 wren/
+nimble.develop
+nimble.paths

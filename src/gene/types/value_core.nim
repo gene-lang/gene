@@ -179,7 +179,8 @@ proc retain*(v: Value) {.inline.} =
         x.ref_count.inc()
       of STRING_TAG:
         let x = cast[ptr String](u and PAYLOAD_MASK)
-        x.ref_count.inc()
+        if not x.is_nil:
+          x.ref_count.inc()
       else:
         discard  # No ref counting for other types
   {.pop.}
@@ -222,10 +223,11 @@ proc release*(v: Value) {.inline.} =
           x.ref_count.dec()
       of STRING_TAG:
         let x = cast[ptr String](u and PAYLOAD_MASK)
-        if x.ref_count == 1:
-          dealloc(x)
-        else:
-          x.ref_count.dec()
+        if not x.is_nil:
+          if x.ref_count == 1:
+            dealloc(x)
+          else:
+            x.ref_count.dec()
       else:
         discard  # No ref counting for other types
   {.pop.}

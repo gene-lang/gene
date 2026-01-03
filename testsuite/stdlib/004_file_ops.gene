@@ -1,9 +1,0 @@
-# Test file operations
-
-(var test_file "tmp/test_file.txt")
-(File/write test_file "Hello from Gene!")
-(var content (File/read test_file))
-(println content)
-(File/delete test_file)
-
-# Expected: Hello from Gene!

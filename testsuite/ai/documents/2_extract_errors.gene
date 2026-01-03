@@ -1,0 +1,17 @@
+(var pdf_msg
+  (try
+    (ai/documents/extract_pdf "missing.pdf" {^command "missing_cmd"})
+  catch *
+    $ex/message
+  )
+)
+(assert (pdf_msg == "PDF extractor not available."))
+
+(var ocr_msg
+  (try
+    (ai/documents/extract_image "missing.png" {^command "missing_cmd"})
+  catch *
+    $ex/message
+  )
+)
+(assert (ocr_msg == "OCR extractor not available."))

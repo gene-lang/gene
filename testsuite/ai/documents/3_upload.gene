@@ -1,0 +1,35 @@
+(var req (new ServerRequest))
+(req/headers = {^Content-Type "multipart/form-data; boundary=BOUNDARY"})
+(req/body = """--BOUNDARY
+Content-Disposition: form-data; name="file"; filename="note.txt"
+Content-Type: text/plain
+
+hello upload
+--BOUNDARY--
+""")
+
+(var saved (ai/documents/save_upload req "/tmp/gene_upload_test" {^overwrite true}))
+(var content (gene/io/read saved))
+(var trimmed (content .trim))
+(assert (trimmed == "hello upload"))
+
+(var ok (ai/documents/validate_upload req {^allowed_types ["txt"]}))
+(assert (ok == true))
+
+(var invalid_msg
+  (try
+    (ai/documents/validate_upload req {^allowed_types ["pdf"]})
+  catch *
+    $ex/message
+  )
+)
+(assert (invalid_msg == "upload type not allowed"))
+
+(var unsupported_msg
+  (try
+    (ai/documents/extract_upload req)
+  catch *
+    $ex/message
+  )
+)
+(assert (unsupported_msg == "unsupported upload type"))
