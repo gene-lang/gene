@@ -151,8 +151,8 @@ User request:
 
 # Main request router
 (fn handle_request [req]
-(var path req/.path)
-(var method req/.method)
+  (var path req/.path)
+  (var method req/.method)
 
   (println method path)
 

@@ -239,7 +239,12 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
   else:
     raise new_exception(types.Exception, self.format_runtime_exception(exception_value))
 
-  return true
+proc pop_frame_exception_handlers(self: ptr VirtualMachine, frame: Frame) {.inline.} =
+  ## Remove any exception handlers tied to a frame that's being returned from.
+  if frame == nil:
+    return
+  while self.exception_handlers.len > 0 and self.exception_handlers[^1].frame == frame:
+    discard self.exception_handlers.pop()
 
 proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj) =
   ## Execute success or failure callbacks for a completed future
@@ -1516,8 +1521,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         when not defined(release):
           if indent.len >= 2:
             indent.delete(indent.len-2..indent.len-1)
-        # If we have an unhandled exception, raise it now
-        if self.current_exception != NIL:
+        # If we have an unhandled exception, raise it now.
+        # Suppress re-raising while a catch is still active in an outer frame.
+        if self.current_exception != NIL and self.exception_handlers.len == 0:
           raise new_exception(types.Exception, self.format_runtime_exception(self.current_exception))
 
         # TODO: validate that there is only one value on the stack
@@ -4359,6 +4365,12 @@ proc exec*(self: ptr VirtualMachine): Value =
           # Profile function exit
           if self.profiling:
             self.exit_function()
+
+          # Ensure exception handlers for this frame are cleared on return.
+          let returning_frame = self.frame
+          self.pop_frame_exception_handlers(returning_frame)
+          if self.current_exception != NIL:
+            self.current_exception = NIL
           
           self.cu = self.frame.caller_address.cu
           self.pc = self.frame.caller_address.pc
@@ -5295,6 +5307,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         if self.frame.caller_frame == nil:
           return NIL
         else:
+          let returning_frame = self.frame
+          self.pop_frame_exception_handlers(returning_frame)
+          if self.current_exception != NIL:
+            self.current_exception = NIL
           self.cu = self.frame.caller_address.cu
           self.pc = self.frame.caller_address.pc
           inst = self.cu.instructions[self.pc].addr
@@ -5308,6 +5324,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         if self.frame.caller_frame == nil:
           return TRUE
         else:
+          let returning_frame = self.frame
+          self.pop_frame_exception_handlers(returning_frame)
+          if self.current_exception != NIL:
+            self.current_exception = NIL
           self.cu = self.frame.caller_address.cu
           self.pc = self.frame.caller_address.pc
           inst = self.cu.instructions[self.pc].addr
@@ -5321,6 +5341,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         if self.frame.caller_frame == nil:
           return FALSE
         else:
+          let returning_frame = self.frame
+          self.pop_frame_exception_handlers(returning_frame)
+          if self.current_exception != NIL:
+            self.current_exception = NIL
           self.cu = self.frame.caller_address.cu
           self.pc = self.frame.caller_address.pc
           inst = self.cu.instructions[self.pc].addr
