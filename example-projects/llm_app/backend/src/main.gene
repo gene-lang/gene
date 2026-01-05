@@ -4,7 +4,7 @@
 # Provides REST API endpoints for chat with a local LLM
 
 # Configuration
-(var PORT 3000)
+(var PORT 4080)
 (var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
 (var model)
 (var session)
@@ -109,7 +109,10 @@
       (if ((i >= (chunks .size)) || (i >= max_chunks))
         (break)
       )
-      (context_parts .append chunks/i/text)
+      (var chunk (chunks .get i))
+      (if (chunk != nil)
+        (context_parts .append chunk/text)
+      )
       (i += 1)
     )
     (var context (context_parts .join "\n\n"))
