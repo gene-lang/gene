@@ -162,13 +162,51 @@ body {
 
 .input-form {
   display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 16px 24px;
   border-top: 1px solid #e5e7eb;
   background: white;
 }
 
-.input-form input {
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  background: #f3f4f6;
+  color: #1f2937;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  white-space: nowrap;
+}
+
+.upload-button:hover {
+  background: #e5e7eb;
+  border-color: #cbd5f5;
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.input-form input[type="text"] {
   flex: 1;
   padding: 12px 16px;
   border: 1px solid #d1d5db;
@@ -178,15 +216,15 @@ body {
   transition: border-color 0.2s;
 }
 
-.input-form input:focus {
+.input-form input[type="text"]:focus {
   border-color: #2563eb;
 }
 
-.input-form input:disabled {
+.input-form input[type="text"]:disabled {
   background: #f9fafb;
 }
 
-.input-form button {
+.input-row button {
   padding: 12px 24px;
   background: #2563eb;
   color: white;
@@ -198,11 +236,44 @@ body {
   transition: background 0.2s;
 }
 
-.input-form button:hover:not(:disabled) {
+.input-row button:hover:not(:disabled) {
   background: #1d4ed8;
 }
 
-.input-form button:disabled {
+.input-row button:disabled {
   background: #9ca3af;
   cursor: not-allowed;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-remove {
+  background: none;
+  border: none;
+  color: #dc2626;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.file-remove:hover {
+  text-decoration: underline;
 }
