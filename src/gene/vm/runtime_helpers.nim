@@ -38,11 +38,11 @@ proc ensure_frame_pool() =
       FRAMES.add(cast[Frame](alloc0(sizeof(FrameObj))))
       FRAME_ALLOCS.inc()
 
-proc new_thread_vm(): ptr VirtualMachine =
+proc new_thread_vm*(): ptr VirtualMachine =
   ## Create a VM instance for a worker thread (App/shared bits are populated elsewhere).
   new_vm_ptr()
 
-proc create_thread_namespace(thread_id: int): Namespace =
+proc create_thread_namespace*(thread_id: int): Namespace =
   ## Build the thread-local namespace with thread metadata.
   let thread_ns = new_namespace("thread_local")
 
@@ -76,7 +76,7 @@ proc reset_thread_vm_state() =
   reset_vm_state()
 
 # VM initialization for worker threads
-proc init_vm_for_thread(thread_id: int) =
+proc init_vm_for_thread*(thread_id: int) =
   ## Initialize VM for a worker thread
   ## Note: App is shared from main thread, only VM is thread-local
 

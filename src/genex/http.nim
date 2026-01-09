@@ -9,8 +9,35 @@ import cgi
 
 include ../gene/extension/boilerplate
 import ../gene/vm
+import ../gene/vm/thread as gene_thread
+import std/typedthreads
 # Explicitly alias to use asyncfutures.Future in this module (preserve generic)
-type Future[T] {.used.} = asyncfutures.Future[T]
+type 
+  Future[T] {.used.} = asyncfutures.Future[T]
+  NimThread[T] = typedthreads.Thread[T]
+
+# ============ Worker Thread Pool for Concurrent HTTP ============
+
+const MAX_HTTP_WORKERS = 8
+
+type
+  HttpWorkerJob = object
+    request_data: Value           # Serialized request as literal map
+    result_ptr: ptr Value         # Where to store the result
+    done_flag: ptr bool           # Signal when done
+    handler: Value                # Handler function (shared, read-only)
+
+  HttpWorkerData = object
+    channel: system.Channel[HttpWorkerJob]
+    thread: NimThread[int]
+    active: bool
+
+var http_workers: array[MAX_HTTP_WORKERS, HttpWorkerData]
+var http_worker_count: int = 0
+var http_workers_initialized: bool = false
+
+# Forward declaration
+proc http_worker_handler(worker_id: int) {.thread.}
 
 # Global variables to store classes
 var request_class_global: Class
@@ -18,6 +45,9 @@ var response_class_global: Class
 var server_request_class_global: Class
 
 var server_response_class_global: Class
+
+# Concurrent mode flag
+var concurrent_mode: bool = false
 
 # Global HTTP server instance
 var http_server: AsyncHttpServer
@@ -35,6 +65,7 @@ proc vm_respond(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
 proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.}
+proc response_to_literal(resp: Value): Value {.gcsafe.}
 
 proc parse_json_internal(node: json.JsonNode): Value {.gcsafe.}
 
@@ -686,10 +717,14 @@ proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.} =
     if pending_http_requests.len == 0:
       return
 
+    # In concurrent mode, we process ALL pending requests at once
+    # Each one gets its own execution, but we still run them sequentially
+    # in this callback. True concurrency would require spawn threads.
+    
     withLock(pending_lock):
-      var i = 0
-      while i < pending_http_requests.len:
-        var req = addr pending_http_requests[i]
+      # Process only ONE request per callback to allow async event loop to breathe
+      if pending_http_requests.len > 0:
+        var req = addr pending_http_requests[0]
         if not req.processed:
           req.processed = true
 
@@ -699,31 +734,132 @@ proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.} =
             try:
               result = execute_gene_function(vm, gene_handler_global, @[req.request])
             except CatchableError as e:
-              # Create error response
-              let error_response = block:
-                let instance_class = (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
-                let instance = new_instance_value(instance_class)
-                instance_props(instance)["status".to_key()] = 500.to_value()
-                instance_props(instance)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
-                instance_props(instance)["headers".to_key()] = new_map_value()
-                instance
-              result = error_response
+              if concurrent_mode:
+                let error_map = new_map_value()
+                map_data(error_map) = Table[Key, Value]()
+                map_data(error_map)["status".to_key()] = 500.to_value()
+                map_data(error_map)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
+                map_data(error_map)["headers".to_key()] = new_map_value()
+                result = error_map
+              else:
+                let error_response = block:
+                  let instance_class = (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
+                  let instance = new_instance_value(instance_class)
+                  instance_props(instance)["status".to_key()] = 500.to_value()
+                  instance_props(instance)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
+                  instance_props(instance)["headers".to_key()] = new_map_value()
+                  instance
+                result = error_response
           else:
             result = NIL
 
-          when not defined(release):
-            if result.kind == VkArray:
-              let items = array_data(result)
-              let first_kind = if items.len > 0: $items[0].kind else: "empty"
-
-          # Complete the Nim future - this will wake up the async HTTP handler
+          # Complete the Nim future
           req.nim_future.complete(result)
           
           # Remove from pending list
-          pending_http_requests.delete(i)
-          continue
-        
-        i.inc()
+          pending_http_requests.delete(0)
+
+# ============ Worker Thread Implementation ============
+
+# Worker thread handler - runs in its own thread with its own VM
+proc http_worker_handler(worker_id: int) {.thread.} =
+  {.cast(gcsafe).}:
+    # Initialize VM for this worker thread
+    current_thread_id = worker_id + 100  # Offset to avoid conflict
+    VM = new_vm_ptr()
+    # Create a minimal thread namespace
+    VM.thread_local_ns = new_namespace("worker_" & $worker_id)
+    gene_thread.init_thread_class()
+    
+    while true:
+      # Wait for a job
+      let job = http_workers[worker_id].channel.recv()
+      
+      # Check for termination signal (request_data is NIL)
+      if job.request_data == NIL:
+        break
+      
+      # Execute the handler with the request data
+      var result: Value = NIL
+      try:
+        # The handler should be compiled and available via global state
+        # We use exec_function on our thread-local VM
+        if gene_handler_global.kind == VkFunction:
+          result = VM.exec_function(gene_handler_global, @[job.request_data])
+        elif gene_handler_global.kind == VkInstance:
+          let inst_class = instance_class(gene_handler_global)
+          if inst_class.methods.contains("call".to_key()):
+            let call_method = inst_class.methods["call".to_key()].callable
+            result = VM.exec_method(call_method, gene_handler_global, @[job.request_data])
+      except CatchableError as e:
+        # Create error response as map
+        let error_map = new_map_value()
+        map_data(error_map) = Table[Key, Value]()
+        map_data(error_map)["status".to_key()] = 500.to_value()
+        map_data(error_map)["body".to_key()] = ("Worker Error: " & e.msg).to_value()
+        map_data(error_map)["headers".to_key()] = new_map_value()
+        result = error_map
+      
+      # Serialize result to literal map for thread-safe transfer
+      let serialized_result = response_to_literal(result)
+      
+      # Store result and signal completion
+      job.result_ptr[] = serialized_result
+      job.done_flag[] = true
+
+# Initialize worker threads
+proc init_http_workers(count: int) =
+  {.cast(gcsafe).}:
+    if http_workers_initialized:
+      return
+    
+    http_worker_count = min(count, MAX_HTTP_WORKERS)
+    echo "Initializing ", http_worker_count, " HTTP worker threads..."
+    
+    for i in 0..<http_worker_count:
+      http_workers[i].channel.open(16)  # Buffer up to 16 jobs per worker
+      http_workers[i].active = true
+      createThread(http_workers[i].thread, http_worker_handler, i)
+    
+    http_workers_initialized = true
+    echo "HTTP worker threads initialized"
+
+# Shutdown worker threads
+proc shutdown_http_workers() =
+  {.cast(gcsafe).}:
+    if not http_workers_initialized:
+      return
+    
+    echo "Shutting down HTTP worker threads..."
+    for i in 0..<http_worker_count:
+      if http_workers[i].active:
+        # Send termination signal
+        let term_job = HttpWorkerJob(request_data: NIL)
+        http_workers[i].channel.send(term_job)
+        http_workers[i].thread.joinThread()
+        http_workers[i].channel.close()
+        http_workers[i].active = false
+    
+    http_workers_initialized = false
+    echo "HTTP worker threads shutdown complete"
+
+# Dispatch a job to a worker (round-robin)
+var next_worker_id: int = 0
+
+proc dispatch_to_worker(request_data: Value, result_ptr: ptr Value, done_flag: ptr bool) =
+  {.cast(gcsafe).}:
+    let job = HttpWorkerJob(
+      request_data: request_data,
+      result_ptr: result_ptr,
+      done_flag: done_flag,
+      handler: gene_handler_global
+    )
+    
+    # Round-robin dispatch
+    let worker_id = next_worker_id
+    next_worker_id = (next_worker_id + 1) mod http_worker_count
+    
+    http_workers[worker_id].channel.send(job)
 
 # Execute a Gene function in VM context
 proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
@@ -795,6 +931,159 @@ proc create_server_request(req: asynchttpserver.Request): Value =
   
   return instance
 
+# Convert ServerRequest instance to a literal map for thread-safe spawning
+proc server_request_to_literal(req: Value): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let result = new_map_value()
+    map_data(result) = Table[Key, Value]()
+    
+    # Copy all properties from instance to map
+    for key in ["method", "path", "url", "body"]:
+      let k = key.to_key()
+      let val = instance_props(req).getOrDefault(k, NIL)
+      map_data(result)[k] = val
+    
+    # Handle nested maps (params, headers, body_params) - need deep copy for thread safety
+    for key in ["params", "headers", "body_params"]:
+      let k = key.to_key()
+      let val = instance_props(req).getOrDefault(k, NIL)
+      if val.kind == VkMap:
+        # Create a new map with the same contents
+        let new_map = new_map_value()
+        map_data(new_map) = Table[Key, Value]()
+        for mk, mv in map_data(val):
+          map_data(new_map)[mk] = mv
+        map_data(result)[k] = new_map
+      else:
+        map_data(result)[k] = val
+    
+    return result
+
+# Convert response to a literal map for thread-safe transfer back from worker
+proc response_to_literal(resp: Value): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    # If already a map, deep copy it for thread safety
+    if resp.kind == VkMap:
+      let result = new_map_value()
+      map_data(result) = Table[Key, Value]()
+      
+      # Copy basic properties (status, body)
+      for key in ["status", "body"]:
+        let k = key.to_key()
+        let val = map_data(resp).getOrDefault(k, NIL)
+        # Deep copy strings to avoid sharing mutable data
+        if val.kind == VkString:
+          map_data(result)[k] = new_str_value(val.str)
+        else:
+          map_data(result)[k] = val
+      
+      # Deep copy headers map if present
+      let headers_key = "headers".to_key()
+      let headers_val = map_data(resp).getOrDefault(headers_key, NIL)
+      if headers_val.kind == VkMap:
+        let new_headers = new_map_value()
+        map_data(new_headers) = Table[Key, Value]()
+        for mk, mv in map_data(headers_val):
+          if mv.kind == VkString:
+            map_data(new_headers)[mk] = new_str_value(mv.str)
+          else:
+            map_data(new_headers)[mk] = mv
+        map_data(result)[headers_key] = new_headers
+      else:
+        let empty_headers = new_map_value()
+        map_data(empty_headers) = Table[Key, Value]()
+        map_data(result)[headers_key] = empty_headers
+      
+      return result
+    
+    # If it's a ServerResponse instance, convert to map
+    elif resp.kind == VkInstance:
+      let result = new_map_value()
+      map_data(result) = Table[Key, Value]()
+      
+      for key in ["status", "body"]:
+        let k = key.to_key()
+        let val = instance_props(resp).getOrDefault(k, NIL)
+        if val.kind == VkString:
+          map_data(result)[k] = new_str_value(val.str)
+        else:
+          map_data(result)[k] = val
+      
+      let headers_key = "headers".to_key()
+      let headers_val = instance_props(resp).getOrDefault(headers_key, NIL)
+      if headers_val.kind == VkMap:
+        let new_headers = new_map_value()
+        map_data(new_headers) = Table[Key, Value]()
+        for mk, mv in map_data(headers_val):
+          if mv.kind == VkString:
+            map_data(new_headers)[mk] = new_str_value(mv.str)
+          else:
+            map_data(new_headers)[mk] = mv
+        map_data(result)[headers_key] = new_headers
+      else:
+        let empty_headers = new_map_value()
+        map_data(empty_headers) = Table[Key, Value]()
+        map_data(result)[headers_key] = empty_headers
+      
+      return result
+    
+    # If it's a string, wrap it in a response map
+    elif resp.kind == VkString:
+      let result = new_map_value()
+      map_data(result) = Table[Key, Value]()
+      map_data(result)["status".to_key()] = 200.to_value()
+      map_data(result)["body".to_key()] = new_str_value(resp.str)
+      let empty_headers = new_map_value()
+      map_data(empty_headers) = Table[Key, Value]()
+      map_data(result)["headers".to_key()] = empty_headers
+      return result
+    
+    # Default: return as-is (primitives like int/bool are safe)
+    else:
+      return resp
+
+# Convert literal map response back to ServerResponse instance
+proc literal_to_server_response(data: Value): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let response_cls = (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
+    let instance = new_instance_value(response_cls)
+    
+    if data.kind == VkMap:
+      instance_props(instance)["status".to_key()] = 
+        map_data(data).getOrDefault("status".to_key(), 200.to_value())
+      instance_props(instance)["body".to_key()] = 
+        map_data(data).getOrDefault("body".to_key(), "".to_value())
+      instance_props(instance)["headers".to_key()] = 
+        map_data(data).getOrDefault("headers".to_key(), new_map_value())
+    else:
+      # If it's not a map, treat the whole value as the body
+      instance_props(instance)["status".to_key()] = 200.to_value()
+      if data.kind == VkString:
+        instance_props(instance)["body".to_key()] = data
+      else:
+        instance_props(instance)["body".to_key()] = ($data).to_value()
+      instance_props(instance)["headers".to_key()] = new_map_value()
+    
+    return instance
+
+# Create spawn wrapper code that passes request data and calls handler
+proc create_spawn_handler_code(handler: Value, req_data: Value): ptr Gene {.gcsafe.} =
+  {.cast(gcsafe).}:
+    # We create a (do ...) block that:
+    # 1. Has the request data embedded as a literal
+    # 2. Calls the handler with that data
+    # The handler should return a map like {^status 200 ^body "..." ^headers {...}}
+    
+    # Since handler is a function/instance, we can't serialize it directly
+    # Instead, we serialize just the request data and look up the handler globally
+    # in the spawned thread via the gene namespace
+    
+    # Create: (do (gene/http_concurrent_handler req_data))
+    # where gene/http_concurrent_handler is a native fn registered globally
+    let gene = new_gene("gene/http_concurrent_handler".to_symbol_value())
+    gene.children.add(req_data)
+    return gene
+
 proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
   {.cast(gcsafe).}:
     # Convert async request to Gene request
@@ -813,27 +1102,46 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
         return
     # If we have a Gene function handler, add to pending requests
     elif gene_handler_global.kind != VkNil:
-      # Create a Nim future to await the response
-      let nim_future = newFuture[Value]("http_handler")
-      
-      # Add to pending requests list
-      let pending_req = PendingHttpRequest(
-        request: gene_req,
-        nim_future: nim_future,
-        processed: false
-      )
-      
-      withLock(pending_lock):
-        pending_http_requests.add(pending_req)
-      
-      # Await the Nim future (will be completed when process_pending_http_requests runs)
-      try:
-        response = await nim_future
-      except CatchableError as e:
-        await req.respond(Http500, "Internal Server Error: " & e.msg)
-        return
-    else:
-      discard  # No handler configured
+      if concurrent_mode and http_workers_initialized:
+        # CONCURRENT MODE: Dispatch to worker thread for parallel processing
+        let req_literal = server_request_to_literal(gene_req)
+        
+        # Allocate result storage on heap
+        var result_val: Value = NIL
+        var done: bool = false
+        
+        # Dispatch to worker
+        dispatch_to_worker(req_literal, addr result_val, addr done)
+        
+        # Poll until worker completes (non-blocking to allow other async work)
+        while not done:
+          await sleepAsync(1)  # Yield to async event loop
+        
+        response = result_val
+        # Convert literal response map to instance if needed
+        if response.kind == VkMap:
+          response = literal_to_server_response(response)
+      else:
+        # NON-CONCURRENT MODE: Queue for main thread processing
+        # Create a Nim future to await the response
+        let nim_future = newFuture[Value]("http_handler")
+        
+        # Add to pending requests list
+        let pending_req = PendingHttpRequest(
+          request: gene_req,
+          nim_future: nim_future,
+          processed: false
+        )
+        
+        withLock(pending_lock):
+          pending_http_requests.add(pending_req)
+        
+        # Await the Nim future (will be completed when process_pending_http_requests runs)
+        try:
+          response = await nim_future
+        except CatchableError as e:
+          await req.respond(Http500, "Internal Server Error: " & e.msg)
+          return
     
     # Handle the response
     if response == NIL:
@@ -872,9 +1180,22 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     raise new_exception(types.Exception, "start_server requires at least a port")
 
   let port_val = get_positional_arg(args, 0, has_keyword_args)
-  let handler = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
+  let handler = if get_positional_count(arg_count, has_keyword_args) > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
   
   let port = if port_val.kind == VkInt: port_val.int64.int else: 8080
+  
+  # Check for ^concurrent option and ^workers count
+  {.cast(gcsafe).}:
+    let concurrent_val = if has_keyword_args: get_keyword_arg(args, "concurrent") else: NIL
+    concurrent_mode = concurrent_val != NIL and concurrent_val.to_bool()
+    
+    if concurrent_mode:
+      # Get worker count (default to 4)
+      let workers_val = if has_keyword_args: get_keyword_arg(args, "workers") else: NIL
+      let worker_count = if workers_val.kind == VkInt: workers_val.int64.int else: 4
+      
+      echo "Concurrent mode enabled with ", worker_count, " worker threads"
+      init_http_workers(worker_count)
   
   # Store the handler
   {.cast(gcsafe).}:
