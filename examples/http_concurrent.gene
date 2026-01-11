@@ -1,3 +1,5 @@
+#!/usr/bin/env gene run
+
 # Concurrent HTTP Server Example
 # Uses worker thread pool for true parallel request handling
 # Each request runs in a separate worker thread

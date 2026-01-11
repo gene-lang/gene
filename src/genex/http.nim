@@ -10,6 +10,7 @@ import cgi
 include ../gene/extension/boilerplate
 import ../gene/vm
 import ../gene/vm/thread as gene_thread
+import ../gene/serdes
 import std/typedthreads
 import std/atomics
 import std/exitprocs
@@ -55,6 +56,7 @@ proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]):
 proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.}
 proc response_to_literal(resp: Value): Value {.gcsafe.}
 proc literal_to_server_request(req_map: Value): Value {.gcsafe.}
+proc literal_error_response(message: string): Value {.gcsafe.}
 proc http_worker_handle_request(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 
 proc parse_json_internal(node: json.JsonNode): Value {.gcsafe.}
@@ -712,10 +714,7 @@ proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.} =
     if pending_http_requests.len == 0:
       return
 
-    # In concurrent mode, we process ALL pending requests at once
-    # Each one gets its own execution, but we still run them sequentially
-    # in this callback. True concurrency would require spawn threads.
-    
+    # Process queued requests sequentially to keep the event loop responsive.
     withLock(pending_lock):
       # Process only ONE request per callback to allow async event loop to breathe
       if pending_http_requests.len > 0:
@@ -729,22 +728,14 @@ proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.} =
             try:
               result = execute_gene_function(vm, gene_handler_global, @[req.request])
             except CatchableError as e:
-              if concurrent_mode:
-                let error_map = new_map_value()
-                map_data(error_map) = Table[Key, Value]()
-                map_data(error_map)["status".to_key()] = 500.to_value()
-                map_data(error_map)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
-                map_data(error_map)["headers".to_key()] = new_map_value()
-                result = error_map
-              else:
-                let error_response = block:
-                  let instance_class = (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
-                  let instance = new_instance_value(instance_class)
-                  instance_props(instance)["status".to_key()] = 500.to_value()
-                  instance_props(instance)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
-                  instance_props(instance)["headers".to_key()] = new_map_value()
-                  instance
-                result = error_response
+              let error_response = block:
+                let instance_class = (if server_response_class_global != nil: server_response_class_global else: new_class("ServerResponse"))
+                let instance = new_instance_value(instance_class)
+                instance_props(instance)["status".to_key()] = 500.to_value()
+                instance_props(instance)["body".to_key()] = ("Internal Server Error: " & e.msg).to_value()
+                instance_props(instance)["headers".to_key()] = new_map_value()
+                instance
+              result = error_response
           else:
             result = NIL
 
@@ -966,12 +957,17 @@ proc http_worker_handle_request(vm: ptr VirtualMachine, args: ptr UncheckedArray
     let request = literal_to_server_request(req_data)
 
     # Execute the global handler
-    if gene_handler_global.kind != VkNil:
-      let result = execute_gene_function(vm, gene_handler_global, @[request])
-      # Serialize the result to a literal for thread-safe return
-      return response_to_literal(result)
-    else:
+    if gene_handler_global.kind == VkNil:
       return NIL
+
+    try:
+      let result = execute_gene_function(vm, gene_handler_global, @[request])
+      let literal_result = response_to_literal(result)
+      if not is_literal_value(literal_result):
+        return literal_error_response("Internal Server Error: response is not literal")
+      return literal_result
+    except CatchableError as e:
+      return literal_error_response("Internal Server Error: " & e.msg)
 
 # HTTP Server implementation
 proc create_server_request(req: asynchttpserver.Request): Value =
@@ -1139,6 +1135,18 @@ proc response_to_literal(resp: Value): Value {.gcsafe.} =
     else:
       return resp
 
+# Create a literal error response map for worker-safe replies
+proc literal_error_response(message: string): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let result = new_map_value()
+    map_data(result) = Table[Key, Value]()
+    map_data(result)["status".to_key()] = 500.to_value()
+    map_data(result)["body".to_key()] = message.to_value()
+    let headers = new_map_value()
+    map_data(headers) = Table[Key, Value]()
+    map_data(result)["headers".to_key()] = headers
+    return result
+
 # Convert literal map response back to ServerResponse instance
 proc literal_to_server_response(data: Value): Value {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -1189,7 +1197,12 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
         let req_literal = server_request_to_literal(gene_req)
 
         # Dispatch to Gene worker - returns a future with attached Nim future
-        let future = dispatch_to_gene_worker(gene_vm_global, req_literal)
+        var future: Value
+        try:
+          future = dispatch_to_gene_worker(gene_vm_global, req_literal)
+        except CatchableError as e:
+          await req.respond(Http500, "Worker dispatch error: " & e.msg)
+          return
         
         # Await the Nim future directly - non-blocking!
         # The future will be completed when poll_event_loop processes the thread reply
