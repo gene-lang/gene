@@ -9,13 +9,13 @@ import cgi
 
 include ../gene/extension/boilerplate
 import ../gene/vm
-import ../gene/serdes
 import ../gene/vm/thread as gene_thread
 import std/typedthreads
+import std/atomics
+import std/exitprocs
 # Explicitly alias to use asyncfutures.Future in this module (preserve generic)
-type 
+type
   Future[T] {.used.} = asyncfutures.Future[T]
-  NimThread[T] = typedthreads.Thread[T]
 
 # ============ Gene Thread Worker Pool for Concurrent HTTP ============
 
@@ -25,7 +25,7 @@ const MAX_HTTP_WORKERS = 8
 var http_gene_workers: array[MAX_HTTP_WORKERS, Value]  # Stores Gene thread references (VkThread)
 var http_gene_worker_count: int = 0
 var http_gene_workers_initialized: bool = false
-var next_http_worker_idx: int = 0  # Round-robin index
+var next_http_worker_idx: Atomic[int]  # Round-robin index (atomic for thread safety)
 
 # Global variables to store classes
 var request_class_global: Class
@@ -779,37 +779,45 @@ proc init_http_gene_workers(count: int, vm: ptr VirtualMachine) =
   {.cast(gcsafe).}:
     if http_gene_workers_initialized:
       return
-    
-    http_gene_worker_count = min(count, MAX_HTTP_WORKERS)
-    echo "Initializing ", http_gene_worker_count, " Gene HTTP worker threads..."
-    
-    for i in 0..<http_gene_worker_count:
+
+    let requested_count = min(count, MAX_HTTP_WORKERS)
+    when not defined(release):
+      echo "Initializing ", requested_count, " Gene HTTP worker threads..."
+
+    var actual_count = 0
+    for i in 0..<requested_count:
       # Get a free thread from the Gene thread pool
       let thread_id = gene_thread.get_free_thread()
       if thread_id == -1:
         echo "Warning: Could not allocate Gene thread for HTTP worker ", i
         continue
-      
+
       # Initialize the thread
       let parent_id = current_thread_id
       gene_thread.init_thread(thread_id, parent_id)
-      
+
       # Create the worker thread
       createThread(gene_thread.THREAD_DATA[thread_id].thread, thread_handler, thread_id)
-      
-      # Store the thread reference
+
+      # Store the thread reference in sequential slots (no gaps)
       let thread_ref = types.Thread(
         id: thread_id,
         secret: THREADS[thread_id].secret
       )
-      http_gene_workers[i] = thread_ref.to_value()
-      
-      # TODO: Send initialization message to set up the on_message handler
-      # For now, workers will use gene_handler_global directly when they receive messages
-    
+      http_gene_workers[actual_count] = thread_ref.to_value()
+      actual_count += 1
+
+    # Track actual number of successfully initialized workers
+    http_gene_worker_count = actual_count
+
+    if actual_count == 0:
+      echo "Error: No HTTP worker threads could be initialized"
+      return
+
     http_gene_workers_initialized = true
-    next_http_worker_idx = 0
-    echo "Gene HTTP worker threads initialized"
+    next_http_worker_idx.store(0)
+    when not defined(release):
+      echo "Gene HTTP worker threads initialized: ", actual_count, " of ", requested_count, " requested"
     
     # Start background poller to process thread replies
     asyncCheck start_http_thread_poller(vm)
@@ -826,7 +834,8 @@ proc shutdown_http_gene_workers() =
     if not http_gene_workers_initialized:
       return
     
-    echo "Shutting down Gene HTTP worker threads..."
+    when not defined(release):
+      echo "Shutting down Gene HTTP worker threads..."
     for i in 0..<http_gene_worker_count:
       let worker = http_gene_workers[i]
       if worker.kind == VkThread:
@@ -849,15 +858,16 @@ proc shutdown_http_gene_workers() =
         http_gene_workers[i] = NIL
     
     http_gene_workers_initialized = false
-    echo "Gene HTTP worker threads shutdown complete"
+    when not defined(release):
+      echo "Gene HTTP worker threads shutdown complete"
 
 # Dispatch a request to a Gene worker thread using send_expect_reply
 # Returns a future that will be completed with the response
 proc dispatch_to_gene_worker(vm: ptr VirtualMachine, request_data: Value): Value {.gcsafe.} =
   {.cast(gcsafe).}:
-    # Round-robin dispatch
-    let worker_idx = next_http_worker_idx
-    next_http_worker_idx = (next_http_worker_idx + 1) mod http_gene_worker_count
+    # Round-robin dispatch (atomic fetch-and-increment for thread safety)
+    let raw_idx = next_http_worker_idx.fetchAdd(1)
+    let worker_idx = raw_idx mod http_gene_worker_count
     
     let worker = http_gene_workers[worker_idx]
     if worker.kind != VkThread:
@@ -869,12 +879,7 @@ proc dispatch_to_gene_worker(vm: ptr VirtualMachine, request_data: Value): Value
     # Validate thread is still alive
     if not THREADS[thread_id].in_use or THREADS[thread_id].secret != thread_secret:
       raise new_exception(types.Exception, "HTTP worker " & $worker_idx & " is no longer valid")
-    # Serialize request data to literal for thread-safe transfer
-    let ser = serialize_literal(request_data)
-    let ser_str = block:
-      {.cast(gcsafe).}:
-        ser.to_s()
-    
+
     # Create Gene AST code to execute: (http_worker_handle_request <serialized_request>)
     # The request data is embedded directly in the Gene AST as a literal
     let handler_code = new_gene("http_worker_handle_request".to_symbol_value())
@@ -1158,24 +1163,6 @@ proc literal_to_server_response(data: Value): Value {.gcsafe.} =
     
     return instance
 
-# Create spawn wrapper code that passes request data and calls handler
-proc create_spawn_handler_code(handler: Value, req_data: Value): ptr Gene {.gcsafe.} =
-  {.cast(gcsafe).}:
-    # We create a (do ...) block that:
-    # 1. Has the request data embedded as a literal
-    # 2. Calls the handler with that data
-    # The handler should return a map like {^status 200 ^body "..." ^headers {...}}
-    
-    # Since handler is a function/instance, we can't serialize it directly
-    # Instead, we serialize just the request data and look up the handler globally
-    # in the spawned thread via the gene namespace
-    
-    # Create: (do (gene/http_concurrent_handler req_data))
-    # where gene/http_concurrent_handler is a native fn registered globally
-    let gene = new_gene("gene/http_concurrent_handler".to_symbol_value())
-    gene.children.add(req_data)
-    return gene
-
 proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
   # Initial yield to allow other connections to be accepted
   await sleepAsync(1)
@@ -1296,7 +1283,8 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
       let workers_val = if has_keyword_args: get_keyword_arg(args, "workers") else: NIL
       let worker_count = if workers_val.kind == VkInt: workers_val.int64.int else: 4
       
-      echo "Concurrent mode enabled with ", worker_count, " Gene worker threads"
+      when not defined(release):
+        echo "Concurrent mode enabled with ", worker_count, " Gene worker threads"
       init_http_gene_workers(worker_count, vm)
   
   # Store the handler
@@ -1419,5 +1407,10 @@ proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 
 # Call init_http_classes to register the callback
 init_http_classes()
+
+# Register shutdown hook to clean up worker threads on program exit
+exitprocs.addExitProc(proc() =
+  shutdown_http_gene_workers()
+)
 
 {.pop.}

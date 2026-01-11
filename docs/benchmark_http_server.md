@@ -19,7 +19,7 @@ sudo yum install httpd-tools
 Start the concurrent HTTP server:
 
 ```bash
-cd /Users/gcao/proj/gene
+# From the gene project root directory
 bin/gene run examples/http_concurrent.gene
 ```
 
