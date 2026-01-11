@@ -776,10 +776,18 @@ proc start_http_thread_poller(vm: ptr VirtualMachine) {.async.} =
     if http_poller_running:
       return  # Already running
     
+    if vm == nil:
+      echo "Error: Cannot start HTTP poller with nil VM"
+      return
+    
     http_poller_running = true
     while http_gene_workers_initialized:
       # Poll for thread messages every 1ms
-      vm.poll_event_loop()
+      if vm != nil:
+        try:
+          vm.poll_event_loop()
+        except CatchableError as e:
+          echo "Error in poll_event_loop: ", e.msg
       await sleepAsync(1)
     
     http_poller_running = false
@@ -973,20 +981,26 @@ proc http_worker_handle_request(vm: ptr VirtualMachine, args: ptr UncheckedArray
 
     let req_data = get_positional_arg(args, 0, has_keyword_args)
 
+    echo "DEBUG: Worker received request"
+    
     # Convert literal map back to ServerRequest instance
     let request = literal_to_server_request(req_data)
 
     # Execute the global handler
     if gene_handler_global.kind == VkNil:
+      echo "DEBUG: gene_handler_global is nil"
       return NIL
 
     try:
+      echo "DEBUG: Worker executing handler"
       let result = execute_gene_function(vm, gene_handler_global, @[request])
+      echo "DEBUG: Worker handler completed"
       let literal_result = response_to_literal(result)
       if not is_literal_value(literal_result):
         return literal_error_response("Internal Server Error: response is not literal")
       return literal_result
     except CatchableError as e:
+      echo "DEBUG: Worker handler error - ", e.msg
       return literal_error_response("Internal Server Error: " & e.msg)
 
 # HTTP Server implementation
@@ -1223,7 +1237,9 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
         # Dispatch to Gene worker - returns a future with attached Nim future
         var future: Value
         try:
+          echo "DEBUG: Dispatching to worker - ", req.url.path
           future = dispatch_to_gene_worker(gene_vm_global, req_literal)
+          echo "DEBUG: Worker dispatched, awaiting response"
         except CatchableError as e:
           await req.respond(Http500, "Worker dispatch error: " & e.msg)
           return
@@ -1238,13 +1254,16 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
           # Yield to event loop first to allow other requests to be accepted
           await sleepAsync(1)
           
+          echo "DEBUG: About to await nim_fut"
           response = await nim_fut
+          echo "DEBUG: nim_fut completed with response"
           
           # Convert literal response map to instance if needed
           if response.kind == VkMap:
             response = literal_to_server_response(response)
         except CatchableError as e:
           # Future was rejected
+          echo "DEBUG: Worker error - ", e.msg
           await req.respond(Http500, "Worker error: " & e.msg)
           return
       else:

@@ -364,6 +364,20 @@ proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: V
     
   else:
     return false
+
+proc thread_error_message(payload: Value): string =
+  if payload.kind != VkMap:
+    return ""
+  let err_key = "__thread_error__".to_key()
+  if not map_data(payload).hasKey(err_key):
+    return ""
+  let flag = map_data(payload)[err_key]
+  if flag == NIL or not flag.to_bool():
+    return ""
+  let msg_val = map_data(payload).getOrDefault("message".to_key(), "Thread error".to_value())
+  if msg_val.kind == VkString:
+    return msg_val.str
+  return $msg_val
 proc poll_event_loop*(self: ptr VirtualMachine) =
   ## Periodically poll async/thread events; caller decides when to invoke.
   ## Callbacks are executed inline via exec_function.
@@ -388,16 +402,22 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
         if msg_opt.isNone():
           break
 
+        echo "DEBUG: poll_event_loop received message!"
         let msg = msg_opt.get()
+        echo "DEBUG: Message type: ", msg.msg_type, ", from_message_id: ", msg.from_message_id
         if msg.msg_type == MtReply:
           # Complete the future with the reply payload
           if self.thread_futures.hasKey(msg.from_message_id):
+            echo "DEBUG: Found matching future, completing it"
             let future_obj = self.thread_futures[msg.from_message_id]
             var payload = msg.payload
             if msg.payload_bytes.bytes.len > 0:
               try:
+                echo "DEBUG: Deserializing payload..."
                 payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+                echo "DEBUG: Payload deserialized successfully"
               except CatchableError as ex:
+                echo "DEBUG: Deserialization failed: ", ex.msg
                 future_obj.state = FsFailure
                 future_obj.value = wrap_nim_exception(ex, "thread reply decode")
                 # Execute callbacks inline
@@ -407,14 +427,34 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
                   future_obj.nim_future.fail(newException(system.Exception, ex.msg))
                 self.thread_futures.del(msg.from_message_id)
                 continue
+            let error_msg = thread_error_message(payload)
+            if error_msg.len > 0:
+              echo "DEBUG: Thread reply indicates error: ", error_msg
+              let ex = new_exception(types.Exception, error_msg)
+              future_obj.state = FsFailure
+              future_obj.value = wrap_nim_exception(ex, "thread reply")
+              # Execute callbacks inline
+              self.execute_future_callbacks(future_obj)
+              # Fail the attached Nim future if present
+              if future_obj.nim_future != nil and not future_obj.nim_future.finished:
+                future_obj.nim_future.fail(newException(system.Exception, error_msg))
+              self.thread_futures.del(msg.from_message_id)
+              continue
             future_obj.state = FsSuccess
             future_obj.value = payload
+            echo "DEBUG: Future state set to success"
             # Execute callbacks inline
             self.execute_future_callbacks(future_obj)
+            echo "DEBUG: Callbacks executed"
             # Complete the attached Nim future if present (for non-blocking HTTP handlers)
             if future_obj.nim_future != nil and not future_obj.nim_future.finished:
+              echo "DEBUG: Completing Nim future..."
               future_obj.nim_future.complete(payload)
+              echo "DEBUG: Nim future completed!"
+            else:
+              echo "DEBUG: No Nim future to complete or already finished"
             self.thread_futures.del(msg.from_message_id)
+            echo "DEBUG: Future removed from table"
 
     # Update all pending futures from their Nim futures and execute callbacks inline
     var i = 0
@@ -5187,6 +5227,15 @@ proc exec*(self: ptr VirtualMachine): Value =
                           future_obj.value = wrap_nim_exception(ex, "thread reply decode")
                           self.thread_futures.del(msg.from_message_id)
                           continue
+                      let error_msg = thread_error_message(payload)
+                      if error_msg.len > 0:
+                        let ex = new_exception(types.Exception, error_msg)
+                        future_obj.state = FsFailure
+                        future_obj.value = wrap_nim_exception(ex, "thread reply")
+                        if future_obj.nim_future != nil and not future_obj.nim_future.finished:
+                          future_obj.nim_future.fail(newException(system.Exception, error_msg))
+                        self.thread_futures.del(msg.from_message_id)
+                        continue
                       future_obj.state = FsSuccess
                       future_obj.value = payload
                       self.thread_futures.del(msg.from_message_id)

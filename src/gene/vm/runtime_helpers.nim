@@ -107,37 +107,58 @@ proc thread_handler*(thread_id: int) {.thread.} =
         # Execute based on message type
         case msg.msg_type:
         of MtRun, MtRunExpectReply:
-          # Compile the Gene AST locally (thread-safe, no shared refs)
-          when DEBUG_VM:
-            echo "DEBUG thread_handler: Compiling code: ", msg.code
-          let cu = compile_init(msg.code)
+          try:
+            # Compile the Gene AST locally (thread-safe, no shared refs)
+            when DEBUG_VM:
+              echo "DEBUG thread_handler: Compiling code: ", msg.code
+            let cu = compile_init(msg.code)
 
-          # Set up VM with scope tracker
-          let scope_tracker = new_scope_tracker()
-          VM.frame = new_frame()
-          VM.frame.stack_index = 0
-          VM.frame.scope = new_scope(scope_tracker)
-          VM.frame.ns = App.app.gene_ns.ref.ns  # Set namespace for symbol lookup
-          VM.cu = cu
-          VM.pc = 0
+            # Set up VM with scope tracker
+            let scope_tracker = new_scope_tracker()
+            VM.frame = new_frame()
+            VM.frame.stack_index = 0
+            VM.frame.scope = new_scope(scope_tracker)
+            VM.frame.ns = App.app.gene_ns.ref.ns  # Set namespace for symbol lookup
+            VM.cu = cu
+            VM.pc = 0
 
-          # Execute
-          let result = VM.exec()
+            # Execute
+            let result = VM.exec()
 
-          # Send reply if requested
-          if msg.msg_type == MtRunExpectReply:
-            let ser = serialize_literal(result)
-            let reply = ThreadMessage(
-              id: next_message_id,
-              msg_type: MtReply,
-              payload: NIL,
-              payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
-              from_message_id: msg.id,
-              from_thread_id: thread_id,
-              from_thread_secret: THREADS[thread_id].secret
-            )
-            next_message_id += 1
-            THREAD_DATA[msg.from_thread_id].channel.send(reply)
+            # Send reply if requested
+            if msg.msg_type == MtRunExpectReply:
+              let ser = serialize_literal(result)
+              let reply = ThreadMessage(
+                id: next_message_id,
+                msg_type: MtReply,
+                payload: NIL,
+                payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
+                from_message_id: msg.id,
+                from_thread_id: thread_id,
+                from_thread_secret: THREADS[thread_id].secret
+              )
+              next_message_id += 1
+              THREAD_DATA[msg.from_thread_id].channel.send(reply)
+          except CatchableError as e:
+            when not defined(release):
+              echo "Thread ", thread_id, " handler error: ", e.msg
+              echo e.getStackTrace()
+            if msg.msg_type == MtRunExpectReply:
+              let error_payload = new_map_value()
+              map_data(error_payload)["__thread_error__".to_key()] = true.to_value()
+              map_data(error_payload)["message".to_key()] = e.msg.to_value()
+              let ser = serialize_literal(error_payload)
+              let reply = ThreadMessage(
+                id: next_message_id,
+                msg_type: MtReply,
+                payload: NIL,
+                payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
+                from_message_id: msg.id,
+                from_thread_id: thread_id,
+                from_thread_secret: THREADS[thread_id].secret
+              )
+              next_message_id += 1
+              THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
         of MtSend, MtSendExpectReply:
           # User message - invoke callbacks

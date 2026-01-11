@@ -6,19 +6,19 @@
 # Configuration
 (var PORT 4080)
 (var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
-(var model)
-(var session)
 
 # Initialize LLM if model path is configured
+# The model is registered globally so worker threads can access it
 (fn init_llm []
   (var model_path_len (if (MODEL_PATH == nil) 0 else (MODEL_PATH .length)))
   (if (model_path_len == 0)
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   elif genex/llm
     (println "Loading LLM model from:" MODEL_PATH)
-    (model = (genex/llm/load_model MODEL_PATH))
-    (session = (model .new_session {^max_tokens 512}))
-    (println "LLM model loaded successfully")
+    (var model (genex/llm/load_model MODEL_PATH))
+    # Register model globally for worker thread access
+    (genex/llm/register_model model)
+    (println "LLM model loaded and registered successfully")
   else
     (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
   )
@@ -48,7 +48,7 @@
 
 # Health check endpoint
 (fn handle_health [req]
-  (var is_loaded (model != nil))
+  (var is_loaded ((genex/llm/get_model) != nil))
   (json_response 200 {^status "ok" ^model_loaded is_loaded})
 )
 
@@ -132,17 +132,27 @@ User request:
   (var tokens_used 0)
   (var thinking)
 
-  (if session
-    # Use actual LLM with chat format
-    (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
-    (var result (session .infer prompt))
-    (var raw_text (result .get "text"))
-    (var tokens (result .get "tokens"))
-    (tokens_used = tokens/.size)
-    # Parse thinking vs answer
-    (var parsed_resp (parse_response raw_text))
-    (thinking = (parsed_resp .get 0))
-    (response_text = (parsed_resp .get 1))
+  # Get model from global registry (works across threads)
+  (var model (genex/llm/get_model))
+  
+  (if model
+    # Create session on-demand for this request
+    (var session (model .new_session {^max_tokens 512}))
+    (try
+      # Use actual LLM with chat format
+      (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+      (var result (session .infer prompt))
+      (var raw_text (result .get "text"))
+      (var tokens (result .get "tokens"))
+      (tokens_used = tokens/.size)
+      # Parse thinking vs answer
+      (var parsed_resp (parse_response raw_text))
+      (thinking = (parsed_resp .get 0))
+      (response_text = (parsed_resp .get 1))
+    finally
+      # Always close session after request
+      (session .close)
+    )
   else
     # Mock response when no model is loaded
     (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
@@ -178,5 +188,9 @@ User request:
 (println "  POST /api/chat   - Send chat message")
 (println)
 
+# Note: Concurrent mode is disabled due to threading safety issues with
+# accessing the global model registry from multiple worker threads.
+# The LLM sessions are not thread-safe across concurrent workers.
+# TODO: Implement proper thread-safety (mutex/lock) for cross-thread model access.
 (start_server PORT handle_request)
 (run_forever)

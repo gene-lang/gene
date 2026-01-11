@@ -1,4 +1,5 @@
 import tables, strutils, sets
+import std/json
 
 import ./types
 import ./parser
@@ -227,7 +228,7 @@ proc value_to_gene_str(self: Value): string =
     # Extract char from NaN-boxed value
     result = "'" & $chr((self.raw and 0xFF).int) & "'"
   of VkString:
-    result = "\"" & self.str & "\""
+    result = json.escapeJson(self.str)
   of VkSymbol:
     result = self.str
   of VkArray:

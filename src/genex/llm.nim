@@ -1,6 +1,12 @@
 import os, strutils, tables, osproc
 import ../gene/types
 
+# Global registries for cross-thread access
+# This allows worker threads to access models and create sessions
+var global_model_registry* {.global.}: Value = NIL
+var global_model_class* {.global.}: Class = nil
+var global_session_class* {.global.}: Class = nil
+
 when defined(GENE_LLM_MOCK):
   type
     ModelState = ref object of CustomValue
@@ -115,20 +121,30 @@ when defined(GENE_LLM_MOCK):
     build_completion_value("", @[], reason, 0)
 
   proc expect_model(val: Value, context: string): ModelState =
-    if val.kind != VkCustom or val.ref.custom_class != model_class_global:
+    # Check by class name for cross-thread compatibility (model_class_global is threadvar)
+    if val.kind != VkCustom:
+      raise new_exception(types.Exception, context & " requires an LLM model instance")
+    if val.ref.custom_class == nil or val.ref.custom_class.name != "Model":
       raise new_exception(types.Exception, context & " requires an LLM model instance")
     cast[ModelState](get_custom_data(val, "LLM model payload missing"))
 
   proc expect_session(val: Value, context: string): SessionState =
-    if val.kind != VkCustom or val.ref.custom_class != session_class_global:
+    # Check by class name for cross-thread compatibility (session_class_global is threadvar)
+    if val.kind != VkCustom:
+      raise new_exception(types.Exception, context & " requires an LLM session instance")
+    if val.ref.custom_class == nil or val.ref.custom_class.name != "Session":
       raise new_exception(types.Exception, context & " requires an LLM session instance")
     cast[SessionState](get_custom_data(val, "LLM session payload missing"))
 
   proc new_model_value(state: ModelState): Value {.gcsafe.} =
-    new_custom_value(model_class_global, state)
+    # Use threadvar class if available, fall back to global for worker threads
+    let cls = if model_class_global != nil: model_class_global else: global_model_class
+    new_custom_value(cls, state)
 
   proc new_session_value(state: SessionState): Value {.gcsafe.} =
-    new_custom_value(session_class_global, state)
+    # Use threadvar class if available, fall back to global for worker threads
+    let cls = if session_class_global != nil: session_class_global else: global_session_class
+    new_custom_value(cls, state)
 
   proc ensure_model_open(state: ModelState) =
     if state.closed:
@@ -279,6 +295,23 @@ when defined(GENE_LLM_MOCK):
 
     build_completion_value(text, tokens, finish_reason, latency_ms)
 
+  # Register a model globally for cross-thread access
+  proc vm_register_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 1:
+      raise new_exception(types.Exception, "register_model requires a model")
+    let model_val = get_positional_arg(args, 0, has_keyword_args)
+    # Validate it's a model (will throw if not)
+    discard expect_model(model_val, "register_model")
+    {.cast(gcsafe).}:
+      global_model_registry = model_val
+    NIL
+
+  # Get the globally registered model (for worker threads)
+  proc vm_get_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    {.cast(gcsafe).}:
+      global_model_registry
+
   proc init_llm_module*() =
     VmCreatedCallbacks.add proc() =
       {.cast(gcsafe).}:
@@ -292,12 +325,16 @@ when defined(GENE_LLM_MOCK):
           model_class_global.parent = App.app.object_class.ref.class
         model_class_global.def_native_method("new_session", vm_model_new_session)
         model_class_global.def_native_method("close", vm_model_close)
+        # Set global for cross-thread access
+        global_model_class = model_class_global
 
         session_class_global = new_class("Session")
         if App.app.object_class.kind == VkClass:
           session_class_global.parent = App.app.object_class.ref.class
         session_class_global.def_native_method("infer", vm_session_infer)
         session_class_global.def_native_method("close", vm_session_close)
+        # Set global for cross-thread access
+        global_session_class = session_class_global
 
         let llm_ns = new_ref(VkNamespace)
         llm_ns.ns = new_namespace("llm")
@@ -305,6 +342,14 @@ when defined(GENE_LLM_MOCK):
         let load_fn = new_ref(VkNativeFn)
         load_fn.native_fn = vm_load_model
         llm_ns.ns["load_model".to_key()] = load_fn.to_ref_value()
+
+        let register_fn = new_ref(VkNativeFn)
+        register_fn.native_fn = vm_register_model
+        llm_ns.ns["register_model".to_key()] = register_fn.to_ref_value()
+
+        let get_fn = new_ref(VkNativeFn)
+        get_fn.native_fn = vm_get_model
+        llm_ns.ns["get_model".to_key()] = get_fn.to_ref_value()
 
         let model_class_ref = new_ref(VkClass)
         model_class_ref.class = model_class_global
@@ -456,20 +501,32 @@ else:
         break
 
   proc expect_model(val: Value, context: string): ModelState =
-    if val.kind != VkCustom or val.ref.custom_class != model_class_global:
+    # Check by class name for cross-thread compatibility (model_class_global is threadvar)
+    if val.kind != VkCustom:
+      raise new_exception(types.Exception, context & " requires an LLM model instance")
+    if val.ref.custom_class == nil or val.ref.custom_class.name != "Model":
       raise new_exception(types.Exception, context & " requires an LLM model instance")
     cast[ModelState](get_custom_data(val, "LLM model payload missing"))
 
   proc expect_session(val: Value, context: string): SessionState =
-    if val.kind != VkCustom or val.ref.custom_class != session_class_global:
+    # Check by class name for cross-thread compatibility (session_class_global is threadvar)
+    if val.kind != VkCustom:
+      raise new_exception(types.Exception, context & " requires an LLM session instance")
+    if val.ref.custom_class == nil or val.ref.custom_class.name != "Session":
       raise new_exception(types.Exception, context & " requires an LLM session instance")
     cast[SessionState](get_custom_data(val, "LLM session payload missing"))
 
   proc new_model_value(state: ModelState): Value {.gcsafe.} =
-    new_custom_value(model_class_global, state)
+    # Use threadvar class if available, fall back to global for worker threads
+    {.cast(gcsafe).}:
+      let cls = if model_class_global != nil: model_class_global else: global_model_class
+      new_custom_value(cls, state)
 
   proc new_session_value(state: SessionState): Value {.gcsafe.} =
-    new_custom_value(session_class_global, state)
+    # Use threadvar class if available, fall back to global for worker threads
+    {.cast(gcsafe).}:
+      let cls = if session_class_global != nil: session_class_global else: global_session_class
+      new_custom_value(cls, state)
 
   proc ensure_model_open(state: ModelState) =
     if state.closed:
@@ -757,6 +814,23 @@ else:
     gene_llm_free_completion(addr completion)
     result_value
 
+  # Register a model globally for cross-thread access
+  proc vm_register_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 1:
+      raise new_exception(types.Exception, "register_model requires a model")
+    let model_val = get_positional_arg(args, 0, has_keyword_args)
+    # Validate it's a model (will throw if not)
+    discard expect_model(model_val, "register_model")
+    {.cast(gcsafe).}:
+      global_model_registry = model_val
+    NIL
+
+  # Get the globally registered model (for worker threads)
+  proc vm_get_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    {.cast(gcsafe).}:
+      global_model_registry
+
   proc cleanup_llm_backend() {.noconv.} =
     for state in tracked_sessions:
       cleanup_session(state)
@@ -782,12 +856,16 @@ else:
           model_class_global.parent = App.app.object_class.ref.class
         model_class_global.def_native_method("new_session", vm_model_new_session)
         model_class_global.def_native_method("close", vm_model_close)
+        # Set global for cross-thread access
+        global_model_class = model_class_global
 
         session_class_global = new_class("Session")
         if App.app.object_class.kind == VkClass:
           session_class_global.parent = App.app.object_class.ref.class
         session_class_global.def_native_method("infer", vm_session_infer)
         session_class_global.def_native_method("close", vm_session_close)
+        # Set global for cross-thread access
+        global_session_class = session_class_global
 
         let llm_ns = new_ref(VkNamespace)
         llm_ns.ns = new_namespace("llm")
@@ -795,6 +873,14 @@ else:
         let load_fn = new_ref(VkNativeFn)
         load_fn.native_fn = vm_load_model
         llm_ns.ns["load_model".to_key()] = load_fn.to_ref_value()
+
+        let register_fn = new_ref(VkNativeFn)
+        register_fn.native_fn = vm_register_model
+        llm_ns.ns["register_model".to_key()] = register_fn.to_ref_value()
+
+        let get_fn = new_ref(VkNativeFn)
+        get_fn.native_fn = vm_get_model
+        llm_ns.ns["get_model".to_key()] = get_fn.to_ref_value()
 
         let model_class_ref = new_ref(VkClass)
         model_class_ref.class = model_class_global
