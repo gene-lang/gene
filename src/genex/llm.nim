@@ -755,9 +755,21 @@ else:
 
     var err: GeneLlmError
     var handle: ptr GeneLlmSession
-    let status = gene_llm_new_session(model_state.handle, addr session_opts, addr handle, addr err)
-    if status != glsOk or handle == nil:
-      raise_backend_error(err)
+    # Serialize llama.cpp operations - not thread-safe
+    {.cast(gcsafe).}:
+      acquire(global_llm_op_lock)
+    try:
+      let status = gene_llm_new_session(model_state.handle, addr session_opts, addr handle, addr err)
+      if status != glsOk or handle == nil:
+        {.cast(gcsafe).}:
+          release(global_llm_op_lock)
+        raise_backend_error(err)
+    except:
+      {.cast(gcsafe).}:
+        release(global_llm_op_lock)
+      raise
+    {.cast(gcsafe).}:
+      release(global_llm_op_lock)
 
     let session_state = SessionState(
       model: model_state,
@@ -817,9 +829,21 @@ else:
 
     var completion: GeneLlmCompletion
     var err: GeneLlmError
-    let status = gene_llm_infer(session_state.handle, addr infer_opts, addr completion, addr err)
-    if status != glsOk:
-      raise_backend_error(err)
+    # Serialize llama.cpp operations - not thread-safe
+    {.cast(gcsafe).}:
+      acquire(global_llm_op_lock)
+    try:
+      let status = gene_llm_infer(session_state.handle, addr infer_opts, addr completion, addr err)
+      if status != glsOk:
+        {.cast(gcsafe).}:
+          release(global_llm_op_lock)
+        raise_backend_error(err)
+    except:
+      {.cast(gcsafe).}:
+        release(global_llm_op_lock)
+      raise
+    {.cast(gcsafe).}:
+      release(global_llm_op_lock)
 
     let result_value = completion_to_value(completion)
     gene_llm_free_completion(addr completion)
@@ -862,8 +886,9 @@ else:
       {.cast(gcsafe).}:
         ensure_backend()
         
-        # Initialize lock for thread-safe model registry access
+        # Initialize locks for thread-safe access
         initLock(global_model_lock)
+        initLock(global_llm_op_lock)
 
         if App == NIL or App.kind != VkApplication:
           return
