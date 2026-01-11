@@ -402,12 +402,18 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
                 future_obj.value = wrap_nim_exception(ex, "thread reply decode")
                 # Execute callbacks inline
                 self.execute_future_callbacks(future_obj)
+                # Fail the attached Nim future if present
+                if future_obj.nim_future != nil and not future_obj.nim_future.finished:
+                  future_obj.nim_future.fail(newException(system.Exception, ex.msg))
                 self.thread_futures.del(msg.from_message_id)
                 continue
             future_obj.state = FsSuccess
             future_obj.value = payload
             # Execute callbacks inline
             self.execute_future_callbacks(future_obj)
+            # Complete the attached Nim future if present (for non-blocking HTTP handlers)
+            if future_obj.nim_future != nil and not future_obj.nim_future.finished:
+              future_obj.nim_future.complete(payload)
             self.thread_futures.del(msg.from_message_id)
 
     # Update all pending futures from their Nim futures and execute callbacks inline

@@ -1,0 +1,39 @@
+#!/usr/bin/env gene run
+
+# Concurrent HTTP Server Example
+# Uses worker thread pool for true parallel request handling
+# Each request runs in a separate worker thread
+
+# Handler receives request data as a map
+(fn handle_request [req]
+  (var path req/path)
+  (var method req/method)
+  
+  (println "Handling request:" method path)
+  
+  (if (== path "/")
+    {^status 200 ^body "Welcome to the concurrent HTTP server!"}
+  elif (== path "/api/data")
+    {^status 200 
+     ^body "{\"message\": \"Hello from Gene\", \"timestamp\": 12345}"
+     ^headers {^Content-Type "application/json"}}
+  elif (== path "/slow")
+    (do
+      (println "Starting slow request...")
+      (sleep 2000)  # 2 second delay - runs in worker thread, doesn't block others
+      (println "Finished slow request")
+      {^status 200 ^body "Slow response complete"})
+  else
+    {^status 404 ^body "Not Found"}))
+
+# Start server with concurrent mode and 4 worker threads
+(start_server 8085 handle_request ^concurrent true ^workers 4)
+
+(println "Server running on port 8085 with worker thread pool")
+(println "Try: curl http://127.0.0.1:8085/")
+(println "")
+(println "Test concurrent handling:")
+(println "  ab -n 5 -c 5 http://127.0.0.1:8085/slow")
+(println "  Should complete in ~2-4 seconds, not 10 seconds")
+
+(run_forever)

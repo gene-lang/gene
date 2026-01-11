@@ -1,0 +1,25 @@
+# Simple HTTP Server Example - NON-CONCURRENT MODE
+# Testing basic request handling first
+
+(fn handle_request [req]
+  # Access request data (req is an instance in non-concurrent mode)
+  (var path (req .path))
+  (var method (req .method))
+  
+  (println "Handling request:" method path)
+  
+  # Return response
+  (if (== path "/")
+    (respond 200 "Welcome to the HTTP server!")
+  elif (== path "/api/data")
+    (respond 200 "{\"message\": \"Hello\"}" {^Content-Type "application/json"})
+  else
+    (respond 404 "Not Found")))
+
+# Start server WITHOUT concurrent mode
+(start_server 8086 handle_request)
+
+(println "Server running on port 8086")
+(println "Try: http://localhost:8086/")
+
+(run_forever)
