@@ -188,9 +188,7 @@ User request:
 (println "  POST /api/chat   - Send chat message")
 (println)
 
-# Note: Concurrent mode is disabled due to threading safety issues with
-# accessing the global model registry from multiple worker threads.
-# The LLM sessions are not thread-safe across concurrent workers.
-# TODO: Implement proper thread-safety (mutex/lock) for cross-thread model access.
-(start_server PORT handle_request)
+# Use concurrent mode with thread-safe model registry access
+# Model is protected by lock, sessions are created per-request
+(start_server PORT handle_request ^concurrent true ^workers 4)
 (run_forever)

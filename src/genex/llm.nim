@@ -1,4 +1,5 @@
 import os, strutils, tables, osproc
+import std/locks
 import ../gene/types
 
 # Global registries for cross-thread access
@@ -6,6 +7,8 @@ import ../gene/types
 var global_model_registry* {.global.}: Value = NIL
 var global_model_class* {.global.}: Class = nil
 var global_session_class* {.global.}: Class = nil
+var global_model_lock* {.global.}: Lock  # Protects access to global_model_registry
+var global_llm_op_lock* {.global.}: Lock  # Serializes llama.cpp operations (not thread-safe)
 
 when defined(GENE_LLM_MOCK):
   type
@@ -304,17 +307,25 @@ when defined(GENE_LLM_MOCK):
     # Validate it's a model (will throw if not)
     discard expect_model(model_val, "register_model")
     {.cast(gcsafe).}:
+      acquire(global_model_lock)
       global_model_registry = model_val
+      release(global_model_lock)
     NIL
 
   # Get the globally registered model (for worker threads)
   proc vm_get_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     {.cast(gcsafe).}:
-      global_model_registry
+      acquire(global_model_lock)
+      let result = global_model_registry
+      release(global_model_lock)
+      result
 
   proc init_llm_module*() =
     VmCreatedCallbacks.add proc() =
       {.cast(gcsafe).}:
+        # Initialize lock for thread-safe model registry access
+        initLock(global_model_lock)
+        
         if App == NIL or App.kind != VkApplication:
           return
         if App.app.genex_ns == NIL or App.app.genex_ns.kind != VkNamespace:
@@ -823,13 +834,18 @@ else:
     # Validate it's a model (will throw if not)
     discard expect_model(model_val, "register_model")
     {.cast(gcsafe).}:
+      acquire(global_model_lock)
       global_model_registry = model_val
+      release(global_model_lock)
     NIL
 
   # Get the globally registered model (for worker threads)
   proc vm_get_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     {.cast(gcsafe).}:
-      global_model_registry
+      acquire(global_model_lock)
+      let result = global_model_registry
+      release(global_model_lock)
+      result
 
   proc cleanup_llm_backend() {.noconv.} =
     for state in tracked_sessions:
@@ -845,6 +861,9 @@ else:
     VmCreatedCallbacks.add proc() =
       {.cast(gcsafe).}:
         ensure_backend()
+        
+        # Initialize lock for thread-safe model registry access
+        initLock(global_model_lock)
 
         if App == NIL or App.kind != VkApplication:
           return
