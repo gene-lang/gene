@@ -83,7 +83,7 @@ proc init_vm_for_thread*(thread_id: int) =
   setup_thread_vm(thread_id)
 
 # Thread handler
-proc thread_handler(thread_id: int) {.thread.} =
+proc thread_handler*(thread_id: int) {.thread.} =
   ## Main thread execution loop
   {.cast(gcsafe).}:
     try:
