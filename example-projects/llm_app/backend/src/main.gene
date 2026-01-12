@@ -188,7 +188,13 @@ User request:
 (println "  POST /api/chat   - Send chat message")
 (println)
 
-# Use concurrent mode with thread-safe model registry access
-# Model is protected by lock, sessions are created per-request
-(start_server PORT handle_request ^concurrent true ^workers 4)
+# (start_server PORT handle_request ^concurrent true ^workers 4)
+
+# LLM apps must run in sequential mode because:
+# 1. Nim's ref objects (ModelState, SessionState) are GC-managed and thread-local
+# 2. Sharing these across threads causes segfaults
+# 3. llama.cpp operations are also not thread-safe
+# For non-LLM HTTP servers, concurrent mode works fine.
+(start_server PORT handle_request)
+
 (run_forever)

@@ -1,5 +1,12 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { marked } from 'marked'
 import './App.css'
+
+// Configure marked for safe rendering
+marked.setOptions({
+  breaks: true,  // Convert \n to <br>
+  gfm: true,     // GitHub Flavored Markdown
+})
 
 function App() {
   const [messages, setMessages] = useState([])
@@ -122,7 +129,14 @@ function App() {
           )}
           {messages.map((msg, idx) => (
             <div key={idx} className={`message ${msg.role}`}>
-              <div className="message-content">{msg.content}</div>
+              {msg.role === 'assistant' ? (
+                <div
+                  className="message-content markdown"
+                  dangerouslySetInnerHTML={{ __html: marked.parse(msg.content || '') }}
+                />
+              ) : (
+                <div className="message-content">{msg.content}</div>
+              )}
               {msg.tokens && (
                 <div className="message-meta">{msg.tokens} tokens</div>
               )}

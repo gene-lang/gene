@@ -119,6 +119,112 @@ body {
   word-break: break-word;
 }
 
+/* Markdown styles for assistant messages */
+.message-content.markdown {
+  white-space: normal;
+}
+
+.message-content.markdown p {
+  margin: 0 0 0.75em 0;
+}
+
+.message-content.markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.message-content.markdown h1,
+.message-content.markdown h2,
+.message-content.markdown h3,
+.message-content.markdown h4 {
+  margin: 1em 0 0.5em 0;
+  font-weight: 600;
+}
+
+.message-content.markdown h1 { font-size: 1.4em; }
+.message-content.markdown h2 { font-size: 1.25em; }
+.message-content.markdown h3 { font-size: 1.1em; }
+.message-content.markdown h4 { font-size: 1em; }
+
+.message-content.markdown h1:first-child,
+.message-content.markdown h2:first-child,
+.message-content.markdown h3:first-child,
+.message-content.markdown h4:first-child {
+  margin-top: 0;
+}
+
+.message-content.markdown ul,
+.message-content.markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.message-content.markdown li {
+  margin: 0.25em 0;
+}
+
+.message-content.markdown code {
+  background: rgba(0, 0, 0, 0.1);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 0.9em;
+}
+
+.message-content.markdown pre {
+  background: rgba(0, 0, 0, 0.15);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+
+.message-content.markdown pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.message-content.markdown blockquote {
+  border-left: 3px solid rgba(0, 0, 0, 0.2);
+  margin: 0.75em 0;
+  padding-left: 12px;
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.message-content.markdown strong {
+  font-weight: 600;
+}
+
+.message-content.markdown a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.message-content.markdown hr {
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.2);
+  margin: 1em 0;
+}
+
+.message-content.markdown table {
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  width: 100%;
+}
+
+.message-content.markdown th,
+.message-content.markdown td {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.message-content.markdown th {
+  background: rgba(0, 0, 0, 0.1);
+  font-weight: 600;
+}
+
 .message-meta {
   font-size: 0.75rem;
   color: #9ca3af;
