@@ -389,19 +389,32 @@ else:
     {.passC: "-I" & shimIncludeDir.}
     {.passL: "-L" & llamaBuildDir.}
     {.passL: "-L" & llamaBuildDir & "/ggml/src".}
-    {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-blas".}
-    {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-metal".}
+    when defined(macosx):
+      {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-blas".}
+      {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-metal".}
+    when defined(linux):
+      {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-cuda".}
+      {.passL: "-L/usr/local/cuda/lib64".}
     {.passL: "-lgene_llm".}
     {.passL: "-lllama".}
     {.passL: "-lggml".}
     {.passL: "-lggml-base".}
     {.passL: "-lggml-cpu".}
-    {.passL: "-lggml-blas".}
-    {.passL: "-lggml-metal".}
-    {.passL: "-framework Metal".}
-    {.passL: "-framework Foundation".}
-    {.passL: "-framework Accelerate".}
-    {.passL: "-lc++".}
+    when defined(macosx):
+      {.passL: "-lggml-blas".}
+      {.passL: "-lggml-metal".}
+      {.passL: "-framework Metal".}
+      {.passL: "-framework Foundation".}
+      {.passL: "-framework Accelerate".}
+      {.passL: "-lc++".}
+    when defined(linux):
+      {.passL: "-lggml-cuda".}
+      {.passL: "-lcuda".}
+      {.passL: "-lcudart".}
+      {.passL: "-lcublas".}
+      {.passL: "-lcublasLt".}
+      {.passL: "-lstdc++".}
+      {.passL: "-lgomp".}
 
   type
     GeneLlmModel {.importc: "struct gene_llm_model", header: "gene_llm.h".} = object
