@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { marked } from 'marked'
 import './App.css'
 
@@ -7,6 +7,30 @@ marked.setOptions({
   breaks: true,  // Convert \n to <br>
   gfm: true,     // GitHub Flavored Markdown
 })
+
+const STORAGE_KEY = 'gene_llm_conversations'
+
+const emptyStore = { conversations: {}, lastConversationId: null }
+
+const loadConversationStore = () => {
+  if (typeof localStorage === 'undefined') return emptyStore
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return emptyStore
+    const parsed = JSON.parse(raw)
+    return {
+      conversations: parsed.conversations || {},
+      lastConversationId: parsed.lastConversationId || null,
+    }
+  } catch (error) {
+    return emptyStore
+  }
+}
+
+const saveConversationStore = (store) => {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+}
 
 function App() {
   const [messages, setMessages] = useState([])
@@ -17,10 +41,25 @@ function App() {
   const [conversationId, setConversationId] = useState(null)
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
+  const storeRef = useRef(emptyStore)
 
   // Check backend health on mount
   useEffect(() => {
     checkHealth()
+  }, [])
+
+  useEffect(() => {
+    const stored = loadConversationStore()
+    storeRef.current = stored
+    const lastId = stored.lastConversationId
+    const lastConversation = lastId ? stored.conversations[lastId] : null
+    if (lastConversation) {
+      const history = Array.isArray(lastConversation.messages)
+        ? lastConversation.messages
+        : []
+      setConversationId(lastId)
+      setMessages(history)
+    }
   }, [])
 
   // Auto-scroll to bottom when messages change
@@ -38,19 +77,53 @@ function App() {
     }
   }
 
-  const startConversation = async () => {
+  const persistConversation = (convId, nextMessages) => {
+    if (!convId) return
+    const store = storeRef.current || emptyStore
+    const existing = store.conversations[convId] || { id: convId, messages: [] }
+    const nextStore = {
+      ...store,
+      conversations: {
+        ...store.conversations,
+        [convId]: { ...existing, id: convId, messages: nextMessages },
+      },
+      lastConversationId: convId,
+    }
+    storeRef.current = nextStore
+    saveConversationStore(nextStore)
+  }
+
+  const setActiveConversation = (convId, nextMessages) => {
+    setConversationId(convId)
+    setMessages(nextMessages)
+    persistConversation(convId, nextMessages)
+  }
+
+  const appendMessage = (convId, message) => {
+    if (!convId) {
+      setMessages(prev => [...prev, message])
+      return
+    }
+    setMessages(prev => {
+      const next = [...prev, message]
+      persistConversation(convId, next)
+      return next
+    })
+  }
+
+  const createConversation = async (initialMessages = []) => {
     const response = await fetch('/api/chat/new', { method: 'POST' })
     const data = await response.json()
     if (!response.ok || data.error || !data.conversation_id) {
       throw new Error(data.error || 'Failed to start conversation')
     }
-    setConversationId(data.conversation_id)
+    setActiveConversation(data.conversation_id, initialMessages)
     return data.conversation_id
   }
 
   const ensureConversation = async () => {
     if (conversationId) return conversationId
-    return startConversation()
+    return createConversation(messages)
   }
 
   const sendMessage = async (e) => {
@@ -71,11 +144,23 @@ function App() {
         fileInputRef.current.value = ''
       }
     }
-    setMessages(prev => [...prev, { role: 'user', content: displayMessage }])
     setLoading(true)
 
+    let activeConversation
     try {
-      const activeConversation = await ensureConversation()
+      activeConversation = await ensureConversation()
+    } catch (error) {
+      setMessages(prev => [...prev, {
+        role: 'error',
+        content: error.message || 'Failed to start conversation'
+      }])
+      setLoading(false)
+      return
+    }
+
+    appendMessage(activeConversation, { role: 'user', content: displayMessage })
+
+    try {
       let response
       if (fileToSend) {
         const formData = new FormData()
@@ -94,24 +179,38 @@ function App() {
       const data = await response.json()
 
       if (data.error) {
-        setMessages(prev => [...prev, { role: 'error', content: data.error }])
+        appendMessage(activeConversation, { role: 'error', content: data.error })
       } else {
-        if (data.conversation_id) {
-          setConversationId(data.conversation_id)
-        }
-        setMessages(prev => [...prev, {
+        appendMessage(activeConversation, {
           role: 'assistant',
           content: data.response,
           tokens: data.tokens_used
-        }])
+        })
       }
+    } catch (error) {
+      appendMessage(activeConversation, {
+        role: 'error',
+        content: 'Failed to connect to backend. Is the server running?'
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleNewConversation = async () => {
+    if (loading) return
+    try {
+      setInput('')
+      setFile(null)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      await createConversation([])
     } catch (error) {
       setMessages(prev => [...prev, {
         role: 'error',
-        content: 'Failed to connect to backend. Is the server running?'
+        content: error.message || 'Failed to start conversation'
       }])
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -131,11 +230,21 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>Gene LLM Chat</h1>
-        <div className="status">
-          <span className={`dot ${status.connected ? 'connected' : 'disconnected'}`}></span>
-          {status.connected
-            ? (status.modelLoaded ? 'LLM Ready' : 'Mock Mode')
-            : 'Disconnected'}
+        <div className="header-actions">
+          <div className="status">
+            <span className={`dot ${status.connected ? 'connected' : 'disconnected'}`}></span>
+            {status.connected
+              ? (status.modelLoaded ? 'LLM Ready' : 'Mock Mode')
+              : 'Disconnected'}
+          </div>
+          <button
+            type="button"
+            className="new-conversation"
+            onClick={handleNewConversation}
+            disabled={loading}
+          >
+            New Conversation
+          </button>
         </div>
       </header>
 

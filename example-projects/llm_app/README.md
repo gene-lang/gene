@@ -169,10 +169,18 @@ Send a chat message within a conversation.
 }
 ```
 
+## Persistence
+
+The backend stores conversations in SQLite at `backend/chat.sqlite` (relative to the backend working directory).
+The frontend mirrors full conversation history in browser local storage and restores the last conversation on reload.
+
 ## Manual Verification
 
 1. `POST /api/chat/new` to get a `conversation_id`
 2. `POST /api/chat/{id}` twice with different messages and confirm the second response reflects earlier context
+3. Restart the backend and send another message to the same `conversation_id`, confirming history persists
+4. Reload the frontend and verify the last conversation history is restored
+5. Click "New Conversation" to start a fresh chat
 
 ## Configuration
 
