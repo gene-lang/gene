@@ -6,6 +6,8 @@
 # Configuration
 (var PORT 4080)
 (var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
+(var CONVERSATIONS [])
+(var NEXT_CONVERSATION_ID 1)
 
 # Initialize LLM if model path is configured
 # The model is registered globally so worker threads can access it
@@ -46,14 +48,85 @@
   [thinking/.trim answer/.trim]
 )
 
+(fn new_conversation []
+  (var conv_id (NEXT_CONVERSATION_ID .to_s))
+  (NEXT_CONVERSATION_ID += 1)
+  (var convo {^id conv_id ^messages []})
+  (CONVERSATIONS .append convo)
+  conv_id
+)
+
+(fn find_conversation [conv_id]
+  (var i 0)
+  (var total (CONVERSATIONS .size))
+  (loop
+    (if (i >= total)
+      (return nil)
+    )
+    (var convo (CONVERSATIONS .get i))
+    (if (convo/id == conv_id)
+      (return convo)
+    )
+    (i += 1)
+  )
+)
+
+(fn build_prompt [history message]
+  (var parts [])
+  (var i 0)
+  (loop
+    (if (i >= (history .size))
+      (break)
+    )
+    (var entry (history .get i))
+    (var role entry/role)
+    (var content entry/content)
+    (if (role == "user")
+      (parts .append #"<|im_start|>user\n#{content}\n<|im_end|>\n")
+    elif (role == "assistant")
+      (parts .append #"<|im_start|>assistant\n#{content}\n<|im_end|>\n")
+    )
+    (i += 1)
+  )
+  (parts .append #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+  (parts .join "")
+)
+
+(fn chat_id_from_path [path]
+  (var prefix "/api/chat/")
+  (if (path .starts_with prefix)
+    (return (path .substr prefix/.length))
+  )
+  nil
+)
+
 # Health check endpoint
 (fn handle_health [req]
-  (var is_loaded ((genex/llm/get_model) != nil))
+  (var is_loaded
+    (if genex/llm
+      (if (genex/llm/get_model) true else false)
+    else
+      false
+    )
+  )
   (json_response 200 {^status "ok" ^model_loaded is_loaded})
 )
 
+(fn handle_chat_new [req]
+  (var conv_id (new_conversation))
+  (json_response 200 {^conversation_id conv_id})
+)
+
 # Chat endpoint
-(fn handle_chat [req]
+(fn handle_chat [req conv_id]
+(if (conv_id == nil)
+  (return (json_response 400 {^error "Missing conversation id"}))
+)
+(var convo (find_conversation conv_id))
+(if (convo == nil)
+  (return (json_response 404 {^error "Conversation not found" ^conversation_id conv_id}))
+)
+(var history convo/messages)
 (var req_body req/.body)
 (var body_str (if (req_body == nil) "" else req_body))
 (var content_type ((req/.headers .get "content-type" "") .to_lower))
@@ -126,6 +199,7 @@ User request:
 #{message}
 """)
   )
+  (var prompt_message message)
 
   # Generate response
   (var response_text "")
@@ -133,14 +207,14 @@ User request:
   (var thinking)
 
   # Get model from global registry (works across threads)
-  (var model (genex/llm/get_model))
-  
+  (var model (if genex/llm (genex/llm/get_model) else false))
+
   (if model
     # Create session on-demand for this request
     (var session (model .new_session {^max_tokens 512}))
     (try
       # Use actual LLM with chat format
-      (var prompt #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+      (var prompt (build_prompt history prompt_message))
       (var result (session .infer prompt))
       (var raw_text (result .get "text"))
       (var tokens (result .get "tokens"))
@@ -159,7 +233,10 @@ User request:
     (tokens_used = 15)
   )
 
-  (json_response 200 {^response response_text ^thinking thinking ^tokens_used tokens_used ^document_used document_used ^document_chunks document_chunks})
+  (history .append {^role "user" ^content prompt_message})
+  (history .append {^role "assistant" ^content response_text})
+
+  (json_response 200 {^conversation_id conv_id ^response response_text ^thinking thinking ^tokens_used tokens_used ^document_used document_used ^document_chunks document_chunks})
 )
 
 # Main request router
@@ -172,8 +249,11 @@ User request:
   # Route requests
   (if (path == "/api/health")
     (handle_health req)
-  elif ((path == "/api/chat") && ((method == "POST") || (method == "GET")))
-    (handle_chat req)
+  elif ((path == "/api/chat/new") && (method == "POST"))
+    (handle_chat_new req)
+  elif ((path .starts_with "/api/chat/") && (method == "POST"))
+    (var conv_id (chat_id_from_path path))
+    (handle_chat req conv_id)
   else
     (json_response 404 {^error "Not found"})
   )
@@ -185,7 +265,8 @@ User request:
 (println "Starting server on http://localhost:" PORT)
 (println "Endpoints:")
 (println "  GET  /api/health - Health check")
-(println "  POST /api/chat   - Send chat message")
+(println "  POST /api/chat/new - Start conversation")
+(println "  POST /api/chat/{id} - Send chat message")
 (println)
 
 # (start_server PORT handle_request ^concurrent true ^workers 4)

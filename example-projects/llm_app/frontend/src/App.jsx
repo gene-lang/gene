@@ -14,6 +14,7 @@ function App() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState({ connected: false, modelLoaded: false })
+  const [conversationId, setConversationId] = useState(null)
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
 
@@ -35,6 +36,21 @@ function App() {
     } catch (error) {
       setStatus({ connected: false, modelLoaded: false })
     }
+  }
+
+  const startConversation = async () => {
+    const response = await fetch('/api/chat/new', { method: 'POST' })
+    const data = await response.json()
+    if (!response.ok || data.error || !data.conversation_id) {
+      throw new Error(data.error || 'Failed to start conversation')
+    }
+    setConversationId(data.conversation_id)
+    return data.conversation_id
+  }
+
+  const ensureConversation = async () => {
+    if (conversationId) return conversationId
+    return startConversation()
   }
 
   const sendMessage = async (e) => {
@@ -59,16 +75,17 @@ function App() {
     setLoading(true)
 
     try {
+      const activeConversation = await ensureConversation()
       let response
       if (fileToSend) {
         const formData = new FormData()
         formData.append('file', fileToSend)
         const url = userMessage
-          ? `/api/chat?message=${encodeURIComponent(userMessage)}`
-          : '/api/chat'
+          ? `/api/chat/${encodeURIComponent(activeConversation)}?message=${encodeURIComponent(userMessage)}`
+          : `/api/chat/${encodeURIComponent(activeConversation)}`
         response = await fetch(url, { method: 'POST', body: formData })
       } else {
-        response = await fetch('/api/chat', {
+        response = await fetch(`/api/chat/${encodeURIComponent(activeConversation)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: userMessage })
@@ -79,6 +96,9 @@ function App() {
       if (data.error) {
         setMessages(prev => [...prev, { role: 'error', content: data.error }])
       } else {
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id)
+        }
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: data.response,

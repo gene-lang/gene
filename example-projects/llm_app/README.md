@@ -138,9 +138,20 @@ Health check endpoint.
 }
 ```
 
-### POST /api/chat
+### POST /api/chat/new
 
-Send a chat message.
+Start a new conversation.
+
+**Response:**
+```json
+{
+  "conversation_id": "1"
+}
+```
+
+### POST /api/chat/{id}
+
+Send a chat message within a conversation.
 
 **Request:**
 ```json
@@ -152,10 +163,16 @@ Send a chat message.
 **Response:**
 ```json
 {
+  "conversation_id": "1",
   "response": "I'm doing well, thank you!",
   "tokens_used": 10
 }
 ```
+
+## Manual Verification
+
+1. `POST /api/chat/new` to get a `conversation_id`
+2. `POST /api/chat/{id}` twice with different messages and confirm the second response reflects earlier context
 
 ## Configuration
 

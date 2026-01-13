@@ -71,6 +71,22 @@ catch *
 {:a 1 :b [1 2 3]}          # Map literal with nested array
 ```
 
+## Syntax Reminder (Do Not Deviate)
+
+```gene
+(if cond
+  ...
+else
+  ...)
+
+(a == b)
+(x + y)
+
+{^key "value"}
+arr/0
+obj/.method    # Preferred over (obj .method) for no-arg calls
+```
+
 ## VM Architecture Highlights
 
 - Stack-based VM with pooled frames (256-value stack per frame) and computed-goto dispatch (`{.computedGoto.}`).
