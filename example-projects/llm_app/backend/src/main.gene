@@ -17,9 +17,8 @@
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   elif genex/llm
     (println "Loading LLM model from:" MODEL_PATH)
-    # gpu_layers = 35 for 12GB VRAM (14B model needs ~10GB for full offload)
-    # Use 99 for smaller models or GPUs with more VRAM
-    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 35}))
+    # Adjust layers for smaller models or GPUs with more VRAM
+    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99}))
     # Register model globally for worker thread access
     (genex/llm/register_model model)
     (println "LLM model loaded and registered successfully")
