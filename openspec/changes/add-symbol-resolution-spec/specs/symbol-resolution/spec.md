@@ -14,6 +14,10 @@ The language SHALL recognize `nil` as the nil literal, and `NIL` SHALL be treate
 - **WHEN** a program evaluates the literal `nil`
 - **THEN** the value SHALL be the nil literal.
 
+#### Scenario: Void literal evaluates to void
+- **WHEN** a program evaluates the literal `void`
+- **THEN** the value SHALL be the void value.
+
 #### Scenario: Uppercase NIL is not reserved
 - **WHEN** a program evaluates `NIL`
 - **THEN** the symbol SHALL be resolved using standard symbol resolution rules.
@@ -67,7 +71,7 @@ Direct reads and assignments to `$name` SHALL be atomic with respect to other th
 - **THEN** the runtime SHALL NOT guarantee consistent results.
 
 ### Requirement: Global synchronization
-The language SHALL provide a `synchronized` form that executes its body while holding a global-access lock. The optional `^on` property SHALL specify a direct child of the global namespace as a string (for example `"$shared_data"`). Implementations SHALL treat the `^on` string as a direct global child name, not a path. When `^on` is provided, the lock SHALL apply only to that global child and its nested members; other global children remain accessible. Using `synchronized` without `^on` is discouraged; implementations MAY emit warnings.
+The language SHALL provide a `synchronized` form that executes its body while holding a global-access lock. The optional `^on` property SHALL specify a direct child of the global namespace as a string including the `$` prefix (for example `"$shared_data"`), consistent with how global variables are accessed elsewhere. Implementations SHALL treat the `^on` string as a direct global child name, not a path. When `^on` is provided, the lock SHALL apply only to that global child and its nested members; other global children remain accessible. Using `synchronized` without `^on` is discouraged; implementations MAY emit warnings.
 
 #### Scenario: Lock covers the specified child
 - **WHEN** a program executes `(synchronized ^on "$shared_data" ($shared_data/x = 1))`

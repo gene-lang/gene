@@ -4,7 +4,7 @@ Symbol resolution rules are currently documented but not formalized as OpenSpec 
 ## What Changes
 - Define a new `symbol-resolution` capability covering keywords, scopes, namespaces, globals, and special variables.
 - Specify namespace import aliasing for `(import genex/llm)` and `(import genex/llm:llm2)`.
-- **BREAKING** Remove `global/` as a global-variable namespace; globals use `$name` only.
+- Clarify that `global/` is NOT a global-variable namespace (documenting existing behavior); globals use `$name` only.
 - Clarify that `nil` is the only nil literal and `NIL` is treated as a normal symbol.
 - Add global assignment validation via a built-in `global_set` function, including read-only global protection for `$ex` and `$env`.
 - Define `$ex` as thread-local, even though it uses the `$` prefix.
