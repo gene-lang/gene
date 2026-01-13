@@ -36,6 +36,7 @@ tests/test_*
 !tests/test_*.sh
 
 *.db
+*.sqlite*
 
 # Nim cache
 nimcache/
