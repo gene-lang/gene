@@ -11,6 +11,7 @@ type
     host*: string
     workspace*: string
     trace*: bool
+    stdio*: bool
 
   LspServer* = ref object
     socket*: AsyncSocket
@@ -20,6 +21,7 @@ type
 
 var lsp_config*: LspConfig
 var lsp_server*: LspServer
+var stdio_mode*: bool = false  # Track if we're in stdio mode
 
 # Helper functions for LSP responses
 proc newNotification*(methodName: string, params: JsonNode): string =
@@ -32,7 +34,13 @@ proc newNotification*(methodName: string, params: JsonNode): string =
 
 # Helper to send notification to all clients
 proc sendNotificationToClients*(notification: string) {.async.} =
-  if lsp_server != nil and lsp_server.clients.len > 0:
+  if stdio_mode:
+    # In stdio mode, write to stdout with Content-Length header
+    let content = $notification
+    let header = "Content-Length: " & $content.len & "\r\n\r\n"
+    stdout.write(header & content)
+    stdout.flushFile()
+  elif lsp_server != nil and lsp_server.clients.len > 0:
     for client in lsp_server.clients:
       try:
         await client.send(notification & "\r\n")
@@ -495,3 +503,93 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
           lsp_server.clients.delete(idx)
         client.close()
     )()
+
+# Stdio LSP Server (for VS Code and similar editors)
+proc read_stdio_message(): string =
+  ## Read a JSON-RPC message from stdin with Content-Length header
+  var content_length = 0
+
+  # Read headers
+  while true:
+    let line = stdin.readLine()
+    if line.len == 0:
+      # Empty line marks end of headers
+      break
+
+    if line.startsWith("Content-Length: "):
+      try:
+        content_length = parseInt(line[16..^1].strip())
+      except ValueError:
+        stderr.writeLine("Error: Invalid Content-Length header")
+        return ""
+
+  # Read content
+  if content_length > 0:
+    result = newString(content_length)
+    let bytes_read = stdin.readBuffer(addr result[0], content_length)
+    if bytes_read != content_length:
+      stderr.writeLine("Error: Expected ", content_length, " bytes, got ", bytes_read)
+      result = ""
+  else:
+    result = ""
+
+proc write_stdio_message(message: string) =
+  ## Write a JSON-RPC message to stdout with Content-Length header
+  let content = message
+  let header = "Content-Length: " & $content.len & "\r\n\r\n"
+  stdout.write(header & content)
+  stdout.flushFile()
+
+proc start_lsp_stdio_server*(config: LspConfig) =
+  ## Start LSP server using stdin/stdout for communication
+  lsp_config = config
+  stdio_mode = true
+
+  # Initialize document cache
+  if lsp_config.workspace.len > 0:
+    if lsp_config.trace:
+      stderr.writeLine("LSP Server starting in workspace: ", lsp_config.workspace)
+    setCurrentDir(lsp_config.workspace)
+
+  if lsp_config.trace:
+    stderr.writeLine("LSP Server started in stdio mode")
+    stderr.flushFile()
+
+  # Main message loop
+  while true:
+    try:
+      # Read message from stdin
+      let message = read_stdio_message()
+
+      if message.len == 0:
+        # EOF or error - exit
+        if lsp_config.trace:
+          stderr.writeLine("LSP Server: EOF received, shutting down")
+          stderr.flushFile()
+        break
+
+      if lsp_config.trace:
+        stderr.writeLine("LSP Request: ", message)
+        stderr.flushFile()
+
+      # Handle the request synchronously (no async in stdio mode)
+      let response = waitFor handle_lsp_request(message)
+
+      if lsp_config.trace:
+        stderr.writeLine("LSP Response: ", response)
+        stderr.flushFile()
+
+      # Write response to stdout
+      write_stdio_message(response)
+
+    except IOError as e:
+      if lsp_config.trace:
+        stderr.writeLine("LSP Server IO Error: ", e.msg)
+        stderr.flushFile()
+      break
+    except CatchableError as e:
+      if lsp_config.trace:
+        stderr.writeLine("LSP Server Error: ", e.msg)
+        stderr.flushFile()
+      # Try to continue on errors
+      continue

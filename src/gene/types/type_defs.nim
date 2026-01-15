@@ -463,6 +463,7 @@ type
   LoopInfo* = object
     start_label*: Label
     end_label*: Label
+    scope_depth*: int16
 
   MethodAccessMode* = enum
     MamAutoCall
@@ -474,6 +475,7 @@ type
     scope_trackers*: seq[ScopeTracker]
     skip_root_scope_start*: bool
     loop_stack*: seq[LoopInfo]
+    started_scope_depth*: int16
     tail_position*: bool  # Track if we're in tail position for tail call optimization
     eager_functions*: bool
     trace_stack*: seq[SourceTrace]

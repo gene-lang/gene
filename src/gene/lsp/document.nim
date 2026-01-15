@@ -156,14 +156,14 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
           if name_val.kind == VkSymbol:
             var signature = name_val.str & " "
             # Try to get argument list
-          if gene.children.len >= 2 and gene.children[1].kind == VkArray:
-            signature &= "["
-            let args = array_data(gene.children[1])
-            for i, arg in args:
-              if i > 0:
-                signature &= " "
+            if gene.children.len >= 2 and gene.children[1].kind == VkArray:
+              signature &= "["
+              let args = array_data(gene.children[1])
+              for i, arg in args:
+                if i > 0:
+                  signature &= " "
                 signature &= $arg
-            signature &= "]"
+              signature &= "]"
 
             symbols.add(SymbolInfo(
               name: name_val.str,

@@ -46,6 +46,7 @@ task testcore, "Runs the test suite":
 task test, "Runs the test suite":
   exec "nim c -r tests/test_basic.nim"
   exec "nim c -r tests/test_scope.nim"
+  exec "nim c -r tests/test_scope_unwind.nim"
   exec "nim c -r tests/test_symbol.nim"
   exec "nim c -r tests/test_repeat.nim"
   exec "nim c -r tests/test_for.nim"

@@ -63,13 +63,11 @@
   (TOOLS .each (fn [name tool]
     (var params_desc "")
     (if ((tool/params .keys) .size > 0)
-      (do # have to use do because of the var will mess up scope
-        (var param_parts [])
-        (tool/params .each (fn [pname pdesc]
-          (param_parts .append (new String "    " pname ": " pdesc))
-        ))
-        (params_desc = (param_parts .join "\n"))
-      )
+      (var param_parts [])
+      (tool/params .each (fn [pname pdesc]
+        (param_parts .append (new String "    " pname ": " pdesc))
+      ))
+      (params_desc = (param_parts .join "\n"))
     )
     (if (params_desc/.length > 0)
       (tool_list .append (new String "- " name ": " tool/description "\n  Parameters:\n" params_desc))
@@ -124,14 +122,12 @@
   (if (MODEL_PATH/.length == 0)
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   elif genex/llm
-    (do # Use do to avoid var inside if from messing up scope
-      (println "Loading LLM model from:" MODEL_PATH)
-      # Adjust layers for smaller models or GPUs with more VRAM
-      (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99}))
-      # Register model globally for worker thread access
-      (genex/llm/register_model model)
-      (println "LLM model loaded and registered successfully")
-    )
+    (println "Loading LLM model from:" MODEL_PATH)
+    # Adjust layers for smaller models or GPUs with more VRAM
+    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99}))
+    # Register model globally for worker thread access
+    (genex/llm/register_model model)
+    (println "LLM model loaded and registered successfully")
   else
     (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
   )
@@ -328,52 +324,47 @@
     (message = ((req/.params .get "message" "Summarize the document.") .trim))
     (document_used = true)
   else
-    (do
-      (var trimmed_body (body_str .trim))
-      (if ((trimmed_body .length) == 0)
-        (message = (req/.params .get "message"))
-        (if ((message == nil) || ((message .length) == 0))
-          (return (json_response 400 {^error "Missing 'message' field"}))
-        )
-      else
-        # Parse JSON body
-        (do
-          (var parsed)
-          (try
-            (parsed = (gene/json/parse req_body))
-          catch *
-            (return (json_response 400 {^error "Invalid JSON"}))
-          )
+    (var trimmed_body (body_str .trim))
+    (if ((trimmed_body .length) == 0)
+      (message = (req/.params .get "message"))
+      (if ((message == nil) || ((message .length) == 0))
+        (return (json_response 400 {^error "Missing 'message' field"}))
+      )
+    else
+      # Parse JSON body
+      (var parsed)
+      (try
+        (parsed = (gene/json/parse req_body))
+      catch *
+        (return (json_response 400 {^error "Invalid JSON"}))
+      )
 
-          # Extract message
-          (message = (parsed .get "message"))
-          (if (message == nil)
-            (return (json_response 400 {^error "Missing 'message' field"}))
-          )
-        )
+      # Extract message
+      (message = (parsed .get "message"))
+      (if (message == nil)
+        (return (json_response 400 {^error "Missing 'message' field"}))
       )
     )
   )
 
   (if (document_text != nil)
-    (do
-      (var chunks (ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
-      (document_chunks = chunks/.size)
-      (var context_parts [])
-      (var i 0)
-      (var max_chunks 3)
-      (loop
-        (if ((i >= chunks/.size) || (i >= max_chunks))
-          (break)
-        )
-        (var chunk (chunks .get i))
-        (if (chunk != nil)
-          (context_parts .append chunk/text)
-        )
-        (i += 1)
+    (var chunks (ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
+    (document_chunks = chunks/.size)
+    (var context_parts [])
+    (var i 0)
+    (var max_chunks 3)
+    (loop
+      (if ((i >= chunks/.size) || (i >= max_chunks))
+        (break)
       )
-      (var context (context_parts .join "\n\n"))
-      (message = #"""
+      (var chunk (chunks .get i))
+      (if (chunk != nil)
+        (context_parts .append chunk/text)
+      )
+      (i += 1)
+    )
+    (var context (context_parts .join "\n\n"))
+    (message = #"""
 You are given extracted document context.
 
 Context:
@@ -382,7 +373,6 @@ Context:
 User request:
 #{message}
 """)
-    )
   )
   (var prompt_message message)
 
@@ -407,10 +397,8 @@ User request:
       
       (loop
         (if (iteration >= max_tool_iterations)
-          (do
-            (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
-            (break)
-          )
+          (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
+          (break)
         )
         
         # Build prompt and generate response
@@ -424,30 +412,26 @@ User request:
         (var tool_call (parse_tool_call raw_text))
         
         (if (tool_call != nil)
-          (do
-            # Execute the tool
-            (var tool_name tool_call/tool)
-            (var tool_args (tool_call .get "args" {}))
-            (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
-            
-            (var tool_result (execute_tool tool_name tool_args))
-            (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
-            
-            # Add tool call and result to history for next iteration
-            (current_history .append {^role "assistant" ^content raw_text})
-            (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
-            (current_history .append {^role "tool_result" ^content current_message})
-            
-            (iteration += 1)
-          )
+          # Execute the tool
+          (var tool_name tool_call/tool)
+          (var tool_args (tool_call .get "args" {}))
+          (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
+          
+          (var tool_result (execute_tool tool_name tool_args))
+          (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
+          
+          # Add tool call and result to history for next iteration
+          (current_history .append {^role "assistant" ^content raw_text})
+          (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
+          (current_history .append {^role "tool_result" ^content current_message})
+          
+          (iteration += 1)
         else
-          (do
-            # No tool call - this is the final response
-            (var parsed_resp (parse_response raw_text))
-            (thinking = (parsed_resp .get 0))
-            (response_text = (parsed_resp .get 1))
-            (break)
-          )
+          # No tool call - this is the final response
+          (var parsed_resp (parse_response raw_text))
+          (thinking = (parsed_resp .get 0))
+          (response_text = (parsed_resp .get 1))
+          (break)
         )
       )
     catch *

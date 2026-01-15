@@ -425,12 +425,18 @@ proc add_scope_start(self: Compiler) =
     self.emit(Instruction(kind: IkScopeStart, arg0: self.scope_tracker.to_value()))
     # Mark that we added a scope start, even for empty scopes
     self.scope_tracker.scope_started = true
+    self.started_scope_depth.inc()
 
 proc end_scope(self: Compiler) =
   # If we added a ScopeStart (either because we have variables or we explicitly marked it),
   # we need to add the corresponding ScopeEnd
-  if self.scope_tracker.next_index > 0 or self.scope_tracker.scope_started:
+  let should_end = self.scope_tracker.next_index > 0 or self.scope_tracker.scope_started
+  let should_pop_started_scope =
+    self.scope_tracker.scope_started and not (self.skip_root_scope_start and self.scope_trackers.len == 1)
+  if should_end:
     self.emit(Instruction(kind: IkScopeEnd))
+    if should_pop_started_scope and self.started_scope_depth > 0:
+      self.started_scope_depth.dec()
   discard self.scope_trackers.pop()
 
 proc compile_if(self: Compiler, gene: ptr Gene) =
@@ -759,7 +765,7 @@ proc compile_loop(self: Compiler, gene: ptr Gene) =
   let end_label = new_label()
   
   # Track this loop
-  self.loop_stack.add(LoopInfo(start_label: start_label, end_label: end_label))
+  self.loop_stack.add(LoopInfo(start_label: start_label, end_label: end_label, scope_depth: self.started_scope_depth))
   
   self.emit(Instruction(kind: IkLoopStart, label: start_label))
   self.compile(gene.children)
@@ -777,7 +783,7 @@ proc compile_while(self: Compiler, gene: ptr Gene) =
   let end_label = new_label()
   
   # Track this loop
-  self.loop_stack.add(LoopInfo(start_label: label, end_label: end_label))
+  self.loop_stack.add(LoopInfo(start_label: label, end_label: end_label, scope_depth: self.started_scope_depth))
   
   # Mark loop start
   self.emit(Instruction(kind: IkLoopStart, label: label))
@@ -816,14 +822,14 @@ proc compile_repeat(self: Compiler, gene: ptr Gene) =
   let start_label = new_label()
   let end_label = new_label()
   
-  # Track this loop
-  self.loop_stack.add(LoopInfo(start_label: start_label, end_label: end_label))
-  
   # Compile count expression
   self.compile(gene.children[0])
 
   # Initialize repeat loop
   self.emit(Instruction(kind: IkRepeatInit, arg0: end_label.to_value()))
+
+  # Track this loop (baseline is after evaluating the count expression)
+  self.loop_stack.add(LoopInfo(start_label: start_label, end_label: end_label, scope_depth: self.started_scope_depth))
 
   # Mark the start of loop body
   self.emit(Instruction(kind: IkNoop, label: start_label))
@@ -896,7 +902,7 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   let end_label = new_label()
   
   # Track this loop
-  self.loop_stack.add(LoopInfo(start_label: start_label, end_label: end_label))
+  self.loop_stack.add(LoopInfo(start_label: start_label, end_label: end_label, scope_depth: self.started_scope_depth))
   
   # Mark loop start
   self.emit(Instruction(kind: IkLoopStart, label: start_label))
@@ -1058,8 +1064,12 @@ proc compile_break(self: Compiler, gene: ptr Gene) =
     # This will be checked at runtime
     self.emit(Instruction(kind: IkBreak, arg0: (-1).to_value()))
   else:
-    # Get the current loop's end label
     let current_loop = self.loop_stack[^1]
+    let unwind_count = self.started_scope_depth.int - current_loop.scope_depth.int
+    if unwind_count > 0:
+      for _ in 0..<unwind_count:
+        self.emit(Instruction(kind: IkScopeEnd))
+    # Get the current loop's end label
     self.emit(Instruction(kind: IkBreak, arg0: current_loop.end_label.to_value()))
 
 proc compile_continue(self: Compiler, gene: ptr Gene) =
@@ -1073,8 +1083,12 @@ proc compile_continue(self: Compiler, gene: ptr Gene) =
     # This will be checked at runtime
     self.emit(Instruction(kind: IkContinue, arg0: (-1).to_value()))
   else:
-    # Get the current loop's start label
     let current_loop = self.loop_stack[^1]
+    let unwind_count = self.started_scope_depth.int - current_loop.scope_depth.int
+    if unwind_count > 0:
+      for _ in 0..<unwind_count:
+        self.emit(Instruction(kind: IkScopeEnd))
+    # Get the current loop's start label
     self.emit(Instruction(kind: IkContinue, arg0: current_loop.start_label.to_value()))
 
 proc compile_throw(self: Compiler, gene: ptr Gene) =
