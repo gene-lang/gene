@@ -224,6 +224,17 @@ proc init_string_class(object_class: Class) =
   let string_class = new_class("String")
   string_class.parent = object_class
 
+  # String constructor - concatenates all arguments into a string
+  proc string_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    var buffer = newStringOfCap(32)
+    for i in 0..<positional:
+      let arg = get_positional_arg(args, i, has_keyword_args)
+      buffer.add(display_value(arg, true))
+    buffer.to_value()
+
+  string_class.def_native_constructor(string_constructor)
+
   proc ensure_mutable_string(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
     ## Return the string value (all strings are now mutable heap allocations)
     let self_index = if has_keyword_args: 1 else: 0
@@ -767,6 +778,32 @@ proc init_collection_classes(object_class: Class) =
 
   map_class.def_native_method("get", vm_map_get)
 
+  proc vm_map_set(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    # map.set(key, value) -> map (returns self for chaining)
+    if get_positional_count(arg_count, has_keyword_args) < 3:
+      not_allowed("Map.set expects key and value arguments")
+
+    let map = get_positional_arg(args, 0, has_keyword_args)
+    if map.kind != VkMap:
+      not_allowed("Map.set must be called on a map")
+
+    let keyVal = get_positional_arg(args, 1, has_keyword_args)
+    var key: Key
+
+    case keyVal.kind
+    of VkString:
+      key = keyVal.str.to_key()
+    of VkSymbol:
+      key = keyVal.str.to_key()
+    else:
+      not_allowed("Map.set key must be a string or symbol")
+
+    let value = get_positional_arg(args, 2, has_keyword_args)
+    map_data(map)[key] = value
+    return map
+
+  map_class.def_native_method("set", vm_map_set)
+
   map_class.def_native_method("contains", vm_map_contains)
 
   proc vm_map_size(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -832,6 +869,30 @@ proc init_collection_classes(object_class: Class) =
     result_ref
 
   map_class.def_native_method("map", vm_map_map)
+
+  proc vm_map_each(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Map.each requires a function")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("each must be called on a map")
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    case callback.kind
+    of VkFunction:
+      for key, value in map_data(map_val):
+        let key_val = cast[Value](key)
+        {.cast(gcsafe).}:
+          discard vm.exec_function(callback, @[key_val.str.to_value(), value])
+    of VkNativeFn:
+      for key, value in map_data(map_val):
+        let key_val = cast[Value](key)
+        {.cast(gcsafe).}:
+          discard call_native_fn(callback.ref.native_fn, vm, [key_val.str.to_value(), value])
+    else:
+      not_allowed("each callback must be a function")
+    map_val
+
+  map_class.def_native_method("each", vm_map_each)
 
   proc vm_map_to_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:

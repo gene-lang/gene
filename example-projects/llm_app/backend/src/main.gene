@@ -9,18 +9,129 @@
 (var DB_PATH "chat.sqlite")
 (var DB nil)
 
+# ============================================================
+# Tool Registry - Functions that LLM can call
+# ============================================================
+
+(var TOOLS {})
+
+# Register a tool
+(fn register_tool [name description params handler]
+  (TOOLS .set name {
+    ^description description
+    ^params params
+    ^handler handler
+  })
+)
+
+# Built-in tools
+(register_tool "get_time"
+  "Get the current date and time"
+  {}
+  (fn [args]
+    {^result (time/now/.to_s)}
+  )
+)
+
+(register_tool "calculate"
+  "Evaluate a mathematical expression. Use this for any math calculations."
+  {^expression "The math expression to evaluate (e.g., '2 + 2', '10 * 5')"}
+  (fn [args]
+    (var expr (args .get "expression" ""))
+    (try
+      (var result (eval (parse expr)))
+      {^result result/.to_s}
+    catch *
+      {^error #"Failed to evaluate: #{expr}"}
+    )
+  )
+)
+
+(register_tool "get_weather"
+  "Get the current weather for a location"
+  {^location "The city or location to get weather for"}
+  (fn [args]
+    (var location (args .get "location" "Unknown"))
+    # Mock weather data - in production, call a real API
+    {^result #"Weather in #{location}: 72°F (22°C), Partly Cloudy. Humidity: 45%"}
+  )
+)
+
+# Build system prompt with tool descriptions
+(fn build_system_prompt []
+  (var tool_list [])
+  (TOOLS .each (fn [name tool]
+    (var params_desc "")
+    (if ((tool/params .keys) .size > 0)
+      (do # have to use do because of the var will mess up scope
+        (var param_parts [])
+        (tool/params .each (fn [pname pdesc]
+          (param_parts .append (new String "    " pname ": " pdesc))
+        ))
+        (params_desc = (param_parts .join "\n"))
+      )
+    )
+    (if (params_desc/.length > 0)
+      (tool_list .append (new String "- " name ": " tool/description "\n  Parameters:\n" params_desc))
+    else
+      (tool_list .append (new String "- " name ": " tool/description))
+    )
+  ))
+  (var tools_section (tool_list .join "\n"))
+  (new String "You are a helpful AI assistant with access to tools.\n\n"
+       "Available tools:\n" tools_section "\n\n"
+       "When you need to use a tool, respond with ONLY a JSON object in this exact format:\n"
+       "{\"tool\": \"tool_name\", \"args\": {\"param\": \"value\"}}\n\n"
+       "After receiving a tool result, provide a natural response to the user.\n"
+       "Only use tools when necessary. For general conversation, respond normally.")
+)
+
+# Parse tool call from LLM response
+(fn parse_tool_call [text]
+  # Look for JSON object with tool field
+  (var trimmed text/.trim)
+  (if (!(trimmed .starts_with "{"))
+    (return nil)
+  )
+  (try
+    (var parsed trimmed/.from_json)
+    (if (parsed .has "tool")
+      parsed
+    else
+      nil
+    )
+  catch *
+    nil
+  )
+)
+
+# Execute a tool by name
+(fn execute_tool [name args]
+  (var tool (TOOLS .get name))
+  (if (tool == nil)
+    (return {^error #"Unknown tool: #{name}"})
+  )
+  (try
+    ((tool/handler) args)
+  catch *
+    {^error #"Tool execution failed: #{$ex/message}"}
+  )
+)
+
 # Initialize LLM if model path is configured
 # The model is registered globally so worker threads can access it
 (fn init_llm []
   (if (MODEL_PATH/.length == 0)
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   elif genex/llm
-    (println "Loading LLM model from:" MODEL_PATH)
-    # Adjust layers for smaller models or GPUs with more VRAM
-    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99}))
-    # Register model globally for worker thread access
-    (genex/llm/register_model model)
-    (println "LLM model loaded and registered successfully")
+    (do # Use do to avoid var inside if from messing up scope
+      (println "Loading LLM model from:" MODEL_PATH)
+      # Adjust layers for smaller models or GPUs with more VRAM
+      (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99}))
+      # Register model globally for worker thread access
+      (genex/llm/register_model model)
+      (println "LLM model loaded and registered successfully")
+    )
   else
     (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
   )
@@ -122,6 +233,9 @@
 
 (fn build_prompt [history message]
   (var parts [])
+  # Add system prompt with tool descriptions
+  (var system_prompt (build_system_prompt))
+  (parts .append #"<|im_start|>system\n#{system_prompt}\n<|im_end|>\n")
   (var i 0)
   (loop
     (if (i >= (history .size))
@@ -134,6 +248,8 @@
       (parts .append #"<|im_start|>user\n#{content}\n<|im_end|>\n")
     elif (role == "assistant")
       (parts .append #"<|im_start|>assistant\n#{content}\n<|im_end|>\n")
+    elif (role == "tool_result")
+      (parts .append #"<|im_start|>user\nTool result: #{content}\n<|im_end|>\n")
     )
     (i += 1)
   )
@@ -212,47 +328,52 @@
     (message = ((req/.params .get "message" "Summarize the document.") .trim))
     (document_used = true)
   else
-    (var trimmed_body (body_str .trim))
-    (if ((trimmed_body .length) == 0)
-      (message = (req/.params .get "message"))
-      (if ((message == nil) || ((message .length) == 0))
-        (return (json_response 400 {^error "Missing 'message' field"}))
-      )
-    else
-      # Parse JSON body
-      (var parsed)
-      (try
-        (parsed = (gene/json/parse req_body))
-      catch *
-        (return (json_response 400 {^error "Invalid JSON"}))
-      )
+    (do
+      (var trimmed_body (body_str .trim))
+      (if ((trimmed_body .length) == 0)
+        (message = (req/.params .get "message"))
+        (if ((message == nil) || ((message .length) == 0))
+          (return (json_response 400 {^error "Missing 'message' field"}))
+        )
+      else
+        # Parse JSON body
+        (do
+          (var parsed)
+          (try
+            (parsed = (gene/json/parse req_body))
+          catch *
+            (return (json_response 400 {^error "Invalid JSON"}))
+          )
 
-      # Extract message
-      (message = (parsed .get "message"))
-      (if (message == nil)
-        (return (json_response 400 {^error "Missing 'message' field"}))
+          # Extract message
+          (message = (parsed .get "message"))
+          (if (message == nil)
+            (return (json_response 400 {^error "Missing 'message' field"}))
+          )
+        )
       )
     )
   )
 
   (if (document_text != nil)
-    (var chunks (ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
-    (document_chunks = chunks/.size)
-    (var context_parts [])
-    (var i 0)
-    (var max_chunks 3)
-    (loop
-      (if ((i >= chunks/.size) || (i >= max_chunks))
-        (break)
+    (do
+      (var chunks (ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
+      (document_chunks = chunks/.size)
+      (var context_parts [])
+      (var i 0)
+      (var max_chunks 3)
+      (loop
+        (if ((i >= chunks/.size) || (i >= max_chunks))
+          (break)
+        )
+        (var chunk (chunks .get i))
+        (if (chunk != nil)
+          (context_parts .append chunk/text)
+        )
+        (i += 1)
       )
-      (var chunk (chunks .get i))
-      (if (chunk != nil)
-        (context_parts .append chunk/text)
-      )
-      (i += 1)
-    )
-    (var context (context_parts .join "\n\n"))
-    (message = #"""
+      (var context (context_parts .join "\n\n"))
+      (message = #"""
 You are given extracted document context.
 
 Context:
@@ -261,13 +382,15 @@ Context:
 User request:
 #{message}
 """)
+    )
   )
   (var prompt_message message)
 
-  # Generate response
+  # Generate response with tool execution loop
   (var response_text "")
   (var tokens_used 0)
   (var thinking)
+  (var tool_calls [])
 
   # Get model from global registry (works across threads)
   (var model (if genex/llm (genex/llm/get_model) else false))
@@ -276,20 +399,62 @@ User request:
     # Create session on-demand for this request
     (var session (model .new_session {^max_tokens 512}))
     (try
-      # Use actual LLM with chat format
-      (var prompt (build_prompt history prompt_message))
-      (var result (session .infer prompt))
-      (var raw_text (result .get "text"))
-      (var tokens (result .get "tokens"))
-      (tokens_used = tokens/.size)
-      # Parse thinking vs answer
-      (var parsed_resp (parse_response raw_text))
-      (thinking = (parsed_resp .get 0))
-      (response_text = (parsed_resp .get 1))
-    finally
-      # Always close session after request
-      (session .close)
+      # Build conversation with history
+      (var current_history history)
+      (var current_message prompt_message)
+      (var max_tool_iterations 5)
+      (var iteration 0)
+      
+      (loop
+        (if (iteration >= max_tool_iterations)
+          (do
+            (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
+            (break)
+          )
+        )
+        
+        # Build prompt and generate response
+        (var prompt (build_prompt current_history current_message))
+        (var result (session .infer prompt))
+        (var raw_text (result .get "text"))
+        (var tokens (result .get "tokens"))
+        (tokens_used += tokens/.size)
+        
+        # Check if this is a tool call
+        (var tool_call (parse_tool_call raw_text))
+        
+        (if (tool_call != nil)
+          (do
+            # Execute the tool
+            (var tool_name tool_call/tool)
+            (var tool_args (tool_call .get "args" {}))
+            (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
+            
+            (var tool_result (execute_tool tool_name tool_args))
+            (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
+            
+            # Add tool call and result to history for next iteration
+            (current_history .append {^role "assistant" ^content raw_text})
+            (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
+            (current_history .append {^role "tool_result" ^content current_message})
+            
+            (iteration += 1)
+          )
+        else
+          (do
+            # No tool call - this is the final response
+            (var parsed_resp (parse_response raw_text))
+            (thinking = (parsed_resp .get 0))
+            (response_text = (parsed_resp .get 1))
+            (break)
+          )
+        )
+      )
+    catch *
+      (response_text = $ex/message)
     )
+    # Note: session cleanup is handled automatically by LLM module's cleanup handler
+    # Explicit close is not possible here due to VM scope bug (scope.members truncated in finally blocks)
   else
     # Mock response when no model is loaded
     (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
@@ -299,7 +464,18 @@ User request:
   (store_message conv_id_int "user" prompt_message document_used document_chunks)
   (store_message conv_id_int "assistant" response_text false 0)
 
-  (json_response 200 {^conversation_id conv_id ^response response_text ^thinking thinking ^tokens_used tokens_used ^document_used document_used ^document_chunks document_chunks})
+  (var response_data {
+    ^conversation_id conv_id
+    ^response response_text
+    ^thinking thinking
+    ^tokens_used tokens_used
+    ^document_used document_used
+    ^document_chunks document_chunks
+  })
+  (if (tool_calls/.size > 0)
+    (response_data .set "tool_calls" tool_calls)
+  )
+  (json_response 200 response_data)
 )
 
 # Main request router
