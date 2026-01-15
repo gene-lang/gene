@@ -143,6 +143,33 @@ proc exit_function(self: ptr VirtualMachine) {.inline.} =
 
     self.profile_data[fn_name] = profile
 
+proc unwind_scopes_to(self: ptr VirtualMachine, target: Scope) =
+  ## Unwind runtime scopes to `target` (inclusive), freeing any child scopes.
+  ##
+  ## Exception dispatch can jump over IkScopeEnd instructions, so we must restore
+  ## the dynamic scope chain to the state that existed when the handler was installed.
+  if self.frame.isNil:
+    return
+
+  if self.frame.scope == target:
+    return
+
+  # Ensure target is reachable from the current scope chain to avoid corrupting state.
+  if target != nil:
+    var cursor = self.frame.scope
+    while cursor != nil and cursor != target:
+      cursor = cursor.parent
+    if cursor != target:
+      raise new_exception(types.Exception, "Exception handler scope mismatch")
+
+  var scope = self.frame.scope
+  while scope != nil and scope != target:
+    let parent = scope.parent
+    scope.free()
+    scope = parent
+
+  self.frame.scope = target
+
 proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr Instruction): bool =
   ## Shared exception dispatch logic (used by IkThrow).
   var exception_value = value
@@ -227,6 +254,9 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
         if f == nil:
           raise new_exception(types.Exception, "Exception handler frame mismatch")
         self.frame = f
+
+      # Restore scope chain to the state at try-start.
+      self.unwind_scopes_to(handler.scope)
 
       self.cu = handler.cu
       self.pc = handler.catch_pc
@@ -920,6 +950,7 @@ proc call_instance_method(self: ptr VirtualMachine, instance: Value, method_name
         catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
+        scope: self.frame.scope,
         cu: self.cu,
         saved_value: NIL,
         has_saved_value: false,
@@ -1024,6 +1055,7 @@ proc call_super_method_resolved(self: ptr VirtualMachine, parent_class: Class, i
         catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
+        scope: self.frame.scope,
         cu: self.cu,
         saved_value: NIL,
         has_saved_value: false,
@@ -1125,6 +1157,7 @@ proc call_value_method(self: ptr VirtualMachine, value: Value, method_name: stri
         catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
+        scope: self.frame.scope,
         cu: self.cu,
         saved_value: NIL,
         has_saved_value: false,
@@ -1447,6 +1480,7 @@ proc call_super_constructor(self: ptr VirtualMachine, parent_class: Class, insta
         catch_pc: CATCH_PC_ASYNC_FUNCTION,
         finally_pc: -1,
         frame: self.frame,
+        scope: self.frame.scope,
         cu: self.cu,
         saved_value: NIL,
         has_saved_value: false,
@@ -3404,6 +3438,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                     catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                     finally_pc: -1,
                     frame: self.frame,
+                    scope: self.frame.scope,
                     cu: self.cu,
                     saved_value: NIL,
                     has_saved_value: false,
@@ -4818,6 +4853,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           catch_pc: catch_pc,
           finally_pc: finally_pc,
           frame: self.frame,
+          scope: self.frame.scope,
           cu: self.cu,
           in_finally: false
         ))
@@ -5129,6 +5165,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           catch_pc: CATCH_PC_ASYNC_BLOCK,  # Special marker for async
           finally_pc: -1,
           frame: self.frame,
+          scope: self.frame.scope,
           cu: self.cu,
           saved_value: NIL,
           has_saved_value: false,
@@ -5454,6 +5491,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
+                scope: self.frame.scope,
                 cu: self.cu,
                 saved_value: NIL,
                 has_saved_value: false,
@@ -5626,6 +5664,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
+                scope: self.frame.scope,
                 cu: self.cu,
                 saved_value: NIL,
                 has_saved_value: false,
@@ -5819,6 +5858,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
+                scope: self.frame.scope,
                 cu: self.cu,
                 saved_value: NIL,
                 has_saved_value: false,
@@ -5959,6 +5999,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 catch_pc: CATCH_PC_ASYNC_FUNCTION,
                 finally_pc: -1,
                 frame: self.frame,
+                scope: self.frame.scope,
                 cu: self.cu,
                 saved_value: NIL,
                 has_saved_value: false,
@@ -6093,6 +6134,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                 finally_pc: -1,
                 frame: self.frame,
+                scope: self.frame.scope,
                 cu: self.cu,
                 saved_value: NIL,
                 has_saved_value: false,
@@ -6301,6 +6343,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                   finally_pc: -1,
                   frame: self.frame,
+                  scope: self.frame.scope,
                   cu: self.cu,
                   saved_value: NIL,
                   has_saved_value: false,
@@ -6455,6 +6498,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
                   finally_pc: -1,
                   frame: self.frame,
+                  scope: self.frame.scope,
                   cu: self.cu,
                   saved_value: NIL,
                   has_saved_value: false,
@@ -6619,6 +6663,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   catch_pc: CATCH_PC_ASYNC_FUNCTION,
                   finally_pc: -1,
                   frame: self.frame,
+                  scope: self.frame.scope,
                   cu: self.cu,
                   saved_value: NIL,
                   has_saved_value: false,
@@ -6863,6 +6908,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   catch_pc: CATCH_PC_ASYNC_FUNCTION,
                   finally_pc: -1,
                   frame: self.frame,
+                  scope: self.frame.scope,
                   cu: self.cu,
                   saved_value: NIL,
                   has_saved_value: false,

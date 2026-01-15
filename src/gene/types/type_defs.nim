@@ -735,6 +735,7 @@ type
     catch_pc*: int
     finally_pc*: int
     frame*: Frame
+    scope*: Scope
     cu*: CompilationUnit
     saved_value*: Value  # Value to restore after finally block
     has_saved_value*: bool

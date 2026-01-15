@@ -156,6 +156,44 @@ test_vm """
   a
 """, 3
 
+# Scope must unwind when exceptions jump out of nested scopes; otherwise later
+# variable resolves can target a stale inner scope and crash with IkVarResolve
+# out-of-bounds.
+test_vm """
+  (var a0 0)
+  (var a1 1)
+  (var a2 2)
+  (var a3 3)
+  (var a4 4)
+  (var a5 5)
+  (var a6 6)
+  (var a7 7)
+  (var a8 8)
+  (var a9 9)
+  (var a10 10)
+  (var a11 11)
+
+  (try
+    (if true
+      (var b0 0)
+      (var b1 1)
+      (var b2 2)
+      (var b3 3)
+      (var b4 4)
+      (var b5 5)
+      (var b6 6)
+      (var b7 7)
+      (var b8 8)
+      (var b9 9)
+      (throw "boom")
+    )
+  catch *
+    0
+  )
+
+  a11
+""", 11
+
 
 # test_vm """
 #   (fn f _

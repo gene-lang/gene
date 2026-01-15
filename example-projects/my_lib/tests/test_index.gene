@@ -1,6 +1,6 @@
 #!/usr/bin/env gene
 
-(import genex/tests/[test skip_test])
+(import genex/test/[test skip_test])
 
 (import upcase from "index")
 

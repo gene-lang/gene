@@ -15,6 +15,7 @@ Files live in `docs/` unless stated otherwise.
 
 - [gir.md](gir.md) — Gene Intermediate Representation file format
 - [generator-functions.md](generator-functions.md) — generator semantics and VM support
+- [if_scope_bug.md](if_scope_bug.md) — exception-driven scope unwinding bug and fix
 - [arg_counter.md](arg_counter.md) — argument counting logic used by function matchers
 - [http_server_and_client.md](http_server_and_client.md) — HTTP extensions and runtime hooks
 - [lsp.md](lsp.md) — Language Server Protocol implementation and editor integration
