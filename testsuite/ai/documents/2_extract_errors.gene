@@ -1,6 +1,6 @@
 (var pdf_msg
   (try
-    (ai/documents/extract_pdf "missing.pdf" {^command "missing_cmd"})
+    (genex/ai/documents/extract_pdf "missing.pdf" {^command "missing_cmd"})
   catch *
     $ex/message
   )
@@ -9,7 +9,7 @@
 
 (var ocr_msg
   (try
-    (ai/documents/extract_image "missing.png" {^command "missing_cmd"})
+    (genex/ai/documents/extract_image "missing.png" {^command "missing_cmd"})
   catch *
     $ex/message
   )

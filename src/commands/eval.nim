@@ -152,7 +152,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       VM.trace = true
       # Initialize frame if needed
       if VM.frame == nil:
-        let ns = new_namespace("<eval>")
+        let ns = new_namespace(App.app.global_ns.ref.ns, "<eval>")
         ns["__module_name__".to_key()] = "<eval>".to_value()
         ns["__is_main__".to_key()] = TRUE
         ns["gene".to_key()] = App.app.gene_ns

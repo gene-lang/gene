@@ -540,7 +540,7 @@ proc load_module*(vm: ptr VirtualMachine, path: string): Namespace =
     return ModuleCache[path]
   
   # Create namespace for module
-  let module_ns = new_namespace(path)
+  let module_ns = new_namespace(App.app.global_ns.ref.ns, path)
   module_ns.members["__is_main__".to_key()] = FALSE
   module_ns.members["__module_name__".to_key()] = path.to_value()
   module_ns.members["gene".to_key()] = App.app.gene_ns
@@ -675,9 +675,11 @@ proc handle_import*(vm: ptr VirtualMachine, import_gene: ptr Gene): tuple[path: 
     return (resolved_path, imports, module_ns, is_native, false)
   
   # Module not cached, need to compile and execute it (or load as native)
-  let module_ns = new_namespace(resolved_path)
+  let module_ns = new_namespace(App.app.global_ns.ref.ns, resolved_path)
   module_ns.members["__is_main__".to_key()] = FALSE
   module_ns.members["__module_name__".to_key()] = resolved_path.to_value()
+  module_ns.members["gene".to_key()] = App.app.gene_ns
+  module_ns.members["genex".to_key()] = App.app.genex_ns
   if is_gir:
     module_ns.members["__compiled__".to_key()] = TRUE
   return (resolved_path, imports, module_ns, is_native, false)
