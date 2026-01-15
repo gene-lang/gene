@@ -543,6 +543,8 @@ proc load_module*(vm: ptr VirtualMachine, path: string): Namespace =
   let module_ns = new_namespace(path)
   module_ns.members["__is_main__".to_key()] = FALSE
   module_ns.members["__module_name__".to_key()] = path.to_value()
+  module_ns.members["gene".to_key()] = App.app.gene_ns
+  module_ns.members["genex".to_key()] = App.app.genex_ns
   
   # Compile the module to ensure it's valid
   discard compile_module(path)

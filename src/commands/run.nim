@@ -171,7 +171,12 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo "Instructions: " & $compiled.instructions.len
 
     if VM.frame == nil:
-      VM.frame = new_frame(new_namespace(file))
+      let ns = new_namespace(App.app.global_ns.ref.ns, file)
+      ns["__module_name__".to_key()] = file.to_value()
+      ns["__is_main__".to_key()] = TRUE
+      ns["gene".to_key()] = App.app.gene_ns
+      ns["genex".to_key()] = App.app.genex_ns
+      VM.frame = new_frame(ns)
     VM.cu = compiled
     try:
       discard VM.exec()
@@ -203,7 +208,12 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
 
       if not compiled.isNil:
         if VM.frame == nil:
-          VM.frame = new_frame(new_namespace(file))
+          let ns = new_namespace(App.app.global_ns.ref.ns, file)
+          ns["__module_name__".to_key()] = file.to_value()
+          ns["__is_main__".to_key()] = TRUE
+          ns["gene".to_key()] = App.app.gene_ns
+          ns["genex".to_key()] = App.app.genex_ns
+          VM.frame = new_frame(ns)
         VM.cu = compiled
         try:
           discard VM.exec()
@@ -236,17 +246,19 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       VM.trace = true
       # Initialize frame if needed
       if VM.frame == nil:
-        let ns = new_namespace(file)
+        let ns = new_namespace(App.app.global_ns.ref.ns, file)
         ns["__module_name__".to_key()] = file.to_value()
         ns["__is_main__".to_key()] = TRUE
         ns["gene".to_key()] = App.app.gene_ns
+        ns["genex".to_key()] = App.app.genex_ns
         App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
         VM.frame = new_frame(ns)
       else:
-        let ns = new_namespace(file)
+        let ns = new_namespace(App.app.global_ns.ref.ns, file)
         ns["__module_name__".to_key()] = file.to_value()
         ns["__is_main__".to_key()] = TRUE
         ns["gene".to_key()] = App.app.gene_ns
+        ns["genex".to_key()] = App.app.genex_ns
         App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
         VM.frame.update(new_frame(ns))
       VM.cu = compiled

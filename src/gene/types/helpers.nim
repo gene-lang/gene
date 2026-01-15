@@ -140,7 +140,9 @@ proc refresh_env_map*() =
   var env_table = initTable[Key, Value]()
   for pair in envPairs():
     env_table[pair.key.to_key()] = pair.value.to_value()
-  App.app.gene_ns.ref.ns["env".to_key()] = new_map_value(env_table)
+  let env_value = new_map_value(env_table)
+  App.app.gene_ns.ref.ns["env".to_key()] = env_value
+  App.app.global_ns.ref.ns["env".to_key()] = env_value
 
 proc set_program_args*(program: string, args: seq[string]) =
   if App == NIL or App.kind != VkApplication:
@@ -151,8 +153,11 @@ proc set_program_args*(program: string, args: seq[string]) =
   var arr_ref = new_array_value()
   for arg in args:
     array_data(arr_ref).add(arg.to_value())
+  let program_value = program.to_value()
   App.app.gene_ns.ref.ns["args".to_key()] = arr_ref
-  App.app.gene_ns.ref.ns["program".to_key()] = program.to_value()
+  App.app.gene_ns.ref.ns["program".to_key()] = program_value
+  App.app.global_ns.ref.ns["args".to_key()] = arr_ref
+  App.app.global_ns.ref.ns["program".to_key()] = program_value
 
 const SYM_UNDERSCORE* = SYMBOL_TAG or 0
 const SYM_SELF* = SYMBOL_TAG or 1

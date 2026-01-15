@@ -1084,14 +1084,17 @@ proc init_regex_and_json() =
   var regex_create_fn = new_ref(VkNativeFn)
   regex_create_fn.native_fn = regex_create
   App.app.gene_ns.ns["regex_create".to_key()] = regex_create_fn.to_ref_value()
+  App.app.global_ns.ns["regex_create".to_key()] = regex_create_fn.to_ref_value()
 
   var regex_match_fn = new_ref(VkNativeFn)
   regex_match_fn.native_fn = regex_match
   App.app.gene_ns.ns["regex_match".to_key()] = regex_match_fn.to_ref_value()
+  App.app.global_ns.ns["regex_match".to_key()] = regex_match_fn.to_ref_value()
 
   var regex_find_fn = new_ref(VkNativeFn)
   regex_find_fn.native_fn = regex_find
   App.app.gene_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
+  App.app.global_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
 
   var json_parse_fn = new_ref(VkNativeFn)
   json_parse_fn.native_fn = json_parse_native
@@ -2760,11 +2763,11 @@ proc init_gene_core_functions() =
   App.app.gene_ns.ns["print_instructions".to_key()] = print_instructions
   App.app.gene_ns.ns["ns".to_key()] = current_ns
   # not and ... are now handled by compile-time instructions, no need to register
-  App.app.gene_ns.ns["parse".to_key()] = vm_parse.to_value()  # $parse translates to gene/parse
-  App.app.gene_ns.ns["with".to_key()] = vm_with.to_value()    # $with translates to gene/with
-  App.app.gene_ns.ns["tap".to_key()] = vm_tap.to_value()      # $tap translates to gene/tap
+  App.app.gene_ns.ns["parse".to_key()] = vm_parse.to_value()  # $parse resolves via global parse
+  App.app.gene_ns.ns["with".to_key()] = vm_with.to_value()    # $with resolves via global with
+  App.app.gene_ns.ns["tap".to_key()] = vm_tap.to_value()      # $tap resolves via global tap
   App.app.gene_ns.ns["eval".to_key()] = vm_eval.to_value()    # eval function
-  App.app.gene_ns.ns["repl".to_key()] = NativeFn(core_repl).to_value()  # $repl translates to gene/repl
+  App.app.gene_ns.ns["repl".to_key()] = NativeFn(core_repl).to_value()  # $repl resolves via global repl
 
   var sleep_ref = new_ref(VkNativeFn)
   sleep_ref.native_fn = gene_sleep

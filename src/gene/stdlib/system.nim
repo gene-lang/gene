@@ -160,6 +160,5 @@ proc init_system_namespace*(global_ns: Namespace) =
   # Also add commonly used functions to global namespace
   global_ns["exit".to_key()] = system_exit.to_value()
   global_ns["cwd".to_key()] = system_cwd.to_value()
-  global_ns["args".to_key()] = system_args.to_value()
 
 {.pop.}

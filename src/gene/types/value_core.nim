@@ -283,7 +283,7 @@ proc `==`*(a, b: ptr Reference): bool =
       return a.csymbol == b.csymbol
     else:
       # Fallback to pointer identity for other reference types
-      return a == b
+      return cast[pointer](a) == cast[pointer](b)
 
 proc `$`*(self: ptr Reference): string =
   $self.kind

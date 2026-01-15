@@ -152,7 +152,12 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       VM.trace = true
       # Initialize frame if needed
       if VM.frame == nil:
-        VM.frame = new_frame(new_namespace("<eval>"))
+        let ns = new_namespace("<eval>")
+        ns["__module_name__".to_key()] = "<eval>".to_value()
+        ns["__is_main__".to_key()] = TRUE
+        ns["gene".to_key()] = App.app.gene_ns
+        ns["genex".to_key()] = App.app.genex_ns
+        VM.frame = new_frame(ns)
       VM.cu = compiled
       let value = VM.exec()
       echo "=== Final Result ==="

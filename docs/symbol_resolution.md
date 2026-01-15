@@ -107,9 +107,9 @@ The `import` form binds a namespace alias into the current namespace. If no alia
 ```gene
 # Keywords
 (if (x > 0)
-  (println "positive")
+  (gene/println "positive")
 else
-  (println "not positive")
+  (gene/println "not positive")
 )
 
 # Local variable

@@ -1960,22 +1960,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                     if value != NIL:
                       found_ns = self.thread_local_ns
                 
-                if value == NIL:
-                  # Try global namespace
-                  value = App.app.global_ns.ref.ns[name]
-                  if value != NIL:
-                    found_ns = App.app.global_ns.ref.ns
-                  else:
-                    # Try gene namespace
-                    value = App.app.gene_ns.ref.ns[name]
-                    if value != NIL:
-                      found_ns = App.app.gene_ns.ref.ns
-                    else:
-                      # Try genex namespace
-                      value = App.app.genex_ns.ref.ns[name]
-                      if value != NIL:
-                        found_ns = App.app.genex_ns.ref.ns
-                
                 # Update cache if we found the value
                 if value != NIL:
                   cache.ns = found_ns
@@ -1998,22 +1982,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                   if value != NIL:
                     found_ns = self.thread_local_ns
 
-                if value == NIL:
-                  # Try global namespace
-                  value = App.app.global_ns.ref.ns[name]
-                  if value != NIL:
-                    found_ns = App.app.global_ns.ref.ns
-                  else:
-                    # Try gene namespace
-                    value = App.app.gene_ns.ref.ns[name]
-                    if value != NIL:
-                      found_ns = App.app.gene_ns.ref.ns
-                    else:
-                      # Try genex namespace
-                      value = App.app.genex_ns.ref.ns[name]
-                      if value != NIL:
-                        found_ns = App.app.genex_ns.ref.ns
-              
               # Initialize cache if we found the value
               if value != NIL:
                 self.cu.inline_caches[self.pc].ns = found_ns
@@ -2068,32 +2036,47 @@ proc exec*(self: ptr VirtualMachine): Value =
         case value.kind:
           of VkSymbol:
             # For eval, we need to check local scope first, then namespaces
-            let key = value.str.to_key()
-            
-            # First check if it's a local variable in the current scope
-            var found_in_scope = false
-            if self.frame.scope != nil and self.frame.scope.tracker != nil:
-              let found = self.frame.scope.tracker.locate(key)
-              if found.local_index >= 0:
-                # Variable found in scope
-                var scope = self.frame.scope
-                var parent_index = found.parent_index
-                while parent_index > 0:
-                  parent_index.dec()
-                  scope = scope.parent
-                self.frame.push(scope.members[found.local_index])
-                found_in_scope = true
-            
-            if not found_in_scope:
-              # Not a local variable, look in namespaces
-              var r = self.frame.ns[key]
-              if r == NIL:
-                r = App.app.global_ns.ns[key]
+            let symbol_str = value.str
+            if symbol_str.starts_with("$") and symbol_str.len > 1:
+              if symbol_str == "$ns":
+                let r = new_ref(VkNamespace)
+                r.ns = self.frame.ns
+                self.frame.push(r.to_ref_value())
+              elif symbol_str == "$ex":
+                let ex_value = if self.current_exception != NIL: self.current_exception else: self.repl_exception
+                self.frame.push(ex_value)
+              else:
+                let key = symbol_str[1..^1].to_key()
+                let resolved = App.app.global_ns.ref.ns[key]
+                if resolved == NIL:
+                  not_allowed("Unknown symbol: " & symbol_str)
+                self.frame.push(resolved)
+            else:
+              let key = symbol_str.to_key()
+              
+              # First check if it's a local variable in the current scope
+              var found_in_scope = false
+              if self.frame.scope != nil and self.frame.scope.tracker != nil:
+                let found = self.frame.scope.tracker.locate(key)
+                if found.local_index >= 0:
+                  # Variable found in scope
+                  var scope = self.frame.scope
+                  var parent_index = found.parent_index
+                  while parent_index > 0:
+                    parent_index.dec()
+                    scope = scope.parent
+                  self.frame.push(scope.members[found.local_index])
+                  found_in_scope = true
+              
+              if not found_in_scope:
+                # Not a local variable, look in namespaces
+                var r = if self.frame.ns != nil: self.frame.ns[key] else: NIL
                 if r == NIL:
-                  r = App.app.gene_ns.ns[key]
-                  if r == NIL:
-                    not_allowed("Unknown symbol: " & value.str)
-              self.frame.push(r)
+                  if self.thread_local_ns != nil:
+                    r = self.thread_local_ns[key]
+                if r == NIL:
+                  not_allowed("Unknown symbol: " & symbol_str)
+                self.frame.push(r)
           of VkGene:
             # Evaluate a gene expression - compile and execute it
             let compiled = compile_init(value)
@@ -2239,8 +2222,8 @@ proc exec*(self: ptr VirtualMachine): Value =
             retain(member)
             self.frame.push(member)
           of VkNamespace:
-            # Special handling for $ex (gene/ex)
-            if name == "ex".to_key() and value == App.app.gene_ns:
+            # Special handling for $ex (gene/ex or global/ex)
+            if name == "ex".to_key() and (value == App.app.gene_ns or value == App.app.global_ns):
               # Return current exception if set, otherwise the REPL exception
               let ex_value = if self.current_exception != NIL: self.current_exception else: self.repl_exception
               self.frame.push(ex_value)
@@ -2348,7 +2331,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
               # Special handling for $ex (gene/ex)
-              if key == "ex".to_key() and target == App.app.gene_ns:
+              if key == "ex".to_key() and (target == App.app.gene_ns or target == App.app.global_ns):
                 let member = if self.current_exception != NIL: self.current_exception else: self.repl_exception
                 retain(member)
                 self.frame.push(member)
@@ -5083,33 +5066,47 @@ proc exec*(self: ptr VirtualMachine): Value =
         case expr_to_eval.kind:
           of VkSymbol:
             # Direct symbol evaluation in caller's context
-            let key = expr_to_eval.str.to_key()
-            var r = NIL
+            let symbol_str = expr_to_eval.str
+            if symbol_str.starts_with("$") and symbol_str.len > 1:
+              if symbol_str == "$ns":
+                let ns_ref = new_ref(VkNamespace)
+                ns_ref.ns = caller_frame.ns
+                self.frame.push(ns_ref.to_ref_value())
+              elif symbol_str == "$ex":
+                let ex_value = if self.current_exception != NIL: self.current_exception else: self.repl_exception
+                self.frame.push(ex_value)
+              else:
+                let key = symbol_str[1..^1].to_key()
+                let resolved = App.app.global_ns.ref.ns[key]
+                if resolved == NIL:
+                  not_allowed("Unknown symbol in caller context: " & symbol_str)
+                self.frame.push(resolved)
+            else:
+              let key = symbol_str.to_key()
+              var r = NIL
 
-            # First check if it's a local variable in the caller's scope
-            if caller_frame.scope != nil and caller_frame.scope.tracker != nil:
-              let found = caller_frame.scope.tracker.locate(key)
-              if found.local_index >= 0:
-                # Variable found in scope
-                var scope = caller_frame.scope
-                var parent_index = found.parent_index
-                while parent_index > 0:
-                  parent_index.dec()
-                  scope = scope.parent
-                if found.local_index < scope.members.len:
-                  r = scope.members[found.local_index]
+              # First check if it's a local variable in the caller's scope
+              if caller_frame.scope != nil and caller_frame.scope.tracker != nil:
+                let found = caller_frame.scope.tracker.locate(key)
+                if found.local_index >= 0:
+                  # Variable found in scope
+                  var scope = caller_frame.scope
+                  var parent_index = found.parent_index
+                  while parent_index > 0:
+                    parent_index.dec()
+                    scope = scope.parent
+                  if found.local_index < scope.members.len:
+                    r = scope.members[found.local_index]
 
-            if r == NIL:
-              # Not a local variable, look in namespaces
-              r = caller_frame.ns[key]
               if r == NIL:
-                r = App.app.global_ns.ref.ns[key]
+                # Not a local variable, look in namespaces
+                r = if caller_frame.ns != nil: caller_frame.ns[key] else: NIL
+                if r == NIL and self.thread_local_ns != nil:
+                  r = self.thread_local_ns[key]
                 if r == NIL:
-                  r = App.app.gene_ns.ref.ns[key]
-                  if r == NIL:
-                    not_allowed("Unknown symbol in caller context: " & expr_to_eval.str)
+                  not_allowed("Unknown symbol in caller context: " & symbol_str)
 
-            self.frame.push(r)
+              self.frame.push(r)
 
           of VkInt, VkFloat, VkString, VkBool, VkNil, VkChar:
             # For literals, no evaluation needed - just return as-is
@@ -7374,12 +7371,13 @@ proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value])
 proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
   let compiled = parse_and_compile(code, module_name)
 
-  let ns = new_namespace(module_name)
+  let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
   ns["__module_name__".to_key()] = module_name.to_value()
   ns["__is_main__".to_key()] = TRUE
   
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
+  ns["genex".to_key()] = App.app.genex_ns
   App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
   
   # Add eval function to the module namespace
@@ -7405,12 +7403,13 @@ proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value
   ## Execute Gene code from a stream (more memory-efficient for large files)
   let compiled = parse_and_compile(stream, module_name)
 
-  let ns = new_namespace(module_name)
+  let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
   ns["__module_name__".to_key()] = module_name.to_value()
   ns["__is_main__".to_key()] = TRUE
 
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
+  ns["genex".to_key()] = App.app.genex_ns
   App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
 
   # Initialize frame if it doesn't exist

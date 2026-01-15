@@ -167,7 +167,7 @@ proc compile_var_op_literal(self: Compiler, symbolVal: Value, literal: Value, op
     return true
   false
 
-# Translate $x to gene/x and $x/y to gene/x/y
+# Translate $x to global/x and $x/y to global/x/y
 proc translate_symbol(input: Value): Value =
   case input.kind:
     of VkSymbol:
@@ -177,7 +177,7 @@ proc translate_symbol(input: Value): Value =
         if s == "$ns":
           result = cast[Value](SYM_NS)
         else:
-          result = @["gene", s[1..^1]].to_complex_symbol()
+          result = @["SPECIAL_GLOBAL", s[1..^1]].to_complex_symbol()
       else:
         result = input
     of VkComplexSymbol:
@@ -185,13 +185,12 @@ proc translate_symbol(input: Value): Value =
       let r = input.ref
       if r.csymbol[0] == "":
         r.csymbol[0] = "self"
-      elif r.csymbol[0].starts_with("$"):
-        # Special case for $ns - translate first part to special symbol  
-        if r.csymbol[0] == "$ns":
-          r.csymbol[0] = "SPECIAL_NS"
-        else:
-          r.csymbol.insert("gene", 0)
-          r.csymbol[1] = r.csymbol[1][1..^1]
+      elif r.csymbol[0] == "$ns":
+        r.csymbol[0] = "SPECIAL_NS"
+      elif r.csymbol[0].starts_with("$") and r.csymbol[0].len > 1:
+        let stripped = r.csymbol[0][1..^1]
+        r.csymbol[0] = "SPECIAL_GLOBAL"
+        r.csymbol.insert(stripped, 1)
     else:
       not_allowed($input)
 
@@ -228,7 +227,10 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       return
 
     let key = r.csymbol[0].to_key()
-    if r.csymbol[0] == "SPECIAL_NS":
+    if r.csymbol[0] == "SPECIAL_GLOBAL":
+      # Handle $x/... by resolving against the global namespace.
+      self.emit(Instruction(kind: IkPushValue, arg0: App.app.global_ns))
+    elif r.csymbol[0] == "SPECIAL_NS":
       # Handle $ns/... specially
       self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](SYM_NS)))
     else:
@@ -503,6 +505,17 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
   let name = gene.children[0]
 
+  # Handle global variables like $x
+  if name.kind == VkSymbol and name.str.starts_with("$") and name.str.len > 1 and name.str != "$ns":
+    self.emit(Instruction(kind: IkPushValue, arg0: App.app.global_ns))
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+    else:
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+    let global_key = name.str[1..^1].to_symbol_value()
+    self.emit(Instruction(kind: IkSetMember, arg0: global_key))
+    return
+
   # Handle namespace variables like $ns/a
   if name.kind == VkComplexSymbol:
     let parts = name.ref.csymbol
@@ -623,6 +636,10 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
   
   if `type`.kind == VkSymbol:
+    if `type`.str.starts_with("$") and `type`.str.len > 1 and `type`.str != "$ns":
+      let name_sym = `type`.str[1..^1].to_symbol_value()
+      self.compile_container_assignment(App.app.global_ns, name_sym, operator, gene.children[1])
+      return
     if container_expr != NIL:
       self.compile_container_assignment(container_expr, `type`, operator, gene.children[1])
       return
