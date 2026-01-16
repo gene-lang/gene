@@ -238,6 +238,12 @@ proc err_info(self: Parser): ParseInfo =
   # get_col_number returns 0-indexed, convert to 1-indexed for display
   result = (self.line_number, self.get_col_number(self.bufpos) + 1)
 
+proc format_position(self: Parser): string =
+  let info = err_info(self)
+  if self.filename.len > 0:
+    return self.filename & ":" & $info.line & ":" & $info.col
+  $info.line & ":" & $info.col
+
 proc current_trace(self: Parser): SourceTrace =
   if self.trace_stack.len == 0:
     return nil
@@ -760,7 +766,7 @@ proc read_map(self: var Parser, mode: MapKind): Table[Key, Value] {.gcsafe.} =
       else:
         raise new_exception(ParseError, "EOF while reading ")
     elif ch == ']' or (mode == MkGene and ch == '}') or (mode == MkMap and ch == ')'):
-      raise new_exception(ParseError, "Unmatched delimiter: " & self.buf[self.bufpos])
+      raise new_exception(ParseError, "Unmatched delimiter: " & $self.buf[self.bufpos] & " at " & self.format_position())
 
     case state:
     of PropKey:
@@ -1100,7 +1106,7 @@ proc read_regex(self: var Parser): Value =
   # result = new_gene_regex(self.str, flags)
 
 proc read_unmatched_delimiter(self: var Parser): Value =
-  raise new_exception(ParseError, "Unmatched delimiter: " & self.buf[self.bufpos])
+  raise new_exception(ParseError, "Unmatched delimiter: " & $self.buf[self.bufpos] & " at " & self.format_position())
 
 proc read_decorator(self: var Parser): Value =
   let gene = new_gene(self.read())

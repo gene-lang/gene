@@ -87,17 +87,17 @@
   (var tool_list [])
   (TOOLS .each (fn [name tool]
     (var params_desc "")
-    (if ((tool/params .keys) .size > 0)
+    (if (tool/params/.keys/.size > 0)
       (var param_parts [])
       (tool/params .each (fn [pname pdesc]
-        (param_parts .append (new String "    " pname ": " pdesc))
+        (param_parts .append #"    #{pname}: #{pdesc}")
       ))
       (params_desc = (param_parts .join "\n"))
     )
     (if (params_desc/.length > 0)
-      (tool_list .append (new String "- " name ": " tool/description "\n  Parameters:\n" params_desc))
+      (tool_list .append #"- #{name}: #{tool/description}\n  Parameters:\n#{params_desc}")
     else
-      (tool_list .append (new String "- " name ": " tool/description))
+      (tool_list .append #"- #{name}: #{tool/description}")
     )
   ))
   (var tools_section (tool_list .join "\n"))
@@ -246,7 +246,7 @@ Only use tools when necessary. For general conversation, respond normally.
   )
   (DB .exec "INSERT INTO conversations (created_at) VALUES (?)" (time/now))
   (var rows (DB .query "SELECT last_insert_rowid()"))
-  (if ((rows .size) == 0)
+  (if (rows/.size == 0)
     (return nil)
   )
   (var id_val rows/0/0)
@@ -258,7 +258,7 @@ Only use tools when necessary. For general conversation, respond normally.
     (return false)
   )
   (var rows (DB .query "SELECT id FROM conversations WHERE id = ?" conv_id_int))
-  ((rows .size) > 0)
+  (rows/.size > 0)
 )
 
 (fn load_history [conv_id_int]
@@ -302,7 +302,7 @@ Only use tools when necessary. For general conversation, respond normally.
   (parts .append #"<|im_start|>system\n#{system_prompt}\n<|im_end|>\n")
   (var i 0)
   (loop
-    (if (i >= (history .size))
+    (if (i >= history/.size)
       (break)
     )
     (var entry (history .get i))
@@ -326,14 +326,14 @@ Only use tools when necessary. For general conversation, respond normally.
 )
 
 (fn trim_history [history max_items]
-  (if ((history .size) <= max_items)
+  (if (history/.size <= max_items)
     (return history)
   )
   (var trimmed [])
-  (var start ((history .size) - max_items))
+  (var start (history/.size - max_items))
   (var i start)
   (loop
-    (if (i >= (history .size))
+    (if (i >= history/.size)
       (break)
     )
     (trimmed .append (history .get i))
@@ -352,10 +352,10 @@ Only use tools when necessary. For general conversation, respond normally.
     (if (prompt/.length <= max_chars)
       (break)
     )
-    (if ((trimmed .size) <= 1)
+    (if (trimmed/.size <= 1)
       (break)
     )
-    (trimmed = (trim_history trimmed ((trimmed .size) - 1)))
+    (trimmed = (trim_history trimmed (trimmed/.size - 1)))
     (prompt = (build_prompt trimmed message))
   )
   trimmed
@@ -491,7 +491,7 @@ User request:
   (var tool_calls [])
 
   # Get model from global registry (works across threads)
-  (var model (if genex/llm (genex/llm/get_model) else false))
+  (var model (if genex/llm then (genex/llm/get_model) else false))
 
   (if model
     # Create session on-demand for this request
@@ -516,7 +516,7 @@ User request:
         (var raw_text (result .get "text"))
         (var tokens (result .get "tokens"))
         (tokens_used += tokens/.size)
-        
+
         # Check if this is a tool call
         (var tool_call (parse_tool_call raw_text))
         
@@ -539,7 +539,7 @@ User request:
           (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
           (current_history .append {^role "tool_result" ^content current_message})
           (current_message = "")
-          
+
           (iteration += 1)
         else
           # No tool call - this is the final response
