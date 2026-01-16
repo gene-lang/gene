@@ -757,7 +757,7 @@ else:
 
     var session_opts = GeneLlmSessionOptions(
       context_length: cint(get_int_option(opts, "context", model_state.context_len)),
-      batch_size: cint(min(512, get_int_option(opts, "batch", model_state.context_len))),
+      batch_size: cint(get_int_option(opts, "batch", min(512, model_state.context_len))),
       threads: cint(max(1, get_int_option(opts, "threads", model_state.threads))),
       seed: cint(get_int_option(opts, "seed", 42)),
       temperature: get_float_option(opts, "temperature", 0.7).cfloat,

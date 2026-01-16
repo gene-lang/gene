@@ -312,12 +312,12 @@
 
   (if ((content_type .index "multipart/form-data") >= 0)
     (try
-      (ai/documents/validate_upload req {^allowed_types ["pdf" "png" "jpg" "jpeg" "bmp" "tiff" "tif"]})
+      (genex/ai/documents/validate_upload req {^allowed_types ["pdf" "png" "jpg" "jpeg" "bmp" "tiff" "tif"]})
     catch *
       (return (json_response 400 {^error $ex/message}))
     )
     (try
-      (document_text = (ai/documents/extract_upload req))
+      (document_text = (genex/ai/documents/extract_upload req))
     catch *
       (return (json_response 400 {^error $ex/message}))
     )
@@ -348,7 +348,7 @@
   )
 
   (if (document_text != nil)
-    (var chunks (ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
+    (var chunks (genex/ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
     (document_chunks = chunks/.size)
     (var context_parts [])
     (var i 0)
@@ -387,7 +387,7 @@ User request:
 
   (if model
     # Create session on-demand for this request
-    (var session (model .new_session {^max_tokens 512}))
+    (var session (model .new_session {^max_tokens 512 ^batch 2048}))
     (try
       # Build conversation with history
       (var current_history history)
