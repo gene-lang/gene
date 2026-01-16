@@ -19,7 +19,7 @@ When the user calls:
   ^parameters [
     {^name "location" ^type "string" ^required true}
   ]
-  ^handler (fn [args] {^temp 72 ^condition "sunny"})
+  ^handler (fnx [args] {^temp 72 ^condition "sunny"})
 })
 ```
 Then the tool is registered and available for execution

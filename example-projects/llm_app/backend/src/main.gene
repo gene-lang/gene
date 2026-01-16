@@ -53,7 +53,7 @@
 (register_tool "get_time"
   "Get the current date and time"
   {}
-  (fn [args]
+  (fnx [args]
     {^result ((gene/now) .to_s)}
   )
 )
@@ -61,7 +61,7 @@
 (register_tool "calculate"
   "Evaluate a mathematical expression. Use this for any math calculations."
   {^expression "The math expression to evaluate (e.g., '2 + 2', '10 * 5')"}
-  (fn [args]
+  (fnx [args]
     (var expr (args .get "expression" ""))
     (try
       (var result (eval (parse expr)))
@@ -75,7 +75,7 @@
 (register_tool "get_weather"
   "Get the current weather for a location"
   {^location "The city or location to get weather for"}
-  (fn [args]
+  (fnx [args]
     (var location (args .get "location" "Unknown"))
     # Mock weather data - in production, call a real API
     {^result #"Weather in #{location}: 72°F (22°C), Partly Cloudy. Humidity: 45%"}
@@ -85,11 +85,11 @@
 # Build system prompt with tool descriptions
 (fn build_system_prompt []
   (var tool_list [])
-  (TOOLS .each (fn [name tool]
+  (TOOLS .each (fnx [name tool]
     (var params_desc "")
     (if (tool/params/.keys/.size > 0)
       (var param_parts [])
-      (tool/params .each (fn [pname pdesc]
+      (tool/params .each (fnx [pname pdesc]
         (param_parts .append #"    #{pname}: #{pdesc}")
       ))
       (params_desc = (param_parts .join "\n"))
@@ -268,14 +268,9 @@ Only use tools when necessary. For general conversation, respond normally.
   (var rows (DB .query "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id" conv_id_int))
   (var history [])
   (var i 0)
-  (loop
-    (if (i >= rows/.size)
-      (break)
-    )
-    (var row (rows .get i))
+  (rows .each (fnx row
     (history .append {^role row/0 ^content row/1})
-    (i += 1)
-  )
+  ))
   history
 )
 
@@ -300,23 +295,16 @@ Only use tools when necessary. For general conversation, respond normally.
   # Add system prompt with tool descriptions
   (var system_prompt (build_system_prompt))
   (parts .append #"<|im_start|>system\n#{system_prompt}\n<|im_end|>\n")
-  (var i 0)
-  (loop
-    (if (i >= history/.size)
-      (break)
+  (history .each (fnx entry
+    (case entry/role
+    when "user"
+      (parts .append #"<|im_start|>user\n#{entry/content}\n<|im_end|>\n")
+    when "assistant"
+      (parts .append #"<|im_start|>assistant\n#{entry/content}\n<|im_end|>\n")
+    when "tool_result"
+      (parts .append #"<|im_start|>user\nTool result: #{entry/content}\n<|im_end|>\n")
     )
-    (var entry (history .get i))
-    (var role entry/role)
-    (var content entry/content)
-    (if (role == "user")
-      (parts .append #"<|im_start|>user\n#{content}\n<|im_end|>\n")
-    elif (role == "assistant")
-      (parts .append #"<|im_start|>assistant\n#{content}\n<|im_end|>\n")
-    elif (role == "tool_result")
-      (parts .append #"<|im_start|>user\nTool result: #{content}\n<|im_end|>\n")
-    )
-    (i += 1)
-  )
+  ))
   (if (message/.length > 0)
     (parts .append #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
   else

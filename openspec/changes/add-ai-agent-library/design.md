@@ -209,7 +209,7 @@ proc to_openai_tools*(registry: ToolRegistry): seq[Table[string, Value]]
   ^parameters [
     {^name "location" ^type "string" ^description "City name" ^required true}
   ]
-  ^handler (fn [args]
+  ^handler (fnx [args]
     (var location args/location)
     {^temperature 72 ^condition "sunny" ^location location}
   )
@@ -242,10 +242,10 @@ proc stream_llm_response*(client: OpenAIClient, messages: seq[Message],
   (var sse (ai/streaming/sse_writer req))
 
   (ai/stream_chat messages {
-    ^on_token (fn [token]
+    ^on_token (fnx [token]
       (sse .write token)
     )
-    ^on_done (fn []
+    ^on_done (fnx []
       (sse .done)
     )
   })

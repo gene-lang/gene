@@ -38,8 +38,8 @@ Given a configured LLM client and messages
 When the user calls:
 ```gene
 (ai/stream_chat messages {
-  ^on_token (fn [token] (sse .write token))
-  ^on_done (fn [] (sse .done))
+  ^on_token (fnx [token] (sse .write token))
+  ^on_done (fnx [] (sse .done))
 })
 ```
 Then tokens are delivered incrementally via the callback
