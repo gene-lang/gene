@@ -50,7 +50,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_symbol.nim"
   exec "nim c -r tests/test_repeat.nim"
   exec "nim c -r tests/test_for.nim"
-  # exec "nim c -r tests/test_case.nim"
+  exec "nim c -r tests/test_case.nim"
   exec "nim c -r tests/test_enum.nim"
   exec "nim c -r tests/test_arithmetic.nim"
   exec "nim c -r tests/test_exception.nim"

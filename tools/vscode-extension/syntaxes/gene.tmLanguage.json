@@ -3,8 +3,8 @@
   "name": "Gene",
   "scopeName": "source.gene",
   "patterns": [
-    { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#comments" },
     { "include": "#numbers" },
     { "include": "#constants" },
     { "include": "#keywords" },
@@ -21,13 +21,135 @@
     "comments": {
       "patterns": [
         {
+          "name": "comment.block.gene",
+          "begin": "#<",
+          "end": ">#"
+        },
+        {
           "name": "comment.line.number-sign.gene",
-          "match": "#.*$"
+          "match": "#(?![\"<]).*$"
         }
       ]
     },
     "strings": {
       "patterns": [
+        {
+          "name": "string.quoted.triple.interpolated.gene",
+          "begin": "#\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.gene",
+              "match": "\\\\."
+            },
+            {
+              "name": "meta.embedded.interpolation.gene",
+              "begin": "#\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.gene" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.gene" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            },
+            {
+              "name": "meta.embedded.interpolation.gene",
+              "begin": "#\\(",
+              "end": "\\)",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.gene" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.gene" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            },
+            {
+              "name": "meta.embedded.interpolation.gene",
+              "begin": "#\\[",
+              "end": "\\]",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.gene" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.gene" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.gene",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.gene",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.interpolated.gene",
+          "begin": "#\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.gene",
+              "match": "\\\\."
+            },
+            {
+              "name": "meta.embedded.interpolation.gene",
+              "begin": "#\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.gene" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.gene" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            },
+            {
+              "name": "meta.embedded.interpolation.gene",
+              "begin": "#\\(",
+              "end": "\\)",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.gene" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.gene" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            },
+            {
+              "name": "meta.embedded.interpolation.gene",
+              "begin": "#\\[",
+              "end": "\\]",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.gene" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.gene" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            }
+          ]
+        },
         {
           "name": "string.quoted.double.gene",
           "begin": "\"",
