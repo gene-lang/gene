@@ -6,8 +6,33 @@
 # Configuration
 (var PORT 4080)
 (var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
+(var MODEL_CONTEXT_STR ($env .get "GENE_LLM_CONTEXT" ""))
+(var MODEL_CONTEXT 4096)
+(if (MODEL_CONTEXT_STR/.length > 0)
+  (MODEL_CONTEXT = MODEL_CONTEXT_STR/.to_i)
+)
+(var MAX_TOKENS_STR ($env .get "GENE_LLM_MAX_TOKENS" ""))
+(var MAX_TOKENS 512)
+(if (MAX_TOKENS_STR/.length > 0)
+  (MAX_TOKENS = MAX_TOKENS_STR/.to_i)
+)
+(var PROMPT_CHAR_LIMIT_STR ($env .get "GENE_LLM_PROMPT_CHARS" ""))
+(var PROMPT_CHAR_LIMIT (MODEL_CONTEXT * 4))
+(if (PROMPT_CHAR_LIMIT_STR/.length > 0)
+  (PROMPT_CHAR_LIMIT = PROMPT_CHAR_LIMIT_STR/.to_i)
+)
 (var DB_PATH "chat.sqlite")
 (var DB nil)
+
+(if (MODEL_CONTEXT < 256)
+  (MODEL_CONTEXT = 256)
+)
+(if (MAX_TOKENS < 1)
+  (MAX_TOKENS = 1)
+)
+(if (PROMPT_CHAR_LIMIT < 1024)
+  (PROMPT_CHAR_LIMIT = 1024)
+)
 
 # ============================================================
 # Tool Registry - Functions that LLM can call
@@ -29,7 +54,7 @@
   "Get the current date and time"
   {}
   (fn [args]
-    {^result (time/now/.to_s)}
+    {^result ((gene/now) .to_s)}
   )
 )
 
@@ -76,24 +101,69 @@
     )
   ))
   (var tools_section (tool_list .join "\n"))
-  (new String "You are a helpful AI assistant with access to tools.\n\n"
-       "Available tools:\n" tools_section "\n\n"
-       "When you need to use a tool, respond with ONLY a JSON object in this exact format:\n"
-       "{\"tool\": \"tool_name\", \"args\": {\"param\": \"value\"}}\n\n"
-       "After receiving a tool result, provide a natural response to the user.\n"
-       "Only use tools when necessary. For general conversation, respond normally.")
+  #"""
+You are a helpful AI assistant with access to tools.
+
+Available tools:
+#{tools_section}
+
+When you need to use a tool, respond with ONLY a JSON object in this exact format:
+{"tool": "tool_name", "args": {"param": "value"}}
+
+After receiving a tool result, provide a natural response to the user.
+Only use tools when necessary. For general conversation, respond normally.
+"""
+)
+
+(fn extract_first_json [text]
+  (var start (text .index "{"))
+  (if (start < 0)
+    (return nil)
+  )
+  (var i start)
+  (var depth 0)
+  (var in_str false)
+  (var escape false)
+  (loop
+    (if (i >= text/.length)
+      (break)
+    )
+    (var ch (text .char_at i))
+    (if in_str
+      (if escape
+        (escape = false)
+      elif (ch == '\\')
+        (escape = true)
+      elif (ch == '"')
+        (in_str = false)
+      )
+    else
+      (if (ch == '"')
+        (in_str = true)
+      elif (ch == '{')
+        (depth += 1)
+      elif (ch == '}')
+        (depth -= 1)
+        (if (depth == 0)
+          (return (text .substr start i))
+        )
+      )
+    )
+    (i += 1)
+  )
+  nil
 )
 
 # Parse tool call from LLM response
 (fn parse_tool_call [text]
   # Look for JSON object with tool field
-  (var trimmed text/.trim)
-  (if (!(trimmed .starts_with "{"))
+  (var trimmed (extract_first_json text))
+  (if (trimmed == nil)
     (return nil)
   )
   (try
-    (var parsed trimmed/.from_json)
-    (if (parsed .has "tool")
+    (var parsed (gene/json/parse trimmed))
+    (if (parsed .contains "tool")
       parsed
     else
       nil
@@ -110,7 +180,7 @@
     (return {^error #"Unknown tool: #{name}"})
   )
   (try
-    ((tool/handler) args)
+    (tool/handler args)
   catch *
     {^error #"Tool execution failed: #{$ex/message}"}
   )
@@ -124,7 +194,7 @@
   elif genex/llm
     (println "Loading LLM model from:" MODEL_PATH)
     # Adjust layers for smaller models or GPUs with more VRAM
-    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99}))
+    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99 ^context MODEL_CONTEXT}))
     # Register model globally for worker thread access
     (genex/llm/register_model model)
     (println "LLM model loaded and registered successfully")
@@ -165,9 +235,7 @@
   (if (think_end < 0)
     (return [nil text/.trim])
   )
-  # substr takes (start, length), not (start, end)
-  (var think_len ((think_end - think_start) - 7))
-  (var thinking (text .substr (think_start + 7) think_len))
+  (var thinking (text .substr (think_start + 7) (think_end - 1)))
   (var answer (text .substr (think_end + 8)))
   [thinking/.trim answer/.trim]
 )
@@ -249,8 +317,48 @@
     )
     (i += 1)
   )
-  (parts .append #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+  (if (message/.length > 0)
+    (parts .append #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+  else
+    (parts .append "<|im_start|>assistant\n")
+  )
   (parts .join "")
+)
+
+(fn trim_history [history max_items]
+  (if ((history .size) <= max_items)
+    (return history)
+  )
+  (var trimmed [])
+  (var start ((history .size) - max_items))
+  (var i start)
+  (loop
+    (if (i >= (history .size))
+      (break)
+    )
+    (trimmed .append (history .get i))
+    (i += 1)
+  )
+  trimmed
+)
+
+(fn trim_history_for_prompt [history message max_items max_chars]
+  (var trimmed (trim_history history max_items))
+  (if (max_chars <= 0)
+    (return trimmed)
+  )
+  (var prompt (build_prompt trimmed message))
+  (loop
+    (if (prompt/.length <= max_chars)
+      (break)
+    )
+    (if ((trimmed .size) <= 1)
+      (break)
+    )
+    (trimmed = (trim_history trimmed ((trimmed .size) - 1)))
+    (prompt = (build_prompt trimmed message))
+  )
+  trimmed
 )
 
 (fn chat_id_from_path [path]
@@ -387,7 +495,7 @@ User request:
 
   (if model
     # Create session on-demand for this request
-    (var session (model .new_session {^max_tokens 512 ^batch 2048}))
+    (var session (model .new_session {^max_tokens MAX_TOKENS ^context MODEL_CONTEXT}))
     (try
       # Build conversation with history
       (var current_history history)
@@ -402,6 +510,7 @@ User request:
         )
         
         # Build prompt and generate response
+        (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
         (var prompt (build_prompt current_history current_message))
         (var result (session .infer prompt))
         (var raw_text (result .get "text"))
@@ -421,9 +530,15 @@ User request:
           (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
           
           # Add tool call and result to history for next iteration
-          (current_history .append {^role "assistant" ^content raw_text})
+          (var parsed_resp (parse_response raw_text))
+          (var tool_text (parsed_resp .get 1))
+          (if (tool_text == nil)
+            (tool_text = raw_text/.trim)
+          )
+          (current_history .append {^role "assistant" ^content tool_text})
           (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
           (current_history .append {^role "tool_result" ^content current_message})
+          (current_message = "")
           
           (iteration += 1)
         else
