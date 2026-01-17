@@ -15,6 +15,7 @@ type
     compile: bool
     help: bool
     quote_str: bool
+    filter: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -27,6 +28,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  --trace: enable execution tracing")
   manager.add_help("  --compile: show compilation details")
   manager.add_help("  --quote-str: output strings with quotes")
+  manager.add_help("  --filter: treat code as predicate, output $line when true")
 
 let short_no_val = {'d', 'h'}
 let long_no_val = @[
@@ -35,6 +37,7 @@ let long_no_val = @[
   "compile",
   "help",
   "quote-str",
+  "filter",
 ]
 
 proc parse_options(args: seq[string]): PipeOptions =
@@ -62,6 +65,8 @@ proc parse_options(args: seq[string]): PipeOptions =
         result.help = true
       of "quote-str":
         result.quote_str = true
+      of "filter":
+        result.filter = true
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -97,6 +102,7 @@ Options:
   --trace                 Enable execution tracing
   --compile               Show compilation details
   --quote-str             Output strings with quotes (for Gene-parseable output)
+  --filter                Treat code as predicate; output $line when true
 
 Examples:
   # Output lines as-is
@@ -117,6 +123,10 @@ Examples:
   # Output with quotes for Gene-parseable data
   cat file.txt | gene pipe --quote-str '$line'
 
+  # Filter lines using predicate (outputs $line when true)
+  cat log.txt | gene pipe --filter '($line/.size > 10)'
+  cat data.txt | gene pipe --filter '($line == "keep")'
+
 Notes:
   - Nil results are skipped (enables filtering)
   - Exits with non-zero status on first error
@@ -129,6 +139,10 @@ Notes:
 
   if code.len == 0:
     return failure("No code provided. Usage: gene pipe '<code>'")
+
+  # If filter mode, wrap the expression to output $line when true
+  if options.filter:
+    code = "(if " & code & " $line)"
 
   # Initialize VM
   init_app_and_vm()

@@ -58,6 +58,42 @@ for test_file in testsuite/pipe/[0-9]*.gene; do
     fi
 done
 
+# Test --filter option with string equality
+echo "Test $test_num: Filter option (string equality)"
+result=$(echo -e "keep\nskip\nkeep" | $GENE_BIN pipe --filter '($line == "keep")')
+expected='keep
+keep'
+if [ "$result" = "$expected" ]; then
+    echo "  ✓ PASS"
+    ((PASS++))
+else
+    echo "  ✗ FAIL"
+    echo "  Expected:"
+    echo "$expected" | sed 's/^/    /'
+    echo "  Got:"
+    echo "$result" | sed 's/^/    /'
+    ((FAIL++))
+fi
+test_num=$((test_num + 1))
+
+# Test --filter option with length check
+echo "Test $test_num: Filter option (length check)"
+result=$(echo -e "hello\nhi\nworld" | $GENE_BIN pipe --filter '($line/.size > 4)')
+expected='hello
+world'
+if [ "$result" = "$expected" ]; then
+    echo "  ✓ PASS"
+    ((PASS++))
+else
+    echo "  ✗ FAIL"
+    echo "  Expected:"
+    echo "$expected" | sed 's/^/    /'
+    echo "  Got:"
+    echo "$result" | sed 's/^/    /'
+    ((FAIL++))
+fi
+test_num=$((test_num + 1))
+
 # Test error handling separately (should exit with error)
 echo "Test $test_num: Error handling"
 if echo "bad" | $GENE_BIN pipe '(throw "error")' 2>/dev/null; then
