@@ -1,4 +1,4 @@
-import parseopt, strutils
+import parseopt, strutils, os
 import ../gene/types
 import ../gene/vm
 import ../gene/compiler
@@ -92,9 +92,11 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return success("""Gene Pipe Command - Line-by-line stream processing
 
 Usage: gene pipe [options] '<code>'
+       gene pipe [options] <file>
 
 Process stdin line-by-line, executing Gene code for each line.
 The current line is available as $line.
+Code can be provided inline or read from a file (supports shebang).
 
 Options:
   -h, --help              Show this help message
@@ -127,6 +129,12 @@ Examples:
   cat log.txt | gene pipe --filter '($line/.size > 10)'
   cat data.txt | gene pipe --filter '($line == "keep")'
 
+  # Create executable script with shebang
+  echo '#!/usr/bin/env gene pipe' > filter.gene
+  echo '($line .size)' >> filter.gene
+  chmod +x filter.gene
+  cat file.txt | ./filter.gene
+
 Notes:
   - Nil results are skipped (enables filtering)
   - Exits with non-zero status on first error
@@ -139,6 +147,32 @@ Notes:
 
   if code.len == 0:
     return failure("No code provided. Usage: gene pipe '<code>'")
+
+  # Check if code is a file path - if so, read code from the file
+  if fileExists(code):
+    try:
+      let file_content = readFile(code)
+      var lines: seq[string] = @[]
+      var first_line = true
+      for line in file_content.splitLines():
+        # Skip shebang line (only first line)
+        if first_line and line.startsWith("#!"):
+          first_line = false
+          continue
+        first_line = false
+        # Skip empty lines
+        if line.len == 0:
+          continue
+        let stripped = line.strip()
+        # Skip comment-only lines (# but not #" or #< which are string interpolation/block comments)
+        if stripped.startsWith("#") and not stripped.startsWith("#\"") and not stripped.startsWith("#<"):
+          continue
+        lines.add(line)
+      code = lines.join("\n")
+      if code.len == 0:
+        return failure("No code found in file (only shebang/comments)")
+    except IOError as e:
+      return failure("Failed to read file: " & e.msg)
 
   # If filter mode, wrap the expression to output $line when true
   if options.filter:

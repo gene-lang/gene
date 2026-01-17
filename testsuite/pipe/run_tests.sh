@@ -94,6 +94,30 @@ else
 fi
 test_num=$((test_num + 1))
 
+# Test file-based execution (shebang support)
+echo "Test $test_num: File-based execution"
+cat > /tmp/gene_pipe_test_$$.gene << 'EOF'
+#!/usr/bin/env gene pipe
+# Test script
+($line .size)
+EOF
+result=$(echo -e "hello\nworld" | $GENE_BIN pipe /tmp/gene_pipe_test_$$.gene)
+expected='5
+5'
+rm -f /tmp/gene_pipe_test_$$.gene
+if [ "$result" = "$expected" ]; then
+    echo "  ✓ PASS"
+    ((PASS++))
+else
+    echo "  ✗ FAIL"
+    echo "  Expected:"
+    echo "$expected" | sed 's/^/    /'
+    echo "  Got:"
+    echo "$result" | sed 's/^/    /'
+    ((FAIL++))
+fi
+test_num=$((test_num + 1))
+
 # Test error handling separately (should exit with error)
 echo "Test $test_num: Error handling"
 if echo "bad" | $GENE_BIN pipe '(throw "error")' 2>/dev/null; then
