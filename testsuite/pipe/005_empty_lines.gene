@@ -1,0 +1,6 @@
+# Test that empty lines are preserved
+# Input: echo -e "a\n\nb"
+# Code: $line
+# Expected: a
+# Expected:
+# Expected: b

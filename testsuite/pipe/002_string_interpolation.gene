@@ -1,0 +1,4 @@
+# Test string interpolation with $line
+# Input: echo "world"
+# Code: #"Hello #{$line}!"
+# Expected: Hello world!

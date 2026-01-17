@@ -1,0 +1,4 @@
+# Test basic $line access
+# Input: echo "test"
+# Code: $line
+# Expected: test

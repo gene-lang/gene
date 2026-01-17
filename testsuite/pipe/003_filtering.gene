@@ -1,0 +1,5 @@
+# Test filtering with nil results
+# Input: echo -e "keep\nskip\nkeep"
+# Code: (if ($line == "keep") $line)
+# Expected: keep
+# Expected: keep

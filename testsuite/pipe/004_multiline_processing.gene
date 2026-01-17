@@ -1,0 +1,6 @@
+# Test that each line is processed independently
+# Input: echo -e "1\n2\n3"
+# Code: (* $line/.to_i 2)
+# Expected: 2
+# Expected: 4
+# Expected: 6
