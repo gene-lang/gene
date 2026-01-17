@@ -1,5 +1,19 @@
-# Test system functions
-# Expected: macos
+# Test system functions - OS detection
+# Verify that system/os returns a valid OS name (platform-agnostic)
 
 (var os_name (system/os))
-(println os_name)
+
+# Verify it's one of the known OS names
+(var valid_oses ["macos" "linux" "windows"])
+(var is_valid false)
+(for os in valid_oses
+  (if (os_name == os)
+    (is_valid = true)
+  )
+)
+
+(if is_valid
+  (println "OK: OS is " os_name)
+else
+  (throw #"ERROR: Invalid OS name: #{os_name}")
+)
