@@ -14,6 +14,7 @@ type
     trace_instruction: bool
     compile: bool
     help: bool
+    quote_str: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -25,6 +26,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  -d, --debug: enable debug output")
   manager.add_help("  --trace: enable execution tracing")
   manager.add_help("  --compile: show compilation details")
+  manager.add_help("  --quote-str: output strings with quotes")
 
 let short_no_val = {'d', 'h'}
 let long_no_val = @[
@@ -32,6 +34,7 @@ let long_no_val = @[
   "trace-instruction",
   "compile",
   "help",
+  "quote-str",
 ]
 
 proc parse_options(args: seq[string]): PipeOptions =
@@ -57,6 +60,8 @@ proc parse_options(args: seq[string]): PipeOptions =
         result.compile = true
       of "h", "help":
         result.help = true
+      of "quote-str":
+        result.quote_str = true
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -91,6 +96,7 @@ Options:
   -d, --debug             Enable debug output
   --trace                 Enable execution tracing
   --compile               Show compilation details
+  --quote-str             Output strings with quotes (for Gene-parseable output)
 
 Examples:
   # Output lines as-is
@@ -107,6 +113,9 @@ Examples:
 
   # Get line length
   cat file.txt | gene pipe '($line .size)'
+
+  # Output with quotes for Gene-parseable data
+  cat file.txt | gene pipe --quote-str '$line'
 
 Notes:
   - Nil results are skipped (enables filtering)
@@ -169,8 +178,8 @@ Notes:
 
       # Print result if not nil (enables filtering)
       if result.kind != VkNil:
-        # Output strings without quotes, other types with their default representation
-        if result.kind == VkString:
+        # Output strings without quotes unless --quote-str is specified
+        if result.kind == VkString and not options.quote_str:
           echo result.str
         else:
           echo $result
