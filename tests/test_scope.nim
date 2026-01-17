@@ -89,7 +89,7 @@ test_vm """
 # Function closure test
 test_vm("""
   (var i 0)
-  (fn f _
+  (fn f []
     i
   )
   (var i 1)

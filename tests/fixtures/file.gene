@@ -5,7 +5,7 @@
 (var message "Hello from async file reading!")
 (println message)
 
-(fn greet name
+(fn greet [name]
   (println "Hello," name "from the file!")
 )
 

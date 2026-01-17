@@ -3,7 +3,7 @@
 (println "=== Custom Future Example ===")
 
 # Create a custom async function that returns a manually created Future  
-(fn delayed_value value
+(fn delayed_value [value]
   (var future (new gene/Future))
   
   # Simulate async work by completing the future

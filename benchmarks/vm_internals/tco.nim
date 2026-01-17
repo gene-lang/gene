@@ -14,7 +14,7 @@ when isMainModule:
   init_app_and_vm()
 
   let code = fmt"""
-    (fn tco n
+    (fn tco [n]
       (if (n == 0)
         (return 0)
       )

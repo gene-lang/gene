@@ -1,6 +1,6 @@
 # Simplified Array Operations Benchmark
 
-(fn array_creation_bench n
+(fn array_creation_bench [n]
   "Test array creation performance"
   (var count 0)
   (var i 0)
@@ -10,7 +10,7 @@
     (i = (+ i 1)))
   count)
 
-(fn array_sum arr
+(fn array_sum [arr]
   "Sum array elements"
   (var sum 0)
   (var i 0)

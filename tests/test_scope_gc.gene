@@ -12,7 +12,7 @@
   (println "create_handler called with:" param)
   
   # Return a closure that captures param
-  (fnx [arg]
+  (fn [arg]
     (println "Handler called with arg:" arg)
     (println "Accessing captured param:" param)
     (println "Accessing module_var:" module_var)

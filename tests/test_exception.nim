@@ -196,7 +196,7 @@ test_vm """
 
 
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     (throw)
 #     1
 #   catch *
@@ -220,7 +220,7 @@ test_vm """
 # """, 2
 
 # test_vm """
-#   (fn f blk
+#   (fn f [blk]
 #     (blk)
 #   )
 #   (f

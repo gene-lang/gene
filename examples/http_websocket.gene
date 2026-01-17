@@ -13,7 +13,7 @@
 (var $ns/DB_PASS ($env "DB_PASS"))
 (var $ns/DB_NAME ($env "DB_NAME" "todos"))
 
-(fn init_db _
+(fn init_db []
   (var conn (DB/open DB_HOST DB_USER DB_PASS DB_NAME))
   (conn .exec """
     CREATE TABLE IF NOT EXISTS `todos`.`todos` (
@@ -81,15 +81,15 @@
 )
 
 (class Record
-  (.on_extended (fnx child
-    (child .on_member_missing (fnx name
+  (.on_extended (fn [child]
+    (child .on_member_missing (fn [name]
       (if (Record/.members .contains name)
         (/.parent ./ name)
       )
     ))
   ))
 
-  (fn /from_row row
+  (fn /from_row [row]
     (var props {})
     (for [i v] in row
       ($set props (@ (/columns ./ i)) v)
@@ -97,7 +97,7 @@
     (new self props)
   )
 
-  (fn /find id
+  (fn /find [id]
     (var query (new Query /table))
     (query .where "id = ?")
     (var data (/orm .exec query id))
@@ -109,7 +109,7 @@
   )
 
   # Query all and convert each row to an instance of the model class
-  (fn /all _
+  (fn /all []
     (var query (new Query /table))
     (var data (/orm .exec query))
     (data .map (row ->
@@ -121,7 +121,7 @@
     ))
   )
 
-  (fn /columns_except_id _
+  (fn /columns_except_id []
     (var columns [])
     (for col in /columns
       (if (col != "id")
@@ -468,7 +468,7 @@
 
         # (SCRIPT (genex/js/js
         #   (var ws (new WebSocket "ws://localhost:2080/ws"))
-        #   (fn* createTodo _
+        #   (fn createTodo []
         #     (var description ((($ "[name=description]").val)))
         #     (var payload {
         #       ^type "create"
@@ -477,7 +477,7 @@
         #     (ws.send (JSON.stringify payload))
         #   )
 
-        #   ((($ "li label.cbx__child").click) (fnx* e
+        #   ((($ "li label.cbx__child").click) (fn [e]
         #     (var id ((($ this).attr) "for"))
         #     (var oldStatus (? ((($ ("input#" id)).is) ":checked") 1 0))
         #     (var newStatus (? (oldStatus == 1) 0 1))
@@ -490,7 +490,7 @@
         #     })
         #     (ws.send (JSON.stringify payload))
         #   ))
-        #   ((($ "li button.delete-button").click) (fnx* e
+        #   ((($ "li button.delete-button").click) (fn [e]
         #     (var id ((($ this).data) "id"))
         #     (var payload {
         #       ^type "update"
@@ -689,7 +689,7 @@
   )
 )
 
-(fn create_router _
+(fn create_router []
   ($tap (new Router)
     (.map "/" HomeController)
     # (.map ^^POST   "/todos" TodosController :create)

@@ -10,7 +10,7 @@ suite "Future Callbacks":
     (var result [])
     (var f (async 42))
     (await f)
-    (f .on_success (fnx [v] (result .append v)))
+    (f .on_success (fn [v] (result .append v)))
 
     # Force polling by doing work
     (var i 0)
@@ -28,7 +28,7 @@ suite "Future Callbacks":
     (var result [])
     (var f (async (throw "test error")))
     (try (await f) catch * nil)
-    (f .on_failure (fnx [e] (result .append "failed")))
+    (f .on_failure (fn [e] (result .append "failed")))
 
     # Force polling
     (var i 0)
@@ -46,9 +46,9 @@ suite "Future Callbacks":
     (var result [])
     (var f (async 10))
     (await f)
-    (f .on_success (fnx [v] (result .append (v + 1))))
-    (f .on_success (fnx [v] (result .append (v + 2))))
-    (f .on_success (fnx [v] (result .append (v + 3))))
+    (f .on_success (fn [v] (result .append (v + 1))))
+    (f .on_success (fn [v] (result .append (v + 2))))
+    (f .on_success (fn [v] (result .append (v + 3))))
 
     # Force polling
     (var i 0)
@@ -68,8 +68,8 @@ suite "Future Callbacks":
     (var result [])
     (var f (async 5))
     (await f)
-    (f .on_success (fnx [v] (result .append v)))
-    (f .on_success (fnx [v] (result .append (v * 2))))
+    (f .on_success (fn [v] (result .append v)))
+    (f .on_success (fn [v] (result .append (v * 2))))
 
     # Force polling
     (var i 0)
@@ -89,7 +89,7 @@ suite "Future Callbacks":
     (var f (async 42))
     (await f)
     # on_failure should not execute for successful future
-    (f .on_failure (fnx [e] (result .append "should not execute")))
+    (f .on_failure (fn [e] (result .append "should not execute")))
 
     # Force polling
     (var i 0)
@@ -106,7 +106,7 @@ suite "Future Callbacks":
     (var result 0)
     (var f (async 15))
     (await f)
-    (f .on_success (fnx [v]
+    (f .on_success (fn [v]
       (result = (v + 5))
     ))
 
@@ -123,7 +123,7 @@ suite "Future Callbacks":
     (var received nil)
     (var f (async {^status "ok" ^value 123}))
     (await f)
-    (f .on_success (fnx [v] (received = v)))
+    (f .on_success (fn [v] (received = v)))
 
     # Force polling
     (var i 0)
@@ -138,7 +138,7 @@ suite "Future Callbacks":
     (var count 0)
     (var f (async 1))
     (await f)
-    (f .on_success (fnx [v] (count = (count + 1))))
+    (f .on_success (fn [v] (count = (count + 1))))
 
     # Force multiple polls
     (var i 0)

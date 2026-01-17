@@ -1,4 +1,4 @@
-(fn f n
+(fn f [n]
   (if (n < 0) then
     (var a)
     (return 0)

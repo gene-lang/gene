@@ -48,7 +48,7 @@ when isMainModule:
   init_app_and_vm()
 
   let code = fmt"""
-    (fn fib n
+    (fn fib [n]
       (if (n < 2)
         n
       else

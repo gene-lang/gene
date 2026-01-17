@@ -118,7 +118,7 @@ test_vm """
 # test_vm """
 #   (class C
 #     (mixin M
-#       (fn f _ 1)
+#       (fn f [] 1)
 #     )
 #   )
 #   (C/M/f)
@@ -183,14 +183,14 @@ test_vm """
 # """, 1
 
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     1
 #   )
 #   f/.call
 # """, 1
 
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     [1 2]
 #   )
 #   f/.call/0

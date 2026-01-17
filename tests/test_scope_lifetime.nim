@@ -75,7 +75,7 @@ suite "Scope Lifetime":
   #   (fn test_callback []
   #     (var x 100)
   #     (var f (async x))
-  #     (.on_success f (fnx [val] val))
+  #     (.on_success f (fn [val] val))
   #     (await f))
   #   (test_callback)
   # """, 100

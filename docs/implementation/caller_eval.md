@@ -11,7 +11,7 @@
 (macro m []
   ($caller_eval :a)
 )
-(fn f _
+(fn f []
   (var a 1)
   (m)  # Should return 1
 )

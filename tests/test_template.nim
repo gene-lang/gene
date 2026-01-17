@@ -12,7 +12,7 @@ import ./helpers
 # TODO: Enable when expression evaluation in templates is implemented
 # test_vm """
 #   (var tpl :(%f b))
-#   (fn f a (a + 1))
+#   (fn f [a] (a + 1))
 #   (var x ($render tpl)) # => (<function f> b)
 #   (var b 2)
 #   (eval x)
@@ -20,7 +20,7 @@ import ./helpers
 
 test_vm """
   (var tpl :(%f %b))
-  (fn f a (a + 1))
+  (fn f [a] (a + 1))
   (var b 2)
   (var x ($render tpl)) # => (<function f> 2)
   (eval x)
@@ -38,7 +38,7 @@ test_vm """
 # TODO: Enable when expression evaluation in templates is implemented
 # test_vm """
 #   (var tpl :[%(f b)])
-#   (fn f a (a + 1))
+#   (fn f [a] (a + 1))
 #   (var b 1)
 #   ($render tpl)
 # """, @[2]
@@ -46,7 +46,7 @@ test_vm """
 # TODO: Enable when expression evaluation in templates is implemented
 # test_vm """
 #   (var tpl :{^p %(f b)})
-#   (fn f a (a + 1))
+#   (fn f [a] (a + 1))
 #   (var b 1)
 #   ($render tpl)
 # """, proc(r: Value) =

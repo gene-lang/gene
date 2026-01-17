@@ -147,7 +147,7 @@ test_vm """
 # Classes not yet implemented in VM
 # test_vm """
 #   (class A
-#     (fn f a a)
+#     (fn f [a] a)
 #   )
 #   (A/f 1)
 # """, 1
@@ -168,7 +168,7 @@ test_vm """
 # test_vm """
 #   (ns n
 #     (.on_member_missing
-#       (fnx name
+#       (fn [name]
 #         (if (name == "test")
 #           1
 #         else
@@ -187,7 +187,7 @@ test_vm """
 # test_vm """
 #   (ns n
 #     (.on_member_missing
-#       (fnx name
+#       (fn [name]
 #         ("" /.name "/" name)
 #       )
 #     )
@@ -199,7 +199,7 @@ test_vm """
 # test_vm """
 #   (class C
 #     (.on_member_missing
-#       (fnx name
+#       (fn [name]
 #         ("" /.name "/" name)
 #       )
 #     )
@@ -211,14 +211,14 @@ test_vm """
 # test_vm """
 #   (ns n
 #     (.on_member_missing
-#       (fnx name
+#       (fn [name]
 #         (if (name == "a")
 #           1
 #         )
 #       )
 #     )
 #     (.on_member_missing
-#       (fnx name
+#       (fn [name]
 #         (if (name == "b")
 #           2
 #         )

@@ -5,5 +5,5 @@
   (var $ns/one 1)
   (var $ns/two 2)
 
-  (fn f a a)
+  (fn f [a] a)
 )

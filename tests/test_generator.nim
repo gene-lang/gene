@@ -55,7 +55,7 @@ suite "Generator Functions":
 
   test "Anonymous generator function":
     let code = """
-(var gen (fn ^^generator _ [max]
+(var gen (fn ^^generator [max]
   (var i 0)
   (while (< i max)
     (yield (* i i))

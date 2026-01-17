@@ -34,7 +34,7 @@ And the vectors with chunk metadata are stored in Qdrant
 
 #### Scenario: Ingest with progress callback
 Given a large number of chunks to ingest
-When the user calls `(pipeline .ingest chunks {^on_progress (fnx [i total] ...)})`
+When the user calls `(pipeline .ingest chunks {^on_progress (fn [i total] ...)})`
 Then the progress callback is invoked after each batch
 
 #### Scenario: Skip duplicate documents

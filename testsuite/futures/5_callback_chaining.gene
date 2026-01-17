@@ -7,9 +7,9 @@
 (await f)
 
 # Chain multiple callbacks
-(f .on_success (fnx [v] (steps .append ["step1" v])))
-(f .on_success (fnx [v] (steps .append ["step2" v])))
-(f .on_success (fnx [v] (steps .append ["step3" v])))
+(f .on_success (fn [v] (steps .append ["step1" v])))
+(f .on_success (fn [v] (steps .append ["step2" v])))
+(f .on_success (fn [v] (steps .append ["step3" v])))
 
 # Force polling
 (var i 0)

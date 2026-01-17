@@ -5,7 +5,7 @@
 (await f)
 
 # Add callback after completion that prints directly
-(f .on_success (fnx [v]
+(f .on_success (fn [v]
   (println ["auto-drain" v])
 ))
 

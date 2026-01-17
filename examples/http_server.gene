@@ -94,8 +94,8 @@
 # `auth` is a middleware that makes sure access to critical resources are authenticated.
 (fn auth [handler]
 
-   # (fnx arg ...) defines an anonymous function.
-   (fnx [req]
+   # (fn [arg] ...) defines an anonymous function.
+   (fn [req]
       (if (req/path != "/secret")
          (return (handler req))
       )

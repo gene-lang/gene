@@ -229,7 +229,7 @@ Functions provide:
 
 # Composition
 (fn compose [f g]
-  (fnx [x] (f (g x))))
+  (fn [x] (f (g x))))
 
 (var double-then-add-5 (compose (add 5) double))
 (double-then-add-5 3)  # => 11  (3*2+5)
@@ -257,8 +257,8 @@ Functions provide:
 (class UserService
   (fn active-user-names [self]
     (self/users
-      .filter (fnx [u] u.active);
-      .map (fnx [u] u.name);
+      .filter (fn [u] u.active);
+      .map (fn [u] u.name);
       .sort)))
 ```
 
@@ -546,7 +546,7 @@ This example shows the vision - most features are not yet implemented:
 
   (fn handle [self req]
     (self/routes
-      .find (fnx [r] (and (== r.method req.method)
+      .find (fn [r] (and (== r.method req.method)
                          (r.path .matches? req.path)));
       .handler;
       .call req)))
@@ -587,10 +587,10 @@ This example shows the vision - most features are not yet implemented:
 # Transform with method chaining
 (var active-users
   (users
-    .filter (fnx [u] (u .get :active));
-    .map (fnx [u]
+    .filter (fn [u] (u .get :active));
+    .map (fn [u]
       (u .update :name ((u .get :name) .to_upper)));
-    .sort-by (fnx [u] (u .get :created_at))))
+    .sort-by (fn [u] (u .get :created_at))))
 
 # Generate HTML report with template
 (var report

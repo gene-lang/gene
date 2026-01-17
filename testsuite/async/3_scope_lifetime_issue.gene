@@ -6,7 +6,7 @@
 (var test_file "../fixtures/test.txt")
 (var output_file "/tmp/gene_scope_test.txt")
 
-(fn create_future_in_scope _
+(fn create_future_in_scope []
   (var local_future (gene/io/read_async test_file))
   local_future
 )
@@ -17,7 +17,7 @@
 (println "Content from scoped future:" content)
 
 (println "Test 2: Multiple scoped futures")
-(fn process_files _
+(fn process_files []
   (var f1 (gene/io/read_async test_file))
   (var f2 (gene/io/read_async test_file))
   (var f3 (gene/io/read_async test_file))
@@ -35,9 +35,9 @@
 (println "Future 2 result length:" (r3 .length))
 
 (println "Test 3: Deep scope nesting (triggers bug)")
-(fn level1 _
-  (fn level2 _
-    (fn level3 _
+(fn level1 []
+  (fn level2 []
+    (fn level3 []
       (gene/io/read_async test_file)
     )
     (level3)

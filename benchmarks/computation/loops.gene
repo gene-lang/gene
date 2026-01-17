@@ -1,5 +1,5 @@
 # Loop and arithmetic benchmark
-(fn sum_loop n
+(fn sum_loop [n]
   (var total 0)
   (var i 1)
   (while (<= i n)
@@ -7,7 +7,7 @@
     (i = (+ i 1)))
   total)
 
-(fn count_loop n
+(fn count_loop [n]
   (var count 0)
   (while (< count n)
     (count = (+ count 1)))

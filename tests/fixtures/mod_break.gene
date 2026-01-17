@@ -1,5 +1,5 @@
-(fn before_break)
+(fn before_break [])
 
 ($break_from_module)
 
-(fn after_break)
+(fn after_break [])

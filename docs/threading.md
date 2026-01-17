@@ -8,7 +8,7 @@ Gene provides threading support through the `gene/thread` namespace. Threads all
 
 ```gene
 # Create a new thread
-(var t (gene/thread/create (fn _
+(var t (gene/thread/create (fn []
   (println "Running in thread")
 )))
 
@@ -65,15 +65,15 @@ Threads communicate via message passing. Messages are sent asynchronously and is
 (gene/thread/send t (Gene "data" [1 2 3]))
 
 # ✗ Invalid - functions
-(gene/thread/send t (fnx [] (println "hi")))  # ERROR
+(gene/thread/send t (fn [] (println "hi")))  # ERROR
 
 # ✗ Invalid - class instances
 (var obj (new MyClass))
 (gene/thread/send t obj)  # ERROR
 
 # ✗ Invalid - containers with non-literal contents
-(gene/thread/send t [(fnx [] 1) 2])  # ERROR - array contains function
-(gene/thread/send t {^fn (fnx [] 1)})  # ERROR - map contains function
+(gene/thread/send t [(fn [] 1) 2])  # ERROR - array contains function
+(gene/thread/send t {^fn (fn [] 1)})  # ERROR - map contains function
 ```
 
 ### Error Messages

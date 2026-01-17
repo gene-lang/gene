@@ -17,7 +17,7 @@
 # (var $ns/DB_PASS ($env "DB_PASS"))
 # (var $ns/DB_NAME ($env "DB_NAME" "todos"))
 
-(fn init_db _
+(fn init_db []
   # (var conn (genex/sqlite/DB/open DB_HOST DB_USER DB_PASS DB_NAME))
   # (conn .exec """
   #   CREATE TABLE IF NOT EXISTS `todos`.`todos` (
@@ -106,8 +106,8 @@
 
 (class Record
   # TODO: .on_extended is not yet supported in the VM
-  # (.on_extended (fnx child
-  #   (child .on_member_missing (fnx name
+  # (.on_extended (fn [child]
+  #   (child .on_member_missing (fn [name]
   #     (if (Record/.members .contains name)
   #       (/.parent ./ name)
   #     )
@@ -538,30 +538,30 @@
             });
           """)
         # (SCRIPT (genex/js/js
-        #   ((($ "li label.cbx__child").click) (fnx* e
+        #   ((($ "li label.cbx__child").click) (fn [e]
         #     (var id ((($ this).attr) "for"))
         #     (var oldStatus (? ((($ #"input##{id}").is) ":checked") 1 0))
         #     (var newStatus (? (oldStatus == 1) 0 1))
         #     ($.ajax {^url "/todos"
         #       ^type "PATCH"
         #       ^data #"id=#{id}&status=#{newStatus}"
-        #       ^success (fnx* [result status]
+        #       ^success (fn [result status]
         #         (window.location.reload)
         #       )
-        #       ^error (fnx* [xhr status error]
+        #       ^error (fn [xhr status error]
         #         (alert #"Operation failed: #{error}")
         #       )
         #     })
         #   ))
-        #   ((($ "li button.delete-button").click) (fnx* e
+        #   ((($ "li button.delete-button").click) (fn [e]
         #     (var id ((($ this).data) "id"))
         #     ($.ajax {^url "/todos"
         #       ^type "DELETE"
         #       ^data #"id=#{id}"
-        #       ^success (fnx* [result status]
+        #       ^success (fn [result status]
         #         (window.location.reload)
         #       )
-        #       ^error (fnx* [xhr status error]
+        #       ^error (fn [xhr status error]
         #         (alert #"Operation failed: #{error}")
         #       )
         #     })
@@ -662,7 +662,7 @@
   )
 )
 
-(fn create_router _
+(fn create_router []
   (println "create_router: Creating new Router")
   (var r (new Router))
   (println "create_router: Router created")

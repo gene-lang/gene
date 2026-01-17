@@ -49,7 +49,7 @@ import ./helpers
 #
 
 test_vm """
-  (fn f a
+  (fn f [a]
     a
   )
   (f 1)

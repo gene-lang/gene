@@ -105,7 +105,7 @@ proc my_handler(vm: ptr VirtualMachine, args: Value): Value {.gcsafe.} =
 **Problem**: Can't execute Gene functions from async native context
 ```gene
 # This doesn't work yet:
-(fn my_handler req
+(fn my_handler [req]
   (respond "Hello"))
 (start_server 8080 my_handler)  # ❌ Can't call Gene function
 ```
@@ -123,8 +123,8 @@ proc my_handler(vm: ptr VirtualMachine, args: Value): Value {.gcsafe.} =
 #### 3. Middleware/Function Composition
 **Problem**: Can't create and chain function wrappers
 ```gene
-(fn auth handler
-  (fnx req
+(fn auth [handler]
+  (fn [req]
     (if authenticated
       (handler req)
       (respond 401))))

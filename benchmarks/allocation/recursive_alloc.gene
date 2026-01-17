@@ -1,7 +1,7 @@
 # Recursive allocation benchmark
 # Creates nested structures recursively to stress allocation
 
-(fn create_nested depth
+(fn create_nested [depth]
   (if (== depth 0)
     {^leaf true}
     {

@@ -195,7 +195,7 @@
         },
         {
           "name": "keyword.other.gene",
-          "match": "\\b(var|let|const|fn|fnx|class|new|import|export|module|ns|namespace|async|await|do|quote|in)\\b"
+          "match": "\\b(var|let|const|fn|class|new|import|export|module|ns|namespace|async|await|do|quote|in)\\b"
         },
         {
           "name": "keyword.operator.gene",
@@ -246,7 +246,7 @@
     "function-definition": {
       "patterns": [
         {
-          "match": "\\((fn!?|fnx)\\s+([a-zA-Z_][a-zA-Z0-9_!?]*)",
+          "match": "\\((fn)\\s+([a-zA-Z_][a-zA-Z0-9_!?]*)",
           "captures": {
             "1": { "name": "keyword.other.gene" },
             "2": { "name": "entity.name.function.gene" }
@@ -311,4 +311,3 @@
     }
   }
 }
-

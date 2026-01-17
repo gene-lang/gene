@@ -1,7 +1,7 @@
 #!/usr/bin/env gene run
 
 # Simple fibonacci without advanced features
-(fn fib n
+(fn fib [n]
   (if (n < 2)
     n
   else

@@ -653,7 +653,7 @@ Note: Spreading an already-spread value would require the stack to contain indiv
 ### Variadic Function Arguments
 ```gene
 (fn sum [& args]
-  (reduce args 0 (fnx [acc x] (+ acc x))))
+  (reduce args 0 (fn [acc x] (+ acc x))))
 
 (var numbers [1 2 3 4 5])
 (sum numbers...)  # => 15

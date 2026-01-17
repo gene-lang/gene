@@ -1,10 +1,10 @@
 #!/usr/bin/env gene run
 
-(fn f a
+(fn f [a]
   (var future
     (gene/sleep_async 2500)
   )
-  (future .on_success (fnx []
+  (future .on_success (fn []
     (println a)
   ))
   future

@@ -53,7 +53,7 @@ test_vm """
   (fn m! []
     ($caller_eval :a)
   )
-  (fn f [_]
+  (fn f []
     (var a 1)
     (m!)
   )
@@ -68,9 +68,9 @@ test_vm """
   (m! a)
 """, 1
 
-# Anonymous macro: fnx! should leave arguments unevaluated
+# Macro-like function: name! should leave arguments unevaluated
 test_vm """
-  (var quote! (fnx! [x] x))
+  (fn quote! [x] x)
   (quote! (throw "boom"))
 """, proc(r: Value) =
   check r.kind == VkGene
@@ -107,9 +107,9 @@ test_vm """
 """, proc(r: Value) =
   check r.kind == VkGene
 # test_core """
-#   (fn m! [_]
+#   (fn m! []
 #     (class A
-#       (.fn test [_] "A.test")
+#       (.fn test [] "A.test")
 #     )
 #     ($caller_eval
 #       (:$def_ns_member "B" A)
@@ -122,7 +122,7 @@ test_vm """
 # test_core """
 #   (fn m! [name]
 #     (class A
-#       (.fn test [_] "A.test")
+#       (.fn test [] "A.test")
 #     )
 #     ($caller_eval
 #       (:$def_ns_member name A)

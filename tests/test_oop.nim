@@ -231,7 +231,7 @@ test_vm """
 #   (class A
 #     (var /children [])
 #     (.on_extended
-#       (fnx child
+#       (fn [child]
 #         (/children .add child)
 #       )
 #     )

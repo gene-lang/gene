@@ -14,7 +14,6 @@ Keywords are reserved identifiers handled directly by the parser/compiler. They 
 | `elif` | Else-if branch |
 | `else` | Else branch |
 | `fn` | Function definition |
-| `fnx` | Extended function (with receiver) |
 | `class` | Class definition |
 | `var` | Variable declaration |
 | `loop` | Loop construct |

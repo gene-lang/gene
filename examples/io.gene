@@ -36,7 +36,7 @@
 
 (var future2 (gene/io/read_async nonexistent_file))
 # TODO: Method calls with arguments not yet implemented
-# (future2 .on_failure (fnx [error]
+# (future2 .on_failure (fn [error]
 #   (println "Error caught in callback:" error)
 # ))
 
@@ -99,7 +99,7 @@ catch *
 # Example 6: Chaining async operations
 (println "6. Chaining async operations:")
 
-(fn process_file_async file_path
+(fn process_file_async [file_path]
   # Read file asynchronously
   (var read_future (gene/io/read_async file_path))
 

@@ -44,14 +44,17 @@ import ./helpers
 # (. f ^a 1 2)       # A shortcut to call f with self from current scope
 # (>> f ^a 1 2)      # A shortcut to call f with self from current scope
 
-test_vm "(fn f a a)", proc(r: Value) =
+test_vm "(fn f [a] a)", proc(r: Value) =
   check r.ref.fn.name == "f"
 
-test_vm "(fn \"f\" a a)", proc(r: Value) =
+test_vm "(fn \"f\" [a] a)", proc(r: Value) =
   check r.ref.fn.name == "f"
 
-test_vm "(fn f _)", proc(r: Value) =
+test_vm "(fn f [])", proc(r: Value) =
   check r.ref.fn.matcher.children.len == 0
+
+test_vm_error "(fnx [x] x)"
+test_vm_error "(fn add x (x + 1))"
 
 test_vm """
   (fn f [] 1)
@@ -62,13 +65,13 @@ test_vm """
   (ns n
     (ns m)
   )
-  (fn n/m/f _ 1)
+  (fn n/m/f [] 1)
   (n/m/f)
 """, 1
 
 # TODO: Implement ^!return syntax
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     # ^^return_nothing vs ^^return_nil vs ^return nil vs ^!return
 #     ^!return
 #     1
@@ -77,7 +80,7 @@ test_vm """
 # """, Value(nil)
 
 test_vm """
-  (fn f a (a + 1))
+  (fn f [a] (a + 1))
   (f 1)
 """, 2
 
@@ -98,9 +101,8 @@ test_vm """
 
 # test_vm """
 #   # How do we tell interpreter to pass arguments as $args?
-#   # _  => arguments in $args
-#   # [] => arguments ignored
-#   (fn f _
+#   # TODO: Define syntax for raw $args in functions.
+#   (fn f []
 #     $args
 #   )
 #   (f ^a "a" 1 2)
@@ -111,7 +113,7 @@ test_vm """
 
 # TODO: Implement (1 . f) method call syntax
 # test_vm """
-#   (fn f _ self)
+#   (fn f [self] self)
 #   (1 . f)
 # """, 1
 
@@ -147,7 +149,7 @@ test_vm """
 # """, 2
 
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     (result = 1) # result: no need to define
 #     2
 #   )
@@ -157,7 +159,7 @@ test_vm """
 
 
 test_vm """
-  (fn fib n
+  (fn fib [n]
     (if (n < 2)
       n
     else
@@ -168,21 +170,21 @@ test_vm """
 """, 8
 
 test_vm """
-  (fn f _
-    (fn g a a)
+  (fn f []
+    (fn g [a] a)
   )
   ((f) 1)
 """, 1
 
 test_vm """
-  (fn f a
-    (fn g _ a)
+  (fn f [a]
+    (fn g [] a)
   )
   ((f 1))
 """, 1
 
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     (var r $return)
 #     (r 1)
 #     2
@@ -194,10 +196,10 @@ test_vm """
 # # to return from
 # # Caution: "r" should only be used in nested functions/blocks inside "f"
 # test_vm """
-#   (fn g ret
+#   (fn g [ret]
 #     (ret 1)
 #   )
-#   (fn f _
+#   (fn f []
 #     (var r $return)
 #     (loop
 #       (g r)
@@ -209,9 +211,9 @@ test_vm """
 # # return can be assigned and will remember which function
 # # to return from
 # test_vm """
-#   (fn f _
+#   (fn f []
 #     (var r $return)
-#     (fn g _
+#     (fn g []
 #       (r 1)
 #     )
 #     (loop
@@ -222,14 +224,14 @@ test_vm """
 # """, 1
 
 # test_vm """
-#   (fn f _ $args)
+#   (fn f [] $args)
 #   (f 1)
 # """, proc(r: Value) =
 #   check r.gene_children[0] == 1
 
 # test_vm """
 #   (fn f [a b] (a + b))
-#   (fn g _
+#   (fn g []
 #     (f $args...)
 #   )
 #   (g 1 2)
@@ -237,22 +239,22 @@ test_vm """
 
 test_vm """
   (var f
-    (fnx a a)
+    (fn [a] a)
   )
   (f 1)
 """, 1
 
 test_vm """
   (var f
-    (fnxx 1)
+    (fn [] 1)
   )
   (f)
 """, 1
 
 test_vm """
-  (fn f _ 1)    # first f in namespace
+  (fn f [] 1)    # first f in namespace
   (var f        # second f in scope
-    (fnx _
+    (fn []
       ((f) + 1) # reference to first f because second f is defined after the anonymous function
     )
   )
@@ -310,7 +312,7 @@ test_vm """
 #   check r.ref.map["c".to_key()] == 3
 
 # test_vm """
-#   (fn f _ 1)
+#   (fn f [] 1)
 #   (call f)
 # """, 1
 
@@ -337,7 +339,7 @@ test_vm """
 # # """, 6
 
 # # test_vm """
-# #   (fn f a
+# #   (fn f [a]
 # #     (self + a)
 # #   )
 # #   (1 >> f 2)
@@ -356,7 +358,7 @@ test_vm """
 
 # TODO: Implement $bind
 # test_vm """
-#   (fn f _ self)
+#   (fn f [self] self)
 #   (var f1
 #     ($bind f 1) # self = 1
 #   )
@@ -425,7 +427,7 @@ test_vm """
 # - positional param forms (parameter list vs. unbracketed)
 # - binary add with two params
 # - explicit return vs implicit result
-# - fnx anonymous function trivial returns
+# - fn anonymous function trivial returns
 # - default arg + computation returning 3
 
 
@@ -441,7 +443,7 @@ test_vm """
 
 test_vm """
   (var a 1)
-  (fn f b
+  (fn f [b]
     (a + b)
   )
   (f 2)
@@ -449,7 +451,7 @@ test_vm """
 
 test_vm """
   (var a 1)
-  (fn f b
+  (fn f [b]
     (a = 2)
     (a + b)
   )
@@ -466,6 +468,3 @@ test_vm """
   )
   ((f))
 """, 3
-
-
-

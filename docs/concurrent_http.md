@@ -267,7 +267,7 @@ Instead of spawning per request, maintain persistent worker threads:
 (for i (range 4)
   (var worker (spawn
     (do
-      ($thread .on_message (fnx [msg]
+      ($thread .on_message (fn [msg]
         # Process request data from msg
         (var req_data (msg .payload))
         (var response (process_request req_data))

@@ -40,11 +40,11 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
   ```
 
 - **Callable path segments (transform)**  
-  A selector path can include a function segment (usually created with `fnx`). The function receives the currently matched value and its return value is passed to the next segment. The return value is **not** automatically written back into the parent container; use `$set` (and future `$update`) for assignment-style updates. In-place mutation is still possible when the matched value is a mutable container.  
+  A selector path can include a function segment (usually created with `fn`). The function receives the currently matched value and its return value is passed to the next segment. The return value is **not** automatically written back into the parent container; use `$set` (and future `$update`) for assignment-style updates. In-place mutation is still possible when the matched value is a mutable container.  
   ```gene
   (var data {^a 1})
-  ((@ a (fnx [item] (item + 1))) data)   # returns 2, does not change data/a
-  ((@ a (fnx [item] (item .append 10) item)) data)  # mutates item in place
+  ((@ a (fn [item] (item + 1))) data)   # returns 2, does not change data/a
+  ((@ a (fn [item] (item .append 10) item)) data)  # mutates item in place
   ```
 
 ### Runtime Semantics
@@ -82,7 +82,7 @@ Define a small set of selector-specific operator segments:
 - `(collect)` → normalize the current selection into an array (convenience; often the implicit final step in `query`)
 
 Important semantic recommendation (to avoid surprises):
-- A **callable segment** `(fnx ...)` continues to mean “transform the current value”.
+- A **callable segment** `(fn ...)` continues to mean “transform the current value”.
 - A **map** operator is always explicit; we do not implicitly map just because the current value happens to be an array.
 
 ### 2.1) Token Operators: `*`, `**`, `@`, `@@`
@@ -136,8 +136,8 @@ Missing values in selection-mode should behave like “no match”:
 # Select children, transform each, then reduce into an array accumulator.
 # (acc .append v) returns acc, so it works well as a reducer.
 ((@ a :$children
-    (map (fnx [child] ...))
-    (reduce [] (fnx [acc v] (acc .append v)))
+    (map (fn [child] ...))
+    (reduce [] (fn [acc v] (acc .append v)))
  ) target)
 ```
 
@@ -146,17 +146,17 @@ This pattern directly supports “map array children, process, then reduce to a 
 Token-operator equivalent:
 
 ```gene
-((@ a *                # expand children/items
-    (fnx [child] ...)  # transform each selected child
+((@ a *               # expand children/items
+    (fn [child] ...)  # transform each selected child
  ) target)
 ```
 
 And for keyed collections:
 
 ```gene
-((@ props **                    # stream [k v] pairs
-    (fnx [k v] [k (f v)])       # transform values (key is preserved unless you return [k v])
-    @@                          # collect back into a map (otherwise you get an array of [k v])
+((@ props **                  # stream [k v] pairs
+    (fn [k v] [k (f v)])       # transform values (key is preserved unless you return [k v])
+    @@                        # collect back into a map (otherwise you get an array of [k v])
  ) target)
 ```
 
@@ -182,7 +182,7 @@ Many more scenarios are sketched but commented out, signalling the intended scop
 - **Range, slices, and list selectors**: Index ranges (`(0 .. 2)`), lists (`@ [0 1]`), and composite selectors are commented out in tests and lack compiler/VM support.
 - **Map key patterns and property lists**: Regex/prefix matches, selecting multiple keys at once, and retrieving keys/properties as collections are unimplemented.
 - **Gene-specific views**: Accessors for type, props, keys, values, children, and descendants (`:$type`, `:$children`, `_`, etc.) exist only in the design notes.
-- **Predicate-based selectors**: There is no mechanism to pass a predicate function (`fnx`) that filters descendants or siblings.
+- **Predicate-based selectors**: There is no mechanism to pass a predicate function (`fn`) that filters descendants or siblings.
 - **Selector flags and modes**: Concepts like `match-first` vs `match-all` and `error_on_no_match` are undefined beyond comments.
 - **Transform pipelines**: We do not yet surface APIs to apply transformations or callbacks to selector matches (akin to CSS selectors + rules).
 - **Selector collection operators**: There is no native selector support for `(map ...)`, `(filter ...)`, `(reduce ...)`, or `(collect)` over match sets.
@@ -246,7 +246,7 @@ Selectors are central to making Gene feel fluid when manipulating nested data. B
 
 4. **Selector Modes & Predicates**
    - Define selector modes (match-first vs match-all, error-on-miss) and carry them through new selector data structures.
-   - Add predicate support (fnx filters) and descendant traversal to unblock search-style selectors.
+   - Add predicate support (fn filters) and descendant traversal to unblock search-style selectors.
 
 5. **Mutation & Transformation APIs**
    - Extend `$set` with `append`, `update`, `remove`, and higher-order transformation hooks, ensuring we respect persistent data semantics.

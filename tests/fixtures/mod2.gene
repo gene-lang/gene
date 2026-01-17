@@ -1,5 +1,5 @@
 (import f)
 
-(fn g _
+(fn g []
   (f)
 )

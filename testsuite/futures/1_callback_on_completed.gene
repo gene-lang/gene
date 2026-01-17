@@ -7,12 +7,12 @@
 (await f)
 
 # Add callback after completion
-(f .on_success (fnx [v]
+(f .on_success (fn [v]
   (result .append ["callback1" v])
 ))
 
 # Add another callback
-(f .on_success (fnx [v]
+(f .on_success (fn [v]
   (result .append ["callback2" (v * 2)])
 ))
 

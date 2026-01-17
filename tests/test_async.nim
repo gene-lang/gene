@@ -194,7 +194,7 @@ test_vm """
 # """, "12"
 
 test_vm """
-  (fn ^^async f _
+  (fn ^^async f []
     1
   )
   (f)
@@ -202,14 +202,14 @@ test_vm """
   check r.kind == VkFuture
 
 test_vm """
-  (fn ^^async f _
+  (fn ^^async f []
     1
   )
   (await (f))
 """, 1
 
 test_vm """
-  (fn ^^async f _
+  (fn ^^async f []
     (throw)
   )
   (try

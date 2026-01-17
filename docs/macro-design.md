@@ -12,8 +12,7 @@ The `!` suffix consistently indicates **unevaluated arguments** across all forms
 |------|-------|----------------|-------|
 | `fn` | ✓ | ✓ (unless name ends in `!`) | Named functions |
 | `fn` with `name!` | ✓ | ✗ | Named macros |
-| `fnx` | ✗ | ✓ | Anonymous functions (lambdas) |
-| `fnx!` | ✗ | ✗ | Anonymous macros |
+| `fn` (anonymous) | ✗ | ✓ | Anonymous functions (lambdas) |
 
 ### Examples
 
@@ -30,29 +29,24 @@ The `!` suffix consistently indicates **unevaluated arguments** across all forms
 )
 
 # Anonymous function (lambda)
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 
-# Anonymous macro
-(var unless (fnx! [cond then]
+# Named macro
+(fn unless! [cond then]
   (if (! ($caller_eval cond))
     ($caller_eval then)
   )
-))
+)
 ```
 
 ### Parameter List
 
 - Use `[]` for empty parameter lists
-- The `_` placeholder is deprecated; use `[]` instead
+- The `_` placeholder is no longer supported; use `[]` instead
 
 ```gene
 # Preferred
 (fn hello []
-  (println "Hello!")
-)
-
-# Deprecated
-(fn hello _
   (println "Hello!")
 )
 ```
@@ -179,7 +173,7 @@ Within macro bodies, use `$caller_eval` to evaluate expressions in the caller's 
 The `!` suffix provides a uniform mechanism for controlling argument evaluation:
 
 - **Function names ending in `!`**: macro behavior
-- **`fnx!`**: anonymous macro
+- Anonymous macros are not supported; use a named macro (`fn name! [args] ...`).
 - **`ctor!`**: unevaluated constructor args
 - **`new!`**: invoke `ctor!`
 - **Method names ending in `!`**: macro behavior

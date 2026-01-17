@@ -208,7 +208,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -216,7 +216,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -537,7 +537,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -545,7 +545,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -866,7 +866,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -874,7 +874,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -1195,7 +1195,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -1203,7 +1203,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -1524,7 +1524,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -1532,7 +1532,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -1853,7 +1853,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -1861,7 +1861,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -2182,7 +2182,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -2190,7 +2190,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -2511,7 +2511,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -2519,7 +2519,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -2840,7 +2840,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -2848,7 +2848,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -3169,7 +3169,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -3177,7 +3177,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -3498,7 +3498,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -3506,7 +3506,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -3827,7 +3827,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -3835,7 +3835,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -4156,7 +4156,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -4164,7 +4164,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -4485,7 +4485,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -4493,7 +4493,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -4814,7 +4814,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -4822,7 +4822,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -5143,7 +5143,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -5151,7 +5151,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -5472,7 +5472,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -5480,7 +5480,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -5801,7 +5801,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -5809,7 +5809,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -6130,7 +6130,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -6138,7 +6138,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -6459,7 +6459,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -6467,7 +6467,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -6788,7 +6788,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -6796,7 +6796,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -7117,7 +7117,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -7125,7 +7125,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -7446,7 +7446,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -7454,7 +7454,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -7775,7 +7775,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -7783,7 +7783,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -8104,7 +8104,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -8112,7 +8112,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -8433,7 +8433,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -8441,7 +8441,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -8762,7 +8762,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -8770,7 +8770,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -9091,7 +9091,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -9099,7 +9099,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -9420,7 +9420,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -9428,7 +9428,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -9749,7 +9749,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -9757,7 +9757,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -10078,7 +10078,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -10086,7 +10086,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -10407,7 +10407,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -10415,7 +10415,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -10736,7 +10736,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -10744,7 +10744,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -11065,7 +11065,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -11073,7 +11073,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -11394,7 +11394,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -11402,7 +11402,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -11723,7 +11723,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -11731,7 +11731,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -12052,7 +12052,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -12060,7 +12060,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -12381,7 +12381,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -12389,7 +12389,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -12710,7 +12710,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -12718,7 +12718,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -13039,7 +13039,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -13047,7 +13047,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -13368,7 +13368,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -13376,7 +13376,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -13697,7 +13697,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -13705,7 +13705,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -14026,7 +14026,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -14034,7 +14034,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -14355,7 +14355,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -14363,7 +14363,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -14684,7 +14684,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -14692,7 +14692,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -15013,7 +15013,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -15021,7 +15021,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -15342,7 +15342,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -15350,7 +15350,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -15671,7 +15671,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -15679,7 +15679,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -16000,7 +16000,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -16008,7 +16008,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -16329,7 +16329,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -16337,7 +16337,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -16658,7 +16658,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -16666,7 +16666,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -16987,7 +16987,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -16995,7 +16995,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -17316,7 +17316,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -17324,7 +17324,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -17645,7 +17645,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -17653,7 +17653,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -17974,7 +17974,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -17982,7 +17982,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -18303,7 +18303,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -18311,7 +18311,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -18632,7 +18632,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -18640,7 +18640,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -18961,7 +18961,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -18969,7 +18969,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -19290,7 +19290,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -19298,7 +19298,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -19619,7 +19619,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -19627,7 +19627,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -19948,7 +19948,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -19956,7 +19956,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -20277,7 +20277,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -20285,7 +20285,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -20606,7 +20606,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -20614,7 +20614,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -20935,7 +20935,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -20943,7 +20943,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -21264,7 +21264,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -21272,7 +21272,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -21593,7 +21593,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -21601,7 +21601,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -21922,7 +21922,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -21930,7 +21930,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -22251,7 +22251,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -22259,7 +22259,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -22580,7 +22580,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -22588,7 +22588,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -22909,7 +22909,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -22917,7 +22917,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -23238,7 +23238,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -23246,7 +23246,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -23567,7 +23567,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -23575,7 +23575,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -23896,7 +23896,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -23904,7 +23904,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -24225,7 +24225,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -24233,7 +24233,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -24554,7 +24554,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -24562,7 +24562,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -24883,7 +24883,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -24891,7 +24891,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -25212,7 +25212,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -25220,7 +25220,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -25541,7 +25541,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -25549,7 +25549,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -25870,7 +25870,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -25878,7 +25878,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -26199,7 +26199,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -26207,7 +26207,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -26528,7 +26528,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -26536,7 +26536,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -26857,7 +26857,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -26865,7 +26865,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -27186,7 +27186,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -27194,7 +27194,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -27515,7 +27515,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -27523,7 +27523,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -27844,7 +27844,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -27852,7 +27852,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -28173,7 +28173,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -28181,7 +28181,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -28502,7 +28502,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -28510,7 +28510,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -28831,7 +28831,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -28839,7 +28839,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -29160,7 +29160,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -29168,7 +29168,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -29489,7 +29489,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -29497,7 +29497,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -29818,7 +29818,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -29826,7 +29826,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -30147,7 +30147,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -30155,7 +30155,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -30476,7 +30476,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -30484,7 +30484,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -30805,7 +30805,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -30813,7 +30813,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -31134,7 +31134,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -31142,7 +31142,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -31463,7 +31463,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -31471,7 +31471,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -31792,7 +31792,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -31800,7 +31800,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -32121,7 +32121,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -32129,7 +32129,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -32450,7 +32450,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -32458,7 +32458,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition
@@ -32779,7 +32779,7 @@ catch *
 # ===== 9. ASYNC PROGRAMMING =====
 (var result (await (async 42)))
 
-(fn read_file filename
+(fn read_file [filename]
   (gene/io/read_async filename)
 )
 
@@ -32787,7 +32787,7 @@ catch *
 
 # ===== 10. FUNCTIONAL PROGRAMMING =====
 # Lambda/anonymous function
-(var double (fnx [x] (x * 2)))
+(var double (fn [x] (x * 2)))
 (println "Double 5:" (double 5))
 
 # Function composition

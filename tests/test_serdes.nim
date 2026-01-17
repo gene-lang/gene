@@ -53,14 +53,14 @@ test_vm """
 """, 1
 
 test_vm """
-  (fn f _ 1)
+  (fn f [] 1)
   (var x (gene/serdes/serialize f))
   (var f* (gene/serdes/deserialize x))
   (f*)
 """, 1
 
 # test_vm """
-#   (var f (fnx _ 1))
+#   (var f (fn [] 1))
 #   (gene/serdes/ref "f" f) # Will add f to a global map like "<pkg>:<module>:_serdes/f" => f
 #   (var x (gene/serdes/serialize f))
 #   (var f* (gene/serdes/deserialize x))
@@ -70,7 +70,7 @@ test_vm """
 # TODO: Fix namespace path resolution for functions in namespaces
 # test_vm """
 #   (ns n
-#     (fn f _ 1)
+#     (fn f [] 1)
 #   )
 #   (var x (gene/serdes/serialize n/f))
 #   (var f* (gene/serdes/deserialize x))

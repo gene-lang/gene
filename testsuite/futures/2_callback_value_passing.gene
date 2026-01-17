@@ -13,7 +13,7 @@
 (await f)
 
 # Add callback that captures the value
-(f .on_success (fnx [v]
+(f .on_success (fn [v]
   (received = v)
 ))
 

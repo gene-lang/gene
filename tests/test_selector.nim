@@ -30,7 +30,7 @@ import ./helpers
 #   * Gene children: :$children
 #   * Descendants: :$descendants - how does match work for this? self.gene.children and their descendants?
 #   * Self and descendants: _
-#   * Predicate (fnx it ...)
+#   * Predicate (fn [it] ...)
 #   * Composite: [0 1 (range 3 5)]
 #
 # SelectorResult
@@ -242,7 +242,7 @@ test_vm """
 
 test_vm """
   (var xs [1 2 3])
-  ((@ * (fnx [x] (x + 1))) xs)
+  ((@ * (fn [x] (x + 1))) xs)
 """, proc(r: Value) =
   check r.kind == VkArray
   check array_data(r).len == 3
@@ -281,7 +281,7 @@ test_vm_error """
 
 test_vm """
   (var m {^a 1 ^b 2})
-  ((@ ** (fnx [k v] [k (v + 10)]) @@) m)
+  ((@ ** (fn [k v] [k (v + 10)]) @@) m)
 """, proc(r: Value) =
   check r.kind == VkMap
   check map_data(r)["a".to_key()] == 11.to_value()
@@ -309,7 +309,7 @@ test_vm """
 
 test_vm """
   (var data {^a 1})
-  (var r ((@ a (fnx [item] (item + 1))) data))
+  (var r ((@ a (fn [item] (item + 1))) data))
   [r data/a]
 """, proc(r: Value) =
   check r.kind == VkArray
@@ -319,13 +319,13 @@ test_vm """
 
 test_vm """
   (var data {^a [1 2]})
-  ((@ a (fnx [item] (item .append 3) item)) data)
+  ((@ a (fn [item] (item .append 3) item)) data)
   data/a/2
 """, 3
 
 test_vm """
   (var data {^a {^b 1}})
-  (var r ((@ a (fnx [item] {^b 2}) b) data))
+  (var r ((@ a (fn [item] {^b 2}) b) data))
   [r data/a/b]
 """, proc(r: Value) =
   check r.kind == VkArray
@@ -335,7 +335,7 @@ test_vm """
 
 test_vm """
   (var data {})
-  ((@ a (fnx [item] 1)) data)
+  ((@ a (fn [item] 1)) data)
   data/a
 """, VOID
 
@@ -499,7 +499,7 @@ test_vm """
 
 # test_vm """
 #   (var a)
-#   (fn f v
+#   (fn f [v]
 #     (a = v)
 #     (:void)
 #   )

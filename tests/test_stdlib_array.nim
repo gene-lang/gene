@@ -34,7 +34,7 @@ test_vm """
 """, 1
 
 test_vm """
-  (fn inc i (i + 1))
+  (fn inc [i] (i + 1))
   ([1 2] .map inc)
 """, proc(result: Value) =
   check result.kind == VkArray

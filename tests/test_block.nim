@@ -18,14 +18,14 @@ test_vm """
   check r.ref.kind == VkBlock
 
 test_vm """
-  (fn f b
+  (fn f [b]
     (b)
   )
   (f (-> 1))
 """, 1
 
 test_vm """
-  (fn f b
+  (fn f [b]
     (b 2)
   )
   (f (a -> (a + 1)))

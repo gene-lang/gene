@@ -149,7 +149,7 @@ proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolI
               details: "variable"
             ))
 
-      of "fn", "fnx":
+      of "fn":
         # Function declaration: (fn name [args] body...)
         if gene.children.len >= 2:
           let name_val = gene.children[0]
@@ -259,7 +259,7 @@ proc extractReferencesFromValue(value: Value, uri: string, references: var seq[S
 
       # Mark definition references
       case type_name:
-      of "var", "let", "const", "fn", "fnx", "class", "module", "ns", "namespace":
+      of "var", "let", "const", "fn", "class", "module", "ns", "namespace":
         if gene.children.len >= 1:
           let name_val = gene.children[0]
           if name_val.kind == VkSymbol:
@@ -401,7 +401,7 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
   # Add Gene keywords
   let keywords = @["var", "fn", "if", "do", "class", "new", "import", "export",
                    "try", "catch", "throw", "async", "await", "for", "while",
-                   "return", "break", "continue", "let", "const", "fnx", "module",
+                   "return", "break", "continue", "let", "const", "module",
                    "ns", "namespace"]
 
   for keyword in keywords:

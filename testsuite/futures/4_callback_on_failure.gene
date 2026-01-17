@@ -14,7 +14,7 @@ catch *
 )
 
 # Add failure callback after future has failed
-(f .on_failure (fnx [err]
+(f .on_failure (fn [err]
   (result .append "failure_callback_executed")
 ))
 
@@ -29,7 +29,7 @@ catch *
 
 # Verify on_success callback does NOT execute for failed future
 (var success_called false)
-(f .on_success (fnx [v] (success_called = true)))
+(f .on_success (fn [v] (success_called = true)))
 
 # Force more polling
 (var j 0)

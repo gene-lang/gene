@@ -7,7 +7,7 @@
 (await f)
 
 # Add callback
-(f .on_success (fnx [v]
+(f .on_success (fn [v]
   (count = (count + 1))
 ))
 
@@ -19,7 +19,7 @@
 
 # Add another callback, it should also execute once
 (var count2 0)
-(f .on_success (fnx [v]
+(f .on_success (fn [v]
   (count2 = (count2 + 1))
 ))
 

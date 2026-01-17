@@ -2,7 +2,7 @@
 
 (import upcase from "index" ^pkg "x/my_lib")
 
-(fn mungle s
+(fn mungle [s]
   #"#{s}=>#(upcase s)"
 )
 

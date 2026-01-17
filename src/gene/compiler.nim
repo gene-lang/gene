@@ -1331,6 +1331,20 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkNoop, label: end_label))
 
 proc compile_fn(self: Compiler, input: Value) =
+  if input.kind == VkGene and input.gene != nil and input.gene.type == "fn".to_symbol_value():
+    if input.gene.children.len == 0:
+      not_allowed("fn requires a name or argument list")
+    let first = input.gene.children[0]
+    if first.kind == VkArray:
+      discard
+    elif first.kind in {VkSymbol, VkString, VkComplexSymbol}:
+      if input.gene.children.len < 2:
+        not_allowed("fn requires an argument list after the name")
+      let args = input.gene.children[1]
+      if args.kind != VkArray:
+        not_allowed("fn argument list must be an array, e.g. [a b]")
+    else:
+      not_allowed("fn requires a name or argument list")
   self.emit(Instruction(kind: IkFunction, arg0: input))
   let tracker_copy = copy_scope_tracker(self.scope_tracker)
 
@@ -1387,7 +1401,7 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
     not_allowed("Method name must be a symbol")
   
   # Create a function from the method definition
-  # The method is similar to (fn name args body...) but bound to the class
+  # The method is similar to (fn name [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
   
@@ -1447,27 +1461,24 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   let is_macro_ctor = gene.type.kind == VkSymbol and gene.type.str == ".ctor!"
 
   # Create a function from the constructor definition
-  # The constructor is similar to (fn new args body...) but bound to the class
+  # The constructor is similar to (fn new [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
   fn_value.gene.children.add(gene.type.str[1..^1].to_symbol_value())
   
-  # Handle args - if it's not an array and there's more than 1 child (arg, body+),
-  # wrap the single arg in an array (unless it's _ which means no args)
+  # Handle args - always normalize to an array
   let args = gene.children[0]
-  if args.kind != VkArray and gene.children.len >= 2:
-    # Check if it's _ (no arguments)
-    if args.kind == VkSymbol and args.str == "_":
-      # _ means no arguments - use it as is
-      fn_value.gene.children.add(args)
-    else:
-      # Single argument without brackets - wrap it in an array
-      var args_array = new_array_value()
-      array_data(args_array).add(args)
-      fn_value.gene.children.add(args_array)
+  var args_array: Value
+  if args.kind == VkArray:
+    args_array = args
+  elif args.kind == VkSymbol and args.str == "_":
+    # _ means no arguments
+    args_array = new_array_value()
   else:
-    # Already an array or no body after it
-    fn_value.gene.children.add(args)
+    # Single argument without brackets - wrap it in an array
+    args_array = new_array_value()
+    array_data(args_array).add(args)
+  fn_value.gene.children.add(args_array)
   
   # Add remaining body
   if gene.children.len == 1:
@@ -2416,7 +2427,7 @@ proc compile_gene(self: Compiler, input: Value) =
     if first_child.kind == VkSymbol:
       if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
         # Don't convert if the type is already an operator or special form
-        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->", "@"]:
+        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->", "@"]:
           # Convert infix to prefix notation and compile
           # (6 / 2) becomes (/ 6 2)
           # (i + 1) becomes (+ i 1)
@@ -2437,7 +2448,7 @@ proc compile_gene(self: Compiler, input: Value) =
         return
     elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == "":
       # Don't convert if the type is already an operator or special form
-      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "fnx", "fnxx", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->"]:
+      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->"]:
         # Convert infix to prefix notation and compile
         # (6 / 2) becomes (/ 6 2)
         # (i + 1) becomes (+ i 1)
@@ -2673,9 +2684,15 @@ proc compile_gene(self: Compiler, input: Value) =
       of "continue":
         self.compile_continue(gene)
         return
-      of "fn", "fnx", "fnx!", "fnxx":
+      of "fn":
         self.compile_fn(input)
         return
+      of "fnx":
+        not_allowed("fnx is no longer supported; use (fn [args] ...) instead")
+      of "fnx!":
+        not_allowed("fnx! is no longer supported; use (fn name! [args] ...) instead")
+      of "fnxx":
+        not_allowed("fnxx is no longer supported; use (fn [] ...) instead")
       of "->":
         self.compile_block(input)
         return

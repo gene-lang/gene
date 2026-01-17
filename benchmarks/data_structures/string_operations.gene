@@ -1,6 +1,6 @@
 # Simplified String Operations Benchmark
 
-(fn string_creation_bench n
+(fn string_creation_bench [n]
   "Test string creation performance"
   (var count 0)
   (var i 0)
@@ -10,7 +10,7 @@
     (i = (+ i 1)))
   count)
 
-(fn string_concat_bench n
+(fn string_concat_bench [n]
   "Test string concatenation"
   (var result "")
   (var i 0)

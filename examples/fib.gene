@@ -1,5 +1,5 @@
 #!/usr/bin/env gene run
-(fn fib n
+(fn fib [n]
   (if (n < 2)
     n
   else

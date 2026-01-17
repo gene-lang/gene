@@ -1,12 +1,12 @@
 # Simplified Allocation Stress Test
 
-(fn create_simple_tree depth
+(fn create_simple_tree [depth]
   (if (<= depth 0)
     []
     [(create_simple_tree (- depth 1))
      (create_simple_tree (- depth 1))]))
 
-(fn create_arrays n
+(fn create_arrays [n]
   (var count 0)
   (var i 0)
   (while (< i n)
@@ -15,7 +15,7 @@
     (i = (+ i 1)))
   count)
 
-(fn create_maps n
+(fn create_maps [n]
   (var count 0)
   (var i 0)
   (while (< i n)

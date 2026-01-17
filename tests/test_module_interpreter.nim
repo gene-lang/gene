@@ -71,7 +71,7 @@ test_interpreter """
 
 test_interpreter """
   (ns n
-    (fn f _ 1)
+    (fn f [] 1)
   )
   (import g from "tests/fixtures/mod2" ^inherit n)
   (g)
@@ -92,7 +92,7 @@ test_interpreter """
 # #   init_all()
 # #   discard VM.import_module("file1", """
 # #     (ns n
-# #       (fn f a a)
+# #       (fn f [a] a)
 # #     )
 # #   """)
 # #   var result = VM.eval """

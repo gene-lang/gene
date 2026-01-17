@@ -9,7 +9,7 @@ gene examples/repl-on-error.gene
 # REPL will not kick in on error
 #>#
 
-(fn f _
+(fn f []
   (var a (throw))
 )
 (println (f))

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Reserved keywords and literals
-The language SHALL treat the following symbols as reserved keywords handled by the parser/compiler and SHALL NOT allow them to be redefined: `if`, `elif`, `else`, `fn`, `fnx`, `class`, `var`, `loop`, `break`, `continue`, `return`, `try`, `catch`, `finally`, `throw`, `import`, `ns`, `macro`, `new`, `nil`, `void`, `true`, `false`.
+The language SHALL treat the following symbols as reserved keywords handled by the parser/compiler and SHALL NOT allow them to be redefined: `if`, `elif`, `else`, `fn`, `class`, `var`, `loop`, `break`, `continue`, `return`, `try`, `catch`, `finally`, `throw`, `import`, `ns`, `macro`, `new`, `nil`, `void`, `true`, `false`.
 
 #### Scenario: Keyword rebinding is rejected
 - **WHEN** a program attempts to bind a reserved keyword (for example `(var if 1)`)

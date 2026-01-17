@@ -1737,53 +1737,46 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var is_generator = false
   var is_macro_like = false
 
-  if node.gene.type != NIL and node.gene.type == "fnx".to_symbol_value():
-    matcher.parse(node.gene.children[0])
-    name = "<unnamed>"
-    body_start = 1
-  elif node.gene.type != NIL and node.gene.type == "fnx!".to_symbol_value():
-    matcher.parse(node.gene.children[0])
-    name = "<unnamed>"
-    body_start = 1
-    is_macro_like = true
-  elif node.gene.type != NIL and node.gene.type == "fnxx".to_symbol_value():
-    name = "<unnamed>"
-    body_start = 0
-  else:
-    if node.gene.children.len == 0:
-      raise new_exception(type_defs.Exception, "Invalid function definition: expected function name")
-    let first = node.gene.children[0]
-    var parsed_args = false
-    case first.kind:
-      of VkSymbol, VkString:
-        name = first.str
-        # Check if function name ends with ! (macro-like function)
-        if name.len > 0 and name[^1] == '!':
-          is_macro_like = true
-        # Check if function name ends with * (generator function)
-        elif name.len > 0 and name[^1] == '*':
-          is_generator = true
-      of VkArray:
-        name = "<unnamed>"
-        matcher.parse(first)
-        parsed_args = true
-        body_start = 1
-      of VkComplexSymbol:
-        name = first.ref.csymbol[^1]
-        # Check if function name ends with ! (macro-like function)
-        if name.len > 0 and name[^1] == '!':
-          is_macro_like = true
-        # Check if function name ends with * (generator function)
-        elif name.len > 0 and name[^1] == '*':
-          is_generator = true
-      else:
-        todo($first.kind)
-
-    if not parsed_args:
+  if node.gene.children.len == 0:
+    raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
+  let first = node.gene.children[0]
+  case first.kind:
+    of VkArray:
+      name = "<unnamed>"
+      matcher.parse(first)
+      body_start = 1
+    of VkSymbol, VkString:
+      name = first.str
+      # Check if function name ends with ! (macro-like function)
+      if name.len > 0 and name[^1] == '!':
+        is_macro_like = true
+      # Check if function name ends with * (generator function)
+      elif name.len > 0 and name[^1] == '*':
+        is_generator = true
       if node.gene.children.len < 2:
-        raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list")
-      matcher.parse(node.gene.children[1])
+        raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
+      let args = node.gene.children[1]
+      if args.kind != VkArray:
+        raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
+      matcher.parse(args)
       body_start = 2
+    of VkComplexSymbol:
+      name = first.ref.csymbol[^1]
+      # Check if function name ends with ! (macro-like function)
+      if name.len > 0 and name[^1] == '!':
+        is_macro_like = true
+      # Check if function name ends with * (generator function)
+      elif name.len > 0 and name[^1] == '*':
+        is_generator = true
+      if node.gene.children.len < 2:
+        raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
+      let args = node.gene.children[1]
+      if args.kind != VkArray:
+        raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
+      matcher.parse(args)
+      body_start = 2
+    else:
+      raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
 
   matcher.check_hint()
   var body: seq[Value] = @[]

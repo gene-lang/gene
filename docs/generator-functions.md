@@ -24,7 +24,7 @@ Generator functions are special functions that can pause execution and yield mul
 ### Anonymous Generator Functions
 ```gene
 # Anonymous generators use ^^generator flag
-(var gen (fn ^^generator _ [max]
+(var gen (fn ^^generator [max]
   (var i 0)
   (while (< i max)
     (yield i)

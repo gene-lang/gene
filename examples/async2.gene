@@ -1,6 +1,6 @@
 #!/usr/bin/env gene run
 
-(fn read_async file
+(fn read_async [file]
   (gene/File/read_async file)
 )
 

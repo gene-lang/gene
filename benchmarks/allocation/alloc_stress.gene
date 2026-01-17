@@ -1,6 +1,6 @@
 # Simplified allocation stress test
 
-(fn create_arrays n
+(fn create_arrays [n]
   (var count 0)
   (var i 0)
   (while (< i n)
