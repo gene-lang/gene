@@ -135,6 +135,11 @@ proc write_value(stream: Stream, v: Value) =
   of VkChar:
     # Extract char from NaN-boxed value
     stream.write((v.raw and 0xFF).uint32)
+  of VkRegex:
+    stream.write_string(v.ref.regex_pattern)
+    stream.write(v.ref.regex_flags)
+    stream.write(if v.ref.regex_has_replacement: 1'u8 else: 0'u8)
+    stream.write_string(v.ref.regex_replacement)
   of VkFunctionDef:
     writeFunctionDef(stream, v.ref.function_def)
   else:
@@ -162,6 +167,12 @@ proc read_value(stream: Stream): Value =
     result = stream.read_string().to_symbol_value()
   of VkChar:
     result = stream.readUint32().char.to_value()
+  of VkRegex:
+    let pattern = stream.read_string()
+    let flags = stream.readUint8()
+    let has_replacement = stream.readUint8() == 1'u8
+    let replacement = stream.read_string()
+    result = new_regex_value(pattern, flags, replacement, has_replacement)
   of VkFunctionDef:
     let info = readFunctionDef(stream)
     result = info.to_value()

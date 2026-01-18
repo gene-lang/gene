@@ -85,6 +85,8 @@ template get_value_class(val: Value): Class =
     types.ref(App.app.set_class).class
   of VkSelector:
     types.ref(App.app.selector_class).class
+  of VkRegex:
+    types.ref(App.app.regex_class).class
   of VkFuture:
     types.ref(App.app.future_class).class
   of VkGenerator:
@@ -2270,6 +2272,25 @@ proc exec*(self: ptr VirtualMachine): Value =
               self.frame.push(member)
             else:
               self.frame.push(NIL)
+          of VkRegexMatch:
+            let key = cast[Value](name).str
+            var member = NIL
+            case key
+            of "value":
+              member = value.ref.regex_match_value.to_value()
+            of "captures":
+              var caps = new_array_value()
+              for item in value.ref.regex_match_captures:
+                array_data(caps).add(item.to_value())
+              member = caps
+            of "start":
+              member = value.ref.regex_match_start.to_value()
+            of "end":
+              member = value.ref.regex_match_end.to_value()
+            else:
+              member = NIL
+            retain(member)
+            self.frame.push(member)
           else:
             when not defined(release):
               echo "IkGetMember: Attempting to access member '", name, "' on value of type ", value.kind
@@ -2375,6 +2396,27 @@ proc exec*(self: ptr VirtualMachine): Value =
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
               let member = instance_props(target).getOrDefault(key, VOID)
+              retain(member)
+              self.frame.push(member)
+            of VkRegexMatch:
+              if prop.kind != VkString and prop.kind != VkSymbol:
+                not_allowed("RegexMatch member access expects string or symbol")
+              let key = prop.str
+              var member = VOID
+              case key
+              of "value":
+                member = target.ref.regex_match_value.to_value()
+              of "captures":
+                var caps = new_array_value()
+                for item in target.ref.regex_match_captures:
+                  array_data(caps).add(item.to_value())
+                member = caps
+              of "start":
+                member = target.ref.regex_match_start.to_value()
+              of "end":
+                member = target.ref.regex_match_end.to_value()
+              else:
+                member = VOID
               retain(member)
               self.frame.push(member)
             of VkArray:
@@ -4686,8 +4728,19 @@ proc exec*(self: ptr VirtualMachine): Value =
         case class.constructor.kind:
           of VkNativeFn:
             # Call native constructor
-            let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
-            self.frame.push(result)
+            if args.kind == VkGene and args.gene.props.len > 0:
+              var native_args = newSeq[Value](args.gene.children.len + 1)
+              var kw_map = new_map_value()
+              for k, v in args.gene.props:
+                map_data(kw_map)[k] = v
+              native_args[0] = kw_map
+              for i, child in args.gene.children:
+                native_args[i + 1] = child
+              let result = call_native_fn(class.constructor.ref.native_fn, self, native_args, true)
+              self.frame.push(result)
+            else:
+              let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
+              self.frame.push(result)
             
           of VkFunction:
             # Regular function constructor
@@ -4731,6 +4784,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               if args.kind == VkGene:
                 for child in args.gene.children:
                   constructor_args.children.add(child)
+                for k, v in args.gene.props:
+                  constructor_args.props[k] = v
               process_args(f.matcher, constructor_args.to_gene_value(), scope)
               assign_property_params(f.matcher, scope, instance)
             

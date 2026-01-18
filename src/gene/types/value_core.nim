@@ -528,7 +528,7 @@ proc is_literal*(self: Value): bool =
       of REF_TAG:
         let r = self.ref
         case r.kind:
-          of VkSelector:
+          of VkSelector, VkRegex:
             return true
           else:
             result = false
@@ -536,6 +536,30 @@ proc is_literal*(self: Value): bool =
         result = false
       else:
         result = false
+
+proc escape_regex_segment(seg: string): string {.inline.} =
+  result = ""
+  for ch in seg:
+    case ch
+    of '\\':
+      result.add("\\\\")
+    of '/':
+      result.add("\\/")
+    else:
+      result.add(ch)
+
+proc regex_flags_to_string(flags: uint8): string {.inline.} =
+  result = ""
+  if (flags and REGEX_FLAG_IGNORE_CASE) != 0:
+    result.add('i')
+  if (flags and REGEX_FLAG_MULTILINE) != 0:
+    result.add('m')
+
+proc format_regex_literal(self: Value): string =
+  result = "#/" & escape_regex_segment(self.ref.regex_pattern) & "/"
+  if self.ref.regex_has_replacement:
+    result &= escape_regex_segment(self.ref.regex_replacement) & "/"
+  result &= regex_flags_to_string(self.ref.regex_flags)
 
 proc str_no_quotes*(self: Value): string {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -603,7 +627,7 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         if self.ref.range_step != NIL:
           result &= " step " & $self.ref.range_step
       of VkRegex:
-        result = "/" & self.ref.regex_pattern & "/"
+        result = format_regex_literal(self)
       of VkDate:
         result = $self.ref.date_year & "-" & $self.ref.date_month & "-" & $self.ref.date_day
       of VkDateTime:
@@ -682,7 +706,7 @@ proc `$`*(self: Value): string {.gcsafe.} =
         if self.ref.range_step != NIL:
           result &= " step " & $self.ref.range_step
       of VkRegex:
-        result = "/" & self.ref.regex_pattern & "/"
+        result = format_regex_literal(self)
       of VkDate:
         result = $self.ref.date_year & "-" & $self.ref.date_month & "-" & $self.ref.date_day
       of VkDateTime:
@@ -1086,10 +1110,20 @@ proc new_range_value*(start: Value, `end`: Value, step: Value): Value =
   r.range_step = step
   result = r.to_ref_value()
 
-proc new_regex_value*(pattern: string, flags: uint8 = 0'u8): Value =
+proc new_regex_value*(pattern: string, flags: uint8 = 0'u8, replacement: string = "", has_replacement: bool = false): Value =
   let r = new_ref(VkRegex)
   r.regex_pattern = pattern
   r.regex_flags = flags
+  r.regex_replacement = replacement
+  r.regex_has_replacement = has_replacement
+  result = r.to_ref_value()
+
+proc new_regex_match_value*(value: string, captures: seq[string], start: int64, `end`: int64): Value =
+  let r = new_ref(VkRegexMatch)
+  r.regex_match_value = value
+  r.regex_match_captures = captures
+  r.regex_match_start = start
+  r.regex_match_end = `end`
   result = r.to_ref_value()
 
 proc new_date_value*(year: int, month: int, day: int): Value =

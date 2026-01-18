@@ -1597,19 +1597,35 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
 
   # Always create a Gene for arguments (for both regular and macro constructors)
   # This ensures the VM validation logic works correctly
-  if gene.children.len > 1:
+  if gene.children.len > 1 or gene.props.len > 0:
     # Create a Gene containing all arguments
     self.emit(Instruction(kind: IkGeneStart))
 
     if is_macro_new:
       # For macro constructor, don't evaluate arguments - pass them as quoted
       self.quote_level.inc()
+      for k, v in gene.props:
+        let key_str = $k
+        if key_str.startsWith("..."):
+          self.compile(v)
+          self.emit(Instruction(kind: IkGenePropsSpread))
+        else:
+          self.compile(v)
+          self.emit(Instruction(kind: IkGeneSetProp, arg0: k))
       for i in 1..<gene.children.len:
         self.compile(gene.children[i])
         self.emit(Instruction(kind: IkGeneAddChild))
       self.quote_level.dec()
     else:
       # For regular constructor, evaluate arguments normally, then add to Gene
+      for k, v in gene.props:
+        let key_str = $k
+        if key_str.startsWith("..."):
+          self.compile(v)
+          self.emit(Instruction(kind: IkGenePropsSpread))
+        else:
+          self.compile(v)
+          self.emit(Instruction(kind: IkGeneSetProp, arg0: k))
       for i in 1..<gene.children.len:
         self.compile(gene.children[i])
         self.emit(Instruction(kind: IkGeneAddChild))
@@ -2841,6 +2857,8 @@ proc compile*(self: Compiler, input: Value) =
         self.compile_literal(input)
       of VkString:
         self.compile_literal(input) # TODO
+      of VkRegex:
+        self.compile_literal(input)
       of VkSymbol:
         self.compile_symbol(input)
       of VkComplexSymbol:

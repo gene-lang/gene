@@ -87,6 +87,8 @@ proc value_class_value(val: Value): Value =
     App.app.map_class
   of VkGene:
     App.app.gene_class
+  of VkRegex:
+    App.app.regex_class
   of VkDate:
     App.app.date_class
   of VkDateTime:
@@ -218,6 +220,17 @@ proc init_basic_classes(): Class =
   App.app.global_ns.ns["Float".to_key()] = App.app.float_class
 
   object_class
+
+proc value_to_json(val: Value): string {.gcsafe.}
+proc build_regex_flags(ignore_case: bool, multiline: bool): uint8 {.inline, gcsafe.}
+proc get_compiled_regex(pattern: string, flags: uint8): Regex {.gcsafe.}
+proc extract_regex(value: Value, pattern: var string, flags: var uint8) {.gcsafe.}
+proc regex_match_bool(input: string, regex_val: Value): bool {.gcsafe.}
+proc regex_process_match(input: string, regex_val: Value): Value {.gcsafe.}
+proc regex_find_first(input: string, regex_val: Value): Value {.gcsafe.}
+proc regex_find_all_values(input: string, regex_val: Value): Value {.gcsafe.}
+proc regex_replace_value(input: string, regex_val: Value, replacement_override: Value, replace_all: bool): Value {.gcsafe.}
+proc parse_json_string(json_str: string): Value {.gcsafe.}
 
 proc init_string_class(object_class: Class) =
   var r: ptr Reference
@@ -487,17 +500,140 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_method("char_at", string_char_at)
 
-  proc string_replace(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    if get_positional_count(arg_count, has_keyword_args) < 3:
-      not_allowed("String.replace requires target and replacement")
+  proc string_match(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.match requires a Regexp")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
-    let from_val = get_positional_arg(args, 1, has_keyword_args)
-    let to_val = get_positional_arg(args, 2, has_keyword_args)
-    if self_arg.kind != VkString or from_val.kind != VkString or to_val.kind != VkString:
-      not_allowed("replace expects string arguments")
-    self_arg.str.replace(from_val.str, to_val.str).to_value()
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("match must be called on a string")
+    if pattern_val.kind != VkRegex:
+      not_allowed("String.match requires a Regexp")
+    regex_match_bool(self_arg.str, pattern_val).to_value()
+
+  string_class.def_native_method("match", string_match)
+
+  proc string_contain(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.contain requires a pattern")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("contain must be called on a string")
+    case pattern_val.kind
+    of VkRegex:
+      result = regex_match_bool(self_arg.str, pattern_val).to_value()
+    of VkString:
+      result = (self_arg.str.find(pattern_val.str) >= 0).to_value()
+    else:
+      not_allowed("String.contain expects a Regexp or string pattern")
+
+  string_class.def_native_method("contain", string_contain)
+
+  proc string_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.find requires a pattern")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("find must be called on a string")
+    case pattern_val.kind
+    of VkRegex:
+      result = regex_find_first(self_arg.str, pattern_val)
+    of VkString:
+      if pattern_val.str.len == 0:
+        not_allowed("String.find pattern cannot be empty")
+      let idx = self_arg.str.find(pattern_val.str)
+      if idx < 0:
+        result = NIL
+      else:
+        result = self_arg.str[idx ..< idx + pattern_val.str.len].to_value()
+    else:
+      not_allowed("String.find expects a Regexp or string pattern")
+
+  string_class.def_native_method("find", string_find)
+
+  proc string_find_all(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.find_all requires a pattern")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("find_all must be called on a string")
+    case pattern_val.kind
+    of VkRegex:
+      result = regex_find_all_values(self_arg.str, pattern_val)
+    of VkString:
+      if pattern_val.str.len == 0:
+        not_allowed("String.find_all pattern cannot be empty")
+      var matches = new_array_value()
+      var start = 0
+      while start <= self_arg.str.len:
+        let idx = self_arg.str.find(pattern_val.str, start)
+        if idx < 0:
+          break
+        array_data(matches).add(self_arg.str[idx ..< idx + pattern_val.str.len].to_value())
+        start = idx + pattern_val.str.len
+      result = matches
+    else:
+      not_allowed("String.find_all expects a Regexp or string pattern")
+
+  string_class.def_native_method("find_all", string_find_all)
+
+  proc string_replace(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("String.replace requires a pattern")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("replace must be called on a string")
+    case pattern_val.kind
+    of VkRegex:
+      let replacement_val = if pos_count >= 3: get_positional_arg(args, 2, has_keyword_args) else: NIL
+      result = regex_replace_value(self_arg.str, pattern_val, replacement_val, false)
+    of VkString:
+      if pos_count < 3:
+        not_allowed("String.replace requires target and replacement")
+      let to_val = get_positional_arg(args, 2, has_keyword_args)
+      if to_val.kind != VkString:
+        not_allowed("replace expects string replacement")
+      let idx = self_arg.str.find(pattern_val.str)
+      if idx < 0:
+        result = self_arg.str.to_value()
+      else:
+        let prefix = if idx > 0: self_arg.str[0 ..< idx] else: ""
+        let start = idx + pattern_val.str.len
+        let suffix = if start < self_arg.str.len: self_arg.str[start .. ^1] else: ""
+        result = (prefix & to_val.str & suffix).to_value()
+    else:
+      not_allowed("String.replace expects a Regexp or string pattern")
 
   string_class.def_native_method("replace", string_replace)
+
+  proc string_replace_all(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("String.replace_all requires a pattern")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("replace_all must be called on a string")
+    case pattern_val.kind
+    of VkRegex:
+      let replacement_val = if pos_count >= 3: get_positional_arg(args, 2, has_keyword_args) else: NIL
+      result = regex_replace_value(self_arg.str, pattern_val, replacement_val, true)
+    of VkString:
+      if pos_count < 3:
+        not_allowed("String.replace_all requires target and replacement")
+      let to_val = get_positional_arg(args, 2, has_keyword_args)
+      if to_val.kind != VkString:
+        not_allowed("replace_all expects string replacement")
+      result = self_arg.str.replace(pattern_val.str, to_val.str).to_value()
+    else:
+      not_allowed("String.replace_all expects a Regexp or string pattern")
+
+  string_class.def_native_method("replace_all", string_replace_all)
 
   proc gene_dollar(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -518,6 +654,120 @@ proc init_string_class(object_class: Class) =
   App.app.gene_ns.ns["String".to_key()] = App.app.string_class
   App.app.global_ns.ns["String".to_key()] = App.app.string_class
 
+proc init_regex_class(object_class: Class) =
+  var r: ptr Reference
+  let regex_class = new_class("Regexp")
+  regex_class.parent = object_class
+
+  proc regexp_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 1:
+      not_allowed("Regexp.ctor requires a pattern string")
+    let pattern_val = get_positional_arg(args, 0, has_keyword_args)
+    if pattern_val.kind != VkString:
+      not_allowed("Regexp.ctor expects a string pattern")
+
+    var replacement = ""
+    var has_replacement = false
+    if pos_count >= 2:
+      let replacement_val = get_positional_arg(args, 1, has_keyword_args)
+      if replacement_val != NIL and replacement_val.kind != VkString:
+        not_allowed("Regexp.ctor replacement must be a string or nil")
+      if replacement_val.kind == VkString:
+        replacement = replacement_val.str
+        has_replacement = true
+    if pos_count > 2:
+      not_allowed("Regexp.ctor accepts at most pattern and replacement")
+
+    var ignore_case = false
+    var multiline = false
+    if has_keyword_args and args[0].kind == VkMap:
+      for k, v in map_data(args[0]):
+        let key_name = cast[Value](k).str
+        case key_name
+        of "i":
+          ignore_case = v.to_bool()
+        of "m":
+          multiline = v.to_bool()
+        else:
+          not_allowed("Regexp.ctor unknown flag: " & key_name)
+
+    let flags = build_regex_flags(ignore_case, multiline)
+    new_regex_value(pattern_val.str, flags, replacement, has_replacement)
+
+  regex_class.def_native_constructor(regexp_constructor)
+
+  proc regexp_match(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Regexp.match requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.match expects a Regexp and string")
+    regex_match_bool(input_val.str, self_arg).to_value()
+
+  proc regexp_process(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Regexp.process requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.process expects a Regexp and string")
+    regex_process_match(input_val.str, self_arg)
+
+  proc regexp_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Regexp.find requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.find expects a Regexp and string")
+    regex_find_first(input_val.str, self_arg)
+
+  proc regexp_find_all(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Regexp.find_all requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.find_all expects a Regexp and string")
+    regex_find_all_values(input_val.str, self_arg)
+
+  proc regexp_replace(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("Regexp.replace requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.replace expects a Regexp and string")
+    let replacement_val = if pos_count >= 3: get_positional_arg(args, 2, has_keyword_args) else: NIL
+    regex_replace_value(input_val.str, self_arg, replacement_val, false)
+
+  proc regexp_replace_all(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("Regexp.replace_all requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.replace_all expects a Regexp and string")
+    let replacement_val = if pos_count >= 3: get_positional_arg(args, 2, has_keyword_args) else: NIL
+    regex_replace_value(input_val.str, self_arg, replacement_val, true)
+
+  regex_class.def_native_method("match", regexp_match)
+  regex_class.def_native_method("process", regexp_process)
+  regex_class.def_native_method("find", regexp_find)
+  regex_class.def_native_method("find_all", regexp_find_all)
+  regex_class.def_native_method("replace", regexp_replace)
+  regex_class.def_native_method("replace_all", regexp_replace_all)
+
+  r = new_ref(VkClass)
+  r.class = regex_class
+  App.app.regex_class = r.to_ref_value()
+  App.app.gene_ns.ns["Regexp".to_key()] = App.app.regex_class
+  App.app.global_ns.ns["Regexp".to_key()] = App.app.regex_class
+
 proc init_symbol_classes(object_class: Class) =
   var r: ptr Reference
   let symbol_class = new_class("Symbol")
@@ -535,12 +785,6 @@ proc init_symbol_classes(object_class: Class) =
   App.app.complex_symbol_class = r.to_ref_value()
   App.app.gene_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
   App.app.global_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
-
-proc value_to_json(val: Value): string {.gcsafe.}
-proc build_regex_flags(ignore_case: bool, multiline: bool): uint8 {.inline, gcsafe.}
-proc get_compiled_regex(pattern: string, flags: uint8): Regex {.gcsafe.}
-proc extract_regex(value: Value, pattern: var string, flags: var uint8) {.gcsafe.}
-proc parse_json_string(json_str: string): Value {.gcsafe.}
 
 proc init_collection_classes(object_class: Class) =
   var r: ptr Reference
@@ -988,81 +1232,6 @@ proc init_date_classes(object_class: Class) =
   datetime_class.def_native_method("hour", datetime_hour)
 
 proc init_regex_and_json() =
-  proc regex_create(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let positional = get_positional_count(arg_count, has_keyword_args)
-    if positional == 0:
-      not_allowed("regex_create requires at least a pattern string")
-    var pattern = ""
-    var ignore_case = false
-    var multiline = false
-    var seen_bool = 0
-    var idx = 0
-    while idx < positional:
-      let arg = get_positional_arg(args, idx, has_keyword_args)
-      case arg.kind
-      of VkString:
-        pattern.add(arg.str)
-      of VkBool:
-        if seen_bool == 0:
-          ignore_case = arg.to_bool()
-        elif seen_bool == 1:
-          multiline = arg.to_bool()
-        else:
-          not_allowed("regex_create accepts at most two boolean flag arguments")
-        inc(seen_bool)
-      else:
-        not_allowed("regex_create expects string or bool arguments")
-      inc idx
-    if pattern.len == 0:
-      not_allowed("regex_create pattern cannot be empty")
-    let flags = build_regex_flags(ignore_case, multiline)
-    new_regex_value(pattern, flags)
-
-  proc regex_match(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("regex_match requires input string and pattern")
-    let input_val = get_positional_arg(args, 0, has_keyword_args)
-    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
-    if input_val.kind != VkString:
-      not_allowed("regex_match input must be a string")
-    var pattern: string
-    var flags: uint8
-    extract_regex(pattern_val, pattern, flags)
-    let regex_obj = get_compiled_regex(pattern, flags)
-    (re.find(input_val.str, regex_obj) >= 0).to_value()
-
-  proc regex_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let positional = get_positional_count(arg_count, has_keyword_args)
-    if positional < 2:
-      not_allowed("regex_find requires input string and pattern")
-    let input_val = get_positional_arg(args, 0, has_keyword_args)
-    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
-    if input_val.kind != VkString:
-      not_allowed("regex_find input must be a string")
-    var capture_idx = 0
-    if positional >= 3:
-      capture_idx = get_positional_arg(args, 2, has_keyword_args).to_int().int
-      if capture_idx < 0:
-        not_allowed("regex_find capture index must be non-negative")
-    var pattern: string
-    var flags: uint8
-    extract_regex(pattern_val, pattern, flags)
-    let regex_obj = get_compiled_regex(pattern, flags)
-    var captures: array[MaxSubpatterns, string]
-    let start_idx = re.find(input_val.str, regex_obj, captures)
-    if start_idx < 0:
-      return NIL
-    let match_length = re.matchLen(input_val.str, regex_obj, start_idx)
-    if match_length < 0:
-      return NIL
-    if capture_idx == 0:
-      return input_val.str[start_idx ..< start_idx + match_length].to_value()
-    let capture_index = capture_idx - 1
-    if capture_index >= captures.len:
-      return NIL
-    let capture_value = captures[capture_index]
-    capture_value.to_value()
-
   proc json_parse_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("json.parse requires a string argument")
@@ -1080,21 +1249,6 @@ proc init_regex_and_json() =
       not_allowed("json.stringify requires a value")
     let value_arg = get_positional_arg(args, 0, has_keyword_args)
     value_to_json(value_arg).to_value()
-
-  var regex_create_fn = new_ref(VkNativeFn)
-  regex_create_fn.native_fn = regex_create
-  App.app.gene_ns.ns["regex_create".to_key()] = regex_create_fn.to_ref_value()
-  App.app.global_ns.ns["regex_create".to_key()] = regex_create_fn.to_ref_value()
-
-  var regex_match_fn = new_ref(VkNativeFn)
-  regex_match_fn.native_fn = regex_match
-  App.app.gene_ns.ns["regex_match".to_key()] = regex_match_fn.to_ref_value()
-  App.app.global_ns.ns["regex_match".to_key()] = regex_match_fn.to_ref_value()
-
-  var regex_find_fn = new_ref(VkNativeFn)
-  regex_find_fn.native_fn = regex_find
-  App.app.gene_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
-  App.app.global_ns.ns["regex_find".to_key()] = regex_find_fn.to_ref_value()
 
   var json_parse_fn = new_ref(VkNativeFn)
   json_parse_fn.native_fn = json_parse_native
@@ -1838,10 +1992,6 @@ proc core_vm_print_instructions*(vm: ptr VirtualMachine, args: ptr UncheckedArra
   echo vm.cu
   return NIL
 
-const
-  REGEX_FLAG_IGNORE_CASE = 0x1'u8
-  REGEX_FLAG_MULTILINE = 0x2'u8
-
 type RegexCacheKey = tuple[pattern: string, flags: uint8]
 
 var regex_cache {.threadvar.}: Table[RegexCacheKey, Regex]
@@ -1864,7 +2014,7 @@ proc get_compiled_regex(pattern: string, flags: uint8): Regex {.gcsafe.} =
     if (flags and REGEX_FLAG_IGNORE_CASE) != 0:
       opts.incl(reIgnoreCase)
     if (flags and REGEX_FLAG_MULTILINE) != 0:
-      opts.incl(reMultiLine)
+      opts.incl(reDotAll)
     regex_cache[key] = re(pattern, opts)
   regex_cache[key]
 
@@ -1878,6 +2028,167 @@ proc extract_regex(value: Value, pattern: var string, flags: var uint8) {.gcsafe
     flags = 0
   else:
     not_allowed("Expected a regex or string pattern")
+
+proc count_regex_captures(pattern: string): int {.gcsafe.} =
+  var count = 0
+  var escaped = false
+  var in_class = false
+  var i = 0
+  while i < pattern.len:
+    let ch = pattern[i]
+    if escaped:
+      escaped = false
+      inc i
+      continue
+    if ch == '\\':
+      escaped = true
+      inc i
+      continue
+    if in_class:
+      if ch == ']':
+        in_class = false
+      inc i
+      continue
+    if ch == '[':
+      in_class = true
+      inc i
+      continue
+    if ch == '(':
+      if i + 1 < pattern.len and pattern[i + 1] == '?':
+        if i + 2 < pattern.len and pattern[i + 2] == '<':
+          count.inc()
+        elif i + 3 < pattern.len and pattern[i + 2] == 'P' and pattern[i + 3] == '<':
+          count.inc()
+      else:
+        count.inc()
+    inc i
+  if count > MaxSubpatterns:
+    result = MaxSubpatterns
+  else:
+    result = count
+
+proc apply_regex_replacement(replacement_str: string, captures: seq[string], full_match: string): string {.gcsafe.} =
+  result = ""
+  var i = 0
+  while i < replacement_str.len:
+    if replacement_str[i] == '\\' and i + 1 < replacement_str.len:
+      let next = replacement_str[i + 1]
+      if next == '\\':
+        result.add('\\')
+        i += 2
+        continue
+      if next in {'0'..'9'}:
+        var j = i + 1
+        var num = 0
+        while j < replacement_str.len and replacement_str[j] in {'0'..'9'}:
+          num = num * 10 + (ord(replacement_str[j]) - ord('0'))
+          j.inc()
+        if num == 0:
+          result.add(full_match)
+        elif num - 1 < captures.len:
+          result.add(captures[num - 1])
+        i = j
+        continue
+      result.add('\\')
+      i.inc()
+      continue
+    result.add(replacement_str[i])
+    i.inc()
+
+proc regex_match_bool(input: string, regex_val: Value): bool {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let regex_obj = get_compiled_regex(regex_val.ref.regex_pattern, regex_val.ref.regex_flags)
+  return re.find(input, regex_obj) >= 0
+
+proc regex_process_match(input: string, regex_val: Value): Value {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let pattern = regex_val.ref.regex_pattern
+  let flags = regex_val.ref.regex_flags
+  let regex_obj = get_compiled_regex(pattern, flags)
+  let capture_count = count_regex_captures(pattern)
+  var captures = newSeq[string](capture_count)
+  let (first, last) = re.findBounds(input, regex_obj, captures)
+  if first < 0:
+    return NIL
+  let end_pos = if last >= first: last + 1 else: first
+  let match_val = if last >= first: input[first .. last] else: ""
+  new_regex_match_value(match_val, captures, first.int64, end_pos.int64)
+
+proc regex_find_first(input: string, regex_val: Value): Value {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let pattern = regex_val.ref.regex_pattern
+  let flags = regex_val.ref.regex_flags
+  let regex_obj = get_compiled_regex(pattern, flags)
+  let capture_count = count_regex_captures(pattern)
+  var captures = newSeq[string](capture_count)
+  let (first, last) = re.findBounds(input, regex_obj, captures)
+  if first < 0:
+    return NIL
+  if last < first:
+    return "".to_value()
+  input[first .. last].to_value()
+
+proc regex_find_all_values(input: string, regex_val: Value): Value {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let pattern = regex_val.ref.regex_pattern
+  let flags = regex_val.ref.regex_flags
+  let regex_obj = get_compiled_regex(pattern, flags)
+  var matches = new_array_value()
+  for match in re.findAll(input, regex_obj):
+    array_data(matches).add(match.to_value())
+  matches
+
+proc regex_replacement_from_args(regex_val: Value, replacement_override: Value): string {.gcsafe.} =
+  if replacement_override.kind == VkString:
+    return replacement_override.str
+  if replacement_override != NIL and replacement_override != VOID:
+    not_allowed("Replacement must be a string")
+  if regex_val.ref.regex_has_replacement:
+    return regex_val.ref.regex_replacement
+  not_allowed("Replacement string is required")
+  ""
+
+proc regex_replace_internal(input: string, regex_obj: Regex, replacement: string, capture_count: int, replace_all: bool): string =
+  var result_str = ""
+  var search_pos = 0
+  var captures = newSeq[string](capture_count)
+  while search_pos <= input.len:
+    if captures.len > 0:
+      for i in 0..<captures.len:
+        captures[i] = ""
+    let (first, last) = re.findBounds(input, regex_obj, captures, search_pos)
+    if first < 0:
+      break
+    if first > search_pos:
+      result_str.add(input[search_pos ..< first])
+    let match_val = if last >= first: input[first .. last] else: ""
+    result_str.add(apply_regex_replacement(replacement, captures, match_val))
+    let next_pos = if last >= first: last + 1 else: first
+    if not replace_all:
+      if next_pos < input.len:
+        result_str.add(input[next_pos .. ^1])
+      return result_str
+    if next_pos == search_pos:
+      search_pos = next_pos + 1
+    else:
+      search_pos = next_pos
+  if search_pos < input.len:
+    result_str.add(input[search_pos .. ^1])
+  result_str
+
+proc regex_replace_value(input: string, regex_val: Value, replacement_override: Value, replace_all: bool): Value {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let pattern = regex_val.ref.regex_pattern
+  let flags = regex_val.ref.regex_flags
+  let replacement = regex_replacement_from_args(regex_val, replacement_override)
+  let regex_obj = get_compiled_regex(pattern, flags)
+  let capture_count = count_regex_captures(pattern)
+  regex_replace_internal(input, regex_obj, replacement, capture_count, replace_all).to_value()
 
 proc parse_json_node(node: json.JsonNode): Value {.gcsafe.}
 
@@ -2874,6 +3185,7 @@ proc init_gene_namespace*() =
   types.gene_namespace_initialized = true
   let object_class = init_basic_classes()
   init_string_class(object_class)
+  init_regex_class(object_class)
 
   init_symbol_classes(object_class)
 

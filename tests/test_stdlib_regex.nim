@@ -2,21 +2,27 @@ import ./helpers
 import gene/types except Exception
 
 test_vm """
-  (regex_match "a" (regex_create "a"))
+  (#/a/ .match "a")
 """, TRUE
 
 test_vm """
-  (regex_match "a" (regex_create "b"))
-""", FALSE
+  (var r (new gene/Regexp ^^i "ab"))
+  (r .match "AB")
+""", TRUE
 
 test_vm """
-  (regex_find "a" (regex_create "(a)"))
+  (var m (#/(a)(b)/ .process "ab"))
+  m/captures/0
 """, "a"
 
 test_vm """
-  (regex_find "ab" (regex_create "(a)(b)" false true) 2)
-""", "b"
+  (#/(\\d)/[\\1]/ .replace_all "a1b2")
+""", "a[1]b[2]"
 
 test_vm """
-  (regex_match "AB" (regex_create "(ab)" true))
-""", TRUE
+  ("a1b2" .replace_all #/(\\d)/[\\1]/)
+""", "a[1]b[2]"
+
+test_vm_error """
+  ("ab" .match "a")
+"""

@@ -963,6 +963,9 @@ type
     name*: string                  # For debugging and profiling
 
 const INST_SIZE* = sizeof(Instruction)
+const
+  REGEX_FLAG_IGNORE_CASE* = 0x1'u8
+  REGEX_FLAG_MULTILINE* = 0x2'u8
 
 type
   # Extended Reference type supporting all ValueKind variants
@@ -995,8 +998,13 @@ type
       of VkRegex:
         regex_pattern*: string
         regex_flags*: uint8
+        regex_replacement*: string
+        regex_has_replacement*: bool
       of VkRegexMatch:
-        regex_match_data*: seq[string]  # Simplified match data
+        regex_match_value*: string
+        regex_match_captures*: seq[string]
+        regex_match_start*: int64
+        regex_match_end*: int64
       of VkRange:
         range_start*: Value
         range_end*: Value

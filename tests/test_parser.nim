@@ -88,26 +88,25 @@ test_parser "^a", to_symbol_value("^a")
 test_parser "symbol-👋", to_symbol_value("symbol-👋")
 test_parser "+foo+", to_symbol_value("+foo+")
 
-# test_parser "#/b/", proc(r: Value) =
-#   check r.kind == VkRegex
-#   check "ab".find(r.regex).get().captures[-1] == "b"
-#   check "AB".find(r.regex).is_none()
+test_parser "#/b/", proc(r: Value) =
+  check r.kind == VkRegex
+  check r.ref.regex_pattern == "b"
+  check r.ref.regex_flags == 0
 
-# test_parser "#/(a|b)/", proc(r: Value) =
-#   check r.kind == VkRegex
-#   check "ab".find(r.regex).get().captures[-1] == "a"
-#   check "AB".find(r.regex).is_none()
+test_parser "#/a\\/b/", proc(r: Value) =
+  check r.kind == VkRegex
+  check r.ref.regex_pattern == "a/b"
 
-# test_parser "#/a\\/b/", proc(r: Value) =
-#   check r.kind == VkRegex
-#   check "a/b".find(r.regex).get().captures[-1] == "a/b"
+test_parser "#/b/i", proc(r: Value) =
+  check r.kind == VkRegex
+  check (r.ref.regex_flags and REGEX_FLAG_IGNORE_CASE) != 0
 
-# # i: ignore case
-# # m: multi-line mode, ^ and $ matches beginning and end of each line
-# test_parser "#/b/i", proc(r: Value) =
-#   check r.kind == VkRegex
-#   check "ab".find(r.regex).get().captures[-1] == "b"
-#   check "AB".find(r.regex).get().captures[-1] == "B"
+test_parser "#/(\\d)/[\\1]/m", proc(r: Value) =
+  check r.kind == VkRegex
+  check r.ref.regex_pattern == "(\\d)"
+  check r.ref.regex_has_replacement
+  check r.ref.regex_replacement == "[\\1]"
+  check (r.ref.regex_flags and REGEX_FLAG_MULTILINE) != 0
 
 # test_parser "2020-12-02", new_gene_date(2020, 12, 02)
 # test_parser "2020-12-02T10:11:12Z",

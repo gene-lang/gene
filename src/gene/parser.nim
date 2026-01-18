@@ -1027,8 +1027,91 @@ proc read_stream(self: var Parser): Value {.gcsafe.} =
   r.stream_ended = false
   result = r.to_ref_value()
 
+proc is_regex_terminator(ch: char): bool {.inline.} =
+  ch == '\0' or ch in {' ', '\t', '\c', '\L', ')', ']', '}', ';', ','}
+
+proc parse_regex_segment(self: var Parser, pos: var int, seg: var string) =
+  while true:
+    case self.buf[pos]
+    of '\0':
+      raise new_exception(ParseError, "EOF while reading regex literal")
+    of '/':
+      inc(pos)
+      break
+    of '\\':
+      case self.buf[pos + 1]
+      of '\\', '/':
+        seg.add(self.buf[pos + 1])
+        inc(pos, 2)
+      else:
+        seg.add('\\')
+        inc(pos)
+    of '\c':
+      pos = lexbase.handleCR(self, pos)
+      seg.add('\c')
+    of '\L':
+      pos = lexbase.handleLF(self, pos)
+      seg.add('\L')
+    else:
+      seg.add(self.buf[pos])
+      inc(pos)
+
 proc read_regex(self: var Parser): Value =
-  todo()
+  var pos = self.bufpos
+  var pattern = ""
+  var replacement = ""
+  var flags: uint8 = 0'u8
+  var has_replacement = false
+
+  parse_regex_segment(self, pos, pattern)
+
+  # Check if there's another delimiter (replacement segment) before terminator
+  block:
+    var scan = pos
+    var found_delim = false
+    var saw_non_flag = false
+    while true:
+      let ch = self.buf[scan]
+      if ch == '\0' or ch in {' ', '\t', '\c', '\L'}:
+        break
+      if ch == '\\':
+        saw_non_flag = true
+        if self.buf[scan + 1] == '\0':
+          break
+        scan += 2
+        continue
+      if ch == '/':
+        found_delim = true
+        break
+      if ch in {')', ']', '}', ';', ','}:
+        if not saw_non_flag:
+          break
+        inc(scan)
+        continue
+      if ch in {'i', 'm'} and not saw_non_flag:
+        inc(scan)
+        continue
+      saw_non_flag = true
+      inc(scan)
+    if found_delim:
+      parse_regex_segment(self, pos, replacement)
+      has_replacement = true
+
+  while true:
+    let ch = self.buf[pos]
+    if is_regex_terminator(ch):
+      break
+    case ch
+    of 'i':
+      flags = flags or REGEX_FLAG_IGNORE_CASE
+    of 'm':
+      flags = flags or REGEX_FLAG_MULTILINE
+    else:
+      raise new_exception(ParseError, "Invalid regex flag: " & $ch)
+    inc(pos)
+
+  self.bufpos = pos
+  result = new_regex_value(pattern, flags, replacement, has_replacement)
   # var pos = self.bufpos
   # var flags: set[RegexFlag]
   # while true:

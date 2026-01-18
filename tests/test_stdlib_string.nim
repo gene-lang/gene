@@ -130,4 +130,4 @@ test_vm """
 
 test_vm """
   ("aabc" .replace "a" "A")
-""", "AAbc"
+""", "Aabc"
