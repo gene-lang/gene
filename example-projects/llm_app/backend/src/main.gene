@@ -3,7 +3,9 @@
 # LLM Chat Backend Server
 # Provides REST API endpoints for chat with a local LLM
 
+# ============================================================
 # Configuration
+# ============================================================
 (var PORT 4080)
 (var MODEL_PATH ($env .get "GENE_LLM_MODEL" ""))
 (var MODEL_CONTEXT_STR ($env .get "GENE_LLM_CONTEXT" ""))
@@ -35,12 +37,10 @@
 )
 
 # ============================================================
-# Tool Registry - Functions that LLM can call
+# Tool Registry
 # ============================================================
-
 (var TOOLS {})
 
-# Register a tool
 (fn register_tool [name description params handler]
   (TOOLS .set name {
     ^description description
@@ -49,7 +49,53 @@
   })
 )
 
-# Built-in tools
+(fn execute_tool [name args]
+  (var tool (TOOLS .get name))
+  (if (tool == nil)
+    (return {^error #"Unknown tool: #{name}"})
+  )
+  (try
+    (tool/handler args)
+  catch *
+    {^error #"Tool execution failed: #{$ex/message}"}
+  )
+)
+
+(fn build_system_prompt []
+  (var tool_list [])
+  (TOOLS .each (fn [name tool]
+    (var params_desc "")
+    (if (tool/params/.keys/.size > 0)
+      (var param_parts [])
+      (tool/params .each (fn [pname pdesc]
+        (param_parts .append #"    #{pname}: #{pdesc}")
+      ))
+      (params_desc = (param_parts .join "\n"))
+    )
+    (if (params_desc/.length > 0)
+      (tool_list .append #"- #{name}: #{tool/description}\n  Parameters:\n#{params_desc}")
+    else
+      (tool_list .append #"- #{name}: #{tool/description}")
+    )
+  ))
+  (var tools_section (tool_list .join "\n"))
+  #"""
+You are a helpful AI assistant with access to tools.
+
+Available tools:
+#{tools_section}
+
+When you need to use a tool, respond with ONLY a JSON object in this exact format:
+{"tool": "tool_name", "args": {"param": "value"}}
+
+After receiving a tool result, provide a natural response to the user.
+Only use tools when necessary. For general conversation, respond normally.
+"""
+)
+
+# ============================================================
+# Tool: get_time
+# ============================================================
 (register_tool "get_time"
   "Get the current date and time"
   {}
@@ -58,6 +104,9 @@
   )
 )
 
+# ============================================================
+# Tool: calculate
+# ============================================================
 (register_tool "calculate"
   "Evaluate a mathematical expression. Use this for any math calculations."
   {^expression "The math expression to evaluate (e.g., '2 + 2', '10 * 5')"}
@@ -72,16 +121,21 @@
   )
 )
 
+# ============================================================
+# Tool: get_weather
+# ============================================================
 (register_tool "get_weather"
   "Get the current weather for a location"
   {^location "The city or location to get weather for"}
   (fn [args]
     (var location (args .get "location" "Unknown"))
-    # Mock weather data - in production, call a real API
     {^result #"Weather in #{location}: 72°F (22°C), Partly Cloudy. Humidity: 45%"}
   )
 )
 
+# ============================================================
+# Tool: web_search
+# ============================================================
 (fn url_encode [input]
   (var out "")
   (var i 0)
@@ -147,7 +201,7 @@
 )
 
 (register_tool "web_search"
-  "Search the web using Google Custom Search (promotions excluded). Requires GOOGLE_API_KEY and GOOGLE_CSE_ID."
+  "Search the web using Google Custom Search. Requires GOOGLE_API_KEY and GOOGLE_CSE_ID."
   {^query "Search query" ^num "Number of results (default 5)"}
   (fn [args]
     (var query (args .get "query" ""))
@@ -177,23 +231,16 @@
 
     (var q (url_encode query))
     (var url #"https://www.googleapis.com/customsearch/v1?key=#{api_key}&cx=#{cse_id}&q=#{q}&num=#{num}")
-    (println "web_search: query=" query)
-    (println "web_search: encoded q=" q)
-    (println "web_search: full URL=" url)
     (try
       (var resp (await (http_get url)))
-      (println "web_search: got response, status=" resp/status)
       (if (resp/status != 200)
         (return {^error #"Search request failed with status #{resp/status}"})
       )
-      (println "web_search: body length=" resp/body/.length)
       (var data (gene/json/parse resp/body))
-      (println "web_search: parsed JSON, keys=" data/.keys)
       (if (data .contains "error")
         (return {^error ((data/error) .to_json)})
       )
       (var items (data .get "items" []))
-      (println "web_search: items count=" items/.size)
       (if (items/.size == 0)
         (return {^result #"No results found for: #{query}"})
       )
@@ -213,9 +260,10 @@
   )
 )
 
-# Helper to strip HTML tags - uses split/join approach
+# ============================================================
+# Tool: read_url
+# ============================================================
 (fn strip_html_tags [html]
-  # Simple approach: repeatedly find and remove tags
   (var text html)
   (var max_iterations 500)
   (var i 0)
@@ -232,10 +280,8 @@
       (break)
     )
     (if (end < start)
-      # Malformed - just remove the >
       (text = #"#{(text .substr 0 (end - 1))}#{(text .substr (end + 1))}")
     else
-      # Remove the tag
       (var before (if (start > 0) then (text .substr 0 (start - 1)) else ""))
       (var after (if ((end + 1) < text/.length) then (text .substr (end + 1)) else ""))
       (text = #"#{before}#{after}")
@@ -278,18 +324,15 @@
       (var content resp/body)
       (var content_type ((resp/headers .get "content-type" "") .to_lower))
 
-      # Truncate raw content first to limit processing (use 3x max_chars for HTML)
       (var process_limit (max_chars * 3))
       (if (content/.length > process_limit)
         (content = (content .substr 0 (process_limit - 1)))
       )
 
-      # Strip HTML if content appears to be HTML
       (if ((content_type .index "text/html") >= 0)
         (content = (strip_html_tags content))
       )
 
-      # Truncate final result if still too long
       (if (content/.length > max_chars)
         (content = (content .substr 0 (max_chars - 1)))
         (content = #"#{content}...\n[Truncated]")
@@ -302,39 +345,9 @@
   )
 )
 
-# Build system prompt with tool descriptions
-(fn build_system_prompt []
-  (var tool_list [])
-  (TOOLS .each (fn [name tool]
-    (var params_desc "")
-    (if (tool/params/.keys/.size > 0)
-      (var param_parts [])
-      (tool/params .each (fn [pname pdesc]
-        (param_parts .append #"    #{pname}: #{pdesc}")
-      ))
-      (params_desc = (param_parts .join "\n"))
-    )
-    (if (params_desc/.length > 0)
-      (tool_list .append #"- #{name}: #{tool/description}\n  Parameters:\n#{params_desc}")
-    else
-      (tool_list .append #"- #{name}: #{tool/description}")
-    )
-  ))
-  (var tools_section (tool_list .join "\n"))
-  #"""
-You are a helpful AI assistant with access to tools.
-
-Available tools:
-#{tools_section}
-
-When you need to use a tool, respond with ONLY a JSON object in this exact format:
-{"tool": "tool_name", "args": {"param": "value"}}
-
-After receiving a tool result, provide a natural response to the user.
-Only use tools when necessary. For general conversation, respond normally.
-"""
-)
-
+# ============================================================
+# Helper Functions
+# ============================================================
 (fn extract_first_json [text]
   (var start (text .index "{"))
   (if (start < 0)
@@ -374,9 +387,30 @@ Only use tools when necessary. For general conversation, respond normally.
   nil
 )
 
-# Parse tool call from LLM response
+(fn json_response [status data]
+  (respond status data/.to_json {^Content-Type "application/json"})
+)
+
+(fn sse_send [stream payload]
+  (var data_str (if (payload == nil) then "{}" else payload/.to_json))
+  (stream .send #"data: #{data_str}\n\n")
+)
+
+(fn parse_response [text]
+  (var think_start (text .index "<think>"))
+  (if (think_start < 0)
+    (return [nil text/.trim])
+  )
+  (var think_end (text .index "</think>"))
+  (if (think_end < 0)
+    (return [nil text/.trim])
+  )
+  (var thinking (text .substr (think_start + 7) (think_end - 1)))
+  (var answer (text .substr (think_end + 8)))
+  [thinking/.trim answer/.trim]
+)
+
 (fn parse_tool_call [text]
-  # Look for JSON object with tool field
   (var trimmed (extract_first_json text))
   (if (trimmed == nil)
     (return nil)
@@ -393,36 +427,9 @@ Only use tools when necessary. For general conversation, respond normally.
   )
 )
 
-# Execute a tool by name
-(fn execute_tool [name args]
-  (var tool (TOOLS .get name))
-  (if (tool == nil)
-    (return {^error #"Unknown tool: #{name}"})
-  )
-  (try
-    (tool/handler args)
-  catch *
-    {^error #"Tool execution failed: #{$ex/message}"}
-  )
-)
-
-# Initialize LLM if model path is configured
-# The model is registered globally so worker threads can access it
-(fn init_llm []
-  (if (MODEL_PATH/.length == 0)
-    (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
-  elif genex/llm
-    (println "Loading LLM model from:" MODEL_PATH)
-    # Adjust layers for smaller models or GPUs with more VRAM
-    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99 ^context MODEL_CONTEXT}))
-    # Register model globally for worker thread access
-    (genex/llm/register_model model)
-    (println "LLM model loaded and registered successfully")
-  else
-    (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
-  )
-)
-
+# ============================================================
+# Database Functions
+# ============================================================
 (fn init_db []
   (if genex/sqlite
     (try
@@ -438,31 +445,6 @@ Only use tools when necessary. For general conversation, respond normally.
   else
     (println "genex/sqlite is unavailable. Rebuild with extensions.")
   )
-)
-
-# JSON response helper
-(fn json_response [status data]
-  (respond status data/.to_json {^Content-Type "application/json"})
-)
-
-(fn sse_send [stream payload]
-  (var data_str (if (payload == nil) "{}" else payload/.to_json))
-  (stream .send #"data: #{data_str}\n\n")
-)
-
-# Strip <think>...</think> tags from response, return [thinking, answer]
-(fn parse_response [text]
-  (var think_start (text .index "<think>"))
-  (if (think_start < 0)
-    (return [nil text/.trim])
-  )
-  (var think_end (text .index "</think>"))
-  (if (think_end < 0)
-    (return [nil text/.trim])
-  )
-  (var thinking (text .substr (think_start + 7) (think_end - 1)))
-  (var answer (text .substr (think_end + 8)))
-  [thinking/.trim answer/.trim]
 )
 
 (fn new_conversation []
@@ -492,7 +474,6 @@ Only use tools when necessary. For general conversation, respond normally.
   )
   (var rows (DB .query "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id" conv_id_int))
   (var history [])
-  (var i 0)
   (rows .each (fn [row]
     (history .append {^role row/0 ^content row/1})
   ))
@@ -503,8 +484,8 @@ Only use tools when necessary. For general conversation, respond normally.
   (if (DB == nil)
     (return nil)
   )
-  (var doc_flag (if document_used 1 else 0))
-  (var chunks_val (if document_used document_chunks else 0))
+  (var doc_flag (if document_used then 1 else 0))
+  (var chunks_val (if document_used then document_chunks else 0))
   (DB .exec "INSERT INTO messages (conversation_id, role, content, document_used, document_chunks, created_at) VALUES (?, ?, ?, ?, ?, ?)"
     conv_id_int
     role
@@ -515,9 +496,24 @@ Only use tools when necessary. For general conversation, respond normally.
   )
 )
 
+# ============================================================
+# LLM Functions
+# ============================================================
+(fn init_llm []
+  (if (MODEL_PATH/.length == 0)
+    (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
+  elif genex/llm
+    (println "Loading LLM model from:" MODEL_PATH)
+    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99 ^context MODEL_CONTEXT}))
+    (genex/llm/register_model model)
+    (println "LLM model loaded and registered successfully")
+  else
+    (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
+  )
+)
+
 (fn build_prompt [history message]
   (var parts [])
-  # Add system prompt with tool descriptions
   (var system_prompt (build_system_prompt))
   (parts .append #"<|im_start|>system\n#{system_prompt}\n<|im_end|>\n")
   (history .each (fn [entry]
@@ -586,11 +582,13 @@ Only use tools when necessary. For general conversation, respond normally.
   nil
 )
 
-# Health check endpoint
+# ============================================================
+# HTTP Handlers
+# ============================================================
 (fn handle_health [req]
   (var is_loaded
     (if genex/llm
-      (if (genex/llm/get_model) true else false)
+      (if (genex/llm/get_model) then true else false)
     else
       false
     )
@@ -609,7 +607,6 @@ Only use tools when necessary. For general conversation, respond normally.
   (json_response 200 {^conversation_id conv_id})
 )
 
-# Chat endpoint
 (fn handle_chat [req conv_id]
   (if (DB == nil)
     (return (json_response 500 {^error "SQLite is unavailable"}))
@@ -628,7 +625,7 @@ Only use tools when necessary. For general conversation, respond normally.
     (return (json_response 404 {^error "Conversation not found" ^conversation_id conv_id}))
   )
   (var req_body req/.body)
-  (var body_str (if (req_body == nil) "" else req_body))
+  (var body_str (if (req_body == nil) then "" else req_body))
   (var content_type ((req/.headers .get "content-type" "") .to_lower))
   (var message)
   (var document_text)
@@ -656,15 +653,12 @@ Only use tools when necessary. For general conversation, respond normally.
         (return (json_response 400 {^error "Missing 'message' field"}))
       )
     else
-      # Parse JSON body
       (var parsed)
       (try
         (parsed = (gene/json/parse req_body))
       catch *
         (return (json_response 400 {^error "Invalid JSON"}))
       )
-
-      # Extract message
       (message = (parsed .get "message"))
       (if (message == nil)
         (return (json_response 400 {^error "Missing 'message' field"}))
@@ -701,20 +695,16 @@ User request:
   )
   (var prompt_message message)
 
-  # Generate response with tool execution loop
   (var response_text "")
   (var tokens_used 0)
   (var thinking)
   (var tool_calls [])
 
-  # Get model from global registry (works across threads)
   (var model (if genex/llm then (genex/llm/get_model) else false))
 
   (if model
-    # Create session on-demand for this request
     (var session (model .new_session {^max_tokens MAX_TOKENS ^context MODEL_CONTEXT}))
     (try
-      # Build conversation with history
       (var current_history history)
       (var current_message prompt_message)
       (var max_tool_iterations 5)
@@ -726,25 +716,21 @@ User request:
           (break)
         )
 
-        # Build prompt and generate response
         (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
         (var prompt (build_prompt current_history current_message))
 
-        # Use streaming to print tokens as they're generated
         (var raw_text "")
         (var result (session .infer_streaming prompt (fn [token]
-          (print token)  # Stream token to console
+          (print token)
           (raw_text = #"#{raw_text}#{token}")
         )))
-        (print "\n")  # Newline after streaming completes
+        (print "\n")
         (var tokens (result .get "tokens"))
         (tokens_used += tokens/.size)
 
-        # Check if this is a tool call
         (var tool_call (parse_tool_call raw_text))
 
         (if (tool_call != nil)
-          # Execute the tool
           (var tool_name tool_call/tool)
           (var tool_args (tool_call .get "args" {}))
           (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
@@ -752,7 +738,6 @@ User request:
           (var tool_result (execute_tool tool_name tool_args))
           (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
 
-          # Add tool call and result to history for next iteration
           (var parsed_resp (parse_response raw_text))
           (var tool_text (parsed_resp .get 1))
           (if (tool_text == nil)
@@ -762,10 +747,8 @@ User request:
           (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
           (current_history .append {^role "tool_result" ^content current_message})
           (current_message = "")
-
           (iteration += 1)
         else
-          # No tool call - this is the final response
           (var parsed_resp (parse_response raw_text))
           (thinking = (parsed_resp .get 0))
           (response_text = (parsed_resp .get 1))
@@ -775,10 +758,7 @@ User request:
     catch *
       (response_text = $ex/message)
     )
-    # Note: session cleanup is handled automatically by LLM module's cleanup handler
-    # Explicit close is not possible here due to VM scope bug (scope.members truncated in finally blocks)
   else
-    # Mock response when no model is loaded
     (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
     (tokens_used = 15)
   )
@@ -921,14 +901,15 @@ User request:
   stream
 )
 
-# Main request router
+# ============================================================
+# Request Router
+# ============================================================
 (fn handle_request [req]
   (var path req/.path)
   (var method req/.method)
 
   (println method path)
 
-  # Route requests
   (if (path == "/api/health")
     (handle_health req)
   elif ((path == "/api/chat/new") && (method == "POST"))
@@ -944,7 +925,9 @@ User request:
   )
 )
 
-# Start server
+# ============================================================
+# Server Startup
+# ============================================================
 (println "=== LLM Chat Backend ===")
 (init_db)
 (init_llm)
@@ -956,13 +939,5 @@ User request:
 (println "  GET  /api/chat/{id}/stream - SSE chat stream (message query param)")
 (println)
 
-# (start_server PORT handle_request ^concurrent true ^workers 4)
-
-# LLM apps must run in sequential mode because:
-# 1. Nim's ref objects (ModelState, SessionState) are GC-managed and thread-local
-# 2. Sharing these across threads causes segfaults
-# 3. llama.cpp operations are also not thread-safe
-# For non-LLM HTTP servers, concurrent mode works fine.
 (start_server PORT handle_request)
-
 (run_forever)
