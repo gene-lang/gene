@@ -1,6 +1,7 @@
 import os, strutils, tables, osproc
 import std/locks
 import ../gene/types
+import ../gene/vm
 
 # Global registries for cross-thread access
 # This allows worker threads to access models and create sessions
@@ -474,6 +475,10 @@ else:
   proc gene_llm_infer(session: ptr GeneLlmSession, opts: ptr GeneLlmInferOptions, completion: ptr GeneLlmCompletion, err: ptr GeneLlmError): GeneLlmStatus {.cdecl, importc: "gene_llm_infer", header: "gene_llm.h".}
   proc gene_llm_free_completion(completion: ptr GeneLlmCompletion) {.cdecl, importc: "gene_llm_free_completion", header: "gene_llm.h".}
 
+  # Streaming callback: returns 0 to continue, non-zero to stop
+  type GeneLlmTokenCallback = proc(token: cstring, token_len: cint, user_data: pointer): cint {.cdecl.}
+  proc gene_llm_infer_streaming(session: ptr GeneLlmSession, opts: ptr GeneLlmInferOptions, callback: GeneLlmTokenCallback, user_data: pointer, completion: ptr GeneLlmCompletion, err: ptr GeneLlmError): GeneLlmStatus {.cdecl, importc: "gene_llm_infer_streaming", header: "gene_llm.h".}
+
   type
     ModelState = ref object of CustomValue
       path: string
@@ -862,6 +867,98 @@ else:
     gene_llm_free_completion(addr completion)
     result_value
 
+  # Context for streaming callback
+  type StreamCallbackContext = object
+    vm: ptr VirtualMachine
+    callback: Value
+    cancelled: bool
+
+  # C callback that invokes the Gene callback
+  proc stream_token_callback(token: cstring, token_len: cint, user_data: pointer): cint {.cdecl.} =
+    if user_data == nil:
+      return 0
+    let ctx = cast[ptr StreamCallbackContext](user_data)
+    if ctx.cancelled:
+      return 1
+    
+    let token_value = ($token).to_value()
+    {.cast(gcsafe).}:
+      try:
+        case ctx.callback.kind
+        of VkFunction:
+          discard ctx.vm.exec_function(ctx.callback, @[token_value])
+        of VkNativeFn:
+          discard call_native_fn(ctx.callback.ref.native_fn, ctx.vm, [token_value])
+        else:
+          discard ctx.vm.exec_callable(ctx.callback, @[token_value])
+      except:
+        ctx.cancelled = true
+        return 1
+    return 0
+
+  proc vm_session_infer_streaming(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 3:
+      raise new_exception(types.Exception, "Session.infer_streaming requires self, prompt, and callback")
+
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    let session_state = expect_session(self_val, "Session.infer_streaming")
+    ensure_session_open(session_state)
+
+    let prompt_val = get_positional_arg(args, 1, has_keyword_args)
+    if prompt_val.kind != VkString:
+      raise new_exception(types.Exception, "Session.infer_streaming prompt must be a string")
+
+    let callback_val = get_positional_arg(args, 2, has_keyword_args)
+    if callback_val.kind notin {VkFunction, VkNativeFn, VkBlock, VkBoundMethod, VkNativeMethod}:
+      raise new_exception(types.Exception, "Session.infer_streaming callback must be a function")
+
+    let opts =
+      if positional >= 4:
+        expect_map(get_positional_arg(args, 3, has_keyword_args), "infer_streaming")
+      else:
+        NIL
+
+    if has_option(opts, "timeout") or has_option(opts, "timeout_ms"):
+      raise new_exception(types.Exception, "Session.infer_streaming timeout is not supported for local inference yet")
+
+    var infer_opts = GeneLlmInferOptions(
+      prompt: prompt_val.str.cstring,
+      max_tokens: cint(max(1, get_int_option(opts, "max_tokens", session_state.max_tokens))),
+      temperature: get_float_option(opts, "temperature", session_state.temperature).cfloat,
+      top_p: get_float_option(opts, "top_p", session_state.top_p).cfloat,
+      top_k: cint(max(1, get_int_option(opts, "top_k", session_state.top_k))),
+      seed: cint(get_int_option(opts, "seed", session_state.seed))
+    )
+
+    var ctx = StreamCallbackContext(
+      vm: vm,
+      callback: callback_val,
+      cancelled: false
+    )
+
+    var completion: GeneLlmCompletion
+    var err: GeneLlmError
+    # Serialize llama.cpp operations - not thread-safe
+    {.cast(gcsafe).}:
+      acquire(global_llm_op_lock)
+    try:
+      let status = gene_llm_infer_streaming(session_state.handle, addr infer_opts, stream_token_callback, addr ctx, addr completion, addr err)
+      if status != glsOk:
+        {.cast(gcsafe).}:
+          release(global_llm_op_lock)
+        raise_backend_error(err)
+    except:
+      {.cast(gcsafe).}:
+        release(global_llm_op_lock)
+      raise
+    {.cast(gcsafe).}:
+      release(global_llm_op_lock)
+
+    let result_value = completion_to_value(completion)
+    gene_llm_free_completion(addr completion)
+    result_value
+
   # Register a model globally for cross-thread access
   proc vm_register_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)
@@ -920,6 +1017,7 @@ else:
         if App.app.object_class.kind == VkClass:
           session_class_global.parent = App.app.object_class.ref.class
         session_class_global.def_native_method("infer", vm_session_infer)
+        session_class_global.def_native_method("infer_streaming", vm_session_infer_streaming)
         session_class_global.def_native_method("close", vm_session_close)
         # Set global for cross-thread access
         global_session_class = session_class_global

@@ -12,10 +12,7 @@ extern "C" {
 struct gene_llm_model;
 struct gene_llm_session;
 
-typedef enum {
-  GENE_LLM_OK = 0,
-  GENE_LLM_ERR_GENERAL = 1
-} gene_llm_status;
+typedef enum { GENE_LLM_OK = 0, GENE_LLM_ERR_GENERAL = 1 } gene_llm_status;
 
 typedef enum {
   GENE_LLM_FINISH_STOP = 0,
@@ -74,9 +71,9 @@ gene_llm_status gene_llm_load_model(const char *path,
 void gene_llm_free_model(struct gene_llm_model *model);
 
 gene_llm_status gene_llm_new_session(struct gene_llm_model *model,
-                                      const gene_llm_session_options *options,
-                                      struct gene_llm_session **out_session,
-                                      gene_llm_error *error);
+                                     const gene_llm_session_options *options,
+                                     struct gene_llm_session **out_session,
+                                     gene_llm_error *error);
 void gene_llm_free_session(struct gene_llm_session *session);
 
 gene_llm_status gene_llm_infer(struct gene_llm_session *session,
@@ -84,6 +81,22 @@ gene_llm_status gene_llm_infer(struct gene_llm_session *session,
                                gene_llm_completion *out_completion,
                                gene_llm_error *error);
 void gene_llm_free_completion(gene_llm_completion *completion);
+
+// Callback invoked for each generated token during streaming inference
+// token: the generated token text (null-terminated)
+// token_len: length of the token in bytes
+// user_data: user-provided context pointer
+// Returns: 0 to continue, non-zero to stop generation early
+typedef int (*gene_llm_token_callback)(char *token, int token_len,
+                                       void *user_data);
+
+// Streaming inference - calls callback for each generated token
+gene_llm_status gene_llm_infer_streaming(struct gene_llm_session *session,
+                                         const gene_llm_infer_options *options,
+                                         gene_llm_token_callback callback,
+                                         void *user_data,
+                                         gene_llm_completion *out_completion,
+                                         gene_llm_error *error);
 
 #ifdef __cplusplus
 }

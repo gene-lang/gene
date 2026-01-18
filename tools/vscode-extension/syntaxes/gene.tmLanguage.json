@@ -3,6 +3,7 @@
   "name": "Gene",
   "scopeName": "source.gene",
   "patterns": [
+    { "include": "#regex" },
     { "include": "#strings" },
     { "include": "#comments" },
     { "include": "#numbers" },
@@ -27,7 +28,15 @@
         },
         {
           "name": "comment.line.number-sign.gene",
-          "match": "#(?![\"<]).*$"
+          "match": "#(?![\"</]).*$"
+        }
+      ]
+    },
+    "regex": {
+      "patterns": [
+        {
+          "name": "string.regexp.gene",
+          "match": "#/(?:\\\\.|[^/\\s])*/(?:(?:\\\\.|[^/\\s])*/)?[im]*"
         }
       ]
     },

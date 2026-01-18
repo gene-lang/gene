@@ -500,8 +500,14 @@ User request:
         # Build prompt and generate response
         (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
         (var prompt (build_prompt current_history current_message))
-        (var result (session .infer prompt))
-        (var raw_text (result .get "text"))
+        
+        # Use streaming to print tokens as they're generated
+        (var raw_text "")
+        (var result (session .infer_streaming prompt (fn [token]
+          (print token)  # Stream token to console
+          (raw_text = #"#{raw_text}#{token}")
+        )))
+        (print "\n")  # Newline after streaming completes
         (var tokens (result .get "tokens"))
         (tokens_used += tokens/.size)
 
