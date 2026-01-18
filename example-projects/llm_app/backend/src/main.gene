@@ -152,13 +152,16 @@
   (fn [args]
     (var query (args .get "query" ""))
     (if (query/.length == 0)
-      (return {^error "Missing query"}))
+      (return {^error "Missing query"})
+    )
     (var api_key ($env .get "GOOGLE_API_KEY" ""))
     (var cse_id ($env .get "GOOGLE_CSE_ID" ""))
     (if (api_key/.length == 0)
-      (return {^error "Missing GOOGLE_API_KEY"}))
+      (return {^error "Missing GOOGLE_API_KEY"})
+    )
     (if (cse_id/.length == 0)
-      (return {^error "Missing GOOGLE_CSE_ID"}))
+      (return {^error "Missing GOOGLE_CSE_ID"})
+    )
 
     (var num_val (args .get "num" nil))
     (var num 5)
@@ -169,8 +172,8 @@
         (num = 5)
       )
     )
-    (if (num < 1) (num = 1))
-    (if (num > 10) (num = 10))
+    (if (num < 1) then (num = 1))
+    (if (num > 10) then (num = 10))
 
     (var q (url_encode query))
     (var url #"https://www.googleapis.com/customsearch/v1?key=#{api_key}&cx=#{cse_id}&q=#{q}&num=#{num}")
@@ -181,12 +184,14 @@
       (var resp (await (http_get url)))
       (println "web_search: got response, status=" resp/status)
       (if (resp/status != 200)
-        (return {^error #"Search request failed with status #{resp/status}"}))
+        (return {^error #"Search request failed with status #{resp/status}"})
+      )
       (println "web_search: body length=" resp/body/.length)
       (var data (gene/json/parse resp/body))
       (println "web_search: parsed JSON, keys=" data/.keys)
       (if (data .contains "error")
-        (return {^error ((data/error) .to_json)}))
+        (return {^error ((data/error) .to_json)})
+      )
       (var items (data .get "items" []))
       (println "web_search: items count=" items/.size)
       (if (items/.size == 0)
@@ -625,17 +630,17 @@ User request:
       (var current_message prompt_message)
       (var max_tool_iterations 5)
       (var iteration 0)
-      
+
       (loop
         (if (iteration >= max_tool_iterations)
           (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
           (break)
         )
-        
+
         # Build prompt and generate response
         (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
         (var prompt (build_prompt current_history current_message))
-        
+
         # Use streaming to print tokens as they're generated
         (var raw_text "")
         (var result (session .infer_streaming prompt (fn [token]
@@ -648,16 +653,16 @@ User request:
 
         # Check if this is a tool call
         (var tool_call (parse_tool_call raw_text))
-        
+
         (if (tool_call != nil)
           # Execute the tool
           (var tool_name tool_call/tool)
           (var tool_args (tool_call .get "args" {}))
           (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
-          
+
           (var tool_result (execute_tool tool_name tool_args))
           (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
-          
+
           # Add tool call and result to history for next iteration
           (var parsed_resp (parse_response raw_text))
           (var tool_text (parsed_resp .get 1))
