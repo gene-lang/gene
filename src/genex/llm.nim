@@ -1,5 +1,6 @@
-import os, strutils, tables, osproc
+import os, tables, osproc
 import std/locks
+import std/exitprocs
 import ../gene/types
 import ../gene/vm
 
@@ -317,9 +318,9 @@ when defined(GENE_LLM_MOCK):
   proc vm_get_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     {.cast(gcsafe).}:
       acquire(global_model_lock)
-      let result = global_model_registry
+      let model_value = global_model_registry
       release(global_model_lock)
-      result
+      model_value
 
   proc init_llm_module*() =
     VmCreatedCallbacks.add proc() =
@@ -1054,9 +1055,9 @@ else:
   proc vm_get_model(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     {.cast(gcsafe).}:
       acquire(global_model_lock)
-      let result = global_model_registry
+      let model_value = global_model_registry
       release(global_model_lock)
-      result
+      model_value
 
   proc cleanup_llm_backend() {.noconv.} =
     for state in tracked_sessions:
@@ -1066,7 +1067,7 @@ else:
       cleanup_model(state)
     tracked_models.setLen(0)
 
-  addQuitProc(cleanup_llm_backend)
+  addExitProc(cleanup_llm_backend)
 
   proc init_llm_module*() =
     VmCreatedCallbacks.add proc() =

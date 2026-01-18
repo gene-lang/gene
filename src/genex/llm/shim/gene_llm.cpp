@@ -209,9 +209,10 @@ gene_llm_status gene_llm_new_session(gene_llm_model *model,
                           ? options->context_length
                           : model->default_ctx;
   ctx_params.n_ctx = ctx_len;
+  // Set batch size to context length to allow processing full prompts
   ctx_params.n_batch = options && options->batch_size > 0
                            ? options->batch_size
-                           : std::min(512, ctx_len);
+                           : ctx_len;
   ctx_params.n_threads = options && options->threads > 0 ? options->threads : 0;
   ctx_params.n_threads_batch = ctx_params.n_threads;
   ctx_params.no_perf = true;
