@@ -90,6 +90,7 @@
       (break)
     )
     (var ch (input .char_at i))
+    (var ch_str (input .substr i i))
     (case ch
     when ' '
       (out .append "+")
@@ -138,7 +139,7 @@
     when '}'
       (out .append "%7D")
     else
-      (out .append ch)
+      (out .append ch_str)
     )
     (i += 1)
   )
@@ -173,23 +174,34 @@
 
     (var q (url_encode query))
     (var url #"https://www.googleapis.com/customsearch/v1?key=#{api_key}&cx=#{cse_id}&q=#{q}&num=#{num}")
+    (println "web_search: query=" query)
+    (println "web_search: encoded q=" q)
+    (println "web_search: full URL=" url)
     (try
       (var resp (await (http_get url)))
+      (println "web_search: got response, status=" resp/status)
       (if (resp/status != 200)
         (return {^error #"Search request failed with status #{resp/status}"}))
+      (println "web_search: body length=" resp/body/.length)
       (var data (gene/json/parse resp/body))
+      (println "web_search: parsed JSON, keys=" data/.keys)
       (if (data .contains "error")
         (return {^error ((data/error) .to_json)}))
       (var items (data .get "items" []))
-      (var results [])
+      (println "web_search: items count=" items/.size)
+      (if (items/.size == 0)
+        (return {^result #"No results found for: #{query}"})
+      )
+      (var result_parts [])
+      (var i 1)
       (items .each (fn [item]
-        (results .append {
-          ^title (item .get "title" "")
-          ^link (item .get "link" "")
-          ^snippet (item .get "snippet" "")
-        })
+        (var title (item .get "title" ""))
+        (var link (item .get "link" ""))
+        (var snippet (item .get "snippet" ""))
+        (result_parts .append #"#{i}. #{title}\n   #{link}\n   #{snippet}")
+        (i += 1)
       ))
-      {^query query ^results results}
+      {^result (result_parts .join "\n\n")}
     catch *
       {^error #"Search failed: #{$ex/message}"}
     )

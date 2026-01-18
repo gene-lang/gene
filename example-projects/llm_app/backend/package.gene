@@ -7,5 +7,5 @@
 ^gene-version "*"
 ^main-module "main"
 ^source-dir "src"
-^homepage "https://github.com/gcao/gene"
-^repository "https://github.com/gcao/gene.git"
+^homepage "https://github.com/gene-language/gene"
+^repository "https://github.com/gene-language/gene.git"

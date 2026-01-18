@@ -210,12 +210,17 @@ gene_llm_status gene_llm_new_session(gene_llm_model *model,
                           : model->default_ctx;
   ctx_params.n_ctx = ctx_len;
   // Set batch size to context length to allow processing full prompts
-  ctx_params.n_batch = options && options->batch_size > 0
-                           ? options->batch_size
-                           : ctx_len;
+  const int batch_size = options && options->batch_size > 0
+                             ? options->batch_size
+                             : ctx_len;
+  ctx_params.n_batch = batch_size;
+  ctx_params.n_ubatch = batch_size;  // Physical batch size must also be set
   ctx_params.n_threads = options && options->threads > 0 ? options->threads : 0;
   ctx_params.n_threads_batch = ctx_params.n_threads;
   ctx_params.no_perf = true;
+
+  fprintf(stderr, "[gene_llm] new_session: ctx_len=%d, batch_size=%d, n_batch=%d, n_ubatch=%d\n",
+          ctx_len, batch_size, ctx_params.n_batch, ctx_params.n_ubatch);
 
   llama_context *ctx = llama_init_from_model(model->model, ctx_params);
   if (!ctx) {
@@ -311,6 +316,9 @@ gene_llm_status gene_llm_infer(gene_llm_session *session,
   }
 
   const int64_t start_us = llama_time_us();
+
+  fprintf(stderr, "[gene_llm] infer: prompt_tokens=%zu, batch.n_tokens=%d\n",
+          prompt_tokens.size(), batch.n_tokens);
 
   if (llama_decode(session->ctx, batch) != 0) {
     llama_sampler_free(sampler);
@@ -441,6 +449,9 @@ gene_llm_status gene_llm_infer_streaming(gene_llm_session *session,
   }
 
   const int64_t start_us = llama_time_us();
+
+  fprintf(stderr, "[gene_llm] infer: prompt_tokens=%zu, batch.n_tokens=%d\n",
+          prompt_tokens.size(), batch.n_tokens);
 
   if (llama_decode(session->ctx, batch) != 0) {
     llama_sampler_free(sampler);

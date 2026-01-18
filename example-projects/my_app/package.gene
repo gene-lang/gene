@@ -11,5 +11,5 @@
 ]
 ^source-dir "src"
 ^test-dir "tests"
-^homepage "https://github.com/gcao/gene-new/example-projects"
-^repository "https://github.com/gcao/gene-new.git" # github:gcao/gene-new
+^homepage "https://github.com/gene-language/gene/example-projects"
+^repository "https://github.com/gene-language/gene.git" # github:gene-language/gene

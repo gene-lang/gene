@@ -138,5 +138,5 @@ Vagrant.configure(2) do |config|
 
   # config.vm.synced_folder "", APP_DIR, type: "nfs"
   # If above does not work, run this command:
-  # sudo mount 192.168.56.3:/Users/gcao/proj/gene /vagrant
+  # sudo mount <HOST_IP>:$HOME/gene-workspace/gene /vagrant
 end

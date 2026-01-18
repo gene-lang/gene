@@ -761,9 +761,10 @@ else:
       else:
         NIL
 
+    let ctx_len = get_int_option(opts, "context", model_state.context_len)
     var session_opts = GeneLlmSessionOptions(
-      context_length: cint(get_int_option(opts, "context", model_state.context_len)),
-      batch_size: cint(get_int_option(opts, "batch", min(512, model_state.context_len))),
+      context_length: cint(ctx_len),
+      batch_size: cint(get_int_option(opts, "batch", ctx_len)),  # Default batch to context length
       threads: cint(max(1, get_int_option(opts, "threads", model_state.threads))),
       seed: cint(get_int_option(opts, "seed", 42)),
       temperature: get_float_option(opts, "temperature", 0.7).cfloat,

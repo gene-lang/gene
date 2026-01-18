@@ -83,7 +83,7 @@ This unified structure enables:
 
 ```bash
 # Clone the repository
-git clone https://github.com/gcao/gene
+git clone https://github.com/gene-language/gene
 cd gene
 
 # Build the VM (produces bin/gene)

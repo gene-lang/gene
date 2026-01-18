@@ -60,5 +60,5 @@ This extension is part of the Gene language project. To contribute:
 
 ## More Information
 
-- [Gene Language Documentation](https://github.com/gcao/gene)
+- [Gene Language Documentation](https://gene-lang.github.io/)
 - [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
