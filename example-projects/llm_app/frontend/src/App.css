@@ -266,11 +266,23 @@ body {
 
 /* Thinking section styles */
 .thinking-section {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.03);
   overflow: hidden;
+}
+
+/* Spacing between multiple response segments */
+.message.assistant .message-content.markdown + .thinking-section,
+.message.assistant .thinking-section + .message-content.markdown {
+  margin-top: 8px;
+}
+
+.message.assistant .message-content.markdown + .message-content.markdown {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .thinking-toggle {

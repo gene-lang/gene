@@ -12,10 +12,38 @@ const STORAGE_KEY = 'gene_llm_conversations'
 
 const emptyStore = { conversations: {}, lastConversationId: null }
 
-// Strip <think>...</think> tags from content
-function stripThinkingTags(content) {
-  if (!content) return ''
-  return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+// Parse content into segments of thinking and response
+function parseContentSegments(content) {
+  if (!content) return []
+
+  const segments = []
+  const thinkRegex = /<think>([\s\S]*?)<\/think>/gi
+  let lastIndex = 0
+  let match
+
+  while ((match = thinkRegex.exec(content)) !== null) {
+    // Add any response content before this thinking block
+    const beforeContent = content.slice(lastIndex, match.index).trim()
+    if (beforeContent) {
+      segments.push({ type: 'response', content: beforeContent })
+    }
+
+    // Add the thinking block
+    const thinkingContent = match[1].trim()
+    if (thinkingContent) {
+      segments.push({ type: 'thinking', content: thinkingContent })
+    }
+
+    lastIndex = match.index + match[0].length
+  }
+
+  // Add any remaining response content after the last thinking block
+  const afterContent = content.slice(lastIndex).trim()
+  if (afterContent) {
+    segments.push({ type: 'response', content: afterContent })
+  }
+
+  return segments
 }
 
 // ThinkingSection component - foldable section showing AI thinking
@@ -386,10 +414,10 @@ function App() {
     }
   }
 
-  const toggleThinking = (messageIdx) => {
+  const toggleThinking = (key) => {
     setExpandedThinking(prev => ({
       ...prev,
-      [messageIdx]: !prev[messageIdx]
+      [key]: !prev[key]
     }))
   }
 
@@ -423,20 +451,32 @@ function App() {
               <p className="hint">Send a message to start chatting.</p>
             </div>
           )}
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`message ${msg.role}`}>
-              {msg.role === 'assistant' && msg.thinking && (
-                <ThinkingSection
-                  thinking={msg.thinking}
-                  isExpanded={expandedThinking[idx] || false}
-                  onToggle={() => toggleThinking(idx)}
-                />
-              )}
+          {messages.map((msg, msgIdx) => (
+            <div key={msgIdx} className={`message ${msg.role}`}>
               {msg.role === 'assistant' ? (
-                <div
-                  className="message-content markdown"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(stripThinkingTags(msg.content)) }}
-                />
+                <>
+                  {parseContentSegments(msg.content).map((segment, segIdx) => {
+                    const key = `${msgIdx}-${segIdx}`
+                    if (segment.type === 'thinking') {
+                      return (
+                        <ThinkingSection
+                          key={key}
+                          thinking={segment.content}
+                          isExpanded={expandedThinking[key] || false}
+                          onToggle={() => toggleThinking(key)}
+                        />
+                      )
+                    } else {
+                      return (
+                        <div
+                          key={key}
+                          className="message-content markdown"
+                          dangerouslySetInnerHTML={{ __html: marked.parse(segment.content) }}
+                        />
+                      )
+                    }
+                  })}
+                </>
               ) : (
                 <div className="message-content">{msg.content}</div>
               )}
