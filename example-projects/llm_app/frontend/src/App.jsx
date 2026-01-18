@@ -37,6 +37,7 @@ function App() {
   const [input, setInput] = useState('')
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [showTyping, setShowTyping] = useState(false)
   const [status, setStatus] = useState({ connected: false, modelLoaded: false })
   const [conversationId, setConversationId] = useState(null)
   const messagesEndRef = useRef(null)
@@ -142,6 +143,7 @@ function App() {
       abortRef.current = null
     }
     setLoading(false)
+    setShowTyping(false)
   }
 
   const createConversation = async (initialMessages = []) => {
@@ -178,6 +180,7 @@ function App() {
       }
     }
     setLoading(true)
+    setShowTyping(true)
     let usedStreaming = false
 
     let activeConversation
@@ -189,6 +192,7 @@ function App() {
         content: error.message || 'Failed to start conversation'
       }])
       setLoading(false)
+      setShowTyping(false)
       return
     }
 
@@ -208,17 +212,11 @@ function App() {
       } else {
         usedStreaming = true
         const assistantId = `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`
-        appendMessage(activeConversation, {
-          id: assistantId,
-          role: 'assistant',
-          content: '',
-          tokens: null
-        })
 
         const streamUrl = `/api/chat/${encodeURIComponent(activeConversation)}/stream?message=${encodeURIComponent(userMessage)}`
         const eventSource = new EventSource(streamUrl)
         streamRef.current = eventSource
-
+        let hasMessage = false
         eventSource.onmessage = (event) => {
           let payload
           try {
@@ -228,6 +226,17 @@ function App() {
           }
 
           if (payload.token) {
+            if (!hasMessage) {
+              hasMessage = true
+              setShowTyping(false)
+              appendMessage(activeConversation, {
+                id: assistantId,
+                role: 'assistant',
+                content: payload.token,
+                tokens: null
+              })
+              return
+            }
             updateMessageById(activeConversation, assistantId, msg => ({
               ...msg,
               content: `${msg.content || ''}${payload.token}`
@@ -235,29 +244,42 @@ function App() {
           }
 
           if (payload.error) {
-            updateMessageById(activeConversation, assistantId, msg => ({
-              ...msg,
-              role: 'error',
-              content: payload.error
-            }))
+            setShowTyping(false)
+            if (hasMessage) {
+              updateMessageById(activeConversation, assistantId, msg => ({
+                ...msg,
+                role: 'error',
+                content: payload.error
+              }))
+            } else {
+              appendMessage(activeConversation, { role: 'error', content: payload.error })
+            }
             stopStream()
           }
 
           if (payload.done) {
-            updateMessageById(activeConversation, assistantId, msg => ({
-              ...msg,
-              tokens: payload.tokens_used || null
-            }))
+            setShowTyping(false)
+            if (hasMessage) {
+              updateMessageById(activeConversation, assistantId, msg => ({
+                ...msg,
+                tokens: payload.tokens_used || null
+              }))
+            }
             stopStream()
           }
         }
 
         eventSource.onerror = () => {
-          updateMessageById(activeConversation, assistantId, msg => ({
-            ...msg,
-            role: msg.content ? 'assistant' : 'error',
-            content: msg.content || 'Streaming connection closed.'
-          }))
+          setShowTyping(false)
+          if (hasMessage) {
+            updateMessageById(activeConversation, assistantId, msg => ({
+              ...msg,
+              role: msg.content ? 'assistant' : 'error',
+              content: msg.content || 'Streaming connection closed.'
+            }))
+          } else {
+            appendMessage(activeConversation, { role: 'error', content: 'Streaming connection closed.' })
+          }
           stopStream()
         }
 
@@ -265,6 +287,7 @@ function App() {
       }
       const data = await response.json()
 
+      setShowTyping(false)
       if (data.error) {
         appendMessage(activeConversation, { role: 'error', content: data.error })
       } else {
@@ -278,6 +301,7 @@ function App() {
       if (error?.name === 'AbortError') {
         return
       }
+      setShowTyping(false)
       appendMessage(activeConversation, {
         role: 'error',
         content: 'Failed to connect to backend. Is the server running?'
@@ -285,6 +309,7 @@ function App() {
     } finally {
       if (!usedStreaming) {
         setLoading(false)
+        setShowTyping(false)
       }
       if (abortRef.current) {
         abortRef.current = null
@@ -367,7 +392,7 @@ function App() {
               )}
             </div>
           ))}
-          {loading && (
+          {showTyping && (
             <div className="message assistant loading">
               <div className="typing-indicator">
                 <span></span><span></span><span></span>
