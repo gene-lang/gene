@@ -42,6 +42,8 @@ function App() {
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
   const storeRef = useRef(emptyStore)
+  const streamRef = useRef(null)
+  const abortRef = useRef(null)
 
   // Check backend health on mount
   useEffect(() => {
@@ -66,6 +68,15 @@ function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.close()
+        streamRef.current = null
+      }
+    }
+  }, [])
 
   const checkHealth = async () => {
     try {
@@ -111,6 +122,28 @@ function App() {
     })
   }
 
+  const updateMessageById = (convId, messageId, updater) => {
+    setMessages(prev => {
+      const next = prev.map(msg => (msg.id === messageId ? updater(msg) : msg))
+      if (convId) {
+        persistConversation(convId, next)
+      }
+      return next
+    })
+  }
+
+  const stopStream = () => {
+    if (streamRef.current) {
+      streamRef.current.close()
+      streamRef.current = null
+    }
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+    setLoading(false)
+  }
+
   const createConversation = async (initialMessages = []) => {
     const response = await fetch('/api/chat/new', { method: 'POST' })
     const data = await response.json()
@@ -145,6 +178,7 @@ function App() {
       }
     }
     setLoading(true)
+    let usedStreaming = false
 
     let activeConversation
     try {
@@ -163,18 +197,71 @@ function App() {
     try {
       let response
       if (fileToSend) {
+        const controller = new AbortController()
+        abortRef.current = controller
         const formData = new FormData()
         formData.append('file', fileToSend)
         const url = userMessage
           ? `/api/chat/${encodeURIComponent(activeConversation)}?message=${encodeURIComponent(userMessage)}`
           : `/api/chat/${encodeURIComponent(activeConversation)}`
-        response = await fetch(url, { method: 'POST', body: formData })
+        response = await fetch(url, { method: 'POST', body: formData, signal: controller.signal })
       } else {
-        response = await fetch(`/api/chat/${encodeURIComponent(activeConversation)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: userMessage })
+        usedStreaming = true
+        const assistantId = `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        appendMessage(activeConversation, {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          tokens: null
         })
+
+        const streamUrl = `/api/chat/${encodeURIComponent(activeConversation)}/stream?message=${encodeURIComponent(userMessage)}`
+        const eventSource = new EventSource(streamUrl)
+        streamRef.current = eventSource
+
+        eventSource.onmessage = (event) => {
+          let payload
+          try {
+            payload = JSON.parse(event.data)
+          } catch (err) {
+            return
+          }
+
+          if (payload.token) {
+            updateMessageById(activeConversation, assistantId, msg => ({
+              ...msg,
+              content: `${msg.content || ''}${payload.token}`
+            }))
+          }
+
+          if (payload.error) {
+            updateMessageById(activeConversation, assistantId, msg => ({
+              ...msg,
+              role: 'error',
+              content: payload.error
+            }))
+            stopStream()
+          }
+
+          if (payload.done) {
+            updateMessageById(activeConversation, assistantId, msg => ({
+              ...msg,
+              tokens: payload.tokens_used || null
+            }))
+            stopStream()
+          }
+        }
+
+        eventSource.onerror = () => {
+          updateMessageById(activeConversation, assistantId, msg => ({
+            ...msg,
+            role: msg.content ? 'assistant' : 'error',
+            content: msg.content || 'Streaming connection closed.'
+          }))
+          stopStream()
+        }
+
+        return
       }
       const data = await response.json()
 
@@ -188,17 +275,26 @@ function App() {
         })
       }
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        return
+      }
       appendMessage(activeConversation, {
         role: 'error',
         content: 'Failed to connect to backend. Is the server running?'
       })
     } finally {
-      setLoading(false)
+      if (!usedStreaming) {
+        setLoading(false)
+      }
+      if (abortRef.current) {
+        abortRef.current = null
+      }
     }
   }
 
   const handleNewConversation = async () => {
     if (loading) return
+    stopStream()
     try {
       setInput('')
       setFile(null)
@@ -301,9 +397,15 @@ function App() {
               placeholder="Type a message or upload a document..."
               disabled={loading}
             />
-            <button type="submit" disabled={loading || (!input.trim() && !file)}>
-              Send
-            </button>
+            {loading ? (
+              <button type="button" onClick={stopStream}>
+                Stop
+              </button>
+            ) : (
+              <button type="submit" disabled={!input.trim() && !file}>
+                Send
+              </button>
+            )}
           </div>
           {file && (
             <div className="file-chip">

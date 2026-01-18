@@ -225,6 +225,11 @@ Only use tools when necessary. For general conversation, respond normally.
   (respond status data/.to_json {^Content-Type "application/json"})
 )
 
+(fn sse_send [stream payload]
+  (var data_str (if (payload == nil) "{}" else payload/.to_json))
+  (stream .send #"data: #{data_str}\n\n")
+)
+
 # Strip <think>...</think> tags from response, return [thinking, answer]
 (fn parse_response [text]
   (var think_start (text .index "<think>"))
@@ -352,7 +357,11 @@ Only use tools when necessary. For general conversation, respond normally.
 (fn chat_id_from_path [path]
   (var prefix "/api/chat/")
   (if (path .starts_with prefix)
-    (return (path .substr prefix/.length))
+    (var rest (path .substr prefix/.length))
+    (if (rest .ends_with "/stream")
+      (rest = (rest .substr 0 (rest/.length - 8)))
+    )
+    (return rest)
   )
   nil
 )
@@ -571,6 +580,111 @@ User request:
   (json_response 200 response_data)
 )
 
+(fn handle_chat_stream [req conv_id]
+  (if (DB == nil)
+    (return (json_response 500 {^error "SQLite is unavailable"}))
+  )
+  (if (conv_id == nil)
+    (return (json_response 400 {^error "Missing conversation id"}))
+  )
+  (var conv_id_int conv_id/.to_i)
+  (if (conv_id_int <= 0)
+    (return (json_response 400 {^error "Invalid conversation id"}))
+  )
+  (var history [])
+  (if (conversation_exists conv_id_int)
+    (history = (load_history conv_id_int))
+  else
+    (return (json_response 404 {^error "Conversation not found" ^conversation_id conv_id}))
+  )
+
+  (var message ((req/.params .get "message" "") .trim))
+  (if (message/.length == 0)
+    (return (json_response 400 {^error "Missing 'message' query param"}))
+  )
+
+  (var prompt_message message)
+  (var stream (respond_sse req {^Content-Type "text/event-stream"}))
+
+  (var response_text "")
+  (var tokens_used 0)
+  (var thinking)
+  (var tool_calls [])
+  (var document_used false)
+  (var document_chunks 0)
+
+  (var model (if genex/llm then (genex/llm/get_model) else false))
+  (if model
+    (var session (model .new_session {^max_tokens MAX_TOKENS ^context MODEL_CONTEXT}))
+    (try
+      (var current_history history)
+      (var current_message prompt_message)
+      (var max_tool_iterations 5)
+      (var iteration 0)
+
+      (loop
+        (if (iteration >= max_tool_iterations)
+          (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
+          (break)
+        )
+
+        (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
+        (var prompt (build_prompt current_history current_message))
+
+        (var raw_text "")
+        (var result (session .infer_streaming prompt (fn [token]
+          (raw_text = #"#{raw_text}#{token}")
+          (sse_send stream {^token token})
+        )))
+        (var tokens (result .get "tokens"))
+        (tokens_used += tokens/.size)
+
+        (var tool_call (parse_tool_call raw_text))
+        (if (tool_call != nil)
+          (var tool_name tool_call/tool)
+          (var tool_args (tool_call .get "args" {}))
+          (var tool_result (execute_tool tool_name tool_args))
+          (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
+
+          (var parsed_resp (parse_response raw_text))
+          (var tool_text (parsed_resp .get 1))
+          (if (tool_text == nil)
+            (tool_text = raw_text/.trim)
+          )
+          (current_history .append {^role "assistant" ^content tool_text})
+          (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
+          (current_history .append {^role "tool_result" ^content current_message})
+          (current_message = "")
+          (iteration += 1)
+        else
+          (var parsed_resp (parse_response raw_text))
+          (thinking = (parsed_resp .get 0))
+          (response_text = (parsed_resp .get 1))
+          (break)
+        )
+      )
+    catch *
+      (response_text = $ex/message)
+      (sse_send stream {^error response_text})
+    )
+  else
+    (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
+    (tokens_used = 15)
+    (sse_send stream {^token response_text})
+  )
+
+  (store_message conv_id_int "user" prompt_message document_used document_chunks)
+  (store_message conv_id_int "assistant" response_text false 0)
+
+  (var done_payload {^done true ^tokens_used tokens_used ^thinking thinking})
+  (if (tool_calls/.size > 0)
+    (done_payload .set "tool_calls" tool_calls)
+  )
+  (sse_send stream done_payload)
+  (stream .close)
+  stream
+)
+
 # Main request router
 (fn handle_request [req]
   (var path req/.path)
@@ -583,6 +697,9 @@ User request:
     (handle_health req)
   elif ((path == "/api/chat/new") && (method == "POST"))
     (handle_chat_new req)
+  elif ((path .starts_with "/api/chat/") && (path .ends_with "/stream") && (method == "GET"))
+    (var conv_id (chat_id_from_path path))
+    (handle_chat_stream req conv_id)
   elif ((path .starts_with "/api/chat/") && (method == "POST"))
     (var conv_id (chat_id_from_path path))
     (handle_chat req conv_id)
@@ -600,6 +717,7 @@ User request:
 (println "  GET  /api/health - Health check")
 (println "  POST /api/chat/new - Start conversation")
 (println "  POST /api/chat/{id} - Send chat message")
+(println "  GET  /api/chat/{id}/stream - SSE chat stream (message query param)")
 (println)
 
 # (start_server PORT handle_request ^concurrent true ^workers 4)

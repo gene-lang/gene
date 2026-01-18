@@ -2,7 +2,7 @@
 import tables, strutils
 import httpclient, uri
 import std/json
-import asynchttpserver, asyncdispatch
+import asynchttpserver, asyncdispatch, asyncnet
 import asyncfutures  # Import asyncfutures explicitly
 import nativesockets, net
 import cgi
@@ -34,6 +34,7 @@ var response_class_global: Class
 var server_request_class_global: Class
 
 var server_response_class_global: Class
+var server_stream_class_global: Class
 
 # Concurrent mode flag
 var concurrent_mode: bool = false
@@ -51,7 +52,10 @@ proc response_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value
 proc response_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc vm_respond(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_respond_sse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc server_stream_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc server_stream_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.}
 proc response_to_literal(resp: Value): Value {.gcsafe.}
@@ -60,6 +64,63 @@ proc literal_error_response(message: string): Value {.gcsafe.}
 proc http_worker_handle_request(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 
 proc parse_json_internal(node: json.JsonNode): Value {.gcsafe.}
+
+proc headers_from_map(headers_val: Value): HttpHeaders =
+  var headers = newHttpHeaders()
+  if headers_val.kind == VkMap:
+    for k, v in map_data(headers_val):
+      let header_name = cast[Value](k).str
+      case v.kind
+      of VkString:
+        headers[header_name] = v.str
+      of VkArray:
+        var values: seq[string] = @[]
+        for item in array_data(v):
+          case item.kind
+          of VkString, VkSymbol:
+            values.add(item.str)
+          else:
+            values.add($item)
+        if values.len > 0:
+          headers[header_name] = values
+      else:
+        headers[header_name] = $v
+  headers
+
+proc apply_default_sse_headers(headers: var HttpHeaders) =
+  if not headers.hasKey("Content-Type"):
+    headers["Content-Type"] = "text/event-stream"
+  if not headers.hasKey("Cache-Control"):
+    headers["Cache-Control"] = "no-cache"
+  if not headers.hasKey("Connection"):
+    headers["Connection"] = "keep-alive"
+  if not headers.hasKey("X-Accel-Buffering"):
+    headers["X-Accel-Buffering"] = "no"
+  if not headers.hasKey("Transfer-Encoding") and not headers.hasKey("Content-Length"):
+    headers["Transfer-Encoding"] = "chunked"
+
+proc send_status_and_headers(client: AsyncSocket, status: string, headers: HttpHeaders) =
+  var msg = "HTTP/1.1 " & status & "\c\L"
+  for k, v in headers:
+    msg.add(k & ": " & v & "\c\L")
+  msg.add("\c\L")
+  waitFor client.send(msg)
+
+proc send_chunk(client: AsyncSocket, payload: string) =
+  let size_hex = toHex(payload.len)
+  let chunk = size_hex & "\c\L" & payload & "\c\L"
+  waitFor client.send(chunk)
+
+proc get_native_client(req_val: Value): AsyncSocket =
+  if req_val.kind != VkInstance:
+    raise new_exception(types.Exception, "respond_sse requires a ServerRequest instance")
+  let ptr_val = instance_props(req_val).getOrDefault("__native_client".to_key(), NIL)
+  if ptr_val.kind != VkPointer:
+    raise new_exception(types.Exception, "respond_sse requires a live request (not available in concurrent mode)")
+  let req_ptr = ptr_val.to_pointer()
+  if req_ptr.is_nil:
+    raise new_exception(types.Exception, "respond_sse request client pointer is nil")
+  cast[AsyncSocket](req_ptr)
 
 proc parse_json*(json_str: string): Value {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -662,6 +723,12 @@ proc init_http_classes*() =
       response_class_global.def_native_constructor(response_constructor)
       response_class_global.def_native_method("json", response_json)
 
+    # Create ServerStream class
+    {.cast(gcsafe).}:
+      server_stream_class_global = new_class("ServerStream")
+      server_stream_class_global.def_native_method("send", server_stream_send)
+      server_stream_class_global.def_native_method("close", server_stream_close)
+
     # Store classes in gene namespace
     let request_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
@@ -672,11 +739,15 @@ proc init_http_classes*() =
     let response_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
       response_class_ref.class = response_class_global
+    let server_stream_class_ref = new_ref(VkClass)
+    {.cast(gcsafe).}:
+      server_stream_class_ref.class = server_stream_class_global
 
     if App.app.gene_ns.kind == VkNamespace:
       App.app.gene_ns.ref.ns["Request".to_key()] = request_class_ref.to_ref_value()
       App.app.gene_ns.ref.ns["ServerRequest".to_key()] = server_request_class_ref.to_ref_value()
       App.app.gene_ns.ref.ns["Response".to_key()] = response_class_ref.to_ref_value()
+      App.app.gene_ns.ref.ns["ServerStream".to_key()] = server_stream_class_ref.to_ref_value()
 
     # Add helper functions to global namespace
     let get_fn = new_ref(VkNativeFn)
@@ -695,6 +766,10 @@ proc init_http_classes*() =
     let respond_fn = new_ref(VkNativeFn)
     respond_fn.native_fn = vm_respond
     App.app.global_ns.ref.ns["respond".to_key()] = respond_fn.to_ref_value()
+
+    let respond_sse_fn = new_ref(VkNativeFn)
+    respond_sse_fn.native_fn = vm_respond_sse
+    App.app.global_ns.ref.ns["respond_sse".to_key()] = respond_sse_fn.to_ref_value()
 
     let redirect_fn = new_ref(VkNativeFn)
     redirect_fn.native_fn = vm_redirect
@@ -1031,6 +1106,9 @@ proc create_server_request(req: asynchttpserver.Request): Value =
   let body_content = req.body
   instance_props(instance)["body".to_key()] = body_content.to_value()
 
+  # Store native client pointer for streaming responses (non-concurrent mode only)
+  instance_props(instance)["__native_client".to_key()] = cast[pointer](req.client).to_value()
+
   var content_type = ""
   if req.headers.hasKey("Content-Type"):
     content_type = req.headers["Content-Type"]
@@ -1121,6 +1199,8 @@ proc response_to_literal(resp: Value): Value {.gcsafe.} =
 
     # If it's a ServerResponse instance, convert to map
     elif resp.kind == VkInstance:
+      if server_stream_class_global != nil and instance_class(resp) == server_stream_class_global:
+        return literal_error_response("ServerStream responses are not supported in concurrent mode")
       let result = new_map_value()
       map_data(result) = Table[Key, Value]()
 
@@ -1283,6 +1363,9 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
     elif response.kind == VkString:
       await req.respond(Http200, response.str)
     elif response.kind == VkInstance:
+      # If it's a ServerStream, streaming already handled
+      if server_stream_class_global != nil and instance_class(response) == server_stream_class_global:
+        return
       # Check if it's a ServerResponse
       let status_val = instance_props(response).getOrDefault("status".to_key(), 200.to_value())
       let body_val = instance_props(response).getOrDefault("body".to_key(), "".to_value())
@@ -1432,6 +1515,92 @@ proc vm_respond(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   instance_props(instance)["headers".to_key()] = headers
 
   return instance
+
+proc server_stream_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 2:
+    raise new_exception(types.Exception, "ServerStream.send requires data")
+
+  let stream_obj = get_positional_arg(args, 0, has_keyword_args)
+  if stream_obj.kind != VkInstance:
+    raise new_exception(types.Exception, "ServerStream.send must be called on a ServerStream instance")
+
+  let data_val = get_positional_arg(args, 1, has_keyword_args)
+  let payload = if data_val.kind == VkString: data_val.str else: $data_val
+
+  let closed_val = instance_props(stream_obj).getOrDefault("closed".to_key(), FALSE)
+  if closed_val == TRUE:
+    return FALSE
+
+  let req_ptr_val = instance_props(stream_obj).getOrDefault("__native_client".to_key(), NIL)
+  if req_ptr_val.kind != VkPointer:
+    return FALSE
+
+  let client = cast[AsyncSocket](req_ptr_val.to_pointer())
+  try:
+    send_chunk(client, payload)
+    return TRUE
+  except CatchableError:
+    instance_props(stream_obj)["closed".to_key()] = TRUE
+    return FALSE
+
+proc server_stream_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "ServerStream.close requires self")
+
+  let stream_obj = get_positional_arg(args, 0, has_keyword_args)
+  if stream_obj.kind != VkInstance:
+    raise new_exception(types.Exception, "ServerStream.close must be called on a ServerStream instance")
+
+  let closed_val = instance_props(stream_obj).getOrDefault("closed".to_key(), FALSE)
+  if closed_val == TRUE:
+    return NIL
+
+  let req_ptr_val = instance_props(stream_obj).getOrDefault("__native_client".to_key(), NIL)
+  if req_ptr_val.kind == VkPointer:
+    let client = cast[AsyncSocket](req_ptr_val.to_pointer())
+    try:
+      waitFor client.send("0\c\L\c\L")
+    except CatchableError:
+      discard
+    try:
+      client.close()
+    except CatchableError:
+      discard
+
+  instance_props(stream_obj)["closed".to_key()] = TRUE
+  return NIL
+
+proc vm_respond_sse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "respond_sse requires a request argument")
+
+  if concurrent_mode:
+    raise new_exception(types.Exception, "respond_sse is not supported in concurrent mode")
+
+  let req_val = get_positional_arg(args, 0, has_keyword_args)
+  let headers_val =
+    if get_positional_count(arg_count, has_keyword_args) > 1:
+      get_positional_arg(args, 1, has_keyword_args)
+    else:
+      NIL
+
+  let client = get_native_client(req_val)
+  var headers = headers_from_map(headers_val)
+  apply_default_sse_headers(headers)
+
+  try:
+    send_status_and_headers(client, "200 OK", headers)
+  except CatchableError as e:
+    raise new_exception(types.Exception, "Failed to start SSE: " & e.msg)
+
+  let stream_class = block:
+    {.cast(gcsafe).}:
+      (if server_stream_class_global != nil: server_stream_class_global else: new_class("ServerStream"))
+  let stream_instance = new_instance_value(stream_class)
+  instance_props(stream_instance)["__native_client".to_key()] =
+    instance_props(req_val).getOrDefault("__native_client".to_key(), NIL)
+  instance_props(stream_instance)["closed".to_key()] = FALSE
+  return stream_instance
 
 proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) < 1:
