@@ -6,7 +6,8 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
   background: #f5f5f5;
 }
 
@@ -261,6 +262,71 @@ body {
 
 .message.user .message-meta {
   color: rgba(255, 255, 255, 0.7);
+}
+
+/* Thinking section styles */
+.thinking-section {
+  margin-bottom: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  overflow: hidden;
+}
+
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #6b7280;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.thinking-toggle:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.thinking-icon {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  transition: transform 0.15s;
+}
+
+.thinking-label {
+  color: #6b7280;
+}
+
+.thinking-content {
+  padding: 0 12px 10px 12px;
+  font-size: 0.85rem;
+  color: #4b5563;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thinking-content.collapsed {
+  max-height: 3em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.thinking-content.expanded {
+  max-height: none;
+}
+
+.thinking-ellipsis {
+  color: #9ca3af;
+  font-weight: 500;
 }
 
 .typing-indicator {

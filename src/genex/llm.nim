@@ -872,6 +872,51 @@ else:
     vm: ptr VirtualMachine
     callback: Value
     cancelled: bool
+    utf8_buffer: string  # Buffer for incomplete UTF-8 sequences
+
+  # Find the boundary of complete UTF-8 characters in a byte sequence
+  # Returns the number of bytes that form complete UTF-8 characters
+  proc find_utf8_boundary(data: string): int =
+    if data.len == 0:
+      return 0
+
+    # Start from the end and look for incomplete sequences
+    var i = data.len - 1
+
+    # Check if the last byte is a continuation byte (10xxxxxx)
+    # or the start of a multi-byte sequence
+    while i >= 0:
+      let b = data[i].uint8
+      if (b and 0xC0) != 0x80:
+        # This is either ASCII or a lead byte
+        if b < 0x80:
+          # ASCII - complete
+          return data.len
+        elif (b and 0xE0) == 0xC0:
+          # 2-byte sequence lead - need 1 more byte
+          if data.len - i >= 2:
+            return data.len
+          else:
+            return i
+        elif (b and 0xF0) == 0xE0:
+          # 3-byte sequence lead - need 2 more bytes
+          if data.len - i >= 3:
+            return data.len
+          else:
+            return i
+        elif (b and 0xF8) == 0xF0:
+          # 4-byte sequence lead - need 3 more bytes
+          if data.len - i >= 4:
+            return data.len
+          else:
+            return i
+        else:
+          # Invalid lead byte, treat as complete
+          return data.len
+      dec i
+
+    # All continuation bytes with no lead - return all
+    return data.len
 
   # C callback that invokes the Gene callback
   proc stream_token_callback(token: cstring, token_len: cint, user_data: pointer): cint {.cdecl.} =
@@ -880,8 +925,24 @@ else:
     let ctx = cast[ptr StreamCallbackContext](user_data)
     if ctx.cancelled:
       return 1
-    
-    let token_value = ($token).to_value()
+
+    # Append new bytes to buffer
+    if token_len > 0:
+      var bytes = newString(token_len)
+      copyMem(addr bytes[0], token, token_len)
+      ctx.utf8_buffer.add(bytes)
+
+    # Find boundary of complete UTF-8 characters
+    let boundary = find_utf8_boundary(ctx.utf8_buffer)
+    if boundary == 0:
+      # No complete characters yet, wait for more
+      return 0
+
+    # Extract complete characters to send
+    let complete_str = ctx.utf8_buffer[0..<boundary]
+    ctx.utf8_buffer = ctx.utf8_buffer[boundary..^1]
+
+    let token_value = complete_str.to_value()
     {.cast(gcsafe).}:
       try:
         case ctx.callback.kind
@@ -934,7 +995,8 @@ else:
     var ctx = StreamCallbackContext(
       vm: vm,
       callback: callback_val,
-      cancelled: false
+      cancelled: false,
+      utf8_buffer: ""
     )
 
     var completion: GeneLlmCompletion
@@ -954,6 +1016,21 @@ else:
       raise
     {.cast(gcsafe).}:
       release(global_llm_op_lock)
+
+    # Flush any remaining buffered UTF-8 content
+    if ctx.utf8_buffer.len > 0 and not ctx.cancelled:
+      let token_value = ctx.utf8_buffer.to_value()
+      {.cast(gcsafe).}:
+        try:
+          case ctx.callback.kind
+          of VkFunction:
+            discard vm.exec_function(ctx.callback, @[token_value])
+          of VkNativeFn:
+            discard call_native_fn(ctx.callback.ref.native_fn, vm, [token_value])
+          else:
+            discard vm.exec_callable(ctx.callback, @[token_value])
+        except:
+          discard  # Ignore errors during final flush
 
     let result_value = completion_to_value(completion)
     gene_llm_free_completion(addr completion)

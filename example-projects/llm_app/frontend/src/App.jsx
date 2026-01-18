@@ -12,6 +12,42 @@ const STORAGE_KEY = 'gene_llm_conversations'
 
 const emptyStore = { conversations: {}, lastConversationId: null }
 
+// Strip <think>...</think> tags from content
+function stripThinkingTags(content) {
+  if (!content) return ''
+  return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+}
+
+// ThinkingSection component - foldable section showing AI thinking
+function ThinkingSection({ thinking, isExpanded, onToggle }) {
+  if (!thinking) return null
+
+  const lines = thinking.split('\n')
+  const previewLines = lines.slice(0, 2).join('\n')
+  const hasMore = lines.length > 2 || (lines.length === 2 && lines[1].length > 100)
+
+  return (
+    <div className="thinking-section">
+      <button
+        className="thinking-toggle"
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+      >
+        <span className="thinking-icon">{isExpanded ? '▼' : '▶'}</span>
+        <span className="thinking-label">Thinking</span>
+      </button>
+      <div className={`thinking-content ${isExpanded ? 'expanded' : 'collapsed'}`}>
+        {isExpanded ? thinking : (
+          <>
+            {previewLines}
+            {hasMore && <span className="thinking-ellipsis">...</span>}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const loadConversationStore = () => {
   if (typeof localStorage === 'undefined') return emptyStore
   try {
@@ -40,6 +76,7 @@ function App() {
   const [showTyping, setShowTyping] = useState(false)
   const [status, setStatus] = useState({ connected: false, modelLoaded: false })
   const [conversationId, setConversationId] = useState(null)
+  const [expandedThinking, setExpandedThinking] = useState({})
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
   const storeRef = useRef(emptyStore)
@@ -262,7 +299,8 @@ function App() {
             if (hasMessage) {
               updateMessageById(activeConversation, assistantId, msg => ({
                 ...msg,
-                tokens: payload.tokens_used || null
+                tokens: payload.tokens_used || null,
+                thinking: payload.thinking || null
               }))
             }
             stopStream()
@@ -294,7 +332,8 @@ function App() {
         appendMessage(activeConversation, {
           role: 'assistant',
           content: data.response,
-          tokens: data.tokens_used
+          tokens: data.tokens_used,
+          thinking: data.thinking || null
         })
       }
     } catch (error) {
@@ -347,6 +386,13 @@ function App() {
     }
   }
 
+  const toggleThinking = (messageIdx) => {
+    setExpandedThinking(prev => ({
+      ...prev,
+      [messageIdx]: !prev[messageIdx]
+    }))
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -379,10 +425,17 @@ function App() {
           )}
           {messages.map((msg, idx) => (
             <div key={idx} className={`message ${msg.role}`}>
+              {msg.role === 'assistant' && msg.thinking && (
+                <ThinkingSection
+                  thinking={msg.thinking}
+                  isExpanded={expandedThinking[idx] || false}
+                  onToggle={() => toggleThinking(idx)}
+                />
+              )}
               {msg.role === 'assistant' ? (
                 <div
                   className="message-content markdown"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(msg.content || '') }}
+                  dangerouslySetInnerHTML={{ __html: marked.parse(stripThinkingTags(msg.content)) }}
                 />
               ) : (
                 <div className="message-content">{msg.content}</div>

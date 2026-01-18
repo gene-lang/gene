@@ -189,6 +189,7 @@ proc init_basic_classes(): Class =
 
   let nil_class = new_class("Nil")
   nil_class.parent = object_class
+  nil_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = nil_class
   App.app.nil_class = r.to_ref_value()
@@ -197,6 +198,7 @@ proc init_basic_classes(): Class =
 
   let bool_class = new_class("Bool")
   bool_class.parent = object_class
+  bool_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = bool_class
   App.app.bool_class = r.to_ref_value()
@@ -205,6 +207,7 @@ proc init_basic_classes(): Class =
 
   let int_class = new_class("Int")
   int_class.parent = object_class
+  int_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = int_class
   App.app.int_class = r.to_ref_value()
@@ -213,6 +216,7 @@ proc init_basic_classes(): Class =
 
   let float_class = new_class("Float")
   float_class.parent = object_class
+  float_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = float_class
   App.app.float_class = r.to_ref_value()
@@ -236,6 +240,7 @@ proc init_string_class(object_class: Class) =
   var r: ptr Reference
   let string_class = new_class("String")
   string_class.parent = object_class
+  string_class.def_native_method("to_s", object_to_s_method)
 
   # String constructor - concatenates all arguments into a string
   proc string_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -772,6 +777,7 @@ proc init_symbol_classes(object_class: Class) =
   var r: ptr Reference
   let symbol_class = new_class("Symbol")
   symbol_class.parent = object_class
+  symbol_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = symbol_class
   App.app.symbol_class = r.to_ref_value()
@@ -780,6 +786,7 @@ proc init_symbol_classes(object_class: Class) =
 
   let complex_symbol_class = new_class("ComplexSymbol")
   complex_symbol_class.parent = object_class
+  complex_symbol_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = complex_symbol_class
   App.app.complex_symbol_class = r.to_ref_value()
@@ -790,6 +797,7 @@ proc init_collection_classes(object_class: Class) =
   var r: ptr Reference
   let array_class = new_class("Array")
   array_class.parent = object_class
+  array_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = array_class
   App.app.array_class = r.to_ref_value()
@@ -976,6 +984,7 @@ proc init_collection_classes(object_class: Class) =
 
   let map_class = new_class("Map")
   map_class.parent = object_class
+  map_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = map_class
   App.app.map_class = r.to_ref_value()
@@ -1152,6 +1161,7 @@ proc init_date_classes(object_class: Class) =
   var r: ptr Reference
   let date_class = new_class("Date")
   date_class.parent = object_class
+  date_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = date_class
   App.app.date_class = r.to_ref_value()
@@ -1188,6 +1198,7 @@ proc init_date_classes(object_class: Class) =
 
   let datetime_class = new_class("DateTime")
   datetime_class.parent = object_class
+  datetime_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = datetime_class
   App.app.datetime_class = r.to_ref_value()
@@ -1296,6 +1307,7 @@ proc init_selector_class(object_class: Class) =
   var r: ptr Reference
   let selector_class = new_class("Selector")
   selector_class.parent = object_class
+  selector_class.def_native_method("to_s", object_to_s_method)
 
   proc selector_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if arg_count < 2:
@@ -1632,6 +1644,7 @@ proc init_set_class(object_class: Class) =
   var r: ptr Reference
   let set_class = new_class("Set")
   set_class.parent = object_class
+  set_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = set_class
   App.app.set_class = r.to_ref_value()
@@ -1642,6 +1655,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
   var r: ptr Reference
   let gene_class = new_class("Gene")
   gene_class.parent = object_class
+  gene_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = gene_class
   App.app.gene_class = r.to_ref_value()
@@ -1694,6 +1708,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
 
   let char_class = new_class("Char")
   char_class.parent = object_class
+  char_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = char_class
   App.app.char_class = r.to_ref_value()

@@ -82,6 +82,120 @@
   )
 )
 
+(fn url_encode [input]
+  (var out "")
+  (var i 0)
+  (loop
+    (if (i >= input/.length)
+      (break)
+    )
+    (var ch (input .char_at i))
+    (case ch
+    when ' '
+      (out .append "+")
+    when '"'
+      (out .append "%22")
+    when '#'
+      (out .append "%23")
+    when '%'
+      (out .append "%25")
+    when '&'
+      (out .append "%26")
+    when '+'
+      (out .append "%2B")
+    when ','
+      (out .append "%2C")
+    when '/'
+      (out .append "%2F")
+    when ':'
+      (out .append "%3A")
+    when ';'
+      (out .append "%3B")
+    when '<'
+      (out .append "%3C")
+    when '='
+      (out .append "%3D")
+    when '>'
+      (out .append "%3E")
+    when '?'
+      (out .append "%3F")
+    when '@'
+      (out .append "%40")
+    when '['
+      (out .append "%5B")
+    when '\\'
+      (out .append "%5C")
+    when ']'
+      (out .append "%5D")
+    when '^'
+      (out .append "%5E")
+    when '`'
+      (out .append "%60")
+    when '{'
+      (out .append "%7B")
+    when '|'
+      (out .append "%7C")
+    when '}'
+      (out .append "%7D")
+    else
+      (out .append ch)
+    )
+    (i += 1)
+  )
+  out
+)
+
+(register_tool "web_search"
+  "Search the web using Google Custom Search (promotions excluded). Requires GOOGLE_API_KEY and GOOGLE_CSE_ID."
+  {^query "Search query" ^num "Number of results (default 5)"}
+  (fn [args]
+    (var query (args .get "query" ""))
+    (if (query/.length == 0)
+      (return {^error "Missing query"}))
+    (var api_key ($env .get "GOOGLE_API_KEY" ""))
+    (var cse_id ($env .get "GOOGLE_CSE_ID" ""))
+    (if (api_key/.length == 0)
+      (return {^error "Missing GOOGLE_API_KEY"}))
+    (if (cse_id/.length == 0)
+      (return {^error "Missing GOOGLE_CSE_ID"}))
+
+    (var num_val (args .get "num" nil))
+    (var num 5)
+    (if (num_val != nil)
+      (try
+        (num = (#"#{num_val}" .to_i))
+      catch *
+        (num = 5)
+      )
+    )
+    (if (num < 1) (num = 1))
+    (if (num > 10) (num = 10))
+
+    (var q (url_encode query))
+    (var url #"https://www.googleapis.com/customsearch/v1?key=#{api_key}&cx=#{cse_id}&q=#{q}&num=#{num}")
+    (try
+      (var resp (await (http_get url)))
+      (if (resp/status != 200)
+        (return {^error #"Search request failed with status #{resp/status}"}))
+      (var data (gene/json/parse resp/body))
+      (if (data .contains "error")
+        (return {^error ((data/error) .to_json)}))
+      (var items (data .get "items" []))
+      (var results [])
+      (items .each (fn [item]
+        (results .append {
+          ^title (item .get "title" "")
+          ^link (item .get "link" "")
+          ^snippet (item .get "snippet" "")
+        })
+      ))
+      {^query query ^results results}
+    catch *
+      {^error #"Search failed: #{$ex/message}"}
+    )
+  )
+)
+
 # Build system prompt with tool descriptions
 (fn build_system_prompt []
   (var tool_list [])
