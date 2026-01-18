@@ -213,6 +213,95 @@
   )
 )
 
+# Helper to strip HTML tags - uses split/join approach
+(fn strip_html_tags [html]
+  # Simple approach: repeatedly find and remove tags
+  (var text html)
+  (var max_iterations 500)
+  (var i 0)
+  (loop
+    (if (i >= max_iterations)
+      (break)
+    )
+    (var start (text .index "<"))
+    (if (start < 0)
+      (break)
+    )
+    (var end (text .index ">"))
+    (if (end < 0)
+      (break)
+    )
+    (if (end < start)
+      # Malformed - just remove the >
+      (text = #"#{(text .substr 0 (end - 1))}#{(text .substr (end + 1))}")
+    else
+      # Remove the tag
+      (var before (if (start > 0) then (text .substr 0 (start - 1)) else ""))
+      (var after (if ((end + 1) < text/.length) then (text .substr (end + 1)) else ""))
+      (text = #"#{before}#{after}")
+    )
+    (i += 1)
+  )
+  text
+)
+
+(register_tool "read_url"
+  "Fetch and read content from a URL. Returns plain text extracted from the page."
+  {^url "The URL to fetch" ^max_chars "Maximum characters to return (default 4000)"}
+  (fn [args]
+    (var url (args .get "url" ""))
+    (if (url/.length == 0)
+      (return {^error "Missing url"})
+    )
+    (if (((url .starts_with "http://") == false) && ((url .starts_with "https://") == false))
+      (return {^error "URL must start with http:// or https://"})
+    )
+
+    (var max_chars_val (args .get "max_chars" nil))
+    (var max_chars 4000)
+    (if (max_chars_val != nil)
+      (try
+        (max_chars = (#"#{max_chars_val}" .to_i))
+      catch *
+        (max_chars = 4000)
+      )
+    )
+    (if (max_chars < 100) then (max_chars = 100))
+    (if (max_chars > 16000) then (max_chars = 16000))
+
+    (try
+      (var resp (await (http_get url)))
+      (if (resp/status != 200)
+        (return {^error #"Failed to fetch URL: HTTP #{resp/status}"})
+      )
+
+      (var content resp/body)
+      (var content_type ((resp/headers .get "content-type" "") .to_lower))
+
+      # Truncate raw content first to limit processing (use 3x max_chars for HTML)
+      (var process_limit (max_chars * 3))
+      (if (content/.length > process_limit)
+        (content = (content .substr 0 (process_limit - 1)))
+      )
+
+      # Strip HTML if content appears to be HTML
+      (if ((content_type .index "text/html") >= 0)
+        (content = (strip_html_tags content))
+      )
+
+      # Truncate final result if still too long
+      (if (content/.length > max_chars)
+        (content = (content .substr 0 (max_chars - 1)))
+        (content = #"#{content}...\n[Truncated]")
+      )
+
+      {^result content}
+    catch *
+      {^error #"Failed to fetch URL: #{$ex/message}"}
+    )
+  )
+)
+
 # Build system prompt with tool descriptions
 (fn build_system_prompt []
   (var tool_list [])
