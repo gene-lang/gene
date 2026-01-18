@@ -104,12 +104,12 @@ proc send_status_and_headers(client: AsyncSocket, status: string, headers: HttpH
   for k, v in headers:
     msg.add(k & ": " & v & "\c\L")
   msg.add("\c\L")
-  waitFor client.send(msg)
+  waitFor client.send(msg, {})
 
 proc send_chunk(client: AsyncSocket, payload: string) =
   let size_hex = toHex(payload.len)
   let chunk = size_hex & "\c\L" & payload & "\c\L"
-  waitFor client.send(chunk)
+  waitFor client.send(chunk, {})
 
 proc get_native_client(req_val: Value): AsyncSocket =
   if req_val.kind != VkInstance:

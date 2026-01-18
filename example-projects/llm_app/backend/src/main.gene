@@ -612,6 +612,7 @@ User request:
   (var tool_calls [])
   (var document_used false)
   (var document_chunks 0)
+  (var stream_cancelled false)
 
   (var model (if genex/llm then (genex/llm/get_model) else false))
   (if model
@@ -633,11 +634,21 @@ User request:
 
         (var raw_text "")
         (var result (session .infer_streaming prompt (fn [token]
+          (print token)
           (raw_text = #"#{raw_text}#{token}")
-          (sse_send stream {^token token})
+          (var ok (sse_send stream {^token token}))
+          (if (ok == false)
+            (stream_cancelled = true)
+            (throw "client disconnected")
+          )
         )))
+        (print "\n")
         (var tokens (result .get "tokens"))
         (tokens_used += tokens/.size)
+
+        (if stream_cancelled
+          (break)
+        )
 
         (var tool_call (parse_tool_call raw_text))
         (if (tool_call != nil)
@@ -671,6 +682,11 @@ User request:
     (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
     (tokens_used = 15)
     (sse_send stream {^token response_text})
+  )
+
+  (if stream_cancelled
+    (stream .close)
+    (return stream)
   )
 
   (store_message conv_id_int "user" prompt_message document_used document_chunks)
