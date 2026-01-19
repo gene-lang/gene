@@ -14,8 +14,7 @@ Files live in `docs/` unless stated otherwise.
 ## Language & Runtime Topics
 
 - [gir.md](gir.md) — Gene Intermediate Representation file format
-- [generator-functions.md](generator-functions.md) — generator semantics and VM support
-- [if_scope_bug.md](if_scope_bug.md) — exception-driven scope unwinding bug and fix
+- [generator_functions.md](generator_functions.md) — generator semantics and VM support
 - [arg_counter.md](arg_counter.md) — argument counting logic used by function matchers
 - [regex.md](regex.md) — Regexp literals and regex/string helper API
 - [http_server_and_client.md](http_server_and_client.md) — HTTP extensions and runtime hooks
@@ -23,7 +22,6 @@ Files live in `docs/` unless stated otherwise.
 
 ## Implementation Diaries
 
-- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — parity snapshot between VM and reference interpreter
 - [implementation/async_design.md](implementation/async_design.md) — architecture for pseudo-async futures
 - [implementation/async_progress.md](implementation/async_progress.md) — task-level todo list for async work
 - [implementation/caller_eval.md](implementation/caller_eval.md) — `$caller_eval` design trade-offs
@@ -32,8 +30,7 @@ Files live in `docs/` unless stated otherwise.
 ## Performance & Benchmarking
 
 - [performance.md](performance.md) — current benchmarks (~3.8M calls/sec fib(24)) and optimisation roadmap
-- [performance-improvements-summary.md](performance-improvements-summary.md) — changelog of recent speedups
-- [gir-benchmarks.md](gir-benchmarks.md) — GIR-specific profiling data and insights
+- [gir_benchmarks.md](gir_benchmarks.md) — GIR-specific profiling data and insights
 
 ## Reference Implementation
 

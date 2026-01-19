@@ -1,6 +1,6 @@
 # Gene VM Architecture
 
-This document describes the VM-based implementation that lives under `src/gene/`.  
+This document describes the VM-based implementation that lives under `src/gene/`.
 The execution pipeline looks like this:
 
 ```
@@ -11,11 +11,11 @@ source.gene ──► Parser ──► AST ──► Compiler ──► Compilat
 
 ## Components
 
-### Command Front-End (`src/gene.nim`, `src/gene/commands/`)
+### Command Front-End (`src/gene.nim`, `src/commands/`)
 - All CLI behaviour is routed through a `CommandManager`.
-- `run`, `eval`, `repl`, `parse`, and `compile` commands live in `src/gene/commands/*.nim`.
+- `run`, `eval`, `repl`, `parse`, `compile`, `pipe`, and `lsp` commands live in `src/commands/*.nim`.
 - `run` optionally loads cached Gene IR (`*.gir`) from `build/`, otherwise parses and compiles on the fly.
-- Shared helpers set up logging, initialise the VM (`init_app_and_vm`), and register runtime namespaces (`register_io_functions`).
+- Shared helpers set up logging, initialise the VM (`init_app_and_vm`), and register runtime namespaces.
 
 ### Parser (`src/gene/parser.nim`)
 - Reads S-expressions, supports macro dispatch (quote/unquote, `@decorators`, string interpolation).
@@ -41,25 +41,60 @@ source.gene ──► Parser ──► AST ──► Compiler ──► Compilat
 - Async support wraps expressions in futures; await simply unwraps (pseudo-async).
 - Includes tracing (`VM.trace`), profiling (`VM.profiling`, `instruction_profiling`), and GIR-aware execution.
 
-## Value Representation (`src/gene/types.nim`)
+## Value Representation (`src/gene/types/`)
 
-- `Value` is a POD `distinct int64`; helper templates interpret the bit pattern as ints, floats, pointers, or tagged indices.
-- `ValueKind` enumerates 100+ variants (scalars, collections, futures, namespaces, instructions, etc.).
-- Heap-allocated data lives in `Reference` objects; the VM retains/releases them explicitly when storing in scopes or arrays.
-- Symbol keys (`Key`) are cached integers that index into the global symbol table for fast lookup.
+The type system is modularised across several files:
+- `type_defs.nim` — Core type definitions (ValueKind, Instruction, Frame, Scope, etc.)
+- `value_core.nim` — NaN-boxing implementation and value operations
+- `classes.nim` — Class-related utilities
+- `instructions.nim` — Instruction helpers and formatting
+- `helpers.nim` — Miscellaneous utility functions
+
+### NaN-Boxing
+
+- `Value` is a `bycopy` object with a `raw: uint64` field, using NaN-boxing for compact representation.
+- All valid IEEE 754 floats pass through unchanged; non-float values live in the negative quiet NaN space (0xFFF0-0xFFFF prefix).
+- Tag constants partition the NaN space:
+  - `SPECIAL_TAG` (0xFFF1) — NIL, TRUE, FALSE, VOID, PLACEHOLDER, characters
+  - `SMALL_INT_TAG` (0xFFF2) — 48-bit immediate integers
+  - `SYMBOL_TAG` (0xFFF3) — Interned symbol indices
+  - `POINTER_TAG` (0xFFF4) — Raw pointers
+  - `ARRAY_TAG` (0xFFF8) — Heap-allocated arrays
+  - `MAP_TAG` (0xFFF9) — Heap-allocated maps
+  - `INSTANCE_TAG` (0xFFFA) — Class instances
+  - `GENE_TAG` (0xFFFB) — Gene S-expression nodes
+  - `REF_TAG` (0xFFFC) — General Reference objects (functions, namespaces, etc.)
+  - `STRING_TAG` (0xFFFD) — Heap-allocated strings
+
+### Automatic Reference Counting
+
+- Managed types (tags ≥ 0xFFF8) use automatic reference counting via Nim's `=copy`/`=destroy`/`=sink` hooks.
+- The `isManaged` template performs a single-instruction check: `(v.raw and 0xFFF8_0000_0000_0000) == 0xFFF8_0000_0000_0000`.
+- `retainManaged`/`releaseManaged` increment/decrement ref counts; objects are destroyed when count reaches zero.
+- This replaces explicit retain/release calls for most operations while keeping hot paths allocation-free.
+
+### ValueKind
+
+- `ValueKind` enumerates 60+ variants covering scalars, collections, futures, generators, threads, namespaces, instructions, and more.
+- Symbol keys (`Key`) are cached integers indexing into the global symbol table for fast lookup.
 
 ## Instruction Families
 
-Instruction opcodes live in `InstructionKind`. A few important groups:
+Instruction opcodes live in `InstructionKind` (`src/gene/types/type_defs.nim`). Key groups:
 
-- **Stack & Scope**: `IkPushValue`, `IkPushNil`, `IkPop`, `IkDup*`, `IkScopeStart`, `IkScopeEnd`.
-- **Variables**: `IkVar`, `IkVarResolve`, `IkVarAssign`, plus literal variants (`IkVarAddValue`, `IkVarSubValue`, …).
-- **Control Flow**: `IkJump`, `IkJumpIfFalse`, `IkLoopStart/End`, `IkContinue`, `IkBreak`, `IkReturn`, `IkTailCall`.
-- **Data & Collections**: `IkArrayStart/End`, `IkMapStart/End`, `IkGene*`, spread instructions, range/enum creation.
+- **Stack & Scope**: `IkPushValue`, `IkPushNil`, `IkPop`, `IkDup*`, `IkSwap`, `IkOver`, `IkLen`, `IkScopeStart`, `IkScopeEnd`.
+- **Variables**: `IkVar`, `IkVarResolve`, `IkVarAssign`, `IkVarResolveInherited`, `IkVarAssignInherited`, plus arithmetic variants (`IkVarAddValue`, `IkVarSubValue`, `IkIncVar`, `IkDecVar`, …).
+- **Control Flow**: `IkJump`, `IkJumpIfFalse`, `IkJumpIfMatchSuccess`, `IkLoopStart/End`, `IkContinue`, `IkBreak`, `IkReturn`, `IkTailCall`.
+- **Data & Collections**: `IkArrayStart/End`, `IkMapStart/End`, `IkMapSpread`, `IkGene*`, `IkStreamStart/End`, spread instructions, `IkCreateRange`, `IkCreateEnum`.
+- **Unified Calls**: `IkUnifiedCall0/1/Kw/Dynamic`, `IkUnifiedMethodCall0/1/2/Kw`, `IkDynamicMethodCall`, `IkCallArgsStart`, `IkCallArgSpread`.
 - **Functions & Macros**: `IkFunction`, `IkBlock`, `IkCallInit`, `IkCallerEval`.
-- **Classes & Methods**: `IkClass`, `IkSubClass`, `IkNew`, `IkDefineMethod`, `IkResolveMethod`, `IkSuper`.
-- **Error Handling**: `IkTryStart`, `IkTryEnd`, `IkCatchStart/End`, `IkFinally`, `IkThrow`.
-- **Async**: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`.
+- **Classes & Methods**: `IkClass`, `IkSubClass`, `IkNew`, `IkDefineMethod`, `IkDefineConstructor`, `IkResolveMethod`, `IkCallSuperMethod`, `IkCallSuperCtor`, `IkSuper`.
+- **Namespaces & Modules**: `IkNamespace`, `IkNamespaceStore`, `IkImport`.
+- **Error Handling**: `IkTryStart`, `IkTryEnd`, `IkCatchStart/End`, `IkFinally`, `IkFinallyEnd`, `IkThrow`, `IkCatchRestore`, `IkGetClass`, `IkIsInstance`.
+- **Generators**: `IkYield`, `IkResume`.
+- **Async & Threading**: `IkAsyncStart`, `IkAsyncEnd`, `IkAwait`, `IkAsync`, `IkSpawnThread`.
+- **Selectors**: `IkCreateSelector`, `IkSetMemberDynamic`, `IkAssertNotVoid`, `IkGetMemberOrNil`, `IkGetMemberDefault`.
+- **Superinstructions**: `IkPushCallPop`, `IkLoadCallPop`, `IkGetLocal`, `IkSetLocal`, `IkAddLocal`, `IkIncLocal`, `IkDecLocal`, `IkReturnNil/True/False`.
 
 See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `src/gene/vm.nim` for runtime semantics.
 
@@ -68,14 +103,48 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
 - Frames are pooled; `new_frame` reuses objects when possible to cut allocations.
 - Scopes (`ScopeObj`) are manually ref-counted. `IkScopeEnd` calls `scope.free()` which decrements the ref count and only deallocates when it reaches 0.
   ✅ Scope lifetime is correctly managed - async code can safely capture scopes and they won't be freed prematurely.
-- Nim ORC/ARC handles heap references (`Reference`) while the VM keeps hot paths allocation-free by using POD `Value`s.
+- Values use automatic reference counting via Nim's `=copy`/`=destroy` hooks for managed types (arrays, maps, instances, genes, strings, references).
+- The VM keeps hot paths allocation-free by using immediate values (ints, bools, symbols) that fit in the NaN-boxed 64-bit representation.
 
 ## Native Integration
 
-- `vm/core.nim` initialises built-in namespaces (math, string, array, map, IO, async).
-- `register_io_functions` adds file helpers (`io/read`, `io/write`, async counterparts).
+- `src/gene/stdlib.nim` initialises built-in namespaces and registers native functions.
+- Standard library modules in `src/gene/stdlib/`:
+  - `math.nim` — Mathematical operations
+  - `io.nim` — File I/O and async file operations
+  - `system.nim` — System-level utilities
 - Native functions use `NativeFn`/`NativeMethod` signatures and are stored in class/namespace tables.
-- Extensions can be built as shared libraries (see `nimble buildext`) and loaded at runtime.
+- Native macros use `NativeMacroFn` signature and receive unevaluated Gene AST plus caller frame.
+- Extensions can be built as shared libraries (see `nimble buildext`) and loaded at runtime via `src/gene/vm/extension.nim`.
+
+## Threading Support
+
+- Worker threads are managed via a thread pool (`THREADS` array, max 64 threads).
+- Each thread has its own `VirtualMachine` instance and message channel.
+- `IkSpawnThread` spawns code on a worker thread and optionally returns a future for the result.
+- Thread messages are serialised/deserialised when crossing thread boundaries to ensure isolation.
+- The main thread polls for thread replies during event loop processing (`poll_event_loop`).
+
+## Generators
+
+- Generator functions are defined with `(fn* name [...] ...)` syntax.
+- `IkYield` suspends execution and returns a value; `IkResume` continues from the suspension point.
+- `GeneratorObj` stores the saved frame, compilation unit, program counter, and scope.
+- Generators support `has_next`, `next`, and `peek` operations.
+
+## AOP (Aspect-Oriented Programming)
+
+- Aspects intercept method calls with before/after/around advices.
+- `Aspect` objects store advice mappings keyed by parameter names.
+- `AopContext` tracks the current interception state during around advice execution.
+- Interceptions wrap original callables and delegate to aspect advices.
+
+## Inline Caching
+
+- `InlineCache` objects accelerate symbol and method resolution.
+- Each cache stores namespace/class version numbers to detect invalidation.
+- On cache hit (matching version), resolution skips the lookup path.
+- Caches are attached to `CompilationUnit` and indexed by program counter.
 
 ## Example Execution Flow
 
@@ -108,13 +177,32 @@ At runtime the VM:
 - GIR hashes plus timestamps make it cheap to spot stale IR during `gene run`.
 - `docs/performance.md` tracks benchmarking methodology and ongoing optimisation ideas.
 
+## Gene IR (GIR) Details
+
+- `GIR_VERSION` (currently 1) tracks the IR format version.
+- `VALUE_ABI_VERSION` (currently 2) tracks the Value representation version — changed when NaN-boxing layout changes.
+- Header includes compiler fingerprint, timestamp, source hash, and debug flags for cache validation.
+- `gene compile` writes GIR files; `gene run` can execute them directly or use cached versions from `build/`.
+
 ## Current Pain Points
 
-- Scope lifetime around async/await needs work (`IkScopeEnd` free ordering).
 - Class system lacks exhaustive tests for constructors, inheritance, and keyword arguments.
 - Pattern matching infrastructure exists but many `match` forms remain disabled in the test suite.
 
-See also:
-- [`docs/performance.md`](performance.md) — hotspot analysis and optimisation roadmap.
-- [`docs/IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) — up-to-date checklist of supported features.
-- [`docs/gir.md`](gir.md) — details on the IR format and CLI workflows.
+## See Also
+
+Core documentation:
+- [`gir.md`](gir.md) — GIR format and CLI workflows
+- [`performance.md`](performance.md) — Hotspot analysis and optimisation roadmap
+
+Design documents:
+- [`threading.md`](threading.md) / [`thread_support.md`](thread_support.md) — Threading model
+- [`generator_functions.md`](generator_functions.md) — Generator implementation
+- [`aop.md`](aop.md) — Aspect-oriented programming
+- [`selector_design.md`](selector_design.md) — Selector syntax and semantics
+- [`pattern_matching_design.md`](pattern_matching_design.md) — Pattern matching
+- [`macro_design.md`](macro_design.md) — Macro system
+
+Extension and tooling:
+- [`c_extensions.md`](c_extensions.md) — Building C/Nim extensions
+- [`lsp.md`](lsp.md) — Language Server Protocol support
