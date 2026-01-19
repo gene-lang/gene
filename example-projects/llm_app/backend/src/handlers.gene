@@ -1,11 +1,12 @@
 # HTTP Handlers Module
 # Request handlers for all API endpoints
 
-(import MAX_TOKENS MODEL_CONTEXT PROMPT_CHAR_LIMIT from "config")
+(import MAX_TOKENS MODEL_CONTEXT PROMPT_CHAR_LIMIT COMFYUI_URL from "config")
 (import execute_tool from "tools")
 (import extract_first_json json_response sse_send parse_response parse_tool_call chat_id_from_path from "helpers")
 (import get_db init_db new_conversation conversation_exists load_history store_message from "db")
 (import init_llm build_prompt trim_history trim_history_for_prompt get_model from "llm")
+(import * from "comfyui")
 
 (fn $ns/handle_health [req]
   (var is_loaded
@@ -321,4 +322,93 @@ User request:
   (sse_send stream done_payload)
   (stream .close)
   stream
+)
+
+# ============================================================
+# Image Generation Handlers
+# ============================================================
+
+(fn $ns/handle_image_health [req]
+  (var result (health_check))
+  (json_response 200 result)
+)
+
+(fn $ns/handle_image_generate [req]
+  (println "DEBUG handler: handle_image_generate called")
+  # Check if ComfyUI URL is configured
+  (if ((COMFYUI_URL == nil) || (COMFYUI_URL/.length == 0))
+    (return (json_response 500 {^error "ComfyUI not configured. Set COMFYUI_URL environment variable."}))
+  )
+  (println "DEBUG handler: ComfyUI URL is configured:" COMFYUI_URL)
+
+  # Parse request body
+  (var req_body req/.body)
+  (var body_str (if (req_body == nil) then "" else req_body))
+  (var trimmed_body (body_str .trim))
+  (println "DEBUG handler: body parsed, length=" trimmed_body/.length)
+
+  (var prompt "")
+  (var options {})
+
+  (if (trimmed_body/.length > 0)
+    (try
+      (var parsed (gene/json/parse trimmed_body))
+      (prompt = (parsed .get "prompt" ""))
+      (if (parsed .contains "negative_prompt")
+        (options .set "negative_prompt" (parsed .get "negative_prompt"))
+      )
+      (if (parsed .contains "width")
+        (options .set "width" (parsed .get "width"))
+      )
+      (if (parsed .contains "height")
+        (options .set "height" (parsed .get "height"))
+      )
+      (if (parsed .contains "steps")
+        (options .set "steps" (parsed .get "steps"))
+      )
+      (if (parsed .contains "cfg")
+        (options .set "cfg" (parsed .get "cfg"))
+      )
+      (if (parsed .contains "seed")
+        (options .set "seed" (parsed .get "seed"))
+      )
+      (if (parsed .contains "model")
+        (options .set "model" (parsed .get "model"))
+      )
+      (if (parsed .contains "sampler")
+        (options .set "sampler" (parsed .get "sampler"))
+      )
+      (if (parsed .contains "scheduler")
+        (options .set "scheduler" (parsed .get "scheduler"))
+      )
+      (if (parsed .contains "timeout")
+        (options .set "timeout" (parsed .get "timeout"))
+      )
+    catch *
+      (return (json_response 400 {^error "Invalid JSON"}))
+    )
+  else
+    # Try query params
+    (prompt = (req/.params .get "prompt" ""))
+  )
+
+  (if ((prompt == nil) || (prompt/.length == 0))
+    (return (json_response 400 {^error "Missing 'prompt' field"}))
+  )
+  (println "DEBUG handler: prompt=" prompt)
+  (println "DEBUG handler: options=" options/.to_json)
+
+  (try
+    (println "DEBUG handler: calling generate_image...")
+    (var result (generate_image prompt options))
+    (println "DEBUG handler: generate_image returned:" result)
+    (json_response 200 {
+      ^prompt_id result/prompt_id
+      ^images result/images
+      ^prompt prompt
+    })
+  catch *
+    (println "DEBUG handler: exception caught:" $ex/message)
+    (json_response 500 {^error $ex/message})
+  )
 )

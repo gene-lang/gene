@@ -24,6 +24,10 @@
 
 ($ns/DB_PATH = "chat.sqlite")
 
+# ComfyUI Configuration
+($ns/COMFYUI_URL = ($env .get "COMFYUI_URL" "http://127.0.0.1:8188"))
+(println "ComfyUI URL:" COMFYUI_URL)
+
 # Apply minimum values
 (if (MODEL_CONTEXT < 256)
   ($ns/MODEL_CONTEXT = 256)

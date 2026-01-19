@@ -1,0 +1,300 @@
+# ComfyUI Integration Module
+# Provides functions to interact with ComfyUI API for image generation
+
+(import COMFYUI_URL from "config")
+
+# Use curl for HTTP requests to work around macOS Local Network permission issue
+(fn curl_get [url]
+  (var cmd #"curl -s --connect-timeout 10 '#{url}'")
+  (var result (system/shell cmd))
+  (if (result/exit_code != 0)
+    (throw #"HTTP GET failed: #{result/output}")
+  )
+  result/output
+)
+
+(fn curl_post [url body]
+  (println "DEBUG curl_post: called with url=" url)
+  (println "DEBUG curl_post: body length=" body/.length)
+
+  # Escape single quotes in the body for shell safety
+  (var escaped_body (body .replace "'" "'\\''"))
+  (var cmd #"printf '%s' '#{escaped_body}' | curl -s --connect-timeout 30 -X POST -H 'Content-Type: application/json' --data-binary @- '#{url}'")
+  (println "DEBUG curl_post: executing curl with printf pipe")
+  (var result (system/shell cmd))
+  (println "DEBUG curl_post: curl returned, exit_code=" result/exit_code "output=" result/output)
+  (if (result/exit_code != 0)
+    (throw #"HTTP POST failed (code #{result/exit_code}): #{result/output}")
+  )
+  (println "DEBUG curl_post: returning output")
+  result/output
+)
+
+# Generate a unique client ID
+(fn generate_client_id []
+  (println "DEBUG generate_client_id: called")
+  # Use random_int (max min) to generate a random 6-digit number
+  (var rand_part (random_int 999999 100000))
+  (println "DEBUG generate_client_id: rand_part=" rand_part)
+  (var result #"gene-client-#{rand_part}")
+  (println "DEBUG generate_client_id: returning" result)
+  result
+)
+
+# Helper to safely get from map with default
+(fn safe_get [obj key default_val]
+  (try
+    (if (obj .contains key)
+      (obj .get key default_val)
+    else
+      default_val
+    )
+  catch *
+    default_val
+  )
+)
+
+# Default workflow template for text-to-image
+# This is a minimal SDXL workflow - users can customize via parameters
+(fn build_workflow [prompt options]
+  (println "DEBUG comfyui: build_workflow called")
+  (var opts (if (options == nil) then {} else options))
+  (println "DEBUG comfyui: build_workflow opts ready")
+
+  # Extract options with defaults
+  (var negative_prompt (if (opts .contains "negative_prompt") then (opts .get "negative_prompt") else ""))
+  (var width (if (opts .contains "width") then (opts .get "width") else 1024))
+  (var height (if (opts .contains "height") then (opts .get "height") else 1024))
+  (var steps (if (opts .contains "steps") then (opts .get "steps") else 20))
+  (var cfg (if (opts .contains "cfg") then (opts .get "cfg") else 7.0))
+  (var seed (if (opts .contains "seed") then (opts .get "seed") else (random_int 2147483647)))
+  (var model (if (opts .contains "model") then (opts .get "model") else "juggernautXL_v9.safetensors"))
+  (var sampler (if (opts .contains "sampler") then (opts .get "sampler") else "euler"))
+  (var scheduler (if (opts .contains "scheduler") then (opts .get "scheduler") else "normal"))
+
+  # ComfyUI workflow format - minimal SDXL workflow
+  {
+    ^3 {
+      ^class_type "KSampler"
+      ^inputs {
+        ^cfg cfg
+        ^denoise 1
+        ^latent_image ["5" 0]
+        ^model ["4" 0]
+        ^negative ["7" 0]
+        ^positive ["6" 0]
+        ^sampler_name sampler
+        ^scheduler scheduler
+        ^seed seed
+        ^steps steps
+      }
+    }
+    ^4 {
+      ^class_type "CheckpointLoaderSimple"
+      ^inputs {
+        ^ckpt_name model
+      }
+    }
+    ^5 {
+      ^class_type "EmptyLatentImage"
+      ^inputs {
+        ^batch_size 1
+        ^height height
+        ^width width
+      }
+    }
+    ^6 {
+      ^class_type "CLIPTextEncode"
+      ^inputs {
+        ^clip ["4" 1]
+        ^text prompt
+      }
+    }
+    ^7 {
+      ^class_type "CLIPTextEncode"
+      ^inputs {
+        ^clip ["4" 1]
+        ^text negative_prompt
+      }
+    }
+    ^8 {
+      ^class_type "VAEDecode"
+      ^inputs {
+        ^samples ["3" 0]
+        ^vae ["4" 2]
+      }
+    }
+    ^9 {
+      ^class_type "SaveImage"
+      ^inputs {
+        ^filename_prefix "ComfyUI"
+        ^images ["8" 0]
+      }
+    }
+  }
+)
+
+# Queue a prompt to ComfyUI
+(fn queue_prompt [workflow]
+  (println "DEBUG comfyui: queue_prompt called")
+  (var client_id (generate_client_id))
+  (println "DEBUG comfyui: client_id=" client_id)
+  (var url #"#{COMFYUI_URL}/prompt")
+  (println "DEBUG comfyui: url=" url)
+  (var payload {^prompt workflow ^client_id client_id})
+  (println "DEBUG comfyui: payload created")
+
+  (println "DEBUG comfyui: calling curl_post...")
+  (var resp_body (curl_post url payload/.to_json))
+  (println "DEBUG comfyui: curl_post returned:" resp_body)
+  (var result (gene/json/parse resp_body))
+  (println "DEBUG comfyui: parsed result")
+  (if (result .contains "error")
+    (var err_obj (result .get "error"))
+    (var err_msg (if (err_obj .contains "message") then (err_obj .get "message") else "unknown error"))
+    (println "DEBUG comfyui: ComfyUI returned error:" err_msg)
+    (throw #"ComfyUI error: #{err_msg}")
+  )
+
+  (println "DEBUG comfyui: returning queue result")
+  {
+    ^prompt_id (safe_get result "prompt_id" "")
+    ^client_id client_id
+  }
+)
+
+# Check if a prompt has completed
+(fn get_history [prompt_id]
+  (var url #"#{COMFYUI_URL}/history/#{prompt_id}")
+  (try
+    (var resp_body (curl_get url))
+    (gene/json/parse resp_body)
+  catch *
+    nil
+  )
+)
+
+# Poll for completion with timeout
+(fn wait_for_completion [prompt_id timeout_ms]
+  (var poll_interval 500)  # ms
+  (var max_iterations (timeout_ms / poll_interval))
+  (var iteration 0)
+
+  (println "DEBUG wait_for_completion: polling for prompt_id=" prompt_id)
+
+  (loop
+    (println "DEBUG wait_for_completion: iteration=" iteration)
+    (if (iteration >= max_iterations)
+      (throw "ComfyUI generation timed out")
+    )
+
+    (println "DEBUG wait_for_completion: calling get_history")
+    (var history (get_history prompt_id))
+    (println "DEBUG wait_for_completion: got history, checking...")
+
+    (if (history != nil)
+      (try
+        (println "DEBUG wait_for_completion: history is not nil, checking for prompt_id")
+        (if (history .contains prompt_id)
+          (println "DEBUG wait_for_completion: found prompt_id in history")
+          (var prompt_data (history .get prompt_id))
+          (if (prompt_data != nil)
+            (println "DEBUG wait_for_completion: prompt_data is not nil")
+            (if (prompt_data .contains "outputs")
+              (println "DEBUG wait_for_completion: found outputs, returning")
+              (return prompt_data)
+            )
+          )
+        )
+      catch *
+        (println "DEBUG wait_for_completion: caught exception in history parsing")
+        nil
+      )
+    )
+
+    (iteration = (iteration + 1))
+    (sleep poll_interval)
+  )
+)
+
+# Get image data from ComfyUI
+(fn get_image [filename subfolder type]
+  (var url #"#{COMFYUI_URL}/view?filename=#{filename}&subfolder=#{subfolder}&type=#{type}")
+  (var data (curl_get url))
+  {
+    ^data data
+    ^content_type "image/png"
+  }
+)
+
+# Main function to generate an image
+(fn $ns/generate_image [prompt options]
+  (println "DEBUG comfyui: generate_image called with prompt=" prompt)
+  (var opts (if (options == nil) then {} else options))
+  (println "DEBUG comfyui: opts created")
+  (var workflow (build_workflow prompt opts))
+  (println "DEBUG comfyui: workflow built")
+  (var queue_result (queue_prompt workflow))
+  (println "DEBUG comfyui: queue_result=" queue_result)
+  (var prompt_id queue_result/prompt_id)
+  (println "DEBUG comfyui: prompt_id=" prompt_id)
+
+  (var timeout (safe_get opts "timeout" 120000))  # 2 minutes default
+  (var result (wait_for_completion prompt_id timeout))
+
+  # Extract output images - ComfyUI returns outputs keyed by node ID
+  (var images [])
+
+  (try
+    (var outputs (safe_get result "outputs" {}))
+    (var keys (outputs .keys))
+    (keys .each (fn [node_id]
+      (try
+        (var node_output (outputs .get node_id))
+        (if ((node_output != nil) && (node_output .contains "images"))
+          (var node_images (safe_get node_output "images" []))
+          (var i 0)
+          (loop
+            (if (i >= node_images/.size)
+              (break)
+            )
+            (var img (node_images .get i))
+            (if (img != nil)
+              (var filename (safe_get img "filename" ""))
+              (var subfolder (safe_get img "subfolder" ""))
+              (var img_type (safe_get img "type" "output"))
+              (images .append {
+                ^filename filename
+                ^subfolder subfolder
+                ^type img_type
+                ^url #"#{COMFYUI_URL}/view?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
+              })
+            )
+            (i += 1)
+          )
+        )
+      catch *
+        nil
+      )
+    ))
+  catch *
+    nil
+  )
+
+  {
+    ^prompt_id prompt_id
+    ^images images
+  }
+)
+
+# Health check for ComfyUI
+(fn $ns/health_check []
+  (try
+    (var url #"#{COMFYUI_URL}/system_stats")
+    (var resp_body (curl_get url))
+    (var stats (gene/json/parse resp_body))
+    {^status "ok" ^url COMFYUI_URL ^system stats/system}
+  catch *
+    {^status "error" ^message $ex/message}
+  )
+)

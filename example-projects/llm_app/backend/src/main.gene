@@ -8,7 +8,7 @@
 (import init_db from "db")
 (import init_llm from "llm")
 (import chat_id_from_path json_response from "helpers")
-(import handle_health handle_chat_new handle_chat handle_chat_stream from "handlers")
+(import handle_health handle_chat_new handle_chat handle_chat_stream handle_image_health handle_image_generate from "handlers")
 
 # ============================================================
 # Request Router
@@ -29,6 +29,10 @@
   elif ((path .starts_with "/api/chat/") && (method == "POST"))
     (var conv_id (chat_id_from_path path))
     (handle_chat req conv_id)
+  elif (path == "/api/image/health")
+    (handle_image_health req)
+  elif ((path == "/api/image/generate") && (method == "POST"))
+    (handle_image_generate req)
   else
     (json_response 404 {^error "Not found"})
   )
@@ -46,6 +50,8 @@
 (println "  POST /api/chat/new - Start conversation")
 (println "  POST /api/chat/{id} - Send chat message")
 (println "  GET  /api/chat/{id}/stream - SSE chat stream (message query param)")
+(println "  GET  /api/image/health - ComfyUI health check")
+(println "  POST /api/image/generate - Generate image with ComfyUI")
 (println)
 
 (start_server PORT handle_request)
