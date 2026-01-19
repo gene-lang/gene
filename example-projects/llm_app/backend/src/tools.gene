@@ -228,6 +228,31 @@ Only use tools when necessary. For general conversation, respond normally.
 # ============================================================
 (fn strip_html_tags [html]
   (var text html)
+  (fn remove_tag_block [input tag]
+    (var open_tag #"<#{tag}")
+    (var close_tag #"</#{tag}>")
+    (var lower (input .to_lower))
+    (var start (lower .index open_tag))
+    (loop
+      (if (start < 0)
+        (break)
+      )
+      (var end (lower .index close_tag))
+      (if ((end < 0) || (end < start))
+        (break)
+      )
+      (var before (if (start > 0) then (input .substr 0 (start - 1)) else ""))
+      (var after_start (end + close_tag/.length))
+      (var after (if (after_start < input/.length) then (input .substr after_start) else ""))
+      (input = #"#{before}#{after}")
+      (lower = (input .to_lower))
+      (start = (lower .index open_tag))
+    )
+    input
+  )
+  (text = (remove_tag_block text "script"))
+  (text = (remove_tag_block text "style"))
+  (text = (remove_tag_block text "noscript"))
   (var max_iterations 500)
   (var i 0)
   (loop
@@ -293,7 +318,22 @@ Only use tools when necessary. For general conversation, respond normally.
       )
 
       (if ((content_type .index "text/html") >= 0)
-        (content = (strip_html_tags content))
+        (if (content/.length > max_chars)
+          (var extracted (genex/html/extract_text_with_links content url))
+          (var text extracted/text)
+          (var links extracted/links)
+          (if (links/.length > 0)
+            (var links_text "")
+            (links .each (fn [link]
+              (links_text = #"#{links_text}#{link/index}. #{link/text} - #{link/url}\n")
+            ))
+            (content = #"#{text}\n\nLinks:\n#{links_text}")
+          else
+            (content = text)
+          )
+        else
+          (content = (strip_html_tags content))
+        )
       )
 
       (if (content/.length > max_chars)

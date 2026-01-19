@@ -1,0 +1,40 @@
+#!/usr/bin/env gene run
+
+(fn usage []
+  (println "Usage: gene examples/extract.gene <url>")
+  (exit 1)
+)
+
+(if ($args/.length < 1)
+  (usage)
+)
+
+(var url $args/0)
+
+(try
+  (var resp (await (http_get url)))
+  (if (resp/status != 200)
+    (println "HTTP error:" resp/status)
+    (exit 1)
+  )
+
+  (var body resp/body)
+  (var content_type ((resp/headers .get "content-type" "") .to_lower))
+
+  (if ((content_type .index "text/html") >= 0)
+    (var extracted (genex/html/extract_text_with_links body url))
+    (println extracted/text)
+    (var links extracted/links)
+    (if (links/.length > 0)
+      (println "\nLinks:")
+      (links .each (fn [link]
+        (println #"#{link/index}. #{link/text} - #{link/url}")
+      ))
+    )
+  else
+    (println body)
+  )
+catch *
+  (println #"Failed to fetch #{url}: #{$ex/message}")
+  (exit 1)
+)
