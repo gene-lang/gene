@@ -1,0 +1,36 @@
+# Configuration Module
+# Environment variables and application settings
+
+($ns/PORT = 4080)
+($ns/MODEL_PATH = ($env .get "GENE_LLM_MODEL" ""))
+
+(var model_context_str ($env .get "GENE_LLM_CONTEXT" ""))
+($ns/MODEL_CONTEXT = 4096)
+(if (model_context_str/.length > 0)
+  ($ns/MODEL_CONTEXT = model_context_str/.to_i)
+)
+
+(var max_tokens_str ($env .get "GENE_LLM_MAX_TOKENS" ""))
+($ns/MAX_TOKENS = 512)
+(if (max_tokens_str/.length > 0)
+  ($ns/MAX_TOKENS = max_tokens_str/.to_i)
+)
+
+(var prompt_char_limit_str ($env .get "GENE_LLM_PROMPT_CHARS" ""))
+($ns/PROMPT_CHAR_LIMIT = (MODEL_CONTEXT * 4))
+(if (prompt_char_limit_str/.length > 0)
+  ($ns/PROMPT_CHAR_LIMIT = prompt_char_limit_str/.to_i)
+)
+
+($ns/DB_PATH = "chat.sqlite")
+
+# Apply minimum values
+(if (MODEL_CONTEXT < 256)
+  ($ns/MODEL_CONTEXT = 256)
+)
+(if (MAX_TOKENS < 1)
+  ($ns/MAX_TOKENS = 1)
+)
+(if (PROMPT_CHAR_LIMIT < 1024)
+  ($ns/PROMPT_CHAR_LIMIT = 1024)
+)

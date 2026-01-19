@@ -1,0 +1,80 @@
+# LLM Functions Module
+# Model initialization, prompt building, and inference
+
+(import MODEL_PATH MODEL_CONTEXT from "config")
+(import build_system_prompt from "tools")
+
+($ns/init_llm = (fn []
+  (if (MODEL_PATH/.length == 0)
+    (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
+  elif genex/llm
+    (println "Loading LLM model from:" MODEL_PATH)
+    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99 ^context MODEL_CONTEXT}))
+    (genex/llm/register_model model)
+    (println "LLM model loaded and registered successfully")
+  else
+    (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
+  )
+))
+
+($ns/build_prompt = (fn [history message]
+  (var parts [])
+  (var system_prompt (build_system_prompt))
+  (parts .append #"<|im_start|>system\n#{system_prompt}\n<|im_end|>\n")
+  (history .each (fn [entry]
+    (case entry/role
+    when "user"
+      (parts .append #"<|im_start|>user\n#{entry/content}\n<|im_end|>\n")
+    when "assistant"
+      (parts .append #"<|im_start|>assistant\n#{entry/content}\n<|im_end|>\n")
+    when "tool_result"
+      (parts .append #"<|im_start|>user\nTool result: #{entry/content}\n<|im_end|>\n")
+    )
+  ))
+  (if (message/.length > 0)
+    (parts .append #"<|im_start|>user\n#{message}\n<|im_end|>\n<|im_start|>assistant\n")
+  else
+    (parts .append "<|im_start|>assistant\n")
+  )
+  (parts .join "")
+))
+
+($ns/trim_history = (fn [history max_items]
+  (if (history/.size <= max_items)
+    (return history)
+  )
+  (var trimmed [])
+  (var start (history/.size - max_items))
+  (var i start)
+  (loop
+    (if (i >= history/.size)
+      (break)
+    )
+    (trimmed .append (history .get i))
+    (i += 1)
+  )
+  trimmed
+))
+
+($ns/trim_history_for_prompt = (fn [history message max_items max_chars]
+  (var trimmed (trim_history history max_items))
+  (if (max_chars <= 0)
+    (return trimmed)
+  )
+  (var prompt (build_prompt trimmed message))
+  (loop
+    (if (prompt/.length <= max_chars)
+      (break)
+    )
+    (if (trimmed/.size <= 1)
+      (break)
+    )
+    (trimmed = (trim_history trimmed (trimmed/.size - 1)))
+    (prompt = (build_prompt trimmed message))
+  )
+  trimmed
+))
+
+($ns/get_model = (fn []
+  (if genex/llm then (genex/llm/get_model) else false)
+))

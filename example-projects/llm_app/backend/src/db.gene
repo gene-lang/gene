@@ -1,0 +1,74 @@
+# Database Functions Module
+# SQLite database operations for conversations and messages
+
+(import DB_PATH from "config")
+
+(var DB nil)
+
+($ns/get_db = (fn [] DB))
+
+($ns/init_db = (fn []
+  (if genex/sqlite
+    (try
+      (DB = (genex/sqlite/open DB_PATH))
+      (DB .exec "PRAGMA journal_mode=WAL")
+      (DB .exec "CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL NOT NULL)")
+      (DB .exec "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, document_used INTEGER DEFAULT 0, document_chunks INTEGER DEFAULT 0, created_at REAL NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id))")
+      (DB .exec "CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)")
+    catch *
+      (println "Failed to open SQLite:" $ex/message)
+      (DB = nil)
+    )
+  else
+    (println "genex/sqlite is unavailable. Rebuild with extensions.")
+  )
+))
+
+($ns/new_conversation = (fn []
+  (if (DB == nil)
+    (return nil)
+  )
+  (DB .exec "INSERT INTO conversations (created_at) VALUES (?)" (time/now))
+  (var rows (DB .query "SELECT last_insert_rowid()"))
+  (if (rows/.size == 0)
+    (return nil)
+  )
+  (var id_val rows/0/0)
+  id_val/.to_s
+))
+
+($ns/conversation_exists = (fn [conv_id_int]
+  (if (DB == nil)
+    (return false)
+  )
+  (var rows (DB .query "SELECT id FROM conversations WHERE id = ?" conv_id_int))
+  (rows/.size > 0)
+))
+
+($ns/load_history = (fn [conv_id_int]
+  (if (DB == nil)
+    (return [])
+  )
+  (var rows (DB .query "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id" conv_id_int))
+  (var history [])
+  (rows .each (fn [row]
+    (history .append {^role row/0 ^content row/1})
+  ))
+  history
+))
+
+($ns/store_message = (fn [conv_id_int role content document_used document_chunks]
+  (if (DB == nil)
+    (return nil)
+  )
+  (var doc_flag (if document_used then 1 else 0))
+  (var chunks_val (if document_used then document_chunks else 0))
+  (DB .exec "INSERT INTO messages (conversation_id, role, content, document_used, document_chunks, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    conv_id_int
+    role
+    content
+    doc_flag
+    chunks_val
+    (time/now)
+  )
+))

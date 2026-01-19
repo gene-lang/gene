@@ -1,0 +1,93 @@
+# Helper Functions Module
+# Utility functions for parsing and response handling
+
+($ns/extract_first_json = (fn [text]
+  (var start (text .index "{"))
+  (if (start < 0)
+    (return nil)
+  )
+  (var i start)
+  (var depth 0)
+  (var in_str false)
+  (var escape false)
+  (loop
+    (if (i >= text/.length)
+      (break)
+    )
+    (var ch (text .char_at i))
+    (if in_str
+      (if escape
+        (escape = false)
+      elif (ch == '\\')
+        (escape = true)
+      elif (ch == '"')
+        (in_str = false)
+      )
+    else
+      (if (ch == '"')
+        (in_str = true)
+      elif (ch == '{')
+        (depth += 1)
+      elif (ch == '}')
+        (depth -= 1)
+        (if (depth == 0)
+          (return (text .substr start i))
+        )
+      )
+    )
+    (i += 1)
+  )
+  nil
+))
+
+($ns/json_response = (fn [status data]
+  (respond status data/.to_json {^Content-Type "application/json"})
+))
+
+($ns/sse_send = (fn [stream payload]
+  (var data_str (if (payload == nil) then "{}" else payload/.to_json))
+  (stream .send #"data: #{data_str}\n\n")
+))
+
+($ns/parse_response = (fn [text]
+  (var think_start (text .index "<think>"))
+  (if (think_start < 0)
+    (return [nil text/.trim])
+  )
+  (var think_end (text .index "</think>"))
+  (if (think_end < 0)
+    (return [nil text/.trim])
+  )
+  (var thinking (text .substr (think_start + 7) (think_end - 1)))
+  (var answer (text .substr (think_end + 8)))
+  [thinking/.trim answer/.trim]
+))
+
+($ns/parse_tool_call = (fn [text]
+  (var trimmed (extract_first_json text))
+  (if (trimmed == nil)
+    (return nil)
+  )
+  (try
+    (var parsed (gene/json/parse trimmed))
+    (if (parsed .contains "tool")
+      parsed
+    else
+      nil
+    )
+  catch *
+    nil
+  )
+))
+
+($ns/chat_id_from_path = (fn [path]
+  (var prefix "/api/chat/")
+  (if (path .starts_with prefix)
+    (var rest (path .substr prefix/.length))
+    (if (rest .ends_with "/stream")
+      (rest = (rest .substr 0 (rest/.length - 8)))
+    )
+    (return rest)
+  )
+  nil
+))

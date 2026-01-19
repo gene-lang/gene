@@ -1,0 +1,324 @@
+# HTTP Handlers Module
+# Request handlers for all API endpoints
+
+(import MAX_TOKENS MODEL_CONTEXT PROMPT_CHAR_LIMIT from "config")
+(import execute_tool from "tools")
+(import extract_first_json json_response sse_send parse_response parse_tool_call chat_id_from_path from "helpers")
+(import get_db init_db new_conversation conversation_exists load_history store_message from "db")
+(import init_llm build_prompt trim_history trim_history_for_prompt get_model from "llm")
+
+($ns/handle_health = (fn [req]
+  (var is_loaded
+    (if genex/llm
+      (if (genex/llm/get_model) then true else false)
+    else
+      false
+    )
+  )
+  (json_response 200 {^status "ok" ^model_loaded is_loaded})
+))
+
+($ns/handle_chat_new = (fn [req]
+  (if ((get_db) == nil)
+    (return (json_response 500 {^error "SQLite is unavailable"}))
+  )
+  (var conv_id (new_conversation))
+  (if (conv_id == nil)
+    (return (json_response 500 {^error "Failed to create conversation"}))
+  )
+  (json_response 200 {^conversation_id conv_id})
+))
+
+($ns/handle_chat = (fn [req conv_id]
+  (if ((get_db) == nil)
+    (return (json_response 500 {^error "SQLite is unavailable"}))
+  )
+  (if (conv_id == nil)
+    (return (json_response 400 {^error "Missing conversation id"}))
+  )
+  (var conv_id_int conv_id/.to_i)
+  (if (conv_id_int <= 0)
+    (return (json_response 400 {^error "Invalid conversation id"}))
+  )
+  (var history [])
+  (if (conversation_exists conv_id_int)
+    (history = (load_history conv_id_int))
+  else
+    (return (json_response 404 {^error "Conversation not found" ^conversation_id conv_id}))
+  )
+  (var req_body req/.body)
+  (var body_str (if (req_body == nil) then "" else req_body))
+  (var content_type ((req/.headers .get "content-type" "") .to_lower))
+  (var message)
+  (var document_text)
+  (var document_chunks 0)
+  (var document_used false)
+
+  (if ((content_type .index "multipart/form-data") >= 0)
+    (try
+      (genex/ai/documents/validate_upload req {^allowed_types ["pdf" "png" "jpg" "jpeg" "bmp" "tiff" "tif"]})
+    catch *
+      (return (json_response 400 {^error $ex/message}))
+    )
+    (try
+      (document_text = (genex/ai/documents/extract_upload req))
+    catch *
+      (return (json_response 400 {^error $ex/message}))
+    )
+    (message = ((req/.params .get "message" "Summarize the document.") .trim))
+    (document_used = true)
+  else
+    (var trimmed_body (body_str .trim))
+    (if ((trimmed_body .length) == 0)
+      (message = (req/.params .get "message"))
+      (if ((message == nil) || ((message .length) == 0))
+        (return (json_response 400 {^error "Missing 'message' field"}))
+      )
+    else
+      (var parsed)
+      (try
+        (parsed = (gene/json/parse req_body))
+      catch *
+        (return (json_response 400 {^error "Invalid JSON"}))
+      )
+      (message = (parsed .get "message"))
+      (if (message == nil)
+        (return (json_response 400 {^error "Missing 'message' field"}))
+      )
+    )
+  )
+
+  (if (document_text != nil)
+    (var chunks (genex/ai/documents/chunk document_text {^strategy :recursive ^size 800 ^overlap 80}))
+    (document_chunks = chunks/.size)
+    (var context_parts [])
+    (var i 0)
+    (var max_chunks 3)
+    (loop
+      (if ((i >= chunks/.size) || (i >= max_chunks))
+        (break)
+      )
+      (var chunk (chunks .get i))
+      (if (chunk != nil)
+        (context_parts .append chunk/text)
+      )
+      (i += 1)
+    )
+    (var context (context_parts .join "\n\n"))
+    (message = #"""
+You are given extracted document context.
+
+Context:
+#{context}
+
+User request:
+#{message}
+""")
+  )
+  (var prompt_message message)
+
+  (var response_text "")
+  (var tokens_used 0)
+  (var thinking)
+  (var tool_calls [])
+
+  (var model (get_model))
+
+  (if model
+    (var session (model .new_session {^max_tokens MAX_TOKENS ^context MODEL_CONTEXT}))
+    (try
+      (var current_history history)
+      (var current_message prompt_message)
+      (var max_tool_iterations 5)
+      (var iteration 0)
+
+      (loop
+        (if (iteration >= max_tool_iterations)
+          (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
+          (break)
+        )
+
+        (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
+        (var prompt (build_prompt current_history current_message))
+
+        (var raw_text "")
+        (var result (session .infer_streaming prompt (fn [token]
+          (print token)
+          (raw_text = #"#{raw_text}#{token}")
+        )))
+        (print "\n")
+        (var tokens (result .get "tokens"))
+        (tokens_used += tokens/.size)
+
+        (var tool_call (parse_tool_call raw_text))
+
+        (if (tool_call != nil)
+          (var tool_name tool_call/tool)
+          (var tool_args (tool_call .get "args" {}))
+          (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
+
+          (var tool_result (execute_tool tool_name tool_args))
+          (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
+
+          (var parsed_resp (parse_response raw_text))
+          (var tool_text (parsed_resp .get 1))
+          (if (tool_text == nil)
+            (tool_text = raw_text/.trim)
+          )
+          (current_history .append {^role "assistant" ^content tool_text})
+          (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
+          (current_history .append {^role "tool_result" ^content current_message})
+          (current_message = "")
+          (iteration += 1)
+        else
+          (var parsed_resp (parse_response raw_text))
+          (thinking = (parsed_resp .get 0))
+          (response_text = (parsed_resp .get 1))
+          (break)
+        )
+      )
+    catch *
+      (response_text = $ex/message)
+    )
+  else
+    (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
+    (tokens_used = 15)
+  )
+
+  (store_message conv_id_int "user" prompt_message document_used document_chunks)
+  (store_message conv_id_int "assistant" response_text false 0)
+
+  (var response_data {
+    ^conversation_id conv_id
+    ^response response_text
+    ^thinking thinking
+    ^tokens_used tokens_used
+    ^document_used document_used
+    ^document_chunks document_chunks
+  })
+  (if (tool_calls/.size > 0)
+    (response_data .set "tool_calls" tool_calls)
+  )
+  (json_response 200 response_data)
+))
+
+($ns/handle_chat_stream = (fn [req conv_id]
+  (if ((get_db) == nil)
+    (return (json_response 500 {^error "SQLite is unavailable"}))
+  )
+  (if (conv_id == nil)
+    (return (json_response 400 {^error "Missing conversation id"}))
+  )
+  (var conv_id_int conv_id/.to_i)
+  (if (conv_id_int <= 0)
+    (return (json_response 400 {^error "Invalid conversation id"}))
+  )
+  (var history [])
+  (if (conversation_exists conv_id_int)
+    (history = (load_history conv_id_int))
+  else
+    (return (json_response 404 {^error "Conversation not found" ^conversation_id conv_id}))
+  )
+
+  (var message ((req/.params .get "message" "") .trim))
+  (if (message/.length == 0)
+    (return (json_response 400 {^error "Missing 'message' query param"}))
+  )
+
+  (var prompt_message message)
+  (var stream (respond_sse req {^Content-Type "text/event-stream"}))
+
+  (var response_text "")
+  (var tokens_used 0)
+  (var thinking)
+  (var tool_calls [])
+  (var document_used false)
+  (var document_chunks 0)
+  (var stream_cancelled false)
+
+  (var model (get_model))
+  (if model
+    (var session (model .new_session {^max_tokens MAX_TOKENS ^context MODEL_CONTEXT}))
+    (try
+      (var current_history history)
+      (var current_message prompt_message)
+      (var max_tool_iterations 5)
+      (var iteration 0)
+
+      (loop
+        (if (iteration >= max_tool_iterations)
+          (response_text = "I apologize, but I'm having trouble completing this request after multiple attempts.")
+          (break)
+        )
+
+        (current_history = (trim_history_for_prompt current_history current_message 12 PROMPT_CHAR_LIMIT))
+        (var prompt (build_prompt current_history current_message))
+
+        (var raw_text "")
+        (var result (session .infer_streaming prompt (fn [token]
+          (print token)
+          (raw_text = #"#{raw_text}#{token}")
+          (var ok (sse_send stream {^token token}))
+          (if (ok == false)
+            (stream_cancelled = true)
+            (throw "client disconnected")
+          )
+        )))
+        (print "\n")
+        (var tokens (result .get "tokens"))
+        (tokens_used += tokens/.size)
+
+        (if stream_cancelled
+          (break)
+        )
+
+        (var tool_call (parse_tool_call raw_text))
+        (if (tool_call != nil)
+          (var tool_name tool_call/tool)
+          (var tool_args (tool_call .get "args" {}))
+          (var tool_result (execute_tool tool_name tool_args))
+          (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
+
+          (var parsed_resp (parse_response raw_text))
+          (var tool_text (parsed_resp .get 1))
+          (if (tool_text == nil)
+            (tool_text = raw_text/.trim)
+          )
+          (current_history .append {^role "assistant" ^content tool_text})
+          (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
+          (current_history .append {^role "tool_result" ^content current_message})
+          (current_message = "")
+          (iteration += 1)
+        else
+          (var parsed_resp (parse_response raw_text))
+          (thinking = (parsed_resp .get 0))
+          (response_text = (parsed_resp .get 1))
+          (break)
+        )
+      )
+    catch *
+      (response_text = $ex/message)
+      (sse_send stream {^error response_text})
+    )
+  else
+    (response_text = "I'm a mock response. Set GENE_LLM_MODEL environment variable to use a real LLM.")
+    (tokens_used = 15)
+    (sse_send stream {^token response_text})
+  )
+
+  (if stream_cancelled
+    (stream .close)
+    (return stream)
+  )
+
+  (store_message conv_id_int "user" prompt_message document_used document_chunks)
+  (store_message conv_id_int "assistant" response_text false 0)
+
+  (var done_payload {^done true ^tokens_used tokens_used ^thinking thinking})
+  (if (tool_calls/.size > 0)
+    (done_payload .set "tool_calls" tool_calls)
+  )
+  (sse_send stream done_payload)
+  (stream .close)
+  stream
+))
