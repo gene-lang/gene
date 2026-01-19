@@ -1,0 +1,20 @@
+# Named import tests
+# Tests (import name from "module") syntax
+
+# Test 1: Import specific items from math_lib
+(import add multiply from "math_lib")
+
+(println "add(10, 20) =" (add 10 20))
+# Expected: add(10, 20) = 30
+
+(println "multiply(3, 7) =" (multiply 3 7))
+# Expected: multiply(3, 7) = 21
+
+# Test 2: Import with alias
+(import add:sum from "math_lib")
+
+(println "sum(5, 5) =" (sum 5 5))
+# Expected: sum(5, 5) = 10
+
+(println "Named import tests completed")
+# Expected: Named import tests completed

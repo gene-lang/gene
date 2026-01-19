@@ -1,0 +1,41 @@
+# Wildcard import tests
+# Tests (import * from "module") syntax
+
+# Test 1: Import all from math_lib
+(import * from "math_lib")
+
+(println "PI =" PI)
+# Expected: PI = 3.14159
+
+(println "E =" E)
+# Expected: E = 2.71828
+
+(println "add(2, 3) =" (add 2 3))
+# Expected: add(2, 3) = 5
+
+(println "multiply(4, 5) =" (multiply 4 5))
+# Expected: multiply(4, 5) = 20
+
+(println "square(6) =" (square 6))
+# Expected: square(6) = 36
+
+(println "double(7) =" (double 7))
+# Expected: double(7) = 14
+
+# Test 2: Import all from string_lib
+(import * from "string_lib")
+
+(println "GREETING =" GREETING)
+# Expected: GREETING = Hello
+
+(println "FAREWELL =" FAREWELL)
+# Expected: FAREWELL = Goodbye
+
+(println "shout(hello) =" (shout "hello"))
+# Expected: shout(hello) = HELLO
+
+(println "whisper(WORLD) =" (whisper "WORLD"))
+# Expected: whisper(WORLD) = world
+
+(println "Wildcard import tests completed")
+# Expected: Wildcard import tests completed

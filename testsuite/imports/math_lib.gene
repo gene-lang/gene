@@ -1,0 +1,11 @@
+# Math library module for testing imports
+
+# Export constants
+($ns/PI = 3.14159)
+($ns/E = 2.71828)
+
+# Export functions
+($ns/add = (fn [a b] (a + b)))
+($ns/multiply = (fn [a b] (a * b)))
+($ns/square = (fn [x] (x * x)))
+($ns/double = (fn [x] (x * 2)))

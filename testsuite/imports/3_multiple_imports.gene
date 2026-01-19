@@ -1,0 +1,22 @@
+# Multiple wildcard imports test
+# Tests that multiple wildcard imports work together
+
+# Import all from both libraries
+(import * from "math_lib")
+(import * from "string_lib")
+
+# Use items from math_lib
+(println "Using math: square(5) =" (square 5))
+# Expected: Using math: square(5) = 25
+
+# Use items from string_lib
+(println "Using string: shout(test) =" (shout "test"))
+# Expected: Using string: shout(test) = TEST
+
+# Combine them
+(var result (add (double 3) 4))
+(println "Combined: add(double(3), 4) =" result)
+# Expected: Combined: add(double(3), 4) = 10
+
+(println "Multiple imports test completed")
+# Expected: Multiple imports test completed

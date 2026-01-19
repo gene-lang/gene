@@ -1,0 +1,9 @@
+# String library module for testing imports
+
+# Export constants
+($ns/GREETING = "Hello")
+($ns/FAREWELL = "Goodbye")
+
+# Export functions
+($ns/shout = (fn [s] (s .to_upper)))
+($ns/whisper = (fn [s] (s .to_lower)))

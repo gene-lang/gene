@@ -157,6 +157,7 @@ else
     run_category "Async Support" "async"
     run_category "Futures" "futures"
     run_category "Generators" "generators"
+    run_category "Imports" "imports"
     run_category "Stdlib" "stdlib"
     run_category "Stdlib Core" "stdlib/core"
     run_category "Stdlib Strings" "stdlib/strings"

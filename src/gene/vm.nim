@@ -4571,18 +4571,24 @@ proc exec*(self: ptr VirtualMachine): Value =
               
               # Import requested symbols
               for item in imports:
-                let value = resolve_import_value(ext_ns, item.name)
-                
-                # Determine the name to import as
-                let import_name = if item.alias != "": 
-                  item.alias 
+                if item.name == "*":
+                  # Wildcard import: copy all members from extension namespace
+                  for key, value in ext_ns.members:
+                    if value != NIL:
+                      self.frame.ns.members[key] = value
                 else:
-                  # Use the last part of the path
-                  let parts = item.name.split("/")
-                  parts[^1]
-                
-                # Add to current namespace
-                self.frame.ns.members[import_name.to_key()] = value
+                  let value = resolve_import_value(ext_ns, item.name)
+
+                  # Determine the name to import as
+                  let import_name = if item.alias != "":
+                    item.alias
+                  else:
+                    # Use the last part of the path
+                    let parts = item.name.split("/")
+                    parts[^1]
+
+                  # Add to current namespace
+                  self.frame.ns.members[import_name.to_key()] = value
             else:
               not_allowed("Native extensions are not supported in this build")
           else:
@@ -4613,34 +4619,46 @@ proc exec*(self: ptr VirtualMachine): Value =
             
             # Import requested symbols
             for item in imports:
-              let value = resolve_import_value(module_ns, item.name)
-              
-              # Determine the name to import as
-              let import_name = if item.alias != "": 
-                item.alias 
+              if item.name == "*":
+                # Wildcard import: copy all members from module namespace
+                for key, value in module_ns.members:
+                  if value != NIL:
+                    self.frame.ns.members[key] = value
               else:
-                # Use the last part of the path
-                let parts = item.name.split("/")
-                parts[^1]
-              
-              # Add to current namespace
-              self.frame.ns.members[import_name.to_key()] = value
+                let value = resolve_import_value(module_ns, item.name)
+
+                # Determine the name to import as
+                let import_name = if item.alias != "":
+                  item.alias
+                else:
+                  # Use the last part of the path
+                  let parts = item.name.split("/")
+                  parts[^1]
+
+                # Add to current namespace
+                self.frame.ns.members[import_name.to_key()] = value
         else:
           # Module already cached - import requested symbols
           let cached_ns = ModuleCache[module_path]
           for item in imports:
-            let value = resolve_import_value(cached_ns, item.name)
-
-            # Determine the name to import as
-            let import_name = if item.alias != "":
-              item.alias
+            if item.name == "*":
+              # Wildcard import: copy all members from cached namespace
+              for key, value in cached_ns.members:
+                if value != NIL:
+                  self.frame.ns.members[key] = value
             else:
-              # Use the last part of the path
-              let parts = item.name.split("/")
-              parts[^1]
+              let value = resolve_import_value(cached_ns, item.name)
 
-            # Add to current namespace
-            self.frame.ns.members[import_name.to_key()] = value
+              # Determine the name to import as
+              let import_name = if item.alias != "":
+                item.alias
+              else:
+                # Use the last part of the path
+                let parts = item.name.split("/")
+                parts[^1]
+
+              # Add to current namespace
+              self.frame.ns.members[import_name.to_key()] = value
 
         self.frame.push(NIL)
 
