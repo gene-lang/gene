@@ -360,10 +360,155 @@ Only use tools when necessary. For general conversation, respond normally.
 # Tool: create_image
 # ============================================================
 (register_tool "create_image"
-  "Generate an image using AI"
-  {^prompt "Description of the image"}
+  "Generate an image using AI (Stable Diffusion). Returns image URLs."
+  {^prompt "Description of the image to generate"}
   (fn [args]
-    (println "DEBUG: create_image tool called")
-    {^result "Test - tool works"}
+    (var prompt (args .get "prompt" ""))
+    (if (prompt/.length == 0)
+      (return {^error "Missing prompt"})
+    )
+
+    # Get ComfyUI URL from env
+    (var comfyui_url ($env .get "COMFYUI_URL" "http://127.0.0.1:8188"))
+
+    # Build workflow JSON for ComfyUI
+    (var seed (random_int 2147483647))
+    (var workflow {
+      ^3 {
+        ^class_type "KSampler"
+        ^inputs {
+          ^cfg 7.0
+          ^denoise 1
+          ^latent_image ["5" 0]
+          ^model ["4" 0]
+          ^negative ["7" 0]
+          ^positive ["6" 0]
+          ^sampler_name "euler"
+          ^scheduler "normal"
+          ^seed seed
+          ^steps 20
+        }
+      }
+      ^4 {
+        ^class_type "CheckpointLoaderSimple"
+        ^inputs {^ckpt_name "juggernautXL_v9.safetensors"}
+      }
+      ^5 {
+        ^class_type "EmptyLatentImage"
+        ^inputs {^batch_size 1 ^height 1024 ^width 1024}
+      }
+      ^6 {
+        ^class_type "CLIPTextEncode"
+        ^inputs {^clip ["4" 1] ^text prompt}
+      }
+      ^7 {
+        ^class_type "CLIPTextEncode"
+        ^inputs {^clip ["4" 1] ^text ""}
+      }
+      ^8 {
+        ^class_type "VAEDecode"
+        ^inputs {^samples ["3" 0] ^vae ["4" 2]}
+      }
+      ^9 {
+        ^class_type "SaveImage"
+        ^inputs {^filename_prefix "ComfyUI" ^images ["8" 0]}
+      }
+    })
+
+    # Queue prompt to ComfyUI
+    (var client_id #"gene-tool-#{(random_int 999999)}")
+    (var payload {^prompt workflow ^client_id client_id})
+    (var json_body payload/.to_json)
+    (var escaped_body (json_body .replace "'" "'\\''"))
+    (var queue_cmd #"printf '%s' '#{escaped_body}' | curl -s -X POST -H 'Content-Type: application/json' --data-binary @- '#{comfyui_url}/prompt'")
+
+    (var queue_result (system/shell queue_cmd))
+
+    (if (queue_result/exit_code != 0)
+      (return {^error "Failed to queue prompt"})
+    )
+
+    (var queue_response (gene/json/parse queue_result/output))
+    (if (queue_response .contains "error")
+      (var err (queue_response .get "error"))
+      (var err_msg (if (err .contains "message") then (err .get "message") else "Unknown error"))
+      (return {^error err_msg})
+    )
+
+    (var prompt_id (queue_response .get "prompt_id" ""))
+    (println "DEBUG: create_image prompt_id=" prompt_id)
+
+    # Poll for completion
+    (var max_polls 240)
+    (var poll_count 0)
+    (var completed false)
+    (var output_data nil)
+
+    (loop
+      (if (poll_count >= max_polls)
+        (return {^error "Image generation timed out"})
+      )
+
+      (var history_cmd #"curl -s '#{comfyui_url}/history/#{prompt_id}'")
+      (var history_result (system/shell history_cmd))
+
+      (if (history_result/exit_code == 0)
+        (try
+          (var history (gene/json/parse history_result/output))
+          (if (history .contains prompt_id)
+            (var prompt_data (history .get prompt_id))
+            (if ((prompt_data != nil) && (prompt_data .contains "outputs"))
+              (output_data = prompt_data)
+              (completed = true)
+            )
+          )
+        catch *
+          nil
+        )
+      )
+
+      (if completed
+        (break)
+      )
+
+      (poll_count = (poll_count + 1))
+      (if (poll_count == 1)
+        (println "DEBUG: create_image polling...")
+      )
+      (sleep 500)
+    )
+
+    # Extract image info
+    (try
+      (var outputs (output_data .get "outputs" {}))
+      (var images [])
+      (outputs .each (fn [node_id node_output]
+        (if (node_output .contains "images")
+          (var node_images (node_output .get "images" []))
+          (node_images .each (fn [img]
+            (var filename (img .get "filename" ""))
+            (var subfolder (img .get "subfolder" ""))
+            (var img_type (img .get "type" "output"))
+            (images .append {
+              ^filename filename
+              ^url #"/api/image/view?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
+            })
+          ))
+        )
+      ))
+
+      (if (images/.size == 0)
+        (return {^error "No images in output"})
+      )
+
+      (var first_image (images .get 0))
+      {
+        ^result #"Image generated! View at: #{first_image/url}"
+        ^images images
+        ^prompt_id prompt_id
+      }
+    catch *
+      {^error #"Failed to extract images: #{$ex/message}"}
+    )
   )
 )

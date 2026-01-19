@@ -415,6 +415,104 @@ User request:
   )
 )
 
+# One-shot LLM endpoint - no history/ID, supports tools, multi-step
+(fn $ns/handle_oneshot [req]
+  (var req_body req/.body)
+  (var body_str (if (req_body == nil) then "" else req_body))
+  (var trimmed_body (body_str .trim))
+
+  (if (trimmed_body/.length == 0)
+    (return (json_response 400 {^error "Missing request body"}))
+  )
+
+  (var parsed)
+  (try
+    (parsed = (gene/json/parse trimmed_body))
+  catch *
+    (return (json_response 400 {^error "Invalid JSON"}))
+  )
+
+  (var message (parsed .get "message" ""))
+  (if (message/.length == 0)
+    (return (json_response 400 {^error "Missing 'message' field"}))
+  )
+
+  (println "ONESHOT: message=" message)
+
+  (var response_text "")
+  (var tokens_used 0)
+  (var tool_calls [])
+
+  (var model (get_model))
+  (if model
+    (var session (model .new_session {^max_tokens MAX_TOKENS ^context MODEL_CONTEXT}))
+    (try
+      (var current_history [])
+      (var current_message message)
+      (var max_tool_iterations 5)
+      (var iteration 0)
+
+      (loop
+        (if (iteration >= max_tool_iterations)
+          (response_text = "Reached maximum tool iterations.")
+          (break)
+        )
+
+        (var prompt (build_prompt current_history current_message))
+
+        (var raw_text "")
+        (var result (session .infer_streaming prompt (fn [token]
+          (print token)
+          (raw_text = #"#{raw_text}#{token}")
+        )))
+        (print "\n")
+        (var tokens (result .get "tokens"))
+        (tokens_used += tokens/.size)
+
+        (var tool_call (parse_tool_call raw_text))
+
+        (if (tool_call != nil)
+          (var tool_name tool_call/tool)
+          (var tool_args (tool_call .get "args" {}))
+          (println #"ONESHOT Tool call: #{tool_name} with args: #{tool_args/.to_json}")
+
+          (var tool_result (execute_tool tool_name tool_args))
+          (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
+
+          (var parsed_resp (parse_response raw_text))
+          (var tool_text (parsed_resp .get 1))
+          (if (tool_text == nil)
+            (tool_text = raw_text/.trim)
+          )
+          (current_history .append {^role "assistant" ^content tool_text})
+          (current_message = (tool_result .get "result" (tool_result .get "error" "Tool returned no result")))
+          (current_history .append {^role "tool_result" ^content current_message})
+          (current_message = "")
+          (iteration += 1)
+        else
+          (var parsed_resp (parse_response raw_text))
+          (response_text = (parsed_resp .get 1))
+          (break)
+        )
+      )
+    catch *
+      (response_text = $ex/message)
+    )
+  else
+    (response_text = "No LLM model loaded. Set GENE_LLM_MODEL environment variable.")
+  )
+
+  (var response_data {
+    ^message message
+    ^response response_text
+    ^tokens_used tokens_used
+  })
+  (if (tool_calls/.size > 0)
+    (response_data .set "tool_calls" tool_calls)
+  )
+  (json_response 200 response_data)
+)
+
 # Proxy image from ComfyUI - avoids exposing ComfyUI to public
 (fn $ns/handle_image_view [req]
   (var filename (req/.params .get "filename" ""))
@@ -428,11 +526,7 @@ User request:
   (try
     (var image_data (get_image filename subfolder img_type))
     # Return binary image data with correct content-type
-    {
-      ^status 200
-      ^headers {^Content-Type image_data/content_type}
-      ^body image_data/data
-    }
+    (respond 200 image_data/data {^Content-Type image_data/content_type})
   catch *
     (json_response 500 {^error $ex/message})
   )
