@@ -158,9 +158,7 @@ User request:
           (var tool_args (tool_call .get "args" {}))
           (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
 
-          (println "DEBUG: about to call execute_tool")
           (var tool_result (execute_tool tool_name tool_args))
-          (println "DEBUG: execute_tool returned")
           (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
 
           (var parsed_resp (parse_response raw_text))
@@ -336,18 +334,15 @@ User request:
 )
 
 (fn $ns/handle_image_generate [req]
-  (println "DEBUG handler: handle_image_generate called")
   # Check if ComfyUI URL is configured
   (if ((COMFYUI_URL == nil) || (COMFYUI_URL/.length == 0))
     (return (json_response 500 {^error "ComfyUI not configured. Set COMFYUI_URL environment variable."}))
   )
-  (println "DEBUG handler: ComfyUI URL is configured:" COMFYUI_URL)
 
   # Parse request body
   (var req_body req/.body)
   (var body_str (if (req_body == nil) then "" else req_body))
   (var trimmed_body (body_str .trim))
-  (println "DEBUG handler: body parsed, length=" trimmed_body/.length)
 
   (var prompt "")
   (var options {})
@@ -397,20 +392,15 @@ User request:
   (if ((prompt == nil) || (prompt/.length == 0))
     (return (json_response 400 {^error "Missing 'prompt' field"}))
   )
-  (println "DEBUG handler: prompt=" prompt)
-  (println "DEBUG handler: options=" options/.to_json)
 
   (try
-    (println "DEBUG handler: calling generate_image...")
     (var result (generate_image prompt options))
-    (println "DEBUG handler: generate_image returned:" result)
     (json_response 200 {
       ^prompt_id result/prompt_id
       ^images result/images
       ^prompt prompt
     })
   catch *
-    (println "DEBUG handler: exception caught:" $ex/message)
     (json_response 500 {^error $ex/message})
   )
 )
@@ -524,9 +514,18 @@ User request:
   )
 
   (try
-    (var image_data (get_image filename subfolder img_type))
+    # Download image to temp file
+    (var image_info (get_image_path filename subfolder img_type))
+    (var tmp_path image_info/path)
+
+    # Read file content using gene/io/read
+    (var data (gene/io/read tmp_path))
+
+    # Clean up temp file
+    (system/shell #"rm -f '#{tmp_path}'")
+
     # Return binary image data with correct content-type
-    (respond 200 image_data/data {^Content-Type image_data/content_type})
+    (respond 200 data {^Content-Type image_info/content_type})
   catch *
     (json_response 500 {^error $ex/message})
   )

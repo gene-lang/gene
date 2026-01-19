@@ -14,19 +14,14 @@
 )
 
 (fn $ns/execute_tool [name args]
-  (println "DEBUG execute_tool: name=" name)
   (var tool (TOOLS .get name))
   (if (tool == nil)
-    (println "DEBUG execute_tool: tool not found")
     (return {^error #"Unknown tool: #{name}"})
   )
-  (println "DEBUG execute_tool: found tool, calling handler")
   (try
     (var result (tool/handler args))
-    (println "DEBUG execute_tool: handler returned")
     result
   catch *
-    (println "DEBUG execute_tool: caught exception:" $ex/message)
     {^error #"Tool execution failed: #{$ex/message}"}
   )
 )
@@ -60,6 +55,9 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 
 After receiving a tool result, provide a natural response to the user.
 Only use tools when necessary. For general conversation, respond normally.
+
+When displaying images, use HTML img tags instead of markdown links:
+<img style="max-width:600px;width:100%" src="IMAGE_URL">
 """
 )
 
@@ -436,7 +434,6 @@ Only use tools when necessary. For general conversation, respond normally.
     )
 
     (var prompt_id (queue_response .get "prompt_id" ""))
-    (println "DEBUG: create_image prompt_id=" prompt_id)
 
     # Poll for completion
     (var max_polls 240)
@@ -472,9 +469,6 @@ Only use tools when necessary. For general conversation, respond normally.
       )
 
       (poll_count = (poll_count + 1))
-      (if (poll_count == 1)
-        (println "DEBUG: create_image polling...")
-      )
       (sleep 500)
     )
 
