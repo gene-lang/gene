@@ -281,7 +281,7 @@ Only use tools when necessary. For general conversation, respond normally.
 
 (register_tool "read_url"
   "Fetch and read content from a URL. Returns plain text extracted from the page."
-  {^url "The URL to fetch" ^max_chars "Maximum characters to return (default 4000)"}
+  {^url "The URL to fetch" ^max_chars "Maximum characters to return (default 8000)"}
   (fn [args]
     (var url (args .get "url" ""))
     (if (url/.length == 0)
@@ -291,13 +291,13 @@ Only use tools when necessary. For general conversation, respond normally.
       (return {^error "URL must start with http:// or https://"})
     )
 
+    (var max_chars 8000)
     (var max_chars_val (args .get "max_chars" nil))
-    (var max_chars 4000)
     (if (max_chars_val != nil)
       (try
         (max_chars = (#"#{max_chars_val}" .to_i))
       catch *
-        (max_chars = 4000)
+        (max_chars = 8000)
       )
     )
     (if (max_chars < 100) then (max_chars = 100))
@@ -311,11 +311,6 @@ Only use tools when necessary. For general conversation, respond normally.
 
       (var content resp/body)
       (var content_type ((resp/headers .get "content-type" "") .to_lower))
-
-      (var process_limit (max_chars * 3))
-      (if (content/.length > process_limit)
-        (content = (content .substr 0 (process_limit - 1)))
-      )
 
       (if ((content_type .index "text/html") >= 0)
         (if (content/.length > max_chars)
@@ -333,6 +328,12 @@ Only use tools when necessary. For general conversation, respond normally.
           )
         else
           (content = (strip_html_tags content))
+        )
+      )
+      (if ((content_type .index "text/html") < 0)
+        (var process_limit (max_chars * 3))
+        (if (content/.length > process_limit)
+          (content = (content .substr 0 (process_limit - 1)))
         )
       )
 
