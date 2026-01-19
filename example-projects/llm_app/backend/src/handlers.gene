@@ -158,7 +158,9 @@ User request:
           (var tool_args (tool_call .get "args" {}))
           (println #"Tool call: #{tool_name} with args: #{tool_args/.to_json}")
 
+          (println "DEBUG: about to call execute_tool")
           (var tool_result (execute_tool tool_name tool_args))
+          (println "DEBUG: execute_tool returned")
           (tool_calls .append {^tool tool_name ^args tool_args ^result tool_result})
 
           (var parsed_resp (parse_response raw_text))
@@ -409,6 +411,29 @@ User request:
     })
   catch *
     (println "DEBUG handler: exception caught:" $ex/message)
+    (json_response 500 {^error $ex/message})
+  )
+)
+
+# Proxy image from ComfyUI - avoids exposing ComfyUI to public
+(fn $ns/handle_image_view [req]
+  (var filename (req/.params .get "filename" ""))
+  (var subfolder (req/.params .get "subfolder" ""))
+  (var img_type (req/.params .get "type" "output"))
+
+  (if (filename/.length == 0)
+    (return (json_response 400 {^error "Missing 'filename' parameter"}))
+  )
+
+  (try
+    (var image_data (get_image filename subfolder img_type))
+    # Return binary image data with correct content-type
+    {
+      ^status 200
+      ^headers {^Content-Type image_data/content_type}
+      ^body image_data/data
+    }
+  catch *
     (json_response 500 {^error $ex/message})
   )
 )

@@ -4,6 +4,7 @@
 # Tool Registry
 (var TOOLS {})
 
+
 (fn $ns/register_tool [name description params handler]
   (TOOLS .set name {
     ^description description
@@ -13,13 +14,19 @@
 )
 
 (fn $ns/execute_tool [name args]
+  (println "DEBUG execute_tool: name=" name)
   (var tool (TOOLS .get name))
   (if (tool == nil)
+    (println "DEBUG execute_tool: tool not found")
     (return {^error #"Unknown tool: #{name}"})
   )
+  (println "DEBUG execute_tool: found tool, calling handler")
   (try
-    (tool/handler args)
+    (var result (tool/handler args))
+    (println "DEBUG execute_tool: handler returned")
+    result
   catch *
+    (println "DEBUG execute_tool: caught exception:" $ex/message)
     {^error #"Tool execution failed: #{$ex/message}"}
   )
 )
@@ -346,5 +353,17 @@ Only use tools when necessary. For general conversation, respond normally.
     catch *
       {^error #"Failed to fetch URL: #{$ex/message}"}
     )
+  )
+)
+
+# ============================================================
+# Tool: create_image
+# ============================================================
+(register_tool "create_image"
+  "Generate an image using AI"
+  {^prompt "Description of the image"}
+  (fn [args]
+    (println "DEBUG: create_image tool called")
+    {^result "Test - tool works"}
   )
 )
