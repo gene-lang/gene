@@ -49,7 +49,7 @@ Available tools:
   Parameters:
     url: The URL to fetch
     max_chars: Maximum characters to return (default 8000)
-- create_image: Generate an image using AI (Stable Diffusion). Returns image URLs.
+- create_image: Generate an image using AI. Returns image URLs.
   Parameters:
     prompt: Description of the image to generate
 
@@ -360,7 +360,7 @@ When displaying images, use HTML img tags instead of markdown links:
 # Tool: create_image
 # ============================================================
 (register_tool "create_image"
-  "Generate an image using AI (Stable Diffusion). Returns image URLs."
+  "Generate an image using AI. Returns image URLs."
   {^prompt "Description of the image to generate"}
   (fn [args]
     (var prompt (args .get "prompt" ""))

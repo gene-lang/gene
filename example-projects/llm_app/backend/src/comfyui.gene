@@ -238,7 +238,7 @@
                 ^subfolder subfolder
                 ^type img_type
                 # Proxy URL through backend - frontend doesn't need direct ComfyUI access
-                ^url #"/api/image/view?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
+                ^url #"/generated_images?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
                 # Direct URL for debugging/admin use
                 ^direct_url #"#{COMFYUI_URL}/view?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
               })

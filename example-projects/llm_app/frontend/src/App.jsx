@@ -514,6 +514,7 @@ function App() {
               onChange={(e) => setInput(e.target.value)}
               placeholder="Type a message or upload a document..."
               disabled={loading}
+              autoFocus
             />
             {loading ? (
               <button type="button" onClick={stopStream}>
