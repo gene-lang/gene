@@ -4298,12 +4298,13 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkFunction:
         {.push checks: off}
-        let f = to_function(inst.arg0)
+        let info = to_function_def_info(inst.arg0)
+        let f = to_function(info.input)
         
         # Determine the target namespace for the function
         var target_ns = self.frame.ns
-        if inst.arg0.kind == VkGene and inst.arg0.gene.children.len > 0:
-          let first = inst.arg0.gene.children[0]
+        if info.input.kind == VkGene and info.input.gene.children.len > 0:
+          let first = info.input.gene.children[0]
           case first.kind:
             of VkComplexSymbol:
               # n/m/f - function should belong to the target namespace
@@ -4328,12 +4329,6 @@ proc exec*(self: ptr VirtualMachine): Value =
               discard
         
         f.ns = target_ns
-        # More data are stored in the next instruction slot
-        self.pc.inc()
-        inst = self.cu.instructions[self.pc].addr
-        when not defined(release):
-          if inst.kind != IkData:
-            raise new_exception(types.Exception, fmt"Expected IkData after IkFunction, got {inst.kind}")
         # Capture parent scope with proper reference counting
         if self.frame.scope != nil:
           self.frame.scope.ref_count.inc()
@@ -4341,7 +4336,6 @@ proc exec*(self: ptr VirtualMachine): Value =
         f.parent_scope = self.frame.scope
 
         var scope_tracker_obj: ScopeTracker = nil
-        var precompiled: CompilationUnit = nil
         let data_value = inst.arg0
 
         case data_value.kind
@@ -4349,7 +4343,8 @@ proc exec*(self: ptr VirtualMachine): Value =
           let info = to_function_def_info(data_value)
           scope_tracker_obj = new_scope_tracker(info.scope_tracker)
           if info.compiled_body.kind == VkCompiledUnit:
-            precompiled = info.compiled_body.ref.cu
+            f.body_compiled = info.compiled_body.ref.cu
+          # Store input back to function for reflection (already parsed above)
         of VkScopeTracker:
           scope_tracker_obj = new_scope_tracker(data_value.ref.scope_tracker)
         else:
@@ -4359,10 +4354,6 @@ proc exec*(self: ptr VirtualMachine): Value =
           scope_tracker_obj = ScopeTracker()
 
         f.scope_tracker = scope_tracker_obj
-
-        if precompiled != nil:
-          f.body_compiled = precompiled
-
         if not f.matcher.is_empty():
           for child in f.matcher.children:
             f.scope_tracker.add(child.name_key)
@@ -4372,8 +4363,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         let v = r.to_ref_value()
         
         # Handle namespaced function definitions
-        if inst.arg0.kind == VkGene and inst.arg0.gene.children.len > 0:
-          let first = inst.arg0.gene.children[0]
+        if info.input.kind == VkGene and info.input.gene.children.len > 0:
+          let first = info.input.gene.children[0]
           case first.kind:
           of VkComplexSymbol:
             # n/m/f or $ns/f - define in target namespace
@@ -4406,17 +4397,12 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkBlock:
         {.push checks: off}
-        let b = to_block(inst.arg0)
+        let info = to_function_def_info(inst.arg0)
+        let b = to_block(info.input)
         b.frame = self.frame
         b.ns = self.frame.ns
-        # More data are stored in the next instruction slot
-        self.pc.inc()
-        inst = self.cu.instructions[self.pc].addr
-        when not defined(release):
-          if inst.kind != IkData:
-            raise new_exception(types.Exception, fmt"Expected IkData after IkBlock, got {inst.kind}")
         b.frame.update(self.frame)
-        b.scope_tracker = new_scope_tracker(inst.arg0.ref.scope_tracker)
+        b.scope_tracker = new_scope_tracker(info.scope_tracker)
 
         if not b.matcher.is_empty():
           for child in b.matcher.children:

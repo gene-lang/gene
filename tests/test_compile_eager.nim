@@ -17,13 +17,11 @@ suite "Eager function compilation":
     var found = false
     for i in 0..<cu.instructions.len:
       let inst = cu.instructions[i]
-      if inst.kind == IkFunction and i + 1 < cu.instructions.len:
-        let dataInst = cu.instructions[i + 1]
-        if dataInst.kind == IkData:
-          let info = to_function_def_info(dataInst.arg0)
-          check info.compiled_body != nil
-          found = true
-          break
+      if inst.kind == IkFunction:
+        let info = to_function_def_info(inst.arg0)
+        check info.compiled_body != nil
+        found = true
+        break
     check found
 
   test "IkFunction payload keeps compiled body nil when eager disabled":
@@ -37,11 +35,9 @@ suite "Eager function compilation":
     var found = false
     for i in 0..<cu.instructions.len:
       let inst = cu.instructions[i]
-      if inst.kind == IkFunction and i + 1 < cu.instructions.len:
-        let dataInst = cu.instructions[i + 1]
-        if dataInst.kind == IkData:
-          let info = to_function_def_info(dataInst.arg0)
-          check info.compiled_body == nil
-          found = true
-          break
+      if inst.kind == IkFunction:
+        let info = to_function_def_info(inst.arg0)
+        check info.compiled_body == nil
+        found = true
+        break
     check found

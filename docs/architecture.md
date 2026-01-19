@@ -155,20 +155,15 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
 
 Compilation emits (simplified):
 ```
-IkFunction           ; allocate function object
-IkVar                ; bind to current scope
-IkVarResolve         ; push function for call
-IkPushValue          ; push literal 1
-IkPushValue          ; push literal 2
-IkCallInit           ; prepare call frame, process matcher
-IkReturn             ; return result
+IkStart
+IkFunction
+IkPop
+IkResolveSymbol        add
+IkPushValue            1
+IkPushValue            2
+IkUnifiedCall
+IkEnd
 ```
-
-At runtime the VM:
-1. Pushes a new frame when hitting `IkFunction`.
-2. Stores locals in the current scope via `IkVar`.
-3. Creates a new call frame (`new_frame`) when `IkCallInit` runs.
-4. Executes the function body with computed-goto dispatch until `IkReturn`.
 
 ## Observability & Tooling
 
@@ -179,7 +174,7 @@ At runtime the VM:
 
 ## Gene IR (GIR) Details
 
-- `GIR_VERSION` (currently 1) tracks the IR format version.
+- `GIR_VERSION` (currently 2) tracks the IR format version.
 - `VALUE_ABI_VERSION` (currently 2) tracks the Value representation version — changed when NaN-boxing layout changes.
 - Header includes compiler fingerprint, timestamp, source hash, and debug flags for cache validation.
 - `gene compile` writes GIR files; `gene run` can execute them directly or use cached versions from `build/`.

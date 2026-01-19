@@ -219,6 +219,7 @@ type
     parent*: ScopeTrackerSnapshot
 
   FunctionDefInfo* = ref object
+    input*: Value
     scope_tracker*: ScopeTracker
     compiled_body*: Value
 

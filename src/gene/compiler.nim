@@ -1345,7 +1345,6 @@ proc compile_fn(self: Compiler, input: Value) =
         not_allowed("fn argument list must be an array, e.g. [a b]")
     else:
       not_allowed("fn requires a name or argument list")
-  self.emit(Instruction(kind: IkFunction, arg0: input))
   let tracker_copy = copy_scope_tracker(self.scope_tracker)
 
   var compiled_body: CompilationUnit = nil
@@ -1355,8 +1354,8 @@ proc compile_fn(self: Compiler, input: Value) =
     compile(fn_obj, true)
     compiled_body = fn_obj.body_compiled
 
-  let info = new_function_def_info(tracker_copy, compiled_body)
-  self.emit(Instruction(kind: IkData, arg0: info.to_value()))
+  let info = new_function_def_info(tracker_copy, compiled_body, input)
+  self.emit(Instruction(kind: IkFunction, arg0: info.to_value()))
 
 proc compile_return(self: Compiler, gene: ptr Gene) =
   if gene.children.len > 0:
@@ -1366,10 +1365,8 @@ proc compile_return(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkReturn))
 
 proc compile_block(self: Compiler, input: Value) =
-  self.emit(Instruction(kind: IkBlock, arg0: input))
-  var r = new_ref(VkScopeTracker)
-  r.scope_tracker = self.scope_tracker
-  self.emit(Instruction(kind: IkData, arg0: r.to_ref_value()))
+  let info = new_function_def_info(self.scope_tracker, nil, input)
+  self.emit(Instruction(kind: IkBlock, arg0: info.to_value()))
 
 proc compile_ns(self: Compiler, gene: ptr Gene) =
   # Apply container splitting to handle complex symbols like app/models

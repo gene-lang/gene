@@ -100,7 +100,7 @@ proc `$`*(self: seq[Instruction]): string =
     result &= fmt"{i:03} {instr}" & "\n"
     case instr.kind:
       of IkFunction:
-        i.inc(2)
+        i.inc()
       else:
         i.inc()
 

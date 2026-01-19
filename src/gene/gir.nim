@@ -4,7 +4,7 @@ import ./types
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 1'u32
+  GIR_VERSION* = 2'u32
   COMPILER_VERSION = "0.1.0"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   
@@ -88,7 +88,11 @@ proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit)
 
 proc readCompilationUnitBlock(stream: Stream): CompilationUnit
 
+proc write_value(stream: Stream, v: Value)
+proc read_value(stream: Stream): Value
+
 proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
+  write_value(stream, info.input)
   writeScopeTrackerSnapshot(stream, snapshot_scope_tracker(info.scope_tracker))
   if info.compiled_body.kind == VkCompiledUnit:
     stream.write(1'u8)
@@ -97,6 +101,7 @@ proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
     stream.write(0'u8)
 
 proc readFunctionDef(stream: Stream): FunctionDefInfo =
+  let input = read_value(stream)
   let snapshot = readScopeTrackerSnapshot(stream)
   var compiled_value = NIL
   if stream.readUint8() == 1:
@@ -105,6 +110,7 @@ proc readFunctionDef(stream: Stream): FunctionDefInfo =
     ref_value.cu = compiled
     compiled_value = ref_value.to_ref_value()
   result = FunctionDefInfo(
+    input: input,
     scope_tracker: materialize_scope_tracker(snapshot),
     compiled_body: compiled_value
   )

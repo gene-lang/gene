@@ -1512,7 +1512,7 @@ proc materialize_scope_tracker*(snapshot: ScopeTrackerSnapshot): ScopeTracker =
   for pair in snapshot.mappings:
     result.mappings[pair[0]] = pair[1]
 
-proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil): FunctionDefInfo =
+proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil, input: Value = NIL): FunctionDefInfo =
   var body_value = NIL
   if body != nil:
     let cu_ref = new_ref(VkCompiledUnit)
@@ -1520,6 +1520,7 @@ proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil):
     body_value = cu_ref.to_ref_value()
 
   result = FunctionDefInfo(
+    input: input,
     scope_tracker: tracker,
     compiled_body: body_value
   )
