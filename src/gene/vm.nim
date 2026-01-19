@@ -2779,8 +2779,6 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.push(NIL)
       of IkPop:
         discard self.frame.pop()
-      of IkClearStack:
-        self.frame.stack_index = 0
       of IkDup:
         let value = self.frame.current()
         when not defined(release):

@@ -3684,7 +3684,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
       if node != PARSER_IGNORE:
         # Pop previous result before compiling next item (except for first)
         if not is_first:
-          self.emit(Instruction(kind: IkClearStack))
+          self.emit(Instruction(kind: IkPop))
 
         self.last_error_trace = nil
         try:
@@ -3744,7 +3744,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
       let node = parser.read()
       if node != PARSER_IGNORE:
         if not is_first:
-          self.emit(Instruction(kind: IkClearStack))
+          self.emit(Instruction(kind: IkPop))
 
         self.last_error_trace = nil
         try:
@@ -3797,7 +3797,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
       if node != PARSER_IGNORE:
         # Pop previous result before compiling next item (except for first)
         if not is_first:
-          self.output.instructions.add(Instruction(kind: IkClearStack))
+          self.output.instructions.add(Instruction(kind: IkPop))
 
         self.last_error_trace = nil
         try:
