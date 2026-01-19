@@ -7,7 +7,7 @@
 (import get_db init_db new_conversation conversation_exists load_history store_message from "db")
 (import init_llm build_prompt trim_history trim_history_for_prompt get_model from "llm")
 
-($ns/handle_health = (fn [req]
+(fn $ns/handle_health [req]
   (var is_loaded
     (if genex/llm
       (if (genex/llm/get_model) then true else false)
@@ -16,9 +16,9 @@
     )
   )
   (json_response 200 {^status "ok" ^model_loaded is_loaded})
-))
+)
 
-($ns/handle_chat_new = (fn [req]
+(fn $ns/handle_chat_new [req]
   (if ((get_db) == nil)
     (return (json_response 500 {^error "SQLite is unavailable"}))
   )
@@ -27,9 +27,9 @@
     (return (json_response 500 {^error "Failed to create conversation"}))
   )
   (json_response 200 {^conversation_id conv_id})
-))
+)
 
-($ns/handle_chat = (fn [req conv_id]
+(fn $ns/handle_chat [req conv_id]
   (if ((get_db) == nil)
     (return (json_response 500 {^error "SQLite is unavailable"}))
   )
@@ -200,9 +200,9 @@ User request:
     (response_data .set "tool_calls" tool_calls)
   )
   (json_response 200 response_data)
-))
+)
 
-($ns/handle_chat_stream = (fn [req conv_id]
+(fn $ns/handle_chat_stream [req conv_id]
   (if ((get_db) == nil)
     (return (json_response 500 {^error "SQLite is unavailable"}))
   )
@@ -321,4 +321,4 @@ User request:
   (sse_send stream done_payload)
   (stream .close)
   stream
-))
+)

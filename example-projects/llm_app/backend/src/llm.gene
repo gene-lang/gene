@@ -4,7 +4,7 @@
 (import MODEL_PATH MODEL_CONTEXT from "config")
 (import build_system_prompt from "tools")
 
-($ns/init_llm = (fn []
+(fn $ns/init_llm []
   (if (MODEL_PATH/.length == 0)
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   elif genex/llm
@@ -15,9 +15,9 @@
   else
     (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
   )
-))
+)
 
-($ns/build_prompt = (fn [history message]
+(fn $ns/build_prompt [history message]
   (var parts [])
   (var system_prompt (build_system_prompt))
   (parts .append #"<|im_start|>system\n#{system_prompt}\n<|im_end|>\n")
@@ -37,9 +37,9 @@
     (parts .append "<|im_start|>assistant\n")
   )
   (parts .join "")
-))
+)
 
-($ns/trim_history = (fn [history max_items]
+(fn $ns/trim_history [history max_items]
   (if (history/.size <= max_items)
     (return history)
   )
@@ -54,9 +54,9 @@
     (i += 1)
   )
   trimmed
-))
+)
 
-($ns/trim_history_for_prompt = (fn [history message max_items max_chars]
+(fn $ns/trim_history_for_prompt [history message max_items max_chars]
   (var trimmed (trim_history history max_items))
   (if (max_chars <= 0)
     (return trimmed)
@@ -73,8 +73,8 @@
     (prompt = (build_prompt trimmed message))
   )
   trimmed
-))
+)
 
-($ns/get_model = (fn []
+(fn $ns/get_model []
   (if genex/llm then (genex/llm/get_model) else false)
-))
+)

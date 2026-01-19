@@ -1,0 +1,13 @@
+# Module using fn $ns/name syntax
+
+(fn $ns/add [a b]
+  (a + b)
+)
+
+(fn $ns/square [x]
+  (x * x)
+)
+
+(fn $ns/greet [name]
+  (#"Hello, #{name}!")
+)

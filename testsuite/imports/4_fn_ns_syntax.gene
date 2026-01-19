@@ -1,0 +1,15 @@
+# Test fn $ns/name syntax for module exports
+
+(import * from "fn_ns_lib")
+
+(println "add(10, 20) =" (add 10 20))
+# Expected: add(10, 20) = 30
+
+(println "square(7) =" (square 7))
+# Expected: square(7) = 49
+
+(println (greet "Gene"))
+# Expected: ("Hello, Gene!")
+
+(println "fn $ns/name syntax test completed")
+# Expected: fn $ns/name syntax test completed

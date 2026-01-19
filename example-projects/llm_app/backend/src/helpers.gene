@@ -1,7 +1,7 @@
 # Helper Functions Module
 # Utility functions for parsing and response handling
 
-($ns/extract_first_json = (fn [text]
+(fn $ns/extract_first_json [text]
   (var start (text .index "{"))
   (if (start < 0)
     (return nil)
@@ -38,18 +38,18 @@
     (i += 1)
   )
   nil
-))
+)
 
-($ns/json_response = (fn [status data]
+(fn $ns/json_response [status data]
   (respond status data/.to_json {^Content-Type "application/json"})
-))
+)
 
-($ns/sse_send = (fn [stream payload]
+(fn $ns/sse_send [stream payload]
   (var data_str (if (payload == nil) then "{}" else payload/.to_json))
   (stream .send #"data: #{data_str}\n\n")
-))
+)
 
-($ns/parse_response = (fn [text]
+(fn $ns/parse_response [text]
   (var think_start (text .index "<think>"))
   (if (think_start < 0)
     (return [nil text/.trim])
@@ -61,9 +61,9 @@
   (var thinking (text .substr (think_start + 7) (think_end - 1)))
   (var answer (text .substr (think_end + 8)))
   [thinking/.trim answer/.trim]
-))
+)
 
-($ns/parse_tool_call = (fn [text]
+(fn $ns/parse_tool_call [text]
   (var trimmed (extract_first_json text))
   (if (trimmed == nil)
     (return nil)
@@ -78,9 +78,9 @@
   catch *
     nil
   )
-))
+)
 
-($ns/chat_id_from_path = (fn [path]
+(fn $ns/chat_id_from_path [path]
   (var prefix "/api/chat/")
   (if (path .starts_with prefix)
     (var rest (path .substr prefix/.length))
@@ -90,4 +90,4 @@
     (return rest)
   )
   nil
-))
+)

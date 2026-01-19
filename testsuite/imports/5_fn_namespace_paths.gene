@@ -1,0 +1,33 @@
+# Test fn with namespace paths
+# Tests that (fn Namespace/name ...) works just like (Namespace/name = (fn ...))
+
+# Create a namespace
+(ns MathLib)
+
+# Define function directly in namespace
+(fn MathLib/add [a b]
+  (a + b)
+)
+
+(fn MathLib/multiply [a b]
+  (a * b)
+)
+
+(println "MathLib/add(3, 4) =" (MathLib/add 3 4))
+# Expected: MathLib/add(3, 4) = 7
+
+(println "MathLib/multiply(5, 6) =" (MathLib/multiply 5 6))
+# Expected: MathLib/multiply(5, 6) = 30
+
+# Create nested namespace
+(ns MathLib/Advanced)
+
+(fn MathLib/Advanced/square [x]
+  (x * x)
+)
+
+(println "MathLib/Advanced/square(8) =" (MathLib/Advanced/square 8))
+# Expected: MathLib/Advanced/square(8) = 64
+
+(println "Namespace path fn syntax test completed")
+# Expected: Namespace path fn syntax test completed

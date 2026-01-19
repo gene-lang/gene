@@ -5,9 +5,9 @@
 
 (var DB nil)
 
-($ns/get_db = (fn [] DB))
+(fn $ns/get_db [] DB)
 
-($ns/init_db = (fn []
+(fn $ns/init_db []
   (if genex/sqlite
     (try
       (DB = (genex/sqlite/open DB_PATH))
@@ -22,9 +22,9 @@
   else
     (println "genex/sqlite is unavailable. Rebuild with extensions.")
   )
-))
+)
 
-($ns/new_conversation = (fn []
+(fn $ns/new_conversation []
   (if (DB == nil)
     (return nil)
   )
@@ -35,17 +35,17 @@
   )
   (var id_val rows/0/0)
   id_val/.to_s
-))
+)
 
-($ns/conversation_exists = (fn [conv_id_int]
+(fn $ns/conversation_exists [conv_id_int]
   (if (DB == nil)
     (return false)
   )
   (var rows (DB .query "SELECT id FROM conversations WHERE id = ?" conv_id_int))
   (rows/.size > 0)
-))
+)
 
-($ns/load_history = (fn [conv_id_int]
+(fn $ns/load_history [conv_id_int]
   (if (DB == nil)
     (return [])
   )
@@ -55,9 +55,9 @@
     (history .append {^role row/0 ^content row/1})
   ))
   history
-))
+)
 
-($ns/store_message = (fn [conv_id_int role content document_used document_chunks]
+(fn $ns/store_message [conv_id_int role content document_used document_chunks]
   (if (DB == nil)
     (return nil)
   )
@@ -71,4 +71,4 @@
     chunks_val
     (time/now)
   )
-))
+)

@@ -4,15 +4,15 @@
 # Tool Registry
 (var TOOLS {})
 
-($ns/register_tool = (fn [name description params handler]
+(fn $ns/register_tool [name description params handler]
   (TOOLS .set name {
     ^description description
     ^params params
     ^handler handler
   })
-))
+)
 
-($ns/execute_tool = (fn [name args]
+(fn $ns/execute_tool [name args]
   (var tool (TOOLS .get name))
   (if (tool == nil)
     (return {^error #"Unknown tool: #{name}"})
@@ -22,9 +22,9 @@
   catch *
     {^error #"Tool execution failed: #{$ex/message}"}
   )
-))
+)
 
-($ns/build_system_prompt = (fn []
+(fn $ns/build_system_prompt []
   (var tool_list [])
   (TOOLS .each (fn [name tool]
     (var params_desc "")
@@ -54,7 +54,7 @@ When you need to use a tool, respond with ONLY a JSON object in this exact forma
 After receiving a tool result, provide a natural response to the user.
 Only use tools when necessary. For general conversation, respond normally.
 """
-))
+)
 
 # ============================================================
 # Tool: get_time

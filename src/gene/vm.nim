@@ -4311,15 +4311,13 @@ proc exec*(self: ptr VirtualMachine): Value =
               # n/m/f - function should belong to the target namespace
               # Skip if first part is empty (e.g., /method_name becomes ["", "method_name"])
               if first.ref.csymbol.len > 0 and first.ref.csymbol[0] != "":
-                when not defined(release):
-                  echo "DEBUG IkFunction: complex symbol with ", first.ref.csymbol.len, " parts: ", first.ref.csymbol
                 for i in 0..<first.ref.csymbol.len - 1:
                   let part = first.ref.csymbol[i]
                   if part == "":
                     continue  # Skip empty parts
+                  if part == "$ns" and i == 0:
+                    continue  # $ns means current namespace, already set
                   let key = part.to_key()
-                  when not defined(release):
-                    echo "  Looking for part ", i, ": '", part, "' in namespace"
                   if target_ns.has_key(key):
                     let nsval = target_ns[key]
                     if nsval.kind == VkNamespace:
@@ -4327,10 +4325,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                     else:
                       raise new_exception(types.Exception, fmt"{part} is not a namespace")
                   else:
-                    when not defined(release):
-                      echo "  Available keys in namespace: "
-                      for k in target_ns.members.keys:
-                        echo "    - ", cast[Value](k).str
                     raise new_exception(types.Exception, fmt"Namespace {part} not found")
             else:
               discard
@@ -4384,18 +4378,23 @@ proc exec*(self: ptr VirtualMachine): Value =
           let first = inst.arg0.gene.children[0]
           case first.kind:
           of VkComplexSymbol:
-            # n/m/f - define in nested namespace
+            # n/m/f or $ns/f - define in target namespace
             var ns = self.frame.ns
             for i in 0..<first.ref.csymbol.len - 1:
-              let key = first.ref.csymbol[i].to_key()
+              let part = first.ref.csymbol[i]
+              if part == "":
+                continue  # Skip empty parts
+              if part == "$ns" and i == 0:
+                continue  # $ns means current namespace, already set
+              let key = part.to_key()
               if ns.has_key(key):
                 let nsval = ns[key]
                 if nsval.kind == VkNamespace:
                   ns = nsval.ref.ns
                 else:
-                  raise new_exception(types.Exception, fmt"{first.ref.csymbol[i]} is not a namespace")
+                  raise new_exception(types.Exception, fmt"{part} is not a namespace")
               else:
-                raise new_exception(types.Exception, fmt"Namespace {first.ref.csymbol[i]} not found")
+                raise new_exception(types.Exception, fmt"Namespace {part} not found")
             ns[f.name.to_key()] = v
           else:
             # Simple name - define in current namespace
