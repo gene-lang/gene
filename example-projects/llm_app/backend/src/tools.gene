@@ -4,9 +4,12 @@
 # Tool Registry
 (var TOOLS {})
 
+(fn $ns/get_tools []
+  TOOLS
+)
 
 (fn $ns/register_tool [name description params handler]
-  (TOOLS .set name {
+  ((get_tools) .set name {
     ^description description
     ^params params
     ^handler handler
@@ -14,7 +17,7 @@
 )
 
 (fn $ns/execute_tool [name args]
-  (var tool (TOOLS .get name))
+  (var tool ((get_tools) .get name))
   (if (tool == nil)
     (return {^error #"Unknown tool: #{name}"})
   )
@@ -27,28 +30,28 @@
 )
 
 (fn $ns/build_system_prompt []
-  (var tool_list [])
-  (TOOLS .each (fn [name tool]
-    (var params_desc "")
-    (if (tool/params/.keys/.size > 0)
-      (var param_parts [])
-      (tool/params .each (fn [pname pdesc]
-        (param_parts .append #"    #{pname}: #{pdesc}")
-      ))
-      (params_desc = (param_parts .join "\n"))
-    )
-    (if (params_desc/.length > 0)
-      (tool_list .append #"- #{name}: #{tool/description}\n  Parameters:\n#{params_desc}")
-    else
-      (tool_list .append #"- #{name}: #{tool/description}")
-    )
-  ))
-  (var tools_section (tool_list .join "\n"))
-  #"""
-You are a helpful AI assistant with access to tools.
+  # Static system prompt to avoid iteration issues
+  """You are a helpful AI assistant with access to tools.
 
 Available tools:
-#{tools_section}
+- get_time: Get the current date and time
+- calculate: Evaluate a mathematical expression. Use this for any math calculations.
+  Parameters:
+    expression: The math expression to evaluate (e.g., '2 + 2', '10 * 5')
+- get_weather: Get the current weather for a location
+  Parameters:
+    location: The city or location to get weather for
+- web_search: Search the web using Google Custom Search. Requires GOOGLE_API_KEY and GOOGLE_CSE_ID.
+  Parameters:
+    query: Search query
+    num: Number of results (default 5)
+- read_url: Fetch and read content from a URL. Returns plain text extracted from the page.
+  Parameters:
+    url: The URL to fetch
+    max_chars: Maximum characters to return (default 8000)
+- create_image: Generate an image using AI (Stable Diffusion). Returns image URLs.
+  Parameters:
+    prompt: Description of the image to generate
 
 When you need to use a tool, respond with ONLY a JSON object in this exact format:
 {"tool": "tool_name", "args": {"param": "value"}}
@@ -57,8 +60,7 @@ After receiving a tool result, provide a natural response to the user.
 Only use tools when necessary. For general conversation, respond normally.
 
 When displaying images, use HTML img tags instead of markdown links:
-<img style="max-width:600px;width:100%" src="IMAGE_URL">
-"""
+<img style="max-width:600px;width:100%" src="IMAGE_URL">"""
 )
 
 # ============================================================
@@ -485,7 +487,7 @@ When displaying images, use HTML img tags instead of markdown links:
             (var img_type (img .get "type" "output"))
             (images .append {
               ^filename filename
-              ^url #"/api/image/view?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
+              ^url #"/generated_images?filename=#{filename}&subfolder=#{subfolder}&type=#{img_type}"
             })
           ))
         )

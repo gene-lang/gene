@@ -1,6 +1,6 @@
 # Gene LLM Chat App
 
-A simple chat application demonstrating Gene's HTTP server capabilities with LLM integration.
+A full-stack chat application demonstrating Gene's HTTP server capabilities with LLM integration, tool support, and AI image generation.
 
 ## The Gene Language
 
@@ -78,134 +78,240 @@ See `examples/full.gene` for a comprehensive syntax reference.
 ## Architecture
 
 ```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    Frontend     │────▶│    Backend      │────▶│   Local LLM     │
+│   (React/Vite)  │     │    (Gene)       │     │  (llama.cpp)    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                                │                       │
+                                │                       │ (tool call)
+                                ▼                       ▼
+                        ┌─────────────────┐     ┌─────────────────┐
+                        │    SQLite DB    │     │    ComfyUI      │
+                        │  (chat history) │     │  (image gen)    │
+                        └─────────────────┘     └─────────────────┘
+```
+
+```
 llm_app/
 ├── frontend/          # React chat interface (Vite)
-└── backend/           # Gene HTTP server with LLM
-    ├── package.gene   # Package manifest
-    ├── models/        # LLM model files
-    │   └── Qwen3-14B-Q4_K_M.gguf
+│   ├── src/
+│   │   ├── App.jsx    # Main chat component
+│   │   └── main.jsx   # Entry point
+│   └── vite.config.js # Proxy configuration
+└── backend/
     └── src/
-        └── main.gene  # Server entry point
+        ├── main.gene      # Server entry point, routing
+        ├── config.gene    # Configuration and env vars
+        ├── db.gene        # SQLite database functions
+        ├── llm.gene       # LLM initialization and prompts
+        ├── handlers.gene  # HTTP request handlers
+        ├── helpers.gene   # Utility functions
+        ├── tools.gene     # Tool registry and implementations
+        └── comfyui.gene   # ComfyUI integration
 ```
+
+## Features
+
+- **Chat with Local LLM**: Uses llama.cpp for local inference with streaming responses
+- **Conversation History**: SQLite-backed persistent chat history
+- **Tool Support**: LLM can use tools to extend its capabilities
+- **Streaming Responses**: Real-time token streaming via Server-Sent Events (SSE)
+- **Image Generation**: Integration with ComfyUI for AI image generation
+
+### Available Tools
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `get_time` | Get current date and time | - |
+| `calculate` | Evaluate mathematical expressions | `expression` |
+| `get_weather` | Get weather for a location (mock) | `location` |
+| `web_search` | Search via Google Custom Search API | `query`, `num` |
+| `read_url` | Fetch and extract text from URLs | `url`, `max_chars` |
+| `create_image` | Generate images via ComfyUI/Stable Diffusion | `prompt` |
 
 ## Prerequisites
 
-- Gene language runtime (build with `nimble build` from gene root)
+- Gene language runtime (build with `-d:geneLLM` flag for LLM support)
 - Node.js 18+ (for frontend)
 - Optional: GGUF model file for real LLM inference
+- Optional: ComfyUI for image generation
+- Optional: Google API credentials for web search
 
 ## Quick Start
 
-### 1. Start the Backend
+### 1. Build Gene with LLM Support
 
 ```bash
-cd backend
+cd gene
+nimble build -d:geneLLM
+```
 
-# Run with the included Qwen3-14B model
-GENE_LLM_MODEL=models/Qwen3-14B-Q4_K_M.gguf ../../../bin/gene run src/main.gene
+### 2. Start the Backend
 
-# Or run in mock mode (no model needed)
+```bash
+cd example-projects/llm_app/backend
+
+# With LLM model
+GENE_LLM_MODEL=/path/to/model.gguf ../../../bin/gene run src/main.gene
+
+# Or in mock mode (no model needed)
 ../../../bin/gene run src/main.gene
 ```
 
-The backend will start on http://localhost:3000
+The backend starts on http://localhost:4080
 
-### 2. Start the Frontend
+### 3. Start the Frontend
 
 ```bash
-cd frontend
+cd example-projects/llm_app/frontend
 npm install
 npm run dev
 ```
 
-The frontend will start on http://localhost:5173
+The frontend starts on http://localhost:5173
 
-### 3. Open the App
+### 4. Open the App
 
 Visit http://localhost:5173 in your browser and start chatting!
 
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GENE_LLM_MODEL` | No | - | Path to GGUF model file (mock mode if unset) |
+| `COMFYUI_URL` | No | `http://127.0.0.1:8188` | ComfyUI server URL for image generation |
+| `GOOGLE_API_KEY` | No | - | Google API key for web search tool |
+| `GOOGLE_CSE_ID` | No | - | Google Custom Search Engine ID |
+
 ## API Endpoints
 
-### GET /api/health
+### Chat Endpoints
 
-Health check endpoint.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Health check, returns model status |
+| `POST` | `/api/chat/new` | Create new conversation |
+| `POST` | `/api/chat/{id}` | Send message to conversation |
+| `GET` | `/api/chat/{id}/stream?message=...` | Stream chat response via SSE |
 
-**Response:**
-```json
-{
-  "status": "ok",
-  "model_loaded": true
-}
+### Image Generation Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/image/health` | Check ComfyUI connection |
+| `POST` | `/api/image/generate` | Generate image with ComfyUI |
+| `GET` | `/api/image/view` | Proxy image from ComfyUI |
+
+### One-shot Endpoint
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/oneshot` | Single message with tools, no history |
+
+### Example curl Requests
+
+**One-shot chat (stateless, with tools):**
+```bash
+curl -X POST http://localhost:4080/api/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What time is it?"}'
 ```
 
-### POST /api/chat/new
-
-Start a new conversation.
-
-**Response:**
-```json
-{
-  "conversation_id": "1"
-}
+**One-shot with image generation:**
+```bash
+curl -X POST http://localhost:4080/api/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Generate an image of a cat wearing a hat"}'
 ```
 
-### POST /api/chat/{id}
-
-Send a chat message within a conversation.
-
-**Request:**
-```json
-{
-  "message": "Hello, how are you?"
-}
+**Direct image generation (bypasses LLM):**
+```bash
+curl -X POST http://localhost:4080/api/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a beautiful sunset over mountains, photorealistic"}'
 ```
 
-**Response:**
-```json
-{
-  "conversation_id": "1",
-  "response": "I'm doing well, thank you!",
-  "tokens_used": 10
-}
+**Image generation with options:**
+```bash
+curl -X POST http://localhost:4080/api/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "a cyberpunk city at night",
+    "negative_prompt": "blurry, low quality",
+    "width": 1024,
+    "height": 1024,
+    "steps": 25,
+    "cfg": 7.5
+  }'
 ```
+
+## Tool Usage Examples
+
+The LLM automatically detects when to use tools:
+
+- "What time is it?" → uses `get_time`
+- "Calculate 15% of 230" → uses `calculate`
+- "Search for Gene programming language" → uses `web_search`
+- "Summarize https://example.com" → uses `read_url`
+- "Generate an image of a sunset over mountains" → uses `create_image`
+
+## Image Generation Setup
+
+To enable AI image generation:
+
+1. Install and run [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
+2. Download an SDXL model (default expects `juggernautXL_v9.safetensors`)
+3. Set the `COMFYUI_URL` environment variable for both backend and frontend
+
+When the `create_image` tool is used:
+1. LLM decides to call the `create_image` tool based on user request
+2. Backend sends a Stable Diffusion workflow directly to ComfyUI
+3. Backend polls ComfyUI until image generation completes
+4. Tool returns image URL in format `/generated_images?filename=...`
+5. LLM includes the URL in an HTML img tag in its response
+6. Frontend proxies `/generated_images` requests to ComfyUI's `/view` endpoint
+
+This architecture keeps ComfyUI internal (not publicly exposed) while allowing generated images to be displayed in the chat.
 
 ## Persistence
 
-The backend stores conversations in SQLite at `backend/chat.sqlite` (relative to the backend working directory).
-The frontend mirrors full conversation history in browser local storage and restores the last conversation on reload.
+- **Backend**: Conversations stored in SQLite at `backend/chat.sqlite`
+- **Frontend**: Conversation history mirrored in browser local storage
 
-## Manual Verification
+## Adding New Tools
 
-1. `POST /api/chat/new` to get a `conversation_id`
-2. `POST /api/chat/{id}` twice with different messages and confirm the second response reflects earlier context
-3. Restart the backend and send another message to the same `conversation_id`, confirming history persists
-4. Reload the frontend and verify the last conversation history is restored
-5. Click "New Conversation" to start a fresh chat
+1. Edit `backend/src/tools.gene`
+2. Register the tool:
+   ```gene
+   (register_tool "tool_name"
+     "Tool description"
+     {^param1 "Parameter description"}
+     (fn [args]
+       (var param1 (args .get "param1" ""))
+       # Implementation
+       {^result "Tool result"}
+     )
+   )
+   ```
+3. Update the static system prompt in `build_system_prompt`
 
-## Configuration
+## Recommended Models
 
-| Environment Variable | Description | Default |
-|---------------------|-------------|---------|
-| `GENE_LLM_MODEL` | Path to GGUF model file | (mock mode) |
+| Model | Size | RAM Required | Notes |
+|-------|------|--------------|-------|
+| TinyLlama 1.1B | ~1GB | 2GB | Fast, limited capability |
+| Phi-2 | ~2GB | 4GB | Good for simple tasks |
+| Qwen3-4B | ~3GB | 6GB | Balanced performance |
+| Qwen3-14B | ~8GB | 12GB | Excellent reasoning |
 
-## Mock Mode
+Download models from [Hugging Face](https://huggingface.co) (search for GGUF format).
 
-When no model is configured, the backend runs in mock mode and returns placeholder responses. This is useful for testing the UI without requiring a large model file.
+## Known Issues
 
-## Included Model
+- **Stack Overflow on Variable Resolution**: Accessing module-level variables from exported functions can cause stack overflow. See `docs/known_issues/var_stack_overflow.md`.
+- **Single-threaded Server**: The Gene HTTP server cannot make HTTP calls to itself.
+- **Binary Data Handling**: Proxying binary data through Gene requires temp files.
 
-This example includes **Qwen3-14B-Q4_K_M** (8.4GB), a powerful 14B parameter model with excellent reasoning capabilities.
+## License
 
-**Requirements for Qwen3-14B:**
-- ~10GB RAM minimum
-- GPU recommended for faster inference
-
-## Alternative Models
-
-For systems with less RAM, consider smaller models:
-
-- TinyLlama 1.1B Chat (~1GB)
-- Phi-2 (~2GB)
-- Qwen3-4B (~3GB)
-
-Download models from https://huggingface.co (search for GGUF format).
+Part of the Gene programming language project.
