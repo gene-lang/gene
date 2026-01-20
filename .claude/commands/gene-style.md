@@ -193,12 +193,12 @@ else
 
 ```gene
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)          # Use / for instance properties
     (/y = y)
   )
 
-  (.fn distance [other]
+  (method distance [other]
     # Method body
   )
 )

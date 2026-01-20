@@ -6,14 +6,14 @@
 # Test 1: Basic macro constructor
 (println "Test 1: Basic macro constructor")
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # Keep x as symbol
     (/y = y)      # Keep y as symbol
   )
-  (.fn get_x _
+  (method get_x _
     (/x)
   )
-  (.fn get_y _
+  (method get_y _
     (/y)
   )
 )
@@ -25,11 +25,11 @@
 # Test 2: Regular constructor still works
 (println "Test 2: Regular constructor")
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Regular assignment
     (/y = y)      # Regular assignment
   )
-  (.fn get_x _
+  (method get_x _
     (/x)
   )
 )
@@ -39,10 +39,10 @@
 # Test 3: Macro constructor with complex symbol expression
 (println "Test 3: Macro constructor with complex expression")
 (class SymbolStore
-  (.ctor! [sym]
+  (ctor! [sym]
     (/sym = sym)  # Store the symbol unevaluated
   )
-  (.fn get_sym _
+  (method get_sym _
     (/sym)
   )
 )
@@ -58,18 +58,18 @@
 # Test 5: Multiple macro constructor arguments
 (println "Test 5: Multiple macro constructor arguments")
 (class MultiSymbol
-  (.ctor! [x y z]
+  (ctor! [x y z]
     (/x = x)
     (/y = y)
     (/z = z)
   )
-  (.fn get_x _
+  (method get_x _
     (/x)
   )
-  (.fn get_y _
+  (method get_y _
     (/y)
   )
-  (.fn get_z _
+  (method get_z _
     (/z)
   )
 )

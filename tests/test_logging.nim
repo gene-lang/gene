@@ -57,7 +57,7 @@ test "Gene Logger emits log line":
     discard VM.exec("""
     (class A
       (/logger = (new genex/logging/Logger self))
-      (.fn m []
+      (method m []
         (logger .info "hello")
       )
     )

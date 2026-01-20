@@ -78,7 +78,7 @@ test_vm """
 # new! should be rejected when the class only has ctor (eager)
 test_vm_error """
   (class Regular
-    (.ctor []
+    (ctor []
       (/x = 1)
     )
   )
@@ -88,7 +88,7 @@ test_vm_error """
 # new should be rejected when the class only has ctor! (lazy)
 test_vm_error """
   (class MacroCtor
-    (.ctor! [x]
+    (ctor! [x]
       (/body = x)
     )
   )
@@ -98,7 +98,7 @@ test_vm_error """
 # new! with ctor! delivers unevaluated arguments to the constructor
 test_vm """
   (class MacroCtor
-    (.ctor! [x]
+    (ctor! [x]
       (/body = x)
     )
   )
@@ -109,7 +109,7 @@ test_vm """
 # test_core """
 #   (fn m! []
 #     (class A
-#       (.fn test [] "A.test")
+#       (method test [] "A.test")
 #     )
 #     ($caller_eval
 #       (:$def_ns_member "B" A)
@@ -122,7 +122,7 @@ test_vm """
 # test_core """
 #   (fn m! [name]
 #     (class A
-#       (.fn test [] "A.test")
+#       (method test [] "A.test")
 #     )
 #     ($caller_eval
 #       (:$def_ns_member name A)

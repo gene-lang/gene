@@ -144,17 +144,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -171,11 +171,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -183,11 +183,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -280,16 +280,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -309,11 +309,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -473,17 +473,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -500,11 +500,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -512,11 +512,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -609,16 +609,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -638,11 +638,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -802,17 +802,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -829,11 +829,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -841,11 +841,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -938,16 +938,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -967,11 +967,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -1131,17 +1131,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -1158,11 +1158,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -1170,11 +1170,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -1267,16 +1267,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -1296,11 +1296,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -1460,17 +1460,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -1487,11 +1487,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -1499,11 +1499,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -1596,16 +1596,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -1625,11 +1625,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -1789,17 +1789,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -1816,11 +1816,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -1828,11 +1828,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -1925,16 +1925,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -1954,11 +1954,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -2118,17 +2118,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -2145,11 +2145,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -2157,11 +2157,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -2254,16 +2254,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -2283,11 +2283,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -2447,17 +2447,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -2474,11 +2474,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -2486,11 +2486,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -2583,16 +2583,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -2612,11 +2612,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -2776,17 +2776,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -2803,11 +2803,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -2815,11 +2815,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -2912,16 +2912,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -2941,11 +2941,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -3105,17 +3105,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -3132,11 +3132,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -3144,11 +3144,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -3241,16 +3241,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -3270,11 +3270,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -3434,17 +3434,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -3461,11 +3461,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -3473,11 +3473,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -3570,16 +3570,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -3599,11 +3599,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -3763,17 +3763,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -3790,11 +3790,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -3802,11 +3802,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -3899,16 +3899,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -3928,11 +3928,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -4092,17 +4092,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -4119,11 +4119,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -4131,11 +4131,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -4228,16 +4228,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -4257,11 +4257,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -4421,17 +4421,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -4448,11 +4448,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -4460,11 +4460,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -4557,16 +4557,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -4586,11 +4586,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -4750,17 +4750,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -4777,11 +4777,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -4789,11 +4789,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -4886,16 +4886,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -4915,11 +4915,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -5079,17 +5079,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -5106,11 +5106,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -5118,11 +5118,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -5215,16 +5215,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -5244,11 +5244,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -5408,17 +5408,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -5435,11 +5435,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -5447,11 +5447,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -5544,16 +5544,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -5573,11 +5573,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -5737,17 +5737,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -5764,11 +5764,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -5776,11 +5776,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -5873,16 +5873,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -5902,11 +5902,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -6066,17 +6066,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -6093,11 +6093,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -6105,11 +6105,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -6202,16 +6202,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -6231,11 +6231,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -6395,17 +6395,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -6422,11 +6422,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -6434,11 +6434,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -6531,16 +6531,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -6560,11 +6560,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -6724,17 +6724,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -6751,11 +6751,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -6763,11 +6763,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -6860,16 +6860,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -6889,11 +6889,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -7053,17 +7053,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -7080,11 +7080,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -7092,11 +7092,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -7189,16 +7189,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -7218,11 +7218,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -7382,17 +7382,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -7409,11 +7409,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -7421,11 +7421,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -7518,16 +7518,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -7547,11 +7547,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -7711,17 +7711,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -7738,11 +7738,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -7750,11 +7750,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -7847,16 +7847,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -7876,11 +7876,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -8040,17 +8040,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -8067,11 +8067,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -8079,11 +8079,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -8176,16 +8176,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -8205,11 +8205,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -8369,17 +8369,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -8396,11 +8396,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -8408,11 +8408,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -8505,16 +8505,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -8534,11 +8534,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -8698,17 +8698,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -8725,11 +8725,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -8737,11 +8737,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -8834,16 +8834,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -8863,11 +8863,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -9027,17 +9027,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -9054,11 +9054,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -9066,11 +9066,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -9163,16 +9163,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -9192,11 +9192,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -9356,17 +9356,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -9383,11 +9383,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -9395,11 +9395,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -9492,16 +9492,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -9521,11 +9521,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -9685,17 +9685,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -9712,11 +9712,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -9724,11 +9724,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -9821,16 +9821,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -9850,11 +9850,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -10014,17 +10014,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -10041,11 +10041,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -10053,11 +10053,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -10150,16 +10150,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -10179,11 +10179,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -10343,17 +10343,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -10370,11 +10370,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -10382,11 +10382,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -10479,16 +10479,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -10508,11 +10508,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -10672,17 +10672,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -10699,11 +10699,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -10711,11 +10711,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -10808,16 +10808,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -10837,11 +10837,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -11001,17 +11001,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -11028,11 +11028,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -11040,11 +11040,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -11137,16 +11137,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -11166,11 +11166,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -11330,17 +11330,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -11357,11 +11357,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -11369,11 +11369,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -11466,16 +11466,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -11495,11 +11495,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -11659,17 +11659,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -11686,11 +11686,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -11698,11 +11698,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -11795,16 +11795,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -11824,11 +11824,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -11988,17 +11988,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -12015,11 +12015,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -12027,11 +12027,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -12124,16 +12124,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -12153,11 +12153,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -12317,17 +12317,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -12344,11 +12344,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -12356,11 +12356,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -12453,16 +12453,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -12482,11 +12482,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -12646,17 +12646,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -12673,11 +12673,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -12685,11 +12685,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -12782,16 +12782,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -12811,11 +12811,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -12975,17 +12975,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -13002,11 +13002,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -13014,11 +13014,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -13111,16 +13111,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -13140,11 +13140,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -13304,17 +13304,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -13331,11 +13331,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -13343,11 +13343,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -13440,16 +13440,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -13469,11 +13469,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -13633,17 +13633,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -13660,11 +13660,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -13672,11 +13672,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -13769,16 +13769,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -13798,11 +13798,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -13962,17 +13962,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -13989,11 +13989,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -14001,11 +14001,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -14098,16 +14098,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -14127,11 +14127,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -14291,17 +14291,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -14318,11 +14318,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -14330,11 +14330,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -14427,16 +14427,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -14456,11 +14456,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -14620,17 +14620,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -14647,11 +14647,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -14659,11 +14659,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -14756,16 +14756,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -14785,11 +14785,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -14949,17 +14949,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -14976,11 +14976,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -14988,11 +14988,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -15085,16 +15085,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -15114,11 +15114,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -15278,17 +15278,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -15305,11 +15305,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -15317,11 +15317,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -15414,16 +15414,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -15443,11 +15443,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -15607,17 +15607,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -15634,11 +15634,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -15646,11 +15646,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -15743,16 +15743,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -15772,11 +15772,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -15936,17 +15936,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -15963,11 +15963,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -15975,11 +15975,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -16072,16 +16072,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -16101,11 +16101,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -16265,17 +16265,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -16292,11 +16292,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -16304,11 +16304,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -16401,16 +16401,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -16430,11 +16430,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -16594,17 +16594,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -16621,11 +16621,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -16633,11 +16633,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -16730,16 +16730,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -16759,11 +16759,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -16923,17 +16923,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -16950,11 +16950,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -16962,11 +16962,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -17059,16 +17059,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -17088,11 +17088,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -17252,17 +17252,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -17279,11 +17279,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -17291,11 +17291,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -17388,16 +17388,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -17417,11 +17417,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -17581,17 +17581,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -17608,11 +17608,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -17620,11 +17620,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -17717,16 +17717,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -17746,11 +17746,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -17910,17 +17910,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -17937,11 +17937,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -17949,11 +17949,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -18046,16 +18046,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -18075,11 +18075,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -18239,17 +18239,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -18266,11 +18266,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -18278,11 +18278,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -18375,16 +18375,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -18404,11 +18404,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -18568,17 +18568,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -18595,11 +18595,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -18607,11 +18607,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -18704,16 +18704,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -18733,11 +18733,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -18897,17 +18897,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -18924,11 +18924,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -18936,11 +18936,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -19033,16 +19033,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -19062,11 +19062,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -19226,17 +19226,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -19253,11 +19253,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -19265,11 +19265,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -19362,16 +19362,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -19391,11 +19391,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -19555,17 +19555,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -19582,11 +19582,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -19594,11 +19594,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -19691,16 +19691,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -19720,11 +19720,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -19884,17 +19884,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -19911,11 +19911,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -19923,11 +19923,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -20020,16 +20020,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -20049,11 +20049,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -20213,17 +20213,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -20240,11 +20240,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -20252,11 +20252,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -20349,16 +20349,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -20378,11 +20378,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -20542,17 +20542,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -20569,11 +20569,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -20581,11 +20581,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -20678,16 +20678,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -20707,11 +20707,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -20871,17 +20871,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -20898,11 +20898,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -20910,11 +20910,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -21007,16 +21007,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -21036,11 +21036,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -21200,17 +21200,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -21227,11 +21227,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -21239,11 +21239,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -21336,16 +21336,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -21365,11 +21365,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -21529,17 +21529,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -21556,11 +21556,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -21568,11 +21568,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -21665,16 +21665,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -21694,11 +21694,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -21858,17 +21858,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -21885,11 +21885,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -21897,11 +21897,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -21994,16 +21994,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -22023,11 +22023,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -22187,17 +22187,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -22214,11 +22214,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -22226,11 +22226,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -22323,16 +22323,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -22352,11 +22352,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -22516,17 +22516,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -22543,11 +22543,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -22555,11 +22555,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -22652,16 +22652,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -22681,11 +22681,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -22845,17 +22845,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -22872,11 +22872,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -22884,11 +22884,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -22981,16 +22981,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -23010,11 +23010,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -23174,17 +23174,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -23201,11 +23201,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -23213,11 +23213,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -23310,16 +23310,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -23339,11 +23339,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -23503,17 +23503,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -23530,11 +23530,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -23542,11 +23542,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -23639,16 +23639,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -23668,11 +23668,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -23832,17 +23832,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -23859,11 +23859,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -23871,11 +23871,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -23968,16 +23968,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -23997,11 +23997,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -24161,17 +24161,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -24188,11 +24188,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -24200,11 +24200,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -24297,16 +24297,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -24326,11 +24326,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -24490,17 +24490,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -24517,11 +24517,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -24529,11 +24529,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -24626,16 +24626,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -24655,11 +24655,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -24819,17 +24819,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -24846,11 +24846,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -24858,11 +24858,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -24955,16 +24955,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -24984,11 +24984,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -25148,17 +25148,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -25175,11 +25175,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -25187,11 +25187,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -25284,16 +25284,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -25313,11 +25313,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -25477,17 +25477,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -25504,11 +25504,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -25516,11 +25516,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -25613,16 +25613,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -25642,11 +25642,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -25806,17 +25806,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -25833,11 +25833,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -25845,11 +25845,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -25942,16 +25942,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -25971,11 +25971,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -26135,17 +26135,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -26162,11 +26162,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -26174,11 +26174,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -26271,16 +26271,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -26300,11 +26300,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -26464,17 +26464,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -26491,11 +26491,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -26503,11 +26503,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -26600,16 +26600,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -26629,11 +26629,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -26793,17 +26793,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -26820,11 +26820,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -26832,11 +26832,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -26929,16 +26929,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -26958,11 +26958,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -27122,17 +27122,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -27149,11 +27149,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -27161,11 +27161,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -27258,16 +27258,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -27287,11 +27287,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -27451,17 +27451,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -27478,11 +27478,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -27490,11 +27490,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -27587,16 +27587,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -27616,11 +27616,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -27780,17 +27780,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -27807,11 +27807,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -27819,11 +27819,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -27916,16 +27916,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -27945,11 +27945,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -28109,17 +28109,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -28136,11 +28136,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -28148,11 +28148,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -28245,16 +28245,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -28274,11 +28274,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -28438,17 +28438,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -28465,11 +28465,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -28477,11 +28477,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -28574,16 +28574,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -28603,11 +28603,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -28767,17 +28767,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -28794,11 +28794,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -28806,11 +28806,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -28903,16 +28903,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -28932,11 +28932,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -29096,17 +29096,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -29123,11 +29123,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -29135,11 +29135,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -29232,16 +29232,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -29261,11 +29261,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -29425,17 +29425,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -29452,11 +29452,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -29464,11 +29464,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -29561,16 +29561,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -29590,11 +29590,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -29754,17 +29754,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -29781,11 +29781,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -29793,11 +29793,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -29890,16 +29890,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -29919,11 +29919,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -30083,17 +30083,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -30110,11 +30110,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -30122,11 +30122,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -30219,16 +30219,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -30248,11 +30248,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -30412,17 +30412,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -30439,11 +30439,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -30451,11 +30451,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -30548,16 +30548,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -30577,11 +30577,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -30741,17 +30741,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -30768,11 +30768,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -30780,11 +30780,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -30877,16 +30877,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -30906,11 +30906,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -31070,17 +31070,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -31097,11 +31097,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -31109,11 +31109,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -31206,16 +31206,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -31235,11 +31235,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -31399,17 +31399,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -31426,11 +31426,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -31438,11 +31438,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -31535,16 +31535,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -31564,11 +31564,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -31728,17 +31728,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -31755,11 +31755,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -31767,11 +31767,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -31864,16 +31864,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -31893,11 +31893,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -32057,17 +32057,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -32084,11 +32084,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -32096,11 +32096,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -32193,16 +32193,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -32222,11 +32222,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -32386,17 +32386,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -32413,11 +32413,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -32425,11 +32425,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -32522,16 +32522,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -32551,11 +32551,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached
@@ -32715,17 +32715,17 @@ else
 # ===== 7. CLASSES & OOP =====
 # Basic class with constructor
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)      # Use / for property access in constructor
     (/y = y)      # /y = self/y
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )
@@ -32742,11 +32742,11 @@ else
 
 # Nested class
 (class Outer
-  (.ctor [data]
+  (ctor [data]
     (/data = data)
   )
   (class Inner        # Outer is like a namespace
-    (.fn get_data _
+    (method get_data _
       Outer/data
     )
   )
@@ -32754,11 +32754,11 @@ else
 
 # Class with macro constructor (receives unevaluated symbols)
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # x and y are unevaluated arguments
     (/y = y)
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
 )
@@ -32851,16 +32851,16 @@ catch *
 
 # ===== 16. COMPREHENSIVE CLASS EXAMPLE =====
 (class Calculator
-  (.ctor []
+  (ctor []
     (/memory = {})
   )
-  (.fn store [key value]
+  (method store [key value]
     (/memory/key = value)
   )
-  (.fn recall [key]
+  (method recall [key]
     /memory/key
   )
-  (.fn add [x y]
+  (method add [x y]
     (var result (x + y))
     (/.store "last" result)
     result
@@ -32880,11 +32880,11 @@ catch *
 
 # ===== 18. FINAL COMPLEX EXAMPLE =====
 (class API
-  (.ctor [base_url]
+  (ctor [base_url]
     (/url = base_url)
     (/cache = {})
   )
-  (.fn request [endpoint]
+  (method request [endpoint]
     (var cached = /cache/endpoint)
     (if cached
       cached

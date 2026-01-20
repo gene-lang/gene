@@ -26,27 +26,27 @@ fn init_db []
   """
 
 class Orm
-  .ctor /conn
+  ctor /conn
 
-  .fn exec [query params...]
+  method exec [query params...]
     /conn .exec query/.to_s params...
 
 class Query
-  .ctor /table
+  ctor /table
 
-  .fn select /select...
+  method select /select...
 
-  .fn join join
+  method join join
     /joins ||= []
     /joins .add join
 
-  .fn where /where
+  method where /where
 
-  .fn order_by /order_by
+  method order_by /order_by
 
-  .fn limit /limit
+  method limit /limit
 
-  .fn to_s _
+  method to_s _
     var sql "SELECT "
     if /select
       sql .append (/select .join ",") " "
@@ -109,7 +109,7 @@ class Record
         columns .add col
     columns
 
-  .fn insert _
+  method insert _
     var columns (/.class . /.class/columns_except_id)
     var sql #"
       INSERT INTO #{/.class/table} (#(columns .join ", "))
@@ -117,18 +117,18 @@ class Record
     var params (columns .map (col -> (./ col)))
     /.class/orm .exec sql params...
 
-  .fn update _
+  method update _
     var sql #"UPDATE #{/.class/table} SET status = ? WHERE id = ?"
     /.class/orm .exec sql /status /id
 
   # If no id, insert into the table, else update existing row.
-  .fn save _
+  method save _
     if not /id
       .insert
     else
       .update
 
-  .fn delete _
+  method delete _
     var sql #"DELETE FROM #{/.class/table} WHERE id = ?"
     /.class/orm .exec sql /id
 
@@ -136,28 +136,28 @@ class Todo < Record
   var /table "todos"
   var /columns ["id" "description" "status"]
 
-  .ctor props
+  ctor props
     /id = props/id
     /description = props/description
     /status = (props/status || 0)
 
-  .fn done _
+  method done _
     /status/.to_s == "1"
 
-  .fn set_done _
+  method set_done _
     /status = 1
 
-  .fn set_todo _
+  method set_todo _
     /status = 0
 
-  .fn to_json _
+  method to_json _
     {
       ^id /id
       ^description /description
       ^status /status
     }
 
-  .fn to_html _
+  method to_html _
     LI ^class #"py-6 px-2 border-b border-grey-darkest flex justify-between items-center relative todo__item #(if /.done "done")"
       DIV
         INPUT ^type "checkbox" ^id /id ^class "cbx hidden" ^checked /.done
@@ -171,7 +171,7 @@ class Todo < Record
           LINE ^x1 "6" ^y1 "6" ^x2 "18" ^y2 "18"
 
 class App
-  .ctor /port
+  ctor /port
     /middlewares = []
 
     # Open connection to the database
@@ -181,7 +181,7 @@ class App
     # Set orm member on Record class which gets inherited by child classes of Record
     var Record/orm orm
 
-  .fn construct_handler middleware_index
+  method construct_handler middleware_index
     if (middleware_index < /middlewares/.size)
       var middleware (/middlewares ./ middleware_index)
       var handler    (.construct_handler (middleware_index + 1))
@@ -189,10 +189,10 @@ class App
     else
       = /handler
 
-  .fn enable_websocket [path handler]
+  method enable_websocket [path handler]
     /websocket = {^path path ^handler handler}
 
-  .fn start _
+  method start _
     println "Starting HTTP server at port" /port "..."
 
     var root_handler (.construct_handler 0)
@@ -201,7 +201,7 @@ class App
 
 # Base class for controllers
 class Controller
-  .fn layout [title = "TODO App" content]
+  method layout [title = "TODO App" content]
     HTML
       HEAD
         META ^charset "utf-8"
@@ -447,15 +447,15 @@ class Controller
         #   ))
         # ))
 
-  .fn render args...
+  method render args...
     respond ((.layout args...).to_s)
 
 class HomeController < Controller
-  .fn index req
+  method index req
     redirect "/todos"
 
 class TodosController < Controller
-  .fn index req
+  method index req
     var todos (Todo . Todo/all)
     .render
       UL ^class "list-reset"
@@ -463,7 +463,7 @@ class TodosController < Controller
           todo/.to_html
         ))
 
-  .fn index_js req
+  method index_js req
     var todos ((Todo . Todo/all).to_json)
     respond #"""
       import { h } from 'https://unpkg.com/vue@3.0.4/dist/vue.runtime.esm-browser.js'
@@ -559,13 +559,13 @@ class TodosController < Controller
 
     """ {^content-type "text/javascript"}
 
-  # (.fn create req
+  # (method create req
   #   (var todo (new Todo req/.body_params))
   #   todo/.save
   #   (redirect "/todos")
   # )
 
-  # (.fn update req
+  # (method update req
   #   (match [^id ^status] req/.body_params)
   #   (var todo (Todo . Todo/find id))
   #   ($set todo @status status)
@@ -574,7 +574,7 @@ class TodosController < Controller
   #   (respond ({^status "success"}.to_json))
   # )
 
-  # (.fn delete req
+  # (method delete req
   #   (var id req/.body_params/id)
   #   (var todo (Todo . Todo/find id))
   #   (if not todo
@@ -585,10 +585,10 @@ class TodosController < Controller
   # )
 
 class Mapping
-  .ctor [/path /controller /action /http_methods]
+  ctor [/path /controller /action /http_methods]
 
   # Return bool: whether the path/method/... of the request matches
-  .fn match req
+  method match req
     &&
       req/.path == /path
       ||
@@ -596,17 +596,17 @@ class Mapping
         /http_methods .contains req/.method
 
 class Router
-  .ctor _
+  ctor _
     /mappings = []
 
-  .fn map [^options... path controller action = "index"]
+  method map [^options... path controller action = "index"]
     var http_methods []
     for method in ["GET" "POST" "PUT" "PATCH" "DELETE"]
       if (options ./ method)
         http_methods .add method
     /mappings .add (new Mapping path controller action http_methods)
 
-  .fn call req
+  method call req
     for m in /mappings
       if (m .match req)
         var result ((new m/controller) . m/action req)
@@ -623,7 +623,7 @@ fn create_router []
     .map          "/todos/index.js" TodosController :index_js
 
 class WebSocketHandler
-  .fn call [ws payload]
+  method call [ws payload]
     println "Received websocket message:" payload
     case payload/type
     when "create"

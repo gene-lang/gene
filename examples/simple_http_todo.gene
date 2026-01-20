@@ -14,21 +14,21 @@
   (var /description "")
   (var /status 0)
 
-  (.ctor [id description status]
+  (ctor [id description status]
     (/id = id)
     (/description = description)
     (/status = status)
   )
 
-  (.fn done _
+  (method done _
     (/status == 1)
   )
 
-  (.fn set_done _
+  (method set_done _
     (/status = 1)
   )
 
-  (.fn to_html _
+  (method to_html _
     (genex/html/tags/LI
       ^class (if /.done "completed" else "pending")
       /description
@@ -38,7 +38,7 @@
 
 # Simple controller
 (class TodoController
-  (.fn index request
+  (method index request
     (println "GET request received")
 
     # Create some sample todos
@@ -89,7 +89,7 @@
     )
   )
 
-  (.fn create request
+  (method create request
     (println "POST request received")
     (respond 201 "Todo created")
   )
@@ -98,11 +98,11 @@
 # Simple router
 (class SimpleRouter
 
-  (.ctor _
+  (ctor _
     (/todo_controller = (new TodoController))
   )
 
-  (.fn call request
+  (method call request
     (var path request/path)
     (var method request/method)
 

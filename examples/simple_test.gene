@@ -27,11 +27,11 @@
 
 # Test classes
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)
     (/y = y)
   )
-  (.fn distance _
+  (method distance _
     (($math/sqrt ((/x * /x) + (/y * /y))))
   )
 )

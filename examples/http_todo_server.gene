@@ -9,25 +9,25 @@
   (var /description "")
   (var /status 0)
 
-  (.ctor [id description status]
+  (ctor [id description status]
     (/id = id)
     (/description = description)
     (/status = status)
   )
 
-  (.fn done _
+  (method done _
     (/status == 1)
   )
 
-  (.fn set_done _
+  (method set_done _
     (/status = 1)
   )
 
-  (.fn set_todo _
+  (method set_todo _
     (/status = 0)
   )
 
-  (.fn to_html _
+  (method to_html _
     (genex/html/tags/LI
       ^class (if (.done) "completed" "pending")
       (genex/html/tags/INPUT
@@ -46,7 +46,7 @@
 (class TodoController
   (var /todos [])
 
-  (.ctor _
+  (ctor _
     (/todos = [
       (new Todo 1 "Learn Gene programming" 0)
       (new Todo 2 "Build HTTP todo app" 0)
@@ -54,7 +54,7 @@
     ])
   )
 
-  (.fn index [request]
+  (method index [request]
     (println "GET / - rendering todo list")
     (genex/html/tags/HTML
       (genex/html/tags/HEAD
@@ -112,7 +112,7 @@
     )
   )
 
-  (.fn create [request]
+  (method create [request]
     (println "POST /todos - creating new todo")
     (respond 201 "Todo created successfully")
   )
@@ -122,11 +122,11 @@
 (class Router
   (var /controller (new TodoController))
 
-  (.ctor [controller]
+  (ctor [controller]
     (/controller = controller)
   )
 
-  (.fn call [request]
+  (method call [request]
     (var path request/path)
     (var method request/method)
 

@@ -7,11 +7,11 @@
 
 # Define a simple Point class
 (class Point
-  (.ctor [/x /y]
+  (ctor [/x /y]
     # Constructor body - properties are auto-assigned
   )
   
-  (.fn distance_from_origin _
+  (method distance_from_origin _
     (var dx (* /x /x))
     (var dy (* /y /y))
     (+ dx dy)  # Return x^2 + y^2 (simplified, no sqrt)

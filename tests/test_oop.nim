@@ -58,7 +58,7 @@ test_vm """
 # Constructor - needs method compilation
 # test_vm """
 #   (class A
-#     (.ctor _
+#     (ctor _
 #       (/test = 1)
 #     )
 #   )
@@ -69,7 +69,7 @@ test_vm """
 # Constructor with parameter shadowing
 # test_vm """
 #   (class A
-#     (.ctor /test)
+#     (ctor /test)
 #   )
 #   (var a (new A 1))
 #   a/test
@@ -86,7 +86,7 @@ test_vm """
 # Methods - needs method compilation and calling
 # test_vm """
 #   (class A
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -96,7 +96,7 @@ test_vm """
 # Method invocation with dot syntax
 # test_vm """
 #   (class A
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -107,10 +107,10 @@ test_vm """
 # Method with instance variable assignment
 # test_vm """
 #   (class A
-#     (.fn set_x a
+#     (method set_x a
 #       (/x = a)
 #     )
-#     (.fn test _
+#     (method test _
 #       /x
 #     )
 #   )
@@ -122,7 +122,7 @@ test_vm """
 # Instance variables - needs constructor support
 # test_vm """
 #   (class A
-#     (.ctor _
+#     (ctor _
 #       (/a = 1)
 #     )
 #   )
@@ -133,17 +133,47 @@ test_vm """
 # Method with parameters
 # test_vm """
 #   (class A
-#     (.fn test a
+#     (method test a
 #       a
 #     )
 #   )
 #   ((new A).test 1)
 # """, 1
 
+# Legacy dotted class member forms should be rejected
+test_vm_error """
+  (class BadCtor
+    (.ctor [x]
+      (/x = x)
+    )
+  )
+"""
+
+test_vm_error """
+  (class BadMethod
+    (.fn m [x]
+      x
+    )
+  )
+"""
+
+# Super constructor calls must use dotted form
+test_vm_error """
+  (class Base
+    (ctor [x] (/x = x))
+  )
+  (class Child < Base
+    (ctor [x]
+      (super ctor x)
+    )
+  )
+  (new Child 1)
+"""
+
 # Inheritance with method override
 # test_vm """
 #   (class A
-#     (.fn test []
+#     (method test []
 #       "A.test"
 #     )
 #   )
@@ -155,12 +185,12 @@ test_vm """
 # Super calls - TODO: implement super properly
 # test_vm """
 #   (class A
-#     (.fn test a
+#     (method test a
 #       a
 #     )
 #   )
 #   (class B < A
-#     (.fn test a
+#     (method test a
 #       (super .test a)
 #     )
 #   )
@@ -170,7 +200,7 @@ test_vm """
 # Inherited constructor - TODO: need to call parent constructor
 # test_vm """
 #   (class A
-#     (.ctor _
+#     (ctor _
 #       (/test = 1)
 #     )
 #   )
@@ -182,7 +212,7 @@ test_vm """
 # Mixins - TODO: implement mixin support
 # test_vm """
 #   (mixin M
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -200,10 +230,10 @@ test_vm """
 # Object syntax (singleton objects)
 test_vm """
   (object Config
-    (.ctor _
+    (ctor _
       (/version = "1.0.0")
     )
-    (.fn get_version _
+    (method get_version _
       /version
     )
   )
@@ -213,12 +243,12 @@ test_vm """
 
 test_vm """
   (class Base
-    (.fn value _
+    (method value _
       1
     )
   )
   (var singleton (object Service < Base
-    (.fn value _
+    (method value _
       (+ (super .value) 1)
     )
   ))
@@ -243,7 +273,7 @@ test_vm """
 # Object syntax
 # test_vm """
 #   ($object a
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -253,7 +283,7 @@ test_vm """
 # Macro-like methods in classes
 # test_vm """
 #   (class A
-#     (.fn test! [a]
+#     (method test! [a]
 #       a
 #     )
 #   )
@@ -264,11 +294,11 @@ test_vm """
 # # Macro constructor test - constructor receives unevaluated arguments
 # test_vm """
 #   (class Point
-#     (.ctor! [x y]
+#     (ctor! [x y]
 #       (/x = ($caller_eval x))
 #       (/y = ($caller_eval y))
 #     )
-#     (.fn get_x []
+#     (method get_x []
 #       /x
 #     )
 #   )
@@ -280,11 +310,11 @@ test_vm """
 # Regular constructor for comparison
 # test_vm """
 #   (class Point
-#     (.ctor [x y]
+#     (ctor [x y]
 #       (/x = x)
 #       (/y = y)
 #     )
-#     (.fn get_x []
+#     (method get_x []
 #       /x
 #     )
 #   )
@@ -296,14 +326,14 @@ test_vm """
 # # Macro constructor with validation
 # test_vm """
 #   (class Validator
-#     (.ctor! [expr]
+#     (ctor! [expr]
 #       # We can inspect the unevaluated expression
 #       (if (== ($caller_eval expr) 42)
 #         (/valid = true)
 #         (/valid = false)
 #       )
 #     )
-#     (.fn is_valid []
+#     (method is_valid []
 #       /valid
 #     )
 #   )

@@ -8,14 +8,14 @@
 
    # Constructor
    # First arg is automatically stored as `port` property in the instance
-   (.ctor port
+   (ctor port
       (/port = port)
       # Initializes `middleware` property as an empty array
       (/middlewares = [])
    )
 
    # Helper method for constructing handlers from /middlewares and /handler
-   (.fn construct_handler middleware_index
+   (method construct_handler middleware_index
       (if (middleware_index < (self/middlewares .size))
          (var middleware (/middlewares .get middleware_index))
          (var handler    (.construct_handler (middleware_index + 1)))
@@ -27,7 +27,7 @@
 
    # Construct the root handler based on /middlewares and /handler
    # Start the HTTP server
-   (.fn start _
+   (method start _
       # Note: print and println inserts " " between arguments
       (println "Starting HTTP server at port" self/port "...")
 
@@ -41,13 +41,13 @@
 (class DummyRouter
 
    # Constructor
-   (.ctor _
+   (ctor _
       (/handlers = [])
    )
 
    # Define `call` method which enables the router to be invoked like any handler,
    # i.e. (<dummy router> req)
-   (.fn call req
+   (method call req
       (println "Router.call called with self:" self "req:" req)
 
       (for h in /handlers

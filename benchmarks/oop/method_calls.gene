@@ -7,26 +7,26 @@
 
 # Define a Calculator class with various methods
 (class Calculator
-  (.ctor /value
+  (ctor /value
     # Constructor body
   )
   
-  (.fn add n
+  (method add n
     (/value = (+ /value n))
     /value
   )
   
-  (.fn multiply n
+  (method multiply n
     (/value = (* /value n))
     /value
   )
   
-  (.fn get _
+  (method get _
     /value
   )
   
   # Method that calls other methods
-  (.fn compound n
+  (method compound n
     (self/.add n)
     (self/.multiply 2)
     /value

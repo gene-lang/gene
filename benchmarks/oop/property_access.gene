@@ -7,22 +7,22 @@
 
 # Define a Person class with multiple properties
 (class Person
-  (.ctor [/name /age /score]
+  (ctor [/name /age /score]
     # Constructor body
   )
   
-  (.fn increment_age _
+  (method increment_age _
     (/age = (+ /age 1))
   )
   
-  (.fn full_info _
+  (method full_info _
     (+ /name " " /age " " /score)
   )
 )
 
 # Define a nested class structure
 (class Company
-  (.ctor [/name /employees]
+  (ctor [/name /employees]
     # Constructor body
   )
 )

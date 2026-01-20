@@ -14,7 +14,7 @@ The system SHALL support multiple container types for complex symbol resolution 
 ```gene
 (ns geometry)
 (class shapes/Circle
-  (.fn area _ (* /radius /radius 3.14))
+  (method area _ (* /radius /radius 3.14))
 )
 ; Container geometry.shapes resolves to namespace object
 ```
@@ -27,7 +27,7 @@ The system SHALL support multiple container types for complex symbol resolution 
 
 ```gene
 (class Container
-  (.ctor _)
+  (ctor _)
   (var /status "created")
 )
 ; Container self resolves to current instance

@@ -19,7 +19,7 @@ Gene currently exposes `regex_create`, `regex_match`, and `regex_find` in the st
   - `#/pattern/replacement/flags` compiles into a `Regexp` with a stored replacement string.
   - Escape `\/` for a literal slash and `\\` for a literal backslash in both pattern and replacement segments.
 - API surface:
-  - `Regexp` is a core class exposed as `gene/Regexp` with `.ctor(pattern, replacement = nil)`.
+  - `Regexp` is a core class exposed as `gene/Regexp` with `ctor(pattern, replacement = nil)`.
   - Flags are passed as properties: `(new gene/Regexp ^^i ^^m "pattern" "replacement")`.
   - Regex literals compile into `Regexp` instances and store the original pattern, flags, and optional replacement.
   - `RegexpMatch` is returned by `Regexp.process` and exposes `value`, `captures`, `start`, and `end` fields.

@@ -33,7 +33,7 @@ test_vm """
 
 test_vm """
   (class A
-    (.fn call [x y]
+    (method call [x y]
       (x + y)
     )
   )

@@ -38,12 +38,12 @@ suite "Keyword Arguments Consistency":
   test "Super call with keyword args - eager method":
     test_vm """
       (class Base
-        (.fn method [^x ^y]
+        (method method [^x ^y]
           (+ x y)
         )
       )
       (class Child < Base
-        (.fn method [^x ^y]
+        (method method [^x ^y]
           (* 2 (super .method ^x x ^y y))
         )
       )
@@ -55,12 +55,12 @@ suite "Keyword Arguments Consistency":
     # Using positional args for macro methods as in existing test_super.nim
     test_vm """
       (class Base
-        (.fn method! [x]
+        (method method! [x]
           x
         )
       )
       (class Child < Base
-        (.fn method! [x]
+        (method method! [x]
           (super .method! (+ 1 2))
         )
       )
@@ -71,7 +71,7 @@ suite "Keyword Arguments Consistency":
   test "Instance method call with keywords through 'call' method":
     test_vm """
       (class Callable
-        (.fn call [^a ^b]
+        (method call [^a ^b]
           (+ a b)
         )
       )
@@ -82,7 +82,7 @@ suite "Keyword Arguments Consistency":
   test "Macro-like method with keywords":
     test_vm """
       (class TestMacro
-        (.fn transform! [code ^multiplier]
+        (method transform! [code ^multiplier]
           [code multiplier]
         )
       )
@@ -136,11 +136,11 @@ suite "Keyword Arguments Consistency":
     test_vm """
       (class Builder
         (var /value)
-        (.fn set [^v]
+        (method set [^v]
           (/value = v)
           self
         )
-        (.fn get []
+        (method get []
           /value
         )
       )

@@ -52,11 +52,11 @@ else
 
 # Classes
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)                  # / for self properties
     (/y = y)
   )
-  (.fn distance _
+  (method distance _
     (sqrt ((/x * /x) + (/y * /y)))
   )
 )

@@ -1,11 +1,11 @@
 #!/usr/bin/env gene run
 
 (class A
-  (.ctor []
+  (ctor []
     (/name = "Test")
   )
   
-  (.fn m []
+  (method m []
     (println "Hi my name is" self/name)
   )
 )

@@ -9,7 +9,7 @@ Major features to add:
 * hot-reload
 * websocket
 * DONE (a; b; c) = (((a) b) c)
-* (class A (.ctor [/p] ...)) (new A 1) => self/p is set to 1
+* (class A (ctor [/p] ...)) (new A 1) => self/p is set to 1
 * DONE #@a b = (a b), #@(a b) c = ((a b) c)
 * AOP
 

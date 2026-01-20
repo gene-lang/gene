@@ -13,7 +13,7 @@ The compiler SHALL parse complex symbols with slash delimiters and split them in
 
 ```gene
 (class geometry/Circle
-  (.fn area _ (* /radius /radius 3.14))
+  (method area _ (* /radius /radius 3.14))
 )
 ; Compiles using stack-based approach:
 ; 1. Compile geometry → push to stack
@@ -28,7 +28,7 @@ The compiler SHALL parse complex symbols with slash delimiters and split them in
 
 ```gene
 (class app/models/User
-  (.ctor [name email]
+  (ctor [name email]
     (/name = name)
     (/email = email)
   )
@@ -64,7 +64,7 @@ The system SHALL compile container expressions using stack-based approach for sy
 ```gene
 (ns geometry)
 (class shapes/Circle
-  (.fn area _ (* /radius /radius 3.14))
+  (method area _ (* /radius /radius 3.14))
 )
 ; Compiles: shapes → push to stack → Circle as member of stack top
 ```

@@ -8,16 +8,16 @@ import ./helpers
 
 test_vm """
   (class Base
-    (.ctor [x] (/x = x))
-    (.fn add [y]
+    (ctor [x] (/x = x))
+    (method add [y]
       (+ /x y)
     )
   )
   (class Child < Base
-    (.ctor [x]
+    (ctor [x]
       (super .ctor x)
     )
-    (.fn add [y]
+    (method add [y]
       (super .add y)
     )
   )
@@ -29,12 +29,12 @@ test_vm """
 
 test_vm """
   (class Base
-    (.fn m [^x]
+    (method m [^x]
       x
     )
   )
   (class Child < Base
-    (.fn m [^x]
+    (method m [^x]
       (super .m ^x x)
     )
   )
@@ -45,10 +45,10 @@ test_vm """
 
 test_vm """
   (class Base
-    (.fn m! [x] x)
+    (method m! [x] x)
   )
   (class Child < Base
-    (.fn m! [x]
+    (method m! [x]
       (super .m! (+ 1 2))
     )
   )
@@ -60,12 +60,12 @@ test_vm """
 
 test_vm """
   (class Base
-    (.ctor! [expr]
+    (ctor! [expr]
       (/body = expr)
     )
   )
   (class Child < Base
-    (.ctor! [expr]
+    (ctor! [expr]
       (super .ctor! expr)
     )
   )

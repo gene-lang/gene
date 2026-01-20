@@ -109,7 +109,7 @@ Convert your complex objects to maps/arrays:
 
 ```gene
 # Instead of sending an instance
-(class Person (.ctor [name age] ...))
+(class Person (ctor [name age] ...))
 (var p (new Person "Alice" 30))
 
 # Convert to a map

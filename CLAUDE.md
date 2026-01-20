@@ -234,11 +234,11 @@ nimble buildext
 
 # Classes
 (class Point
-  (.ctor [x y]
+  (ctor [x y]
     (/x = x)                  # Use / for property access
     (/y = y)
   )
-  (.fn get_x _ /x)            # Method definition
+  (method get_x _ /x)            # Method definition
 )
 
 # Method calls

@@ -8,7 +8,7 @@ This document describes the design and implementation of constructors in Gene, i
 
 Gene already has partial support for macro constructors:
 
-- `.ctor!` - Creates a macro-like constructor that receives unevaluated arguments
+- `ctor!` - Creates a macro-like constructor that receives unevaluated arguments
 - `new!` - Calls a constructor with unevaluated arguments
 - `new` - Calls a constructor with evaluated arguments
 
@@ -26,7 +26,7 @@ Gene already has partial support for macro constructors:
 ```gene
 # Regular constructor - arguments are evaluated
 (class Person
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)      # name is already evaluated
     (/age = age)        # age is already evaluated
   )
@@ -34,7 +34,7 @@ Gene already has partial support for macro constructors:
 
 # Macro constructor - arguments are unevaluated
 (class LazyPerson
-  (.ctor! [name age]
+  (ctor! [name age]
     (/name = ($caller_eval name))  # name is a symbol, we evaluate it
     (/age = ($caller_eval age))    # age is a symbol, we evaluate it
   )
@@ -59,14 +59,14 @@ Gene already has partial support for macro constructors:
 
 ```gene
 (class Student < Person
-  (.ctor! [name age grade]
+  (ctor! [name age grade]
     (super .ctor! name age)    # Pass unevaluated args to parent macro constructor
     (/grade = ($caller_eval grade))
   )
 )
 
 (class Employee < Person
-  (.ctor [name age salary]
+  (ctor [name age salary]
     (super .ctor name age)     # Pass evaluated args to parent regular constructor
     (/salary = salary)
   )
@@ -78,8 +78,8 @@ Gene already has partial support for macro constructors:
 ### 1. Constructor Type Detection
 
 The compiler must detect constructor types:
-- `.ctor` → Regular constructor (evaluated args)
-- `.ctor!` → Macro constructor (unevaluated args)
+- `ctor` → Regular constructor (evaluated args)
+- `ctor!` → Macro constructor (unevaluated args)
 
 ### 2. Instantiation Validation
 
@@ -108,12 +108,12 @@ Clear, helpful error messages for mismatches:
 
 ```gene
 (class Config
-  (.ctor! [config_file]
+  (ctor! [config_file]
     (/config_file = ($caller_eval config_file))
     (/data = nil)  # Will be loaded lazily
   )
 
-  (.fn load_config _
+  (method load_config _
     (/data = (read_file /config_file))
   )
 )
@@ -125,12 +125,12 @@ Clear, helpful error messages for mismatches:
 
 ```gene
 (class Query
-  (.ctor! [table condition]
+  (ctor! [table condition]
     (/table = ($caller_eval table))
     (/condition = condition)      # Keep as unevaluated expression
   )
 
-  (.fn to_sql _
+  (method to_sql _
     "SELECT * FROM " + /table + " WHERE " + (condition .to_sql)
   )
 )
@@ -142,17 +142,17 @@ Clear, helpful error messages for mismatches:
 
 ```gene
 (class ValidatedField
-  (.ctor! [field_name validation_rule]
+  (ctor! [field_name validation_rule]
     (/field_name = ($caller_eval field_name))
     (/validation_rule = validation_rule)  # Keep rule as callable
   )
 
-  (.fn validate [value]
+  (method validate [value]
     ((/validation_rule) value)
   )
 )
 
-(var name_field (new! ValidatedField name (.fn [v] (and (> v.len 0) (< v.len 50)))))
+(var name_field (new! ValidatedField name (fn [v] (and (> v.len 0) (< v.len 50)))))
 ```
 
 ## Implementation Plan
@@ -175,8 +175,8 @@ Clear, helpful error messages for mismatches:
 ## Backward Compatibility
 
 This design is fully backward compatible:
-- Existing `.ctor` and `new` code continues to work unchanged
-- New `.ctor!` and `new!` syntax is additive
+- Existing `ctor` and `new` code continues to work unchanged
+- New `ctor!` and `new!` syntax is additive
 - Only new validation errors are introduced for mismatched usage
 
 ## Future Considerations
@@ -185,8 +185,8 @@ This design is fully backward compatible:
 Potentially support multiple constructors with different signatures:
 ```gene
 (class Point
-  (.ctor [x y] ...)      # Two-arg constructor
-  (.ctor! [coord] ...)   # Single symbolic arg constructor
+  (ctor [x y] ...)      # Two-arg constructor
+  (ctor! [coord] ...)   # Single symbolic arg constructor
 )
 ```
 
@@ -194,8 +194,8 @@ Potentially support multiple constructors with different signatures:
 Attributes to modify constructor behavior:
 ```gene
 (class Example
-  (.ctor [args...] {:private true})  # Private constructor
-  (.ctor! [args...] {:inline true})  # Inline macro constructor
+  (ctor [args...] {:private true})  # Private constructor
+  (ctor! [args...] {:inline true})  # Inline macro constructor
 )
 ```
 

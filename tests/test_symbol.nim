@@ -135,7 +135,7 @@ test_vm """
 
 # test_vm """
 #   (class C
-#     (.ctor _
+#     (ctor _
 #       (/prop = 1)
 #     )
 #   )
@@ -145,7 +145,7 @@ test_vm """
 
 # test_vm """
 #   (class C
-#     (.ctor _
+#     (ctor _
 #       (/prop = 1)
 #     )
 #   )
@@ -155,7 +155,7 @@ test_vm """
 
 # test_vm """
 #   (class C
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -165,7 +165,7 @@ test_vm """
 
 # test_vm """
 #   (class C
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -175,7 +175,7 @@ test_vm """
 
 # test_vm """
 #   (class C
-#     (.fn test _
+#     (method test _
 #       (/p = 1)
 #     )
 #   )

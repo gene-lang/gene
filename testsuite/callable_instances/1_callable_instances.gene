@@ -2,7 +2,7 @@
 
 # 0-arg callable
 (class ZeroArgCallable
-  (.fn call []
+  (method call []
     "zero"
   )
 )
@@ -13,7 +13,7 @@
 
 # 1-arg callable
 (class OneArgCallable
-  (.fn call [x]
+  (method call [x]
     (* x 2)
   )
 )
@@ -24,7 +24,7 @@
 
 # 2-arg callable
 (class TwoArgCallable
-  (.fn call [x y]
+  (method call [x y]
     (+ x y)
   )
 )
@@ -35,7 +35,7 @@
 
 # 3-arg callable
 (class ThreeArgCallable
-  (.fn call [a b c]
+  (method call [a b c]
     (+ a (+ b c))
   )
 )

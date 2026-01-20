@@ -15,28 +15,28 @@
   (var /description "")
   (var /status 0)
 
-  (.ctor [id description status]
+  (ctor [id description status]
     (/id = id)
     (/description = description)
     (/status = status)
   )
 
-  (.fn done _
+  (method done _
     (/status == 1)
   )
 
-  (.fn set_done _
+  (method set_done _
     (/status = 1)
   )
 
-  (.fn set_todo _
+  (method set_todo _
     (/status = 0)
   )
 )
 
 # Simple controller
 (class TodoController
-  (.fn index path
+  (method index path
     (var todos [
       (new Todo 1 "Learn Gene programming" 0)
       (new Todo 2 "Build HTTP todo app" 0)
@@ -68,7 +68,7 @@
     )
   )
 
-  (.fn create path
+  (method create path
     (var new_todo (new Todo 0 "New TODO item" 0))
     (new_todo .set_todo)
     (println "Created new todo:" new_todo/description)
@@ -80,15 +80,15 @@
 (class SimpleRouter
   (var /routes [])
 
-  (.ctor _
+  (ctor _
     (/routes = [])
   )
 
-  (.fn add_route [path controller action]
+  (method add_route [path controller action]
     (/routes = (/routes || []))
   )
 
-  (.fn call [path]
+  (method call [path]
     (println "Handling request for:" path)
     (var controller (new TodoController))
     (controller .index path)

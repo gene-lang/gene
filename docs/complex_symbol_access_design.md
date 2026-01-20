@@ -100,7 +100,7 @@ The system supports multiple container types automatically:
 
 ```gene
 (class geometry/shapes/Circle
-  (.fn area _
+  (method area _
     (* /radius /radius 3.14)
   )
 )
@@ -110,7 +110,7 @@ The system supports multiple container types automatically:
   (var /columns ["id" "description" "status"])
 )
 
-(.fn set_status [value]
+(method set_status [value]
   (/status = value)
 )
 

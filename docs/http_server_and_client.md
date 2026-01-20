@@ -114,7 +114,7 @@ proc my_handler(vm: ptr VirtualMachine, args: Value): Value {.gcsafe.} =
 **Problem**: Can't call instance methods properly
 ```gene
 (class Router
-  (.fn call req
+  (method call req
     (respond "Hello")))
 (var router (new Router))
 (start_server 8080 router)  # ❌ Can't dispatch to router.call

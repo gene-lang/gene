@@ -20,7 +20,7 @@
 - [ ] Use existing constructor infrastructure with enhanced `IkNew`
 
 ### 1.3 Update constructor definitions
-- [ ] Ensure `.ctor!` creates constructor with unevaluated argument handling
+- [ ] Ensure `ctor!` creates constructor with unevaluated argument handling
 - [ ] Verify constructor logic is properly integrated with class
 - [ ] Test constructor works with `new!` syntax
 
@@ -32,8 +32,8 @@
 - [ ] Update GIR serialization if needed for the new field
 
 ### 2.2 Track constructor type during compilation
-- [ ] Modify `compile_constructor_definition` to set `has_macro_constructor = true` for `.ctor!`
-- [ ] Ensure `.ctor` leaves field as `false`
+- [ ] Modify `compile_constructor_definition` to set `has_macro_constructor = true` for `ctor!`
+- [ ] Ensure `ctor` leaves field as `false`
 - [ ] Test that field is set correctly for both constructor types
 
 ### 2.3 Add validation (compile-time and runtime)
@@ -46,7 +46,7 @@
 ## Phase 3: Super Constructor Support
 
 ### 3.1 Add super .ctor! syntax parsing
-- [ ] Add `.ctor!` case to `compile_gene` method call handling
+- [ ] Add `ctor!` case to `compile_gene` method call handling
 - [ ] Implement quote level management for macro super calls
 - [ ] Ensure proper argument passing (unevaluated)
 

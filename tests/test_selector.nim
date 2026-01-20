@@ -297,7 +297,7 @@ test_vm """
 
 test_vm """
   (class C
-    (.ctor [x]
+    (ctor [x]
       (/x = x)
     )
   )
@@ -412,7 +412,7 @@ test_vm """
 
 # test_vm """
 #   (class A
-#     (.fn test x
+#     (method test x
 #       ($set @x x)
 #     )
 #   )
@@ -423,7 +423,7 @@ test_vm """
 
 # test_vm """
 #   (class A
-#     (.ctor []
+#     (ctor []
 #       (/description = "Class A")
 #     )
 #   )
@@ -457,7 +457,7 @@ test_vm """
 
 # test_vm """
 #   (class A
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -466,7 +466,7 @@ test_vm """
 
 # test_vm """
 #   (class A
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
@@ -475,7 +475,7 @@ test_vm """
 
 # test_vm """
 #   (class A
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )

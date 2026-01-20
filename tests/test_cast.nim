@@ -8,12 +8,12 @@ import ./helpers
 # TODO: cast is not implemented in the VM yet
 # test_vm """
 #   (class A
-#     (.fn test _
+#     (method test _
 #       1
 #     )
 #   )
 #   (class B
-#     (.fn test _
+#     (method test _
 #       2
 #     )
 #   )

@@ -6,13 +6,13 @@
 The compiler SHALL validate that constructor calls match the constructor type defined in the class and handle `new!` calls with unevaluated arguments. Runtime validation SHALL also protect dynamic instantiations.
 
 #### Scenario: Regular constructor with regular instantiation
-**WHEN** a class is defined with a regular constructor (`.ctor`) and instantiated with `new`
+**WHEN** a class is defined with a regular constructor (`ctor`) and instantiated with `new`
 **THEN** the instantiation SHALL succeed
 **AND** arguments SHALL be evaluated before being passed to the constructor.
 
 ```gene
 (class Person
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age)
   )
@@ -22,13 +22,13 @@ The compiler SHALL validate that constructor calls match the constructor type de
 ```
 
 #### Scenario: Macro constructor with macro instantiation
-**WHEN** a class is defined with a macro constructor (`.ctor!`) and instantiated with `new!`
+**WHEN** a class is defined with a macro constructor (`ctor!`) and instantiated with `new!`
 **THEN** the compiler SHALL handle arguments as unevaluated symbols
 **AND** arguments SHALL be passed to the constructor without evaluation.
 
 ```gene
 (class LazyPerson
-  (.ctor! [name age]
+  (ctor! [name age]
     (/name = ($caller_eval name))
     (/age = ($caller_eval age))
   )
@@ -44,7 +44,7 @@ The compiler SHALL validate that constructor calls match the constructor type de
 
 ```gene
 (class Person
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age)
   )
@@ -60,7 +60,7 @@ The compiler SHALL validate that constructor calls match the constructor type de
 
 ```gene
 (class LazyPerson
-  (.ctor! [name age]
+  (ctor! [name age]
     (/name = ($caller_eval name))
     (/age = ($caller_eval age))
   )
@@ -79,14 +79,14 @@ Classes SHALL track whether they have a macro constructor for compile-time valid
 
 ```gene
 (class RegularClass
-  (.ctor [x]
+  (ctor [x]
     (/value = x)
   )
 )
 # Class should have has_macro_constructor = false
 
 (class MacroClass
-  (.ctor! [x]
+  (ctor! [x]
     (/value = ($caller_eval x))
   )
 )
@@ -100,7 +100,7 @@ Classes SHALL track whether they have a macro constructor for compile-time valid
 
 ```gene
 (class RegularClass
-  (.ctor [x]
+  (ctor [x]
     (/value = x)
   )
 )
@@ -113,7 +113,7 @@ Classes SHALL track whether they have a macro constructor for compile-time valid
 
 ```gene
 (class MacroClass
-  (.ctor! [x]
+  (ctor! [x]
     (/value = ($caller_eval x))
   )
 )
@@ -138,13 +138,13 @@ Constructor validation SHALL work correctly through inheritance chains.
 
 ```gene
 (class Base
-  (.ctor [x]
+  (ctor [x]
     (/base_value = x)
   )
 )
 
 (class Derived < Base
-  (.ctor [x y]
+  (ctor [x y]
     (super .ctor x)
     (/derived_value = y)
   )
@@ -163,7 +163,7 @@ Error messages SHALL be clear and actionable.
 
 ```gene
 (class MyClass
-  (.ctor [x]
+  (ctor [x]
     (/value = x)
   )
 )
@@ -182,7 +182,7 @@ All existing code SHALL continue to work without changes.
 ```gene
 # This pattern should continue to work unchanged
 (class Person
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age)
   )
@@ -204,7 +204,7 @@ The VM SHALL validate constructor types at runtime to protect dynamic instantiat
 
 ```gene
 (class LazyPerson
-  (.ctor! [name age]
+  (ctor! [name age]
     (/name = ($caller_eval name))
     (/age = ($caller_eval age))
   )
@@ -222,7 +222,7 @@ The VM SHALL validate constructor types at runtime to protect dynamic instantiat
 
 ```gene
 (class Person
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age)
   )

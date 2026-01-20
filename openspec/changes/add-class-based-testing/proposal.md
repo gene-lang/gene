@@ -47,14 +47,14 @@ Extend `src/genex/test.nim` with:
 ```gene
 (class TestCase
   # Lifecycle hooks (override in subclasses)
-  (.fn setUp [])     # Called before each test method
-  (.fn tearDown [])  # Called after each test method
+  (method setUp [])     # Called before each test method
+  (method tearDown [])  # Called after each test method
 
   # Assertion methods (delegated to existing check/fail)
-  (.fn assert_true [expr message])
-  (.fn assert_false [expr message])
-  (.fn assert_equal [expected actual message])
-  (.fn assert_raises [exception_class body])
+  (method assert_true [expr message])
+  (method assert_false [expr message])
+  (method assert_equal [expected actual message])
+  (method assert_raises [exception_class body])
 )
 ```
 
@@ -62,13 +62,13 @@ Extend `src/genex/test.nim` with:
 ```gene
 (class TestRunner
   # Run all test_* methods in a TestCase class
-  (.fn run_test_class [test_class])
+  (method run_test_class [test_class])
 
   # Run a specific test method
-  (.fn run_test [test_class method_name])
+  (method run_test [test_class method_name])
 
   # Discover all test_* methods in a class
-  (.fn discover_tests [test_class])
+  (method discover_tests [test_class])
 )
 ```
 
@@ -90,18 +90,18 @@ Extend `src/genex/test.nim` with:
   (var /counter 0)
 
   # Lifecycle hooks
-  (.fn setUp []
+  (method setUp []
     (/counter = 0))
 
-  (.fn tearDown []
+  (method tearDown []
     (println "Test complete, counter:" /counter))
 
   # Test methods (must start with test_)
-  (.fn test_increment []
+  (method test_increment []
     (/counter = (/counter + 1))
     (/assert_equal 1 /counter "Counter should be 1"))
 
-  (.fn test_decrement []
+  (method test_decrement []
     (/counter = -1)
     (/assert_equal -1 /counter))
 )

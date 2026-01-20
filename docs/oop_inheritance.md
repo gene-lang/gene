@@ -4,22 +4,22 @@ This document captures the planned semantics for invoking superclass methods and
 
 ## Goals
 - Allow calling a parent method or constructor from inside a subclass implementation.
-- Support both eager and macro variants (`.m` vs `.m!`, `.ctor` vs `.ctor!`).
+- Support both eager and macro variants (`.m` vs `.m!`, `ctor` vs `ctor!`).
 - Keep invocation syntax minimal and uniform with existing call forms.
 - Avoid runtime allocation overhead for `super` dispatch.
 
 ## Target Syntax
 
 ```gene
-(.fn m [a b]
+(method m [a b]
   (super .m a b)      # eager parent method
 )
 
-(.fn m [a b]
+(method m [a b]
   (super .m! a b)     # macro parent method (unevaluated args)
 )
 
-(.ctor! [a b]
+(ctor! [a b]
   (super .ctor! a b)  # macro parent constructor
 )
 ```
@@ -33,8 +33,8 @@ This document captures the planned semantics for invoking superclass methods and
   - `(super .ctor ...)` / `(super .ctor! ...)` resolve the parent ctor/ctor! respectively.
   - The current instance is passed as implicit first argument; parent constructor sets up parent state, not a new instance.
 - **Argument evaluation**:
-  - `.m` / `.ctor` use evaluated arguments.
-  - `.m!` / `.ctor!` receive quoted arguments (consistent with macro rules).
+  - `.m` / `ctor` use evaluated arguments.
+  - `.m!` / `ctor!` receive quoted arguments (consistent with macro rules).
 - **Errors**:
   - Using `super` outside a method/ctor → compile-time error.
   - No parent class → runtime error (“No parent class for super”).

@@ -547,18 +547,18 @@ This keeps the single-thread model but allows other handlers to run during I/O w
 
 # Class-based handler with middleware
 (class App
-  (.fn call [req]
+  (method call [req]
     (if (not (auth/check req))
       (respond 401 "Unauthorized")
       (self/.route req)))
   
-  (.fn route [req]
+  (method route [req]
     (case req/path
       "/" (respond 200 "Welcome")
       "/api/users" (self/.get_users req)
       (respond 404 "Not Found")))
   
-  (.fn get_users [req]
+  (method get_users [req]
     # Blocking database call - runs in worker thread
     (var users (db/query "SELECT * FROM users"))
     (respond 200 (to_json users) {^Content-Type "application/json"})))

@@ -60,11 +60,11 @@ This unified structure enables:
 (class Person < Object
   ^final true
 
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age))
 
-  (.fn greet []
+  (method greet []
     (print "Hello, my name is " /name)))
 ```
 

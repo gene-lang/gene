@@ -16,13 +16,13 @@ The system SHALL provide a `genex/test/TestCase` base class that users can inher
 (class MyTest < genex/test/TestCase
   (var /counter 0)
 
-  (.fn setUp []
+  (method setUp []
     (/counter = 0))
 
-  (.fn tearDown []
+  (method tearDown []
     (println "Test complete"))
 
-  (.fn test_increment []
+  (method test_increment []
     (/counter = (/counter + 1))
     (/assert_equal 1 /counter "Counter should be 1"))
 )
@@ -35,7 +35,7 @@ The system SHALL provide a `genex/test/TestCase` base class that users can inher
 **Given** I have a class inheriting from `genex/test/TestCase`
 **When** I call assertion methods in a test method:
 ```gene
-(.fn test_assertions []
+(method test_assertions []
   (/assert_true true "should pass")
   (/assert_false false "should pass")
   (/assert_equal 5 5 "should pass"))
@@ -52,11 +52,11 @@ The system SHALL provide a `genex/test/TestRunner` class that automatically disc
 **Given** I have a TestCase subclass with multiple methods:
 ```gene
 (class MyTest < genex/test/TestCase
-  (.fn setUp [] NIL)
-  (.fn tearDown [] NIL)
-  (.fn test_addition [] (/assert_equal 4 (2 + 2)))
-  (.fn test_subtraction [] (/assert_equal 1 (3 - 2)))
-  (.fn helper_method [] "not a test"))
+  (method setUp [] NIL)
+  (method tearDown [] NIL)
+  (method test_addition [] (/assert_equal 4 (2 + 2)))
+  (method test_subtraction [] (/assert_equal 1 (3 - 2)))
+  (method helper_method [] "not a test"))
 ```
 **When** I create a TestRunner and call `discover_tests`:
 ```gene
@@ -103,11 +103,11 @@ The TestCase class SHALL provide `setUp` and `tearDown` lifecycle hooks that run
 ```gene
 (class CounterTest < genex/test/TestCase
   (var /counter 0)
-  (.fn setUp [] (/counter = 0))
-  (.fn test_increment []
+  (method setUp [] (/counter = 0))
+  (method test_increment []
     (/counter = (/counter + 1))
     (/assert_equal 1 /counter))
-  (.fn test_increment_twice []
+  (method test_increment_twice []
     (/counter = (/counter + 2))
     (/assert_equal 2 /counter)))
 ```
@@ -120,9 +120,9 @@ The TestCase class SHALL provide `setUp` and `tearDown` lifecycle hooks that run
 **Given** I have a TestCase with tearDown that prints cleanup message:
 ```gene
 (class ResourceTest < genex/test/TestCase
-  (.fn tearDown []
+  (method tearDown []
     (println "Cleaning up resources"))
-  (.fn test_that_fails []
+  (method test_that_fails []
     (/assert_true false)))
 ```
 **When** I run the test that fails
@@ -143,7 +143,7 @@ The class-based testing framework SHALL coexist with functional `test!`/`suite!`
 
 # Class-based test
 (class MyTest < genex/test/TestCase
-  (.fn test_class_based []
+  (method test_class_based []
     (/assert_true true)))
 
 (var runner (new genex/test/TestRunner))

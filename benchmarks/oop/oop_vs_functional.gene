@@ -8,16 +8,16 @@
 # ===== OOP Approach =====
 
 (class BankAccount
-  (.ctor [/balance /owner]
+  (ctor [/balance /owner]
     # Constructor body
   )
   
-  (.fn deposit amount
+  (method deposit amount
     (/balance = (+ /balance amount))
     /balance
   )
   
-  (.fn withdraw amount
+  (method withdraw amount
     (if (>= /balance amount)
       (do
         (/balance = (- /balance amount))
@@ -27,12 +27,12 @@
     )
   )
   
-  (.fn transfer target amount
+  (method transfer target amount
     (self/.withdraw amount)
     ((target/.deposit) amount)
   )
   
-  (.fn get_balance _
+  (method get_balance _
     /balance
   )
 )

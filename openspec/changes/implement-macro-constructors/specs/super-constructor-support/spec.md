@@ -13,14 +13,14 @@ Gene SHALL support `(super .ctor!)` syntax for calling parent macro constructors
 
 ```gene
 (class Base
-  (.ctor! [config]
+  (ctor! [config]
     (/config = ($caller_eval config))
     (/initialized = true)
   )
 )
 
 (class Derived < Base
-  (.ctor! [config extra]
+  (ctor! [config extra]
     (super .ctor! config)  # Pass unevaluated config to parent
     (/extra = ($caller_eval extra))
   )
@@ -36,14 +36,14 @@ Gene SHALL support `(super .ctor!)` syntax for calling parent macro constructors
 
 ```gene
 (class Base
-  (.ctor [config]
+  (ctor [config]
     (/config = config)
     (/initialized = true)
   )
 )
 
 (class Derived < Base
-  (.ctor [config extra]
+  (ctor [config extra]
     (super .ctor config)  # Pass evaluated config to parent
     (/extra = extra)
   )
@@ -62,13 +62,13 @@ Gene SHALL validate that super constructor calls match the parent's constructor 
 
 ```gene
 (class Base
-  (.ctor! [config]
+  (ctor! [config]
     (/config = ($caller_eval config))
   )
 )
 
 (class Derived < Base
-  (.ctor [config extra]
+  (ctor [config extra]
     (super .ctor config)  # ERROR: Parent has macro constructor
     (/extra = extra)
   )
@@ -84,13 +84,13 @@ Gene SHALL validate that super constructor calls match the parent's constructor 
 
 ```gene
 (class Base
-  (.ctor [config]
+  (ctor [config]
     (/config = config)
   )
 )
 
 (class Derived < Base
-  (.ctor! [config extra]
+  (ctor! [config extra]
     (super .ctor! config)  # ERROR: Parent has regular constructor
     (/extra = ($caller_eval extra))
   )
@@ -109,13 +109,13 @@ Gene SHALL support inheritance chains with mixed constructor types when properly
 
 ```gene
 (class Base
-  (.ctor [value]
+  (ctor [value]
     (/base_value = value)
   )
 )
 
 (class Derived < Base
-  (.ctor! [symbolic_value]
+  (ctor! [symbolic_value]
     (super .ctor ($caller_eval symbolic_value))  # Evaluate before passing to regular parent
     (/derived_symbol = symbolic_value)
   )
@@ -131,14 +131,14 @@ Gene SHALL support inheritance chains with mixed constructor types when properly
 
 ```gene
 (class Base
-  (.ctor! [symbolic_value]
+  (ctor! [symbolic_value]
     (/base_symbol = symbolic_value)
     (/base_value = ($caller_eval symbolic_value))
   )
 )
 
 (class Derived < Base
-  (.ctor [evaluated_value]
+  (ctor [evaluated_value]
     (super .ctor! 'base_value)  # Pass quoted symbol to macro parent
     (/derived_value = evaluated_value)
   )
@@ -157,7 +157,7 @@ Super constructor calls SHALL correctly pass arguments (evaluated or unevaluated
 
 ```gene
 (class Base
-  (.ctor! [arg1 arg2 arg3]
+  (ctor! [arg1 arg2 arg3]
     (/val1 = ($caller_eval arg1))
     (/val2 = arg2)      # Keep unevaluated
     (/val3 = ($caller_eval arg3))
@@ -165,7 +165,7 @@ Super constructor calls SHALL correctly pass arguments (evaluated or unevaluated
 )
 
 (class Derived < Base
-  (.ctor! [a b c d]
+  (ctor! [a b c d]
     (super .ctor! a b c)  # Pass a,b,c unevaluated
     (/val4 = ($caller_eval d))
   )
@@ -184,13 +184,13 @@ Super constructor error messages SHALL include parent class information.
 
 ```gene
 (class ConfigurationManager
-  (.ctor! [config_file]
+  (ctor! [config_file]
     (/config = ($caller_eval config_file))
   )
 )
 
 (class ExtendedConfig < ConfigurationManager
-  (.ctor [file_name]
+  (ctor [file_name]
     (super .ctor file_name)  # ERROR: Wrong super call type
   )
 )
@@ -208,20 +208,20 @@ Super constructor validation SHALL work through multiple inheritance levels.
 
 ```gene
 (class GrandParent
-  (.ctor! [base_config]
+  (ctor! [base_config]
     (/base = ($caller_eval base_config))
   )
 )
 
 (class Parent < GrandParent
-  (.ctor! [parent_config]
+  (ctor! [parent_config]
     (super .ctor! parent_config)
     (/parent = ($caller_eval parent_config))
   )
 )
 
 (class Child < Parent
-  (.ctor! [child_config]
+  (ctor! [child_config]
     (super .ctor! child_config)
     (/child = ($caller_eval child_config))
   )
@@ -239,14 +239,14 @@ Existing `(super .ctor)` calls SHALL continue to work unchanged.
 
 ```gene
 (class Animal
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age)
   )
 )
 
 (class Dog < Animal
-  (.ctor [name age breed]
+  (ctor [name age breed]
     (super .ctor name age)  # Should continue to work
     (/breed = breed)
   )

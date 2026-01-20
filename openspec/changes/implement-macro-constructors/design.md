@@ -9,7 +9,7 @@ This design describes how to implement complete macro constructor support by tre
 ### Current State Analysis
 
 Gene already has:
-- `.ctor!` syntax for defining macro constructors
+- `ctor!` syntax for defining macro constructors
 - `new!` syntax for calling macro constructors
 - `IkNewMacro` VM instruction (to be removed)
 - Partial quote-level handling for unevaluated arguments
@@ -33,7 +33,7 @@ What's missing:
 
 We combine compile-time and runtime approaches:
 
-1. **Define macro constructors** with `.ctor!` - creates constructor with unevaluated argument handling
+1. **Define macro constructors** with `ctor!` - creates constructor with unevaluated argument handling
 2. **Call macro constructors** with `new!` - compiler handles with Gene wrapper for unevaluated args
 3. **Dual validation** - compile-time checks for static cases, runtime checks for dynamic cases
 4. **Unified VM path** - use existing `IkNew` with enhanced validation logic
@@ -61,9 +61,9 @@ Remove `IkNewMacro` instruction from InstructionKind enum.
 **File**: `src/gene/compiler.nim`
 
 **Constructor Definition Tracking**:
-- Set `has_macro_constructor = true` when processing `.ctor!`
-- Leave as `false` for regular `.ctor`
-- `.ctor!` creates constructor with unevaluated argument handling
+- Set `has_macro_constructor = true` when processing `ctor!`
+- Leave as `false` for regular `ctor`
+- `ctor!` creates constructor with unevaluated argument handling
 
 **Enhanced `compile_new` function**:
 ```nim
@@ -139,7 +139,7 @@ proc compile_new(self: Compiler, gene: ptr Gene) =
 
 ### Phase 2: Constructor Type Tracking
 1. Add `has_macro_constructor` field to Class
-2. Set flag during `.ctor!` processing
+2. Set flag during `ctor!` processing
 3. Add compile-time validation for `new`/`new!` mismatches
 4. Add runtime validation in VM for dynamic scenarios
 
@@ -179,6 +179,6 @@ Changes must be compatible with existing GIR cache:
 
 ## Backward Compatibility
 
-- All existing `.ctor` and `new` code continues to work unchanged
+- All existing `ctor` and `new` code continues to work unchanged
 - Only new validation errors are introduced for previously incorrect usage
 - GIR format changes are additive only

@@ -57,7 +57,7 @@
 # 2.1 Constructor with instance variables
 (println "2.1 Constructor with instance variables:")
 (class Person
-  (.ctor [name age]
+  (ctor [name age]
     (/name = name)
     (/age = age)
   )
@@ -70,7 +70,7 @@
 # 2.2 Constructor with parameter shadowing (shorthand)
 (println "2.2 Constructor with parameter shadowing:")
 (class Point
-  (.ctor [/x /y])  # Shorthand: automatically assigns to /x and /y
+  (ctor [/x /y])  # Shorthand: automatically assigns to /x and /y
 )
 (var p (new Point 10 20))
 (println p/x)  # Should print 10
@@ -80,13 +80,13 @@
 # 2.3 Methods
 (println "2.3 Methods:")
 (class Counter
-  (.ctor []
+  (ctor []
     (/count = 0)
   )
-  (.fn increment _
+  (method increment _
     (/count = (+ /count 1))
   )
-  (.fn get_count _
+  (method get_count _
     /count
   )
 )
@@ -99,10 +99,10 @@
 # 2.4 Method with parameters
 (println "2.4 Method with parameters:")
 (class Calculator
-  (.fn add [a b]
+  (method add [a b]
     (+ a b)
   )
-  (.fn multiply [a b]
+  (method multiply [a b]
     (* a b)
   )
 )
@@ -114,10 +114,10 @@
 # 2.5 Method invocation with dot notation
 (println "2.5 Method invocation with dot notation:")
 (class Greeter
-  (.ctor name
+  (ctor name
     (/name = name)
   )
-  (.fn greet _
+  (method greet _
     (println "Hello, I'm " /name)
   )
 )
@@ -128,11 +128,11 @@
 # 2.6 Instance variable access
 (println "2.6 Instance variable access:")
 (class Rectangle
-  (.ctor [width height]
+  (ctor [width height]
     (/width = width)
     (/height = height)
   )
-  (.fn area _
+  (method area _
     (* /width /height)
   )
 )
@@ -145,7 +145,7 @@
 # 2.7 Instance variable assignment from outside
 (println "2.7 Instance variable assignment from outside:")
 (class Mutable
-  (.ctor _
+  (ctor _
     (/value = 0)
   )
 )
@@ -158,12 +158,12 @@
 # 2.8 Inheritance with method override
 (println "2.8 Inheritance with method override:")
 (class Animal2
-  (.fn speak _
+  (method speak _
     "Some sound"
   )
 )
 (class Dog2 < Animal2
-  (.fn speak _
+  (method speak _
     "Woof!"
   )
 )
@@ -174,7 +174,7 @@
 # 2.9 Inheritance with method inherited (not overridden)
 (println "2.9 Inheritance with method inherited:")
 (class Base
-  (.fn test _
+  (method test _
     "Base.test"
   )
 )
@@ -186,12 +186,12 @@
 # 2.10 Super calls
 (println "2.10 Super calls:")
 (class Parent
-  (.fn greet [name]
+  (method greet [name]
     (println "Parent says: Hello " name)
   )
 )
 (class Child < Parent
-  (.fn greet [name]
+  (method greet [name]
     (super .greet name)
     (println "Child says: Hi " name)
   )
@@ -206,7 +206,7 @@
 # 2.11 Inherited constructor
 (println "2.11 Inherited constructor:")
 (class ParentWithCtor
-  (.ctor name
+  (ctor name
     (/name = name)
   )
 )
@@ -238,7 +238,7 @@
 # 2.14 Mixins - maybe not a good idea.
 (println "2.14 Mixins:")
 # (mixin Flyable
-#   (.fn fly _
+#   (method fly _
 #     (println "Flying!")
 #   )
 # )
@@ -269,10 +269,10 @@
 # 2.16 Object syntax (singleton objects)
 (println "2.16 Object syntax (singleton objects):")
 (object config
-  (.ctor _
+  (ctor _
     (/version = "1.0.0")
   )
-  (.fn do_something _
+  (method do_something _
     (println "Doing something...")
   )
 )
@@ -283,10 +283,10 @@
 # 2.17 Macro-like methods (receive unevaluated arguments)
 (println "2.17 Macro-like methods:")
 (class MacroTest
-  (.fn normal [a]
+  (method normal [a]
     a
   )
-  (.fn macro_like! [a]
+  (method macro_like! [a]
     a
   )
 )
@@ -299,14 +299,14 @@
 # 2.18 Macro constructor (receives unevaluated arguments)
 (println "2.18 Macro constructor:")
 (class LazyPoint
-  (.ctor! [x y]
+  (ctor! [x y]
     (/x = x)      # Keep x as symbol
     (/y = y)      # Keep y as symbol
   )
-  (.fn get_x _
+  (method get_x _
     /x
   )
-  (.fn get_y _
+  (method get_y _
     /y
   )
 )
@@ -321,7 +321,7 @@
 (println "2.19 Class variables (static members):")
 # (class Config
 #   (var /version "1.0.0")  # Class variable
-#   (.fn get_version _
+#   (method get_version _
 #     Config/version
 #   )
 # )
@@ -334,7 +334,7 @@
 # 2.20 Private methods (if supported)
 (println "2.20 Private methods:")
 # This is a question - does Gene support private methods?
-# Possible syntax: (.fn _private_method ...) ?
+# Possible syntax: (method _private_method ...) ?
 (println "DESIGN QUESTION")
 (println "")
 
@@ -367,7 +367,7 @@
 # 3.3 Constructor with no parameters
 (println "3.3 Constructor with no parameters:")
 (class Empty
-  (.ctor _)
+  (ctor _)
 )
 (var empty (new Empty))
 (println "")
@@ -375,14 +375,14 @@
 # 3.4 Method returning self (for chaining)
 (println "3.4 Method returning self (for chaining):")
 (class Builder
-  (.ctor _
+  (ctor _
     (/value = 0)
   )
-  (.fn add [n]
+  (method add [n]
     (/value = (+ /value n))
     self
   )
-  (.fn get _
+  (method get _
     /value
   )
 )

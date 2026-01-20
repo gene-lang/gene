@@ -71,15 +71,15 @@
 )
 
 (class C
-  (.fn m1 [x]
+  (method m1 [x]
     (println "m1" x)
     (x + 1)
   )
-  (.fn m2 [x]
+  (method m2 [x]
     (println "m2" x)
     (x + 2)
   )
-  (.fn m3 [x]
+  (method m3 [x]
     (println "m3" x)
     (throw "boom")
   )

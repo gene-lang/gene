@@ -1389,7 +1389,7 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkCallInit))
 
 proc compile_method_definition(self: Compiler, gene: ptr Gene) =
-  # Method definition: (.fn name args body...) or (.fn name arg body...)
+  # Method definition: (method name args body...) or (method name arg body...)
   if gene.children.len < 2:
     not_allowed("Method definition requires at least name and args")
   
@@ -1454,14 +1454,13 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkDefineMethod, arg0: name))
 
 proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
-  # Check if this is a macro constructor (.ctor!)
-  let is_macro_ctor = gene.type.kind == VkSymbol and gene.type.str == ".ctor!"
+  # Constructor definition: (ctor args body...) or (ctor! args body...)
 
   # Create a function from the constructor definition
   # The constructor is similar to (fn new [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
-  fn_value.gene.children.add(gene.type.str[1..^1].to_symbol_value())
+  fn_value.gene.children.add(gene.type.str.to_symbol_value())
   
   # Handle args - always normalize to an array
   let args = gene.children[0]
@@ -2387,11 +2386,16 @@ proc compile_gene(self: Compiler, input: Value) =
     if gene.children.len == 0:
       not_allowed("super requires a member")
     let member = gene.children[0]
-    if member.kind != VkSymbol or not member.str.starts_with("."):
+    if member.kind != VkSymbol:
       not_allowed("super requires a method or constructor symbol (e.g., .m or .ctor!)")
-    let member_name = member.str[1..^1]  # strip leading dot
-    let is_ctor = member.str == ".ctor" or member.str == ".ctor!"
-    let is_macro = member.str.ends_with("!")
+    if member.str == "ctor" or member.str == "ctor!":
+      not_allowed("super constructor calls must use .ctor or .ctor!")
+    if not member.str.starts_with("."):
+      not_allowed("super requires a method or constructor symbol (e.g., .m or .ctor!)")
+    let member_str = member.str
+    let member_name = member_str[1..^1]  # strip leading dot
+    let is_ctor = member_str == ".ctor" or member_str == ".ctor!"
+    let is_macro = member_str.ends_with("!")
     let arg_start = 1
     let arg_count = gene.children.len - arg_start
 
@@ -2767,14 +2771,18 @@ proc compile_gene(self: Compiler, input: Value) =
           self.emit(Instruction(kind: IkPop))
         self.emit(Instruction(kind: IkPushNil))
         return
-      of ".fn":
+      of "method":
         # Method definition inside class body
         self.compile_method_definition(gene)
         return
-      of ".ctor", ".ctor!":
+      of "method!":
+        not_allowed("method! is not supported; use (method name! [args] ...) for macro-like methods")
+      of "ctor", "ctor!":
         # Constructor definition inside class body
         self.compile_constructor_definition(gene)
         return
+      of ".fn", ".fn!", ".ctor", ".ctor!":
+        not_allowed("Legacy dotted class members are not supported; use (method ...) or (ctor ...) instead")
       of "eval":
         # Evaluate expressions
         if gene.children.len == 0:
@@ -2799,12 +2807,10 @@ proc compile_gene(self: Compiler, input: Value) =
           return
         elif s.starts_with("."):
           # Check if this is a method definition (e.g., .fn, .ctor) or a method call
-          if s == ".fn" or s == ".ctor":
-            self.compile_method_definition(gene)
-            return
-          else:
-            self.compile_method_call(gene)
-            return
+          if s == ".fn" or s == ".fn!" or s == ".ctor" or s == ".ctor!":
+            not_allowed("Legacy dotted class members are not supported; use (method ...) or (ctor ...) instead")
+          self.compile_method_call(gene)
+          return
         elif s.starts_with("$"):
           # Handle $ prefixed operations
           case s:

@@ -1,7 +1,7 @@
 #!/usr/bin/env gene run
 
 (class FibCalculator
-  (.fn fib n
+  (method fib n
     (if (< n 2)
       n
       (+ (self .fib (- n 1)) (self .fib (- n 2)))

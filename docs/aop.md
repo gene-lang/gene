@@ -122,7 +122,7 @@ A: no it has to be runtime because Gene is too flexible. However we can minimize
 
 ## Here are the main gaps still remaining for class AOP as it stands:
 
-  - No constructor interception: Aspect.apply only wraps entries in class.methods, so .ctor/.ctor! can’t be intercepted today.
+  - No constructor interception: Aspect.apply only wraps entries in class.methods, so ctor/ctor! can’t be intercepted today.
   - No per‑instance enable/disable or unapply/reset; once applied it’s permanent and class‑wide.
   - Only one around advice per placeholder; no stacking/priority/ordering controls beyond FIFO for before/after.
   - Advices only receive positional args; original keyword args aren’t exposed or auto‑forwarded.

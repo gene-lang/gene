@@ -240,8 +240,8 @@ Similar implementations needed for:
 ```gene
 # Test 1: Basic dynamic dispatch
 (class Controller
-  (.fn index req "index called")
-  (.fn create req "create called")
+  (method index req "index called")
+  (method create req "create called")
 )
 
 (var action "index")

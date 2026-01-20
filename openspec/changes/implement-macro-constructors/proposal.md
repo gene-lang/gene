@@ -6,7 +6,7 @@ Implement complete macro constructor support in Gene following the design in `do
 
 ## Why
 
-Gene currently has partial macro constructor support but lacks proper validation and super constructor support. Users can define macro constructors with `.ctor!` and call them with `new!`, but:
+Gene currently has partial macro constructor support but lacks proper validation and super constructor support. Users can define macro constructors with `ctor!` and call them with `new!`, but:
 
 1. **No Validation**: `new` can be used with macro constructors and `new!` with regular constructors, leading to runtime errors that are hard to debug
 2. **No Super Support**: Inherited classes cannot properly call parent macro constructors with `(super .ctor!)`
@@ -17,9 +17,9 @@ This change completes the macro constructor feature to make it a first-class, re
 
 ## Problem Statement
 
-Currently Gene has partial support for macro constructors (`.ctor!` and `new!`) but lacks proper validation and super constructor support. Users can:
+Currently Gene has partial support for macro constructors (`ctor!` and `new!`) but lacks proper validation and super constructor support. Users can:
 
-1. Define macro constructors with `.ctor!`
+1. Define macro constructors with `ctor!`
 2. Call them with `new!`
 
 But the system lacks:
@@ -63,5 +63,5 @@ The implementation spans multiple systems:
 ## Dependencies
 
 - Existing macro-like function infrastructure
-- Current `.ctor!` and `new!` partial implementation
+- Current `ctor!` and `new!` partial implementation
 - VM instruction set (`IkNew`, `IkNewMacro`)

@@ -16,7 +16,7 @@ when isMainModule:
   # OOP Fibonacci implementation using class and method syntax
   let code = fmt"""
     (class FibCalculator
-      (.fn fib n
+      (method fib n
         (if (< n 2)
           n
           (+ (self .fib (- n 1)) (self .fib (- n 2)))
