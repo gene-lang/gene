@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+build/
+nimcache/
+*.o
+*.a
+
+# Models (mounted separately)
+models/
+*.gguf
+
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+docs/
+*.md
+!example-projects/llm_app/backend/src/*.md
+
+# Tests (not needed in production)
+tests/
+testsuite/
+benchmarks/
+
+# Examples (except llm_app)
+examples/
+
+# Tools - exclude llama.cpp submodule (will be cloned fresh)
+tools/llama.cpp/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
+*.sqlite
+.env
+.env.*
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore

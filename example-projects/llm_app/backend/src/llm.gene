@@ -9,9 +9,14 @@
     (println "No GENE_LLM_MODEL environment variable set - running in mock mode")
   elif genex/llm
     (println "Loading LLM model from:" MODEL_PATH)
-    (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99 ^context MODEL_CONTEXT}))
-    (genex/llm/register_model model)
-    (println "LLM model loaded and registered successfully")
+    (try
+      (var model (genex/llm/load_model MODEL_PATH {^gpu_layers 99 ^context MODEL_CONTEXT}))
+      (genex/llm/register_model model)
+      (println "LLM model loaded and registered successfully")
+    catch *
+      (println #"Failed to load model: #{$ex/message} - running in mock mode")
+      (println "Place a GGUF model file at the specified path to enable LLM inference")
+    )
   else
     (println "GENE_LLM_MODEL is set, but genex/llm is unavailable. Rebuild with -d:geneLLM.")
   )

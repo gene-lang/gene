@@ -1,0 +1,65 @@
+# Gene LLM App Docker Compose Configuration
+#
+# Usage:
+#   docker-compose build      # Build the images
+#   docker-compose up         # Start the containers
+#   docker-compose up -d      # Start in background
+#   docker-compose down       # Stop and remove containers
+#   docker-compose logs -f    # View logs
+#
+# Prerequisites:
+#   - Place your GGUF model file in ./models/ directory (optional)
+#   - ComfyUI running on host at port 8188 (optional, for image generation)
+#
+# Access:
+#   - Frontend: http://localhost:5080
+#   - Backend API: http://localhost:4080
+
+services:
+  # Backend - Gene LLM server
+  llm-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gene-llm-backend
+    ports:
+      - "4080:4080"
+    volumes:
+      # Mount LLM models directory (read-only)
+      - ./models:/models:ro
+      # Persist chat database
+      - ./example-projects/llm_app/backend/chat.sqlite:/app/data/chat.sqlite
+    environment:
+      # Path to GGUF model file inside container
+      - GENE_LLM_MODEL=/models/model.gguf
+      # ComfyUI URL (for image generation tool)
+      - COMFYUI_URL=http://host.docker.internal:8188
+      # Google Search API (optional)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_CSE_ID=${GOOGLE_CSE_ID:-}
+      # Code execution sandbox
+      - CODE_SANDBOX_DIR=/app/sandbox
+      - CODE_EXEC_TIMEOUT=30
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 4G
+
+  # Frontend - React/Vite app served by nginx
+  llm-frontend:
+    build:
+      context: ./example-projects/llm_app/frontend
+      dockerfile: Dockerfile
+    container_name: gene-llm-frontend
+    ports:
+      - "5080:80"
+    depends_on:
+      - llm-backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

@@ -128,6 +128,7 @@ llm_app/
 | `web_search` | Search via Google Custom Search API | `query`, `num` |
 | `read_url` | Fetch and extract text from URLs | `url`, `max_chars` |
 | `create_image` | Generate images via ComfyUI/Stable Diffusion | `prompt` |
+| `run_code` | Execute code in sandbox (Python/Gene/Shell) | `language`, `code` |
 
 ## Prerequisites
 
@@ -139,14 +140,76 @@ llm_app/
 
 ## Quick Start
 
-### 1. Build Gene with LLM Support
+There are two ways to run the LLM app: using Docker (recommended) or running locally.
+
+### Option A: Docker (Recommended)
+
+Docker provides an isolated environment with all dependencies pre-installed.
+
+#### 1. Prepare Models Directory
+
+```bash
+# Create models directory in gene root
+mkdir -p models
+
+# Download or copy your GGUF model file
+# Example: cp /path/to/your/model.gguf models/model.gguf
+```
+
+#### 2. Build and Run with Docker Compose
+
+```bash
+cd gene
+
+# Build the Docker image (first time only, takes several minutes)
+docker-compose build
+
+# Start the container
+docker-compose up
+
+# Or run in background
+docker-compose up -d
+```
+
+The backend starts on http://localhost:4080
+
+#### 3. Test the API
+
+```bash
+# Health check
+curl http://localhost:4080/api/health
+
+# Test code execution
+curl -X POST http://localhost:4080/api/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Run this Python code: print(2+2)"}'
+```
+
+#### Docker Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GENE_LLM_MODEL` | `/models/model.gguf` | Path to GGUF model in container |
+| `COMFYUI_URL` | `http://host.docker.internal:8188` | ComfyUI URL on host |
+| `CODE_EXEC_TIMEOUT` | `30` | Code execution timeout (seconds) |
+
+#### Docker Volumes
+
+| Host Path | Container Path | Description |
+|-----------|----------------|-------------|
+| `./models` | `/models` | LLM model files (read-only) |
+| `./example-projects/llm_app/backend/chat.sqlite` | `/app/data/chat.sqlite` | Chat database |
+
+### Option B: Local Development
+
+#### 1. Build Gene with LLM Support
 
 ```bash
 cd gene
 nimble build -d:geneLLM
 ```
 
-### 2. Start the Backend
+#### 2. Start the Backend
 
 ```bash
 cd example-projects/llm_app/backend
@@ -160,7 +223,7 @@ GENE_LLM_MODEL=/path/to/model.gguf ../../../bin/gene run src/main.gene
 
 The backend starts on http://localhost:4080
 
-### 3. Start the Frontend
+#### 3. Start the Frontend
 
 ```bash
 cd example-projects/llm_app/frontend
@@ -170,7 +233,7 @@ npm run dev
 
 The frontend starts on http://localhost:5173
 
-### 4. Open the App
+#### 4. Open the App
 
 Visit http://localhost:5173 in your browser and start chatting!
 
@@ -182,6 +245,8 @@ Visit http://localhost:5173 in your browser and start chatting!
 | `COMFYUI_URL` | No | `http://127.0.0.1:8188` | ComfyUI server URL for image generation |
 | `GOOGLE_API_KEY` | No | - | Google API key for web search tool |
 | `GOOGLE_CSE_ID` | No | - | Google Custom Search Engine ID |
+| `CODE_SANDBOX_DIR` | No | `/tmp/gene-sandbox` | Directory for code execution sandbox |
+| `CODE_EXEC_TIMEOUT` | No | `30` | Timeout for code execution (seconds) |
 
 ## API Endpoints
 
@@ -254,6 +319,34 @@ The LLM automatically detects when to use tools:
 - "Search for Gene programming language" → uses `web_search`
 - "Summarize https://example.com" → uses `read_url`
 - "Generate an image of a sunset over mountains" → uses `create_image`
+- "Write a Python script that prints the first 10 Fibonacci numbers" → uses `run_code`
+
+### Code Execution Examples
+
+The `run_code` tool allows the LLM to execute code in a sandboxed environment:
+
+```bash
+# Execute Python code
+curl -X POST http://localhost:4080/api/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Run Python: import math; print(math.pi)"}'
+
+# Execute shell commands
+curl -X POST http://localhost:4080/api/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Run shell command: echo Hello from the sandbox"}'
+
+# Data analysis with pandas
+curl -X POST http://localhost:4080/api/oneshot \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Write Python code to create a simple dataframe with pandas and print it"}'
+```
+
+**Security Notes:**
+- Code runs in an isolated sandbox directory
+- Execution has a 30-second timeout (configurable via `CODE_EXEC_TIMEOUT`)
+- Python has access to numpy, pandas, and matplotlib
+- Shell commands run with limited privileges
 
 ## Image Generation Setup
 

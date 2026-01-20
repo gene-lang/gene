@@ -52,6 +52,17 @@ Available tools:
 - create_image: Generate an image using AI. Returns image URLs.
   Parameters:
     prompt: Description of the image to generate
+- run_code: Execute code in a sandboxed environment and return the output.
+  Parameters:
+    language: The programming language (python, gene, or shell)
+    code: The code to execute
+  Examples:
+    {"tool": "run_code", "args": {"language": "python", "code": "print(2 + 2)"}}
+    {"tool": "run_code", "args": {"language": "shell", "code": "echo Hello World"}}
+  Notes:
+    - Code runs in an isolated sandbox with a 30-second timeout
+    - Python has access to numpy, pandas, and matplotlib
+    - Use this for calculations, data processing, or running scripts
 
 When you need to use a tool, respond with ONLY a JSON object in this exact format:
 {"tool": "tool_name", "args": {"param": "value"}}
@@ -505,6 +516,121 @@ When displaying images, use HTML img tags instead of markdown links:
       }
     catch *
       {^error #"Failed to extract images: #{$ex/message}"}
+    )
+  )
+)
+
+# ============================================================
+# Tool: run_code
+# ============================================================
+(fn get_sandbox_dir []
+  ($env .get "CODE_SANDBOX_DIR" "/tmp/gene-sandbox")
+)
+
+(fn get_exec_timeout []
+  (var timeout_str ($env .get "CODE_EXEC_TIMEOUT" "30"))
+  (try
+    (timeout_str .to_i)
+  catch *
+    30
+  )
+)
+
+(register_tool "run_code"
+  "Execute code in a sandboxed environment and return the output. Supports Python, Gene, and Shell."
+  {^language "The programming language: python, gene, or shell" ^code "The code to execute"}
+  (fn [args]
+    (var lang ((args .get "language" "python") .to_lower))
+    (var code (args .get "code" ""))
+
+    (if (code/.length == 0)
+      (return {^error "Missing code to execute"})
+    )
+
+    # Validate language
+    (if (((lang != "python") && (lang != "gene")) && (lang != "shell"))
+      (return {^error #"Unsupported language: #{lang}. Use python, gene, or shell."})
+    )
+
+    (var sandbox_dir (get_sandbox_dir))
+    (var timeout (get_exec_timeout))
+    (var timestamp ((gene/now) .format "%Y%m%d_%H%M%S"))
+    (var random_id (random_int 999999))
+
+    # Create sandbox directory if it doesn't exist
+    (try
+      (system/shell #"mkdir -p #{sandbox_dir}")
+    catch *
+      nil
+    )
+
+    # Determine file extension and command
+    (var ext "")
+    (var cmd "")
+
+    (case lang
+    when "python"
+      (ext = "py")
+      # Use venv python if available, otherwise system python
+      (var python_cmd "python3")
+      (var venv_python #"#{sandbox_dir}/venv/bin/python")
+      (var check_venv (system/shell #"test -f #{venv_python} && echo yes || echo no"))
+      (if ((check_venv/output .trim) == "yes")
+        (python_cmd = venv_python)
+      )
+      (cmd = #"cd #{sandbox_dir} && timeout #{timeout}s #{python_cmd}")
+    when "gene"
+      (ext = "gene")
+      (cmd = #"cd #{sandbox_dir} && timeout #{timeout}s gene run")
+    when "shell"
+      (ext = "sh")
+      (cmd = #"cd #{sandbox_dir} && timeout #{timeout}s bash")
+    )
+
+    # Create temp file with code
+    (var filename #"code_#{timestamp}_#{random_id}.#{ext}")
+    (var filepath #"#{sandbox_dir}/#{filename}")
+
+    # Write code to file (escape for shell)
+    (var escaped_code (code .replace "'" "'\\''"))
+    (var write_cmd #"printf '%s' '#{escaped_code}' > '#{filepath}'")
+    (var write_result (system/shell write_cmd))
+
+    (if (write_result/exit_code != 0)
+      (return {^error "Failed to create code file"})
+    )
+
+    # Execute the code
+    (var exec_cmd #"#{cmd} '#{filepath}' 2>&1")
+    (var result (system/shell exec_cmd))
+
+    # Clean up temp file
+    (try
+      (system/shell #"rm -f '#{filepath}'")
+    catch *
+      nil
+    )
+
+    # Check for timeout
+    (if (result/exit_code == 124)
+      (return {
+        ^error #"Code execution timed out after #{timeout} seconds"
+        ^partial_output result/output
+      })
+    )
+
+    # Return result
+    (if (result/exit_code == 0)
+      {
+        ^result result/output
+        ^exit_code 0
+      }
+    else
+      {
+        ^error #"Code execution failed with exit code #{result/exit_code}"
+        ^output result/output
+        ^exit_code result/exit_code
+      }
     )
   )
 )

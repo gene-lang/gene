@@ -394,7 +394,7 @@ else:
     when defined(macosx):
       {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-blas".}
       {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-metal".}
-    when defined(linux):
+    when defined(linux) and not defined(geneNoCuda):
       {.passL: "-L" & llamaBuildDir & "/ggml/src/ggml-cuda".}
       {.passL: "-L/usr/local/cuda/lib64".}
     {.passL: "-lgene_llm".}
@@ -410,11 +410,12 @@ else:
       {.passL: "-framework Accelerate".}
       {.passL: "-lc++".}
     when defined(linux):
-      {.passL: "-lggml-cuda".}
-      {.passL: "-lcuda".}
-      {.passL: "-lcudart".}
-      {.passL: "-lcublas".}
-      {.passL: "-lcublasLt".}
+      when not defined(geneNoCuda):
+        {.passL: "-lggml-cuda".}
+        {.passL: "-lcuda".}
+        {.passL: "-lcudart".}
+        {.passL: "-lcublas".}
+        {.passL: "-lcublasLt".}
       {.passL: "-lstdc++".}
       {.passL: "-lgomp".}
 
