@@ -43,13 +43,13 @@ Key modules:
 - `src/gene/parser.nim` — S-expression reader with macro dispatch table.
 - `src/gene/compiler.nim` — emits instructions defined in `src/gene/types.nim`.
 - `src/gene/vm/core.nim` — native functions, class initialisation, `register_io_functions`.
-- `src/gene/vm/async.nim` — pseudo future implementation backing `async`/`await`.
+- `src/gene/vm/async.nim` — async I/O implementation with event loop integration.
 
 ## Feature Status
 
 - ✅ Macros and macro-like functions with unevaluated arguments.
 - ✅ Basic classes (`class`, `new`, nested classes) and namespace plumbing.
-- ✅ Futures run synchronously; `async` wraps expressions and `await` unwraps results.
+- ✅ Real async I/O with event loop integration; `async` wraps expressions, `await` polls until completion.
 - ✅ Scope lifetime management: `IkScopeEnd` correctly uses ref-counting to prevent premature freeing when async blocks capture scopes.
 - ⚠️ Pattern matching beyond argument binders is still experimental (`match` tests largely disabled).
 - ⚠️ Module/import system and richer class method dispatch (constructors, inheritance, keyword args) are incomplete.
@@ -67,7 +67,7 @@ Key modules:
   (throw "boom")
 catch *
   ($ex .message))          # Catch all exceptions with $ex
-(async (println "hi"))     # Futures resolve synchronously today
+(async (println "hi"))     # Real async execution with event loop
 {:a 1 :b [1 2 3]}          # Map literal with nested array
 ```
 
@@ -93,7 +93,7 @@ obj/.method    # Preferred over (obj .method) for no-arg calls
 - Scopes (`ScopeObj`) are manually managed structures allocated via `alloc0`; always initialise `members = newSeq[Value]()`.
 - Compilation pipeline: parse S-expressions → build AST (`Gene` nodes) → emit `Instruction` seq defined in `src/gene/types.nim`.
 - GIR serializer (`src/gene/gir.nim`) persists constants + instructions; cached under `build/` and reused by the CLI.
-- Async is pseudo: futures complete immediately on the calling thread. Await simply unwraps the future’s value.
+- Async uses real event loop integration: VM polls Nim's asyncdispatch every 100 instructions. Await blocks until the future completes.
 
 ## Instruction Cheatsheet
 

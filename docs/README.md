@@ -22,7 +22,7 @@ Files live in `docs/` unless stated otherwise.
 
 ## Implementation Diaries
 
-- [implementation/async_design.md](implementation/async_design.md) — architecture for pseudo-async futures
+- [implementation/async_design.md](implementation/async_design.md) — architecture for async I/O with event loop integration
 - [implementation/async_progress.md](implementation/async_progress.md) — task-level todo list for async work
 - [implementation/caller_eval.md](implementation/caller_eval.md) — `$caller_eval` design trade-offs
 - [implementation/development_notes.md](implementation/development_notes.md) — open questions and troubleshooting log

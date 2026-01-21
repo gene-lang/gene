@@ -20,7 +20,7 @@ This repository hosts the bytecode virtual machine (VM) implementation written i
   - S-expression parser compatible with the reference interpreter
   - Macro system with unevaluated argument support
   - Basic class system (`class`, `new`, nested classes) and namespaces
-  - Pseudo-async primitives (`async`, `await`) backed by futures
+  - Async I/O with event loop integration (`async`, `await`)
   - Command-line toolchain (`run`, `eval`, `repl`, `parse`, `compile`)
   - File I/O helpers via the `io` namespace (`io/read`, `io/write`, async variants)
 - **In progress / known limitations**
@@ -76,7 +76,7 @@ This unified structure enables:
 | **Homoiconic** | Code is data, data is code — enabling powerful metaprogramming |
 | **Macro System** | Transform code at compile-time with full access to the AST |
 | **Class System** | OOP with classes, inheritance, constructors, and methods |
-| **Async/Await** | Pseudo-async primitives for concurrent-style programming |
+| **Async/Await** | Real async I/O with event loop for concurrent programming |
 | **NaN-boxed Values** | Efficient 8-byte value representation for performance |
 
 ## Building

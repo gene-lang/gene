@@ -5270,8 +5270,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         
         let future = future_val.ref.future
         
-        # For now, futures complete immediately (pseudo-async)
-        # In the future, we would check the future state here
+        # Check the future state and handle accordingly
         case future.state:
           of FsSuccess:
             self.frame.push(future.value)

@@ -38,7 +38,7 @@ source.gene ──► Parser ──► AST ──► Compiler ──► Compilat
 - Each `Frame` owns a 256-slot value stack, an instruction pointer, argument list, and scope chain.
 - Scope objects form a linked list; ref-counted manually to avoid churn (see `IkScopeStart`/`IkScopeEnd`).
 - Macro-aware call path keeps arguments unevaluated when `Function.is_macro_like` is set.
-- Async support wraps expressions in futures; await simply unwraps (pseudo-async).
+- Async I/O with event loop integration; VM polls asyncdispatch every 100 instructions.
 - Includes tracing (`VM.trace`), profiling (`VM.profiling`, `instruction_profiling`), and GIR-aware execution.
 
 ## Value Representation (`src/gene/types/`)

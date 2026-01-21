@@ -126,13 +126,13 @@ New instructions needed:
 
 ### 4. Key Design Decisions
 
-1. **No Real OS Async (Initially)**
-   - Start with "pseudo futures" that complete synchronously
-   - Later can integrate with Nim's asyncdispatch for real async ops
+1. **Real Async I/O with Event Loop**
+   - ✅ Integrated with Nim's asyncdispatch for real async operations
+   - VM polls event loop every 100 instructions
 
 2. **Callback Execution Timing**
-   - Check futures after every N instructions (e.g., 10)
-   - Or check during IkAwait when blocking
+   - Check futures every 100 instructions during VM execution
+   - Poll during IkAwait when blocking
 
 3. **Exception Handling**
    - async captures exceptions and stores in Future

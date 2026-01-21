@@ -24,7 +24,7 @@ Gene is a Lisp-like programming language with S-expression syntax, implemented i
 - **VM** (`src/gene/vm.nim`): Stack-based execution engine with instruction loop
 - **Type System** (`src/gene/types.nim`): All type definitions and InstructionKind enum
 - **Scope Management**: Scopes form parent-chain for variable lookup; use manual memory management
-- **Async Model**: Pseudo-async (synchronous futures) using `IkAsyncStart`/`IkAsyncEnd` with exception handlers
+- **Async Model**: Real async I/O with event loop integration using `IkAsyncStart`/`IkAsyncEnd` with exception handlers
 
 ### Testing Strategy
 - **Test Location**: `testsuite/` organized by feature (basics/, control_flow/, async/, etc.)
@@ -55,14 +55,14 @@ Gene is a Lisp-like programming language with S-expression syntax, implemented i
 ```
 
 ### Critical Implementation Details
-- **Scope Lifetime**: Known issue with scope being freed in `IkScopeEnd` causing use-after-free with async blocks
+- **Scope Lifetime**: Properly managed with ref-counting; async blocks safely capture scopes
 - **Exception Handling**: Use `catch *` with `$ex` (not `catch e`—crashes on macOS)
 - **Method Dispatch**: Handled in `IkCallMethod1` per type (VkInstance, VkString, VkFuture)
 - **Memory Model**: Manual ref counting; scopes use `alloc0`/`dealloc`
 
 ## Important Constraints
 - **Manual Memory Management**: Be careful with scope lifetime and ref counting
-- **Async Limitations**: Futures complete synchronously; async blocks don't capture scopes
+- **Async**: Real async I/O with event loop; VM polls asyncdispatch every 100 instructions
 - **Platform**: Primary development on macOS; cross-platform Nim limitations apply
 - **Performance**: VM instruction dispatch is hot path; optimize carefully
 
