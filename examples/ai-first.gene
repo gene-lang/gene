@@ -1,0 +1,503 @@
+# AI-First Gene: Complete Language Example
+#
+# This file demonstrates all major features of AI-first Gene.
+# It's a reference for the target language design.
+
+#==============================================================================
+# MODULE DECLARATION
+#==============================================================================
+
+(module examples/ai-first
+  ^exports [
+    # Types
+    User UserId Email Password
+    Account Transaction
+    ApiError
+
+    # Functions
+    create_user get_user authenticate
+    transfer_money get_balance
+
+    # Tools
+    user_api account_api
+  ])
+
+#==============================================================================
+# IMPORTS
+#==============================================================================
+
+(import std/option [Option Some None])
+(import std/result [Result Ok Err])
+(import std/time [DateTime now])
+(import db: db)
+(import http: http)
+(import email: email)
+(import crypto [hash verify_hash])
+
+#==============================================================================
+# TYPE DEFINITIONS
+#==============================================================================
+
+# Simple type alias
+(type UserId Int)
+(type Email String)
+(type Password String)
+
+# Record type with fields
+(type User {
+  ^id UserId
+  ^email Email
+  ^name String
+  ^password_hash String
+  ^created_at DateTime
+  ^active Bool
+})
+
+(type Account {
+  ^id Int
+  ^user_id UserId
+  ^balance Float
+  ^currency String
+})
+
+(type Transaction {
+  ^id Int
+  ^from_account Int
+  ^to_account Int
+  ^amount Float
+  ^timestamp DateTime
+})
+
+# Union type for errors
+(type ApiError (
+  | {^code "validation/INVALID_EMAIL" ^email String}
+  | {^code "validation/WEAK_PASSWORD" ^min_length Int}
+  | {^code "auth/INVALID_CREDENTIALS"}
+  | {^code "auth/USER_NOT_FOUND" ^id UserId}
+  | {^code "account/INSUFFICIENT_FUNDS" ^available Float ^requested Float}
+  | {^code "account/NOT_FOUND" ^id Int}
+  | {^code "db/CONNECTION_FAILED" ^reason String}
+))
+
+#==============================================================================
+# PURE FUNCTIONS (No Effects)
+#==============================================================================
+
+# Type inferred from usage: (Int, Int) -> Int
+(fn add [a b]
+  (a + b))
+
+# Explicit types for clarity
+(fn multiply [a: Int b: Int] -> Int
+  (a * b))
+
+# Generic function
+(fn first [arr: Array[T]] -> Option[T]
+  (if (arr .empty?)
+    None
+    (Some arr/0)))
+
+# Function with contracts
+(fn fibonacci [n: Int] -> Int
+  ^pre [(n >= 0)]
+  ^post [(result >= 0)]
+  ^examples [
+    {^in [0] ^out 0}
+    {^in [1] ^out 1}
+    {^in [5] ^out 5}
+    {^in [10] ^out 55}
+  ]
+
+  (if (n < 2)
+    n
+    (+ (fibonacci (n - 1)) (fibonacci (n - 2)))))
+
+# Validate email format (pure)
+(fn validate_email [email: String] -> Bool
+  (email .matches "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"))
+
+# Validate password strength (pure)
+(fn validate_password [password: String] -> Bool
+  (and
+    (password .length >= 8)
+    (password .matches "[A-Z]")
+    (password .matches "[a-z]")
+    (password .matches "[0-9]")))
+
+#==============================================================================
+# EFFECTFUL FUNCTIONS
+#==============================================================================
+
+# Database effect only
+(fn get_user [id: UserId] -> Result[User, ApiError] ! [Db]
+  ^intent "Fetch user by ID from database"
+  ^examples [
+    {^in [1] ^out (Ok (User ^id 1 ^email "alice@example.com" ...))}
+    {^in [999] ^out (Err {^code "auth/USER_NOT_FOUND" ^id 999})}
+  ]
+
+  (match (db/query_one "SELECT * FROM users WHERE id = ?" [id])
+    (Some row) (Ok (row_to_user row))
+    None       (Err {^code "auth/USER_NOT_FOUND" ^id id})))
+
+# Multiple effects: Db + Log
+(fn create_user [email: Email password: Password name: String] -> Result[User, ApiError] ! [Db, Log]
+  ^intent "Create a new user account with validation"
+  ^pre [
+    (validate_email email)
+    (validate_password password)
+  ]
+  ^post [
+    (result .is_ok) => (get_user result/.value/.id .is_ok)
+  ]
+  ^examples [
+    {^in ["alice@example.com" "Secret123" "Alice"]
+     ^out (Ok (User ^id 1 ^email "alice@example.com" ^name "Alice" ...))}
+    {^in ["invalid-email" "Secret123" "Bob"]
+     ^out (Err {^code "validation/INVALID_EMAIL" ^email "invalid-email"})}
+  ]
+
+  (do
+    # Validate inputs
+    (if (not (validate_email email))
+      (return (Err {^code "validation/INVALID_EMAIL" ^email email})))
+
+    (if (not (validate_password password))
+      (return (Err {^code "validation/WEAK_PASSWORD" ^min_length 8})))
+
+    # Check for existing user
+    (match (db/query_one "SELECT id FROM users WHERE email = ?" [email])
+      (Some _) (return (Err {^code "validation/INVALID_EMAIL" ^email email}))
+      None     nil)
+
+    # Create user
+    (var password_hash (hash password))
+    (var user_id (db/insert "users" {
+      ^email email
+      ^name name
+      ^password_hash password_hash
+      ^created_at (now)
+      ^active true
+    }))
+
+    (log/info "User created" {^user_id user_id ^email email})
+
+    (Ok (User
+      ^id user_id
+      ^email email
+      ^name name
+      ^password_hash password_hash
+      ^created_at (now)
+      ^active true))))
+
+# Authentication with Db effect
+(fn authenticate [email: Email password: Password] -> Result[User, ApiError] ! [Db]
+  ^intent "Authenticate user with email and password"
+
+  (match (db/query_one "SELECT * FROM users WHERE email = ?" [email])
+    None (Err {^code "auth/INVALID_CREDENTIALS"})
+    (Some row)
+      (if (verify_hash password row/.password_hash)
+        (Ok (row_to_user row))
+        (Err {^code "auth/INVALID_CREDENTIALS"}))))
+
+# Financial transaction with multiple effects
+(fn transfer_money [from: Int to: Int amount: Float] -> Result[Transaction, ApiError] ! [Db, Log]
+  ^intent "Transfer money between accounts"
+  ^pre [
+    (amount > 0)
+    (from != to)
+  ]
+  ^post [
+    (result .is_ok) => (
+      (var from_after (get_balance from))
+      (var to_after (get_balance to))
+      true  # Simplified - would check balance changes
+    )
+  ]
+
+  (do
+    # Get source account
+    (var from_account (db/query_one "SELECT * FROM accounts WHERE id = ?" [from])?)
+    (match from_account
+      None (return (Err {^code "account/NOT_FOUND" ^id from}))
+      (Some acc)
+        (if (acc/.balance < amount)
+          (return (Err {^code "account/INSUFFICIENT_FUNDS"
+                        ^available acc/.balance
+                        ^requested amount}))))
+
+    # Get destination account
+    (var to_account (db/query_one "SELECT * FROM accounts WHERE id = ?" [to])?)
+    (match to_account
+      None (return (Err {^code "account/NOT_FOUND" ^id to}))
+      (Some _) nil)
+
+    # Perform transfer in transaction
+    (db/transaction
+      (db/execute "UPDATE accounts SET balance = balance - ? WHERE id = ?" [amount from])
+      (db/execute "UPDATE accounts SET balance = balance + ? WHERE id = ?" [amount to])
+      (var tx_id (db/insert "transactions" {
+        ^from_account from
+        ^to_account to
+        ^amount amount
+        ^timestamp (now)
+      })))
+
+    (log/info "Transfer completed" {^from from ^to to ^amount amount})
+
+    (Ok (Transaction
+      ^id tx_id
+      ^from_account from
+      ^to_account to
+      ^amount amount
+      ^timestamp (now)))))
+
+(fn get_balance [account_id: Int] -> Result[Float, ApiError] ! [Db]
+  (match (db/query_one "SELECT balance FROM accounts WHERE id = ?" [account_id])
+    None (Err {^code "account/NOT_FOUND" ^id account_id})
+    (Some row) (Ok row/.balance)))
+
+#==============================================================================
+# TOOL DEFINITIONS (for AI function calling)
+#==============================================================================
+
+(tool user_api/create
+  ^description "Create a new user account"
+  ^params {
+    ^email {^type String ^format "email" ^required true
+            ^description "User's email address"}
+    ^password {^type String ^min 8 ^required true
+               ^description "Password (min 8 chars, must include upper, lower, number)"}
+    ^name {^type String ^max 100 ^required true
+           ^description "User's display name"}
+  }
+  ^returns (Result User ApiError)
+  ^effects [Db Log]
+  ^errors [
+    {^code "validation/INVALID_EMAIL" ^when "Email format is invalid"}
+    {^code "validation/WEAK_PASSWORD" ^when "Password doesn't meet requirements"}
+  ]
+  ^examples [
+    {^in {^email "alice@example.com" ^password "Secret123" ^name "Alice"}
+     ^out (Ok (User ^id 1 ^email "alice@example.com" ^name "Alice"))}
+  ]
+
+  [email password name]
+  (create_user email password name))
+
+(tool user_api/authenticate
+  ^description "Authenticate user and return user data"
+  ^params {
+    ^email {^type String ^format "email" ^required true}
+    ^password {^type String ^required true}
+  }
+  ^returns (Result User ApiError)
+  ^effects [Db]
+  ^errors [
+    {^code "auth/INVALID_CREDENTIALS" ^when "Email or password incorrect"}
+  ]
+
+  [email password]
+  (authenticate email password))
+
+(tool account_api/transfer
+  ^description "Transfer money between accounts"
+  ^params {
+    ^from {^type Int ^required true ^description "Source account ID"}
+    ^to {^type Int ^required true ^description "Destination account ID"}
+    ^amount {^type Float ^min 0.01 ^required true ^description "Amount to transfer"}
+  }
+  ^returns (Result Transaction ApiError)
+  ^effects [Db Log]
+  ^errors [
+    {^code "account/INSUFFICIENT_FUNDS" ^when "Source account has insufficient balance"}
+    {^code "account/NOT_FOUND" ^when "Account does not exist"}
+  ]
+
+  [from to amount]
+  (transfer_money from to amount))
+
+(tool account_api/balance
+  ^description "Get account balance"
+  ^params {
+    ^account_id {^type Int ^required true}
+  }
+  ^returns (Result Float ApiError)
+  ^effects [Db]
+  ^errors [
+    {^code "account/NOT_FOUND" ^when "Account does not exist"}
+  ]
+
+  [account_id]
+  (get_balance account_id))
+
+#==============================================================================
+# CONTEXT-DEPENDENT FUNCTIONS
+#==============================================================================
+
+(fn handle_request [req: Request] -> Result[Response, ApiError] ! [Db, Http, Log]
+  ^requires [current_user permissions]
+  ^intent "Handle authenticated API request"
+
+  (do
+    # Access context
+    (var user $ctx/.current_user)
+    (var perms $ctx/.permissions)
+
+    # Check permissions
+    (if (not (perms .includes req/.required_permission))
+      (return (Err {^code "auth/FORBIDDEN"})))
+
+    # Process request
+    (log/info "Processing request" {^user user/.id ^endpoint req/.path})
+    (process_request req)))
+
+# Using context
+(fn main [] -> Nil ! [Db, Http, Log, Console]
+  (with-context [
+    (current_user (User ^id 1 ^email "admin@example.com" ...))
+    (permissions ["read" "write" "admin"])
+    (db (db/connect "postgresql://localhost/myapp"))
+  ]
+    (var result (handle_request sample_request))
+    (match result
+      (Ok response) (println "Success:" response)
+      (Err e) (println "Error:" e/.code))))
+
+#==============================================================================
+# PATTERN MATCHING
+#==============================================================================
+
+(fn describe_result [r: Result[Int, ApiError]] -> String
+  (match r
+    (Ok n) (if (n > 100)
+             "Large success"
+             "Small success")
+    (Err {^code "db/CONNECTION_FAILED" ^reason reason})
+      (++ "DB error: " reason)
+    (Err {^code code})
+      (++ "Error: " code)))
+
+(fn process_option [opt: Option[Int]] -> Int
+  (match opt
+    (Some n) (n * 2)
+    None     0))
+
+#==============================================================================
+# ERROR PROPAGATION WITH ?
+#==============================================================================
+
+(fn get_user_balance [user_id: UserId] -> Result[Float, ApiError] ! [Db]
+  ^intent "Get the balance of a user's primary account"
+
+  # ? propagates Err automatically
+  (var user (get_user user_id)?)
+  (var account (db/query_one
+    "SELECT * FROM accounts WHERE user_id = ? AND primary = true"
+    [user/.id])?)
+  (match account
+    None (Err {^code "account/NOT_FOUND" ^id 0})
+    (Some acc) (Ok acc/.balance)))
+
+#==============================================================================
+# EFFECT HANDLERS (for testing)
+#==============================================================================
+
+(fn test_user_creation [] -> Nil ! [Console]
+  ^intent "Test user creation with mocked database"
+
+  (var mock_db (mock-db {
+    ^users []
+    ^next_id 1
+  }))
+
+  (with-handler Db mock_db
+    (var result (create_user "test@example.com" "Password123" "Test User"))
+    (match result
+      (Ok user) (do
+        (println "Created user:" user/.id)
+        (assert (user/.email == "test@example.com")))
+      (Err e) (do
+        (println "Unexpected error:" e/.code)
+        (assert false)))))
+
+#==============================================================================
+# OBSERVABILITY
+#==============================================================================
+
+(fn traced_operation [data: Data] -> Result[Output, ApiError] ! [Db, Http]
+  ^intent "Perform operation with full tracing"
+
+  (with-trace
+    (do
+      (var user (get_user data/.user_id)?)
+      (var external (http/get data/.api_url)?)
+      (process user external))))
+
+(fn preview_transfer [from: Int to: Int amount: Float] -> Array[Effect]
+  ^intent "Preview what a transfer would do without executing"
+
+  (dry-run
+    (transfer_money from to amount)))
+
+#==============================================================================
+# ASYNC OPERATIONS
+#==============================================================================
+
+(fn fetch_all_users [ids: Array[UserId]] -> Result[Array[User], ApiError] ! [Db, Async]
+  ^intent "Fetch multiple users concurrently"
+
+  # Launch concurrent fetches
+  (var futures (ids .map (fn [id] (async (get_user id)))))
+
+  # Await all
+  (var results (await_all futures))
+
+  # Collect successes or return first error
+  (var users [])
+  (for result in results
+    (match result
+      (Ok user) (users .push user)
+      (Err e) (return (Err e))))
+
+  (Ok users))
+
+#==============================================================================
+# HELPER FUNCTIONS (private)
+#==============================================================================
+
+(fn- row_to_user [row: DbRow] -> User
+  (User
+    ^id row/.id
+    ^email row/.email
+    ^name row/.name
+    ^password_hash row/.password_hash
+    ^created_at row/.created_at
+    ^active row/.active))
+
+(fn- process_request [req: Request] -> Result[Response, ApiError] ! [Db, Http]
+  # Implementation details...
+  (Ok (Response ^status 200 ^body "OK")))
+
+#==============================================================================
+# MAIN ENTRY POINT
+#==============================================================================
+
+(fn main [] -> Nil ! [Db, Console, Log]
+  (do
+    (println "AI-First Gene Example")
+
+    # Connect to database
+    (var db (db/connect "postgresql://localhost/example"))
+
+    (with-context [(db db)]
+      # Create a user
+      (match (create_user "demo@example.com" "DemoPass123" "Demo User")
+        (Ok user) (println "Created:" user/.name)
+        (Err e) (println "Error:" e/.code))
+
+      # Run example tests
+      (test_user_creation)
+
+      (println "Done."))))

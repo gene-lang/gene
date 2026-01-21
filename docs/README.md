@@ -5,7 +5,9 @@ Files live in `docs/` unless stated otherwise.
 
 ## Architecture & Design Notes
 
-- [architecture.md](architecture.md) — bird’s-eye view of the VM and compiler pipeline
+- [ai-first.md](ai-first.md) — AI-native language design principles and proposed features
+- [ai-first-design.md](ai-first-design.md) — Phased implementation roadmap for AI-first features
+- [architecture.md](architecture.md) — bird's-eye view of the VM and compiler pipeline
 - [selector_design.md](selector_design.md) — method/selector dispatch strategy
 - [spread_design.md](spread_design.md) — plans for the spread operator and collection literals
 - [simd_support.md](simd_support.md) — exploratory notes on SIMD integration
