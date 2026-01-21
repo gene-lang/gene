@@ -1,0 +1,143 @@
+# Test method_missing functionality
+
+(println "=== Method Missing Tests ===")
+
+# Test 1: Basic method_missing
+(println "Test 1: Basic method_missing")
+(class DynamicProxy
+  (method method_missing [name args...]
+    name
+  )
+)
+
+(var proxy (new DynamicProxy))
+(var result (proxy .unknown_method))
+(println "  Result: " result)
+(assert (result == "unknown_method"))
+(println "  PASSED")
+
+# Test 2: method_missing with arguments
+(println "Test 2: method_missing with arguments")
+(class ArgCapture
+  (method method_missing [name args...]
+    {^name name ^args args}
+  )
+)
+
+(var obj (new ArgCapture))
+(var cap (obj .test_method 1 2 3))
+(println "  Name: " cap/name)
+(println "  Args: " cap/args)
+(assert (cap/name == "test_method"))
+(assert (cap/args == [1 2 3]))
+(println "  PASSED")
+
+# Test 3: Regular methods take precedence
+(println "Test 3: Regular methods take precedence")
+(class MixedClass
+  (method foo _ "real foo")
+  (method method_missing [name args...]
+    "missing"
+  )
+)
+
+(var mixed (new MixedClass))
+(assert ((mixed .foo) == "real foo"))
+(assert ((mixed .bar) == "missing"))
+(println "  foo: " (mixed .foo))
+(println "  bar: " (mixed .bar))
+(println "  PASSED")
+
+# Test 4: method_missing inheritance
+(println "Test 4: method_missing inheritance")
+(class BaseProxy
+  (method method_missing [name args...]
+    "from_base"
+  )
+)
+
+(class ChildProxy < BaseProxy
+  (method real_method _ "real")
+)
+
+(var child (new ChildProxy))
+(assert ((child .real_method) == "real"))
+(assert ((child .unknown) == "from_base"))
+(println "  real_method: " (child .real_method))
+(println "  unknown: " (child .unknown))
+(println "  PASSED")
+
+# Test 5: Child can override method_missing
+(println "Test 5: Child override method_missing")
+(class ParentMM
+  (method method_missing [name args...]
+    "parent"
+  )
+)
+
+(class ChildMM < ParentMM
+  (method method_missing [name args...]
+    "child"
+  )
+)
+
+(var child_mm (new ChildMM))
+(assert ((child_mm .anything) == "child"))
+(println "  anything: " (child_mm .anything))
+(println "  PASSED")
+
+# Test 6: Return value from method_missing
+(println "Test 6: Return value propagation")
+(class Calculator
+  (method method_missing [name args...]
+    (var x args/0)
+    (if (name == "double")
+      (x * 2)
+    elif (name == "triple")
+      (x * 3)
+    else
+      0
+    )
+  )
+)
+
+(var calc (new Calculator))
+(assert ((calc .double 5) == 10))
+(assert ((calc .triple 5) == 15))
+(assert ((calc .unknown 5) == 0))
+(println "  double 5: " (calc .double 5))
+(println "  triple 5: " (calc .triple 5))
+(println "  PASSED")
+
+# Test 7: Zero-argument method call
+(println "Test 7: Zero-argument method call")
+(class ZeroArgProxy
+  (method method_missing [name args...]
+    (args .size)
+  )
+)
+
+(var zero_proxy (new ZeroArgProxy))
+(var zero_result (zero_proxy .no_args))
+(println "  Args count: " zero_result)
+(assert (zero_result == 0))
+(println "  PASSED")
+
+# Test 8: Multiple arguments
+(println "Test 8: Multiple arguments")
+(class MultiArgProxy
+  (method method_missing [name args...]
+    (var sum 0)
+    (for arg in args
+      (sum = (sum + arg))
+    )
+    sum
+  )
+)
+
+(var multi (new MultiArgProxy))
+(assert ((multi .sum 1 2 3 4 5) == 15))
+(println "  sum 1 2 3 4 5: " (multi .sum 1 2 3 4 5))
+(println "  PASSED")
+
+(println "=== All Method Missing Tests Passed ===")

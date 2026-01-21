@@ -11,6 +11,7 @@ proc new_class*(name: string, parent: Class): Class =
     ns: new_namespace(nil, name),
     parent: parent,
     constructor: NIL,
+    method_missing: NIL,
     members: initTable[Key, Value](),
     methods: initTable[Key, Method](),
     version: 0,
@@ -50,6 +51,14 @@ proc get_method*(self: Class, name: Key): Method {.inline.} =
 
 proc get_method*(self: Class, name: string): Method {.inline.} =
   self.get_method(name.to_key)
+
+proc get_method_missing*(self: Class): Value {.inline.} =
+  ## Get the method_missing handler, traversing the class hierarchy
+  if self.method_missing != NIL:
+    return self.method_missing
+  elif self.parent != nil:
+    return self.parent.get_method_missing()
+  return NIL
 
 proc get_super_method*(self: Class, name: string): Method {.inline.} =
   if self.parent != nil:

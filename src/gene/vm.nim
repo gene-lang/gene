@@ -1193,6 +1193,89 @@ proc call_value_method(self: ptr VirtualMachine, value: Value, method_name: stri
     not_allowed("Method must be a function or native function")
     return false
 
+proc call_method_missing(self: ptr VirtualMachine, obj: Value, class: Class,
+                         method_name: string, args: openArray[Value]): bool =
+  ## Call method_missing on a class when a method is not found.
+  ## Returns true if method_missing was found and called, false otherwise.
+  let mm = class.get_method_missing()
+  if mm == NIL:
+    return false
+
+  case mm.kind:
+  of VkFunction:
+    let f = mm.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    var scope: Scope
+    if f.matcher.is_empty():
+      scope = f.parent_scope
+      if scope != nil:
+        scope.ref_count.inc()
+    else:
+      scope = new_scope(f.scope_tracker, f.parent_scope)
+      # Build argument list: self, method_name, ...args
+      # For method_missing [name ...args], we pass:
+      # - self (the object)
+      # - method_name as string
+      # - all original args (which will be captured as rest args)
+      var all_args = newSeq[Value](args.len + 2)
+      all_args[0] = obj  # self
+      all_args[1] = new_str_value(method_name)  # method name
+      for i in 0..<args.len:
+        all_args[i + 2] = args[i]
+
+      if all_args.len > 0:
+        let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
+        process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
+
+    var new_frame = new_frame()
+    new_frame.kind = FkMethod
+    new_frame.target = mm
+    new_frame.scope = scope
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(obj)
+    args_gene.gene.children.add(new_str_value(method_name))
+    for arg in args:
+      args_gene.gene.children.add(arg)
+    new_frame.args = args_gene
+    new_frame.caller_frame = self.frame
+    self.frame.ref_count.inc()
+    new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+    new_frame.ns = f.ns
+
+    if f.async:
+      self.exception_handlers.add(ExceptionHandler(
+        catch_pc: CATCH_PC_ASYNC_FUNCTION,
+        finally_pc: -1,
+        frame: self.frame,
+        scope: self.frame.scope,
+        cu: self.cu,
+        saved_value: NIL,
+        has_saved_value: false,
+        in_finally: false
+      ))
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    return true
+
+  of VkNativeFn:
+    # Native method_missing handler
+    var all_args = newSeq[Value](args.len + 2)
+    all_args[0] = obj  # self
+    all_args[1] = new_str_value(method_name)  # method name
+    for i in 0..<args.len:
+      all_args[i + 2] = args[i]
+    let result = call_native_fn(mm.ref.native_fn, self, all_args)
+    self.frame.push(result)
+    return true
+
+  else:
+    not_allowed("method_missing must be a function or native function")
+    return false
+
 proc call_interception_original(self: ptr VirtualMachine, original: Value, instance: Value,
                                 args: seq[Value], kw_pairs: seq[(Key, Value)]): Value =
   case original.kind
@@ -4200,7 +4283,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         )
         class.methods[name.str.to_key()] = m
         class.version.inc()
-        
+
+        # If this is method_missing, also store it in the dedicated field
+        if name.str == "method_missing":
+          class.method_missing = fn_value
+
         # Set the function's namespace to the class namespace
         fn_value.ref.fn.ns = class.ns
         
@@ -6419,6 +6506,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            # Try method_missing before throwing error
+            if self.call_method_missing(obj, class, method_name, @[]):
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             not_allowed("Method " & method_name & " not found on instance")
         of VkString, VkArray, VkMap, VkFuture, VkGenerator:
           # Use template to get class
@@ -6575,6 +6667,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            # Try method_missing before throwing error
+            if self.call_method_missing(obj, class, method_name, [arg]):
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             not_allowed("Method " & method_name & " not found on instance")
         of VkString, VkArray, VkMap, VkFuture, VkGenerator:
           # Use template to get class
@@ -6741,6 +6838,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            # Try method_missing before throwing error
+            if self.call_method_missing(obj, class, method_name, [arg1, arg2]):
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             not_allowed("Method " & method_name & " not found on instance")
         of VkString, VkArray, VkMap, VkFuture, VkGenerator:
           # Use template to get class
@@ -6845,6 +6947,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            # Try method_missing before throwing error
+            if self.call_method_missing(obj, class, method_name, args):
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             not_allowed("Method " & method_name & " not found on instance")
         of VkString, VkArray, VkMap, VkFuture, VkGenerator:
           # Use template to get class
@@ -6996,6 +7103,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            # Try method_missing before throwing error (keyword args not passed to method_missing)
+            if self.call_method_missing(obj, class, method_name, args):
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             not_allowed("Method " & method_name & " not found on instance")
         else:
           not_allowed("Unified method call with keywords not supported for " & $obj.kind)
@@ -7094,6 +7206,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            # Try method_missing before throwing error
+            if self.call_method_missing(obj, class, method_name, args):
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             not_allowed("Method " & method_name & " not found on instance")
         else:
           not_allowed("Dynamic method call not supported for " & $obj.kind)

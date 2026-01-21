@@ -368,7 +368,7 @@ type
     methods*: Table[Key, Method]
     members*: Table[Key, Value]  # Static members - class acts as namespace
     on_extended*: Value
-    # method_missing*: Value
+    method_missing*: Value
     ns*: Namespace # Class can act like a namespace
     for_singleton*: bool # if it's the class associated with a single object, can not be extended
     version*: uint64  # Incremented when methods are mutated
