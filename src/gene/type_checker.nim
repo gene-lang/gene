@@ -674,6 +674,16 @@ proc check_while(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   return TypeExpr(kind: TkNamed, name: "Nil")
 
+proc check_loop(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check loop: (loop body...)
+  ## Loop can return a value via (break value)
+  self.push_scope()
+  for child in gene.children:
+    discard self.check_expr(child)
+  self.pop_scope()
+  # Loop returns Any since break can return any value
+  return ANY_TYPE
+
 proc check_try(self: TypeChecker, gene: ptr Gene): TypeExpr =
   ## Type check try/catch: (try body... catch pattern handler...)
   var try_type: TypeExpr = ANY_TYPE
@@ -1043,7 +1053,7 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
     # Infix operators
     if gene.children.len > 0 and gene.children[0].kind == VkSymbol:
       let op = gene.children[0].str
-      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "+=", "-=", "*=", "/="]:
+      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "+=", "-=", "*=", "/=", "?"]:
         return self.check_infix(gene)
       if gene.children[0].str.startsWith("."):
         let method_name = gene.children[0].str[1..^1]
@@ -1091,6 +1101,15 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return self.check_for(gene)
       of "while":
         return self.check_while(gene)
+      of "loop":
+        return self.check_loop(gene)
+      of "break":
+        # break can have an optional value
+        if gene.children.len > 0:
+          return self.check_expr(gene.children[0])
+        return ANY_TYPE
+      of "continue":
+        return ANY_TYPE
       of "try":
         return self.check_try(gene)
       of "Ok":

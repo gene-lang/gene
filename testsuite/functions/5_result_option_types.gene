@@ -69,5 +69,36 @@
 (println "count after while = " count)
 # Expected: count after while = 3
 
+# ? operator tests - unwrap Ok/Some or return early
+(fn unwrap_ok []
+  (var val ((Ok 42) ?))
+  (val * 2))
+
+(println "unwrap_ok() = " (unwrap_ok))
+# Expected: unwrap_ok() = 84
+
+(fn early_return_err []
+  (var val ((Err "error") ?))
+  (println "This should not print")
+  val)
+
+(println "early_return_err() = " (early_return_err))
+# Expected: early_return_err() = (Err "error")
+
+(fn unwrap_some []
+  (var val ((Some "hello") ?))
+  val)
+
+(println "unwrap_some() = " (unwrap_some))
+# Expected: unwrap_some() = hello
+
+(fn early_return_none []
+  (var val (None ?))
+  (println "This should not print")
+  val)
+
+(println "early_return_none() = " (early_return_none))
+# Expected: early_return_none() = (None)
+
 (println "Result/Option tests completed")
 # Expected: Result/Option tests completed

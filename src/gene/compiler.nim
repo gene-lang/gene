@@ -2650,6 +2650,11 @@ proc compile_gene(self: Compiler, input: Value) =
           self.compile(gene.children[1])
           self.emit(Instruction(kind: IkOr))
           return
+        of "?":
+          # Postfix ? operator: (expr ?) - unwrap Ok/Some or return early
+          self.compile(`type`)
+          self.emit(Instruction(kind: IkTryUnwrap))
+          return
         of "..":
           self.compile_range_operator(gene)
           return

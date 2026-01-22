@@ -5379,6 +5379,49 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.push(result)
         {.pop.}
 
+      of IkTryUnwrap:
+        # ? operator: unwrap Ok/Some or return early with Err/None
+        {.push checks: off}
+        let val = self.frame.pop()
+
+        # Check if it's a Gene value (Ok, Err, Some, None are Gene values)
+        if val.kind == VkGene and val.gene != nil:
+          let gene = val.gene
+          if gene.`type`.kind == VkSymbol:
+            let type_name = gene.`type`.str
+            case type_name:
+              of "Ok", "Some":
+                # Unwrap: push the inner value
+                if gene.children.len > 0:
+                  self.frame.push(gene.children[0])
+                else:
+                  self.frame.push(NIL)
+              of "Err", "None":
+                # Early return with this value
+                # Same logic as IkReturn but simplified
+                if self.frame.caller_frame == nil:
+                  self.frame.push(val)
+                else:
+                  # Profile function exit if needed
+                  if self.profiling:
+                    self.exit_function()
+
+                  # Restore to caller frame using caller_address
+                  self.cu = self.frame.caller_address.cu
+                  self.pc = self.frame.caller_address.pc
+                  inst = self.cu.instructions[self.pc].addr
+                  self.frame.update(self.frame.caller_frame)
+                  self.frame.ref_count.dec()
+                  self.frame.push(val)  # Push the Err/None as return value
+                  continue
+              else:
+                # Not a Result/Option, just push it back (no-op)
+                self.frame.push(val)
+        else:
+          # Not a Gene, just push it back
+          self.frame.push(val)
+        {.pop.}
+
       # Superinstructions for performance
       of IkPushCallPop:
         # Combined PUSH; CALL; POP for void function calls

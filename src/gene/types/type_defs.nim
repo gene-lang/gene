@@ -661,6 +661,7 @@ type
     IkAsyncStart   # Start async block with exception handling
     IkAsyncEnd     # End async block and create future
     IkAwait        # Wait for Future to complete
+    IkTryUnwrap    # ? operator: unwrap Ok/Some or return early with Err/None
 
     # Threading
     IkSpawnThread  # Spawn a new thread (pops: return_value flag, CompilationUnit; pushes: thread ref or future)
