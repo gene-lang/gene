@@ -7,6 +7,6 @@
 (println ({
   ^items
     ((s .lines) .map
-      (item -> {^title item})
+      (block [item] {^title item})
     )
 }.to_json))

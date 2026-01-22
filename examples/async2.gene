@@ -9,7 +9,7 @@
 (var future (read_async filename))
 (var content)
 (future .on_success
-  (s -> (content = s)))
+  (block [s] (content = s)))
 (await future)
 (if not content
   # Q: how do we make sure callbacks can be registered after the future ends?

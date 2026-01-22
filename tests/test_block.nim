@@ -8,12 +8,12 @@ import ./helpers
 #   E.g. $0, $1, $-1(last)
 
 test_vm """
-  (->)
+  (block [])
 """, proc(r: Value) =
   check r.ref.kind == VkBlock
 
 test_vm """
-  (a -> a)
+  (block [a] a)
 """, proc(r: Value) =
   check r.ref.kind == VkBlock
 
@@ -21,12 +21,12 @@ test_vm """
   (fn f [b]
     (b)
   )
-  (f (-> 1))
+  (f (block [] 1))
 """, 1
 
 test_vm """
   (fn f [b]
     (b 2)
   )
-  (f (a -> (a + 1)))
+  (f (block [a] (a + 1)))
 """, 3

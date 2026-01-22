@@ -112,7 +112,7 @@
   (fn /all []
     (var query (new Query /table))
     (var data (/orm .exec query))
-    (data .map (row ->
+    (data .map (block [row]
       (var props {})
       (for [i v] in row
         ($set props (@ (/columns ./ i)) v)
@@ -135,9 +135,9 @@
     (var columns (/.class . /.class/columns_except_id))
     (var sql #"
       INSERT INTO #{/.class/table} (#(columns .join ", "))
-      VALUES(#((columns .map (col -> "?")) .join ", "))"
+      VALUES(#((columns .map (block [col] "?")) .join ", "))"
     )
-    (var params (columns .map (col -> (./ col))))
+    (var params (columns .map (block [col] (./ col))))
     (/.class/orm .exec sql params...)
   )
 
@@ -519,7 +519,7 @@
     (var todos (Todo . Todo/all))
     (.render
       (UL ^class "list-reset"
-        (... (todos .map (todo ->
+        (... (todos .map (block [todo]
           todo/.to_html
         )))
       )

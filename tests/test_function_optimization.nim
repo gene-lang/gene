@@ -68,7 +68,7 @@ test "Two-argument functions":
     (fn pair [x y] [x y])
     (pair 1 "two")
   """, new_array_value(@[1.to_value(), "two".to_value()]))
-  
+
   # Test two-arg comparison
   test_vm("""
     (fn max [a b]

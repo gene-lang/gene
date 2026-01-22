@@ -2727,6 +2727,9 @@ proc compile_gene(self: Compiler, input: Value) =
       of "->":
         self.compile_block(input)
         return
+      of "block":
+        self.compile_block(input)
+        return
       of "return":
         self.compile_return(gene)
         return

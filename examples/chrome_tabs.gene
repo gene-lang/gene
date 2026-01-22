@@ -4,7 +4,7 @@
 (var rows (gene/csv/parse output))
 (if ($args/.size > 0)
   (var filter $args/0/.to_lower_case)
-  (rows = (rows .filter (row ->
+  (rows = (rows .filter (block [row]
     ((row/2/.to_lower_case .contains filter) || (row/3/.to_lower_case .contains filter))
   )))
 )

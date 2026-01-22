@@ -57,7 +57,7 @@ test_vm """
     (var a 1)
     (m!)
   )
-  (f nil)
+  (f)
 """, 1
 
 test_vm """

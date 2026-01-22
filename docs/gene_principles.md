@@ -599,7 +599,7 @@ This example shows the vision - most features are not yet implemented:
     (body
       (h1 "Active Users")
       (ul
-        %(active-users .map (user ->
+        %(active-users .map (block [user]
           ($render :(li %(user .get :name)))))))))
 
 # Render and save

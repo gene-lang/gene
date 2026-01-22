@@ -167,7 +167,7 @@ New instructions needed:
 
 ```gene
 (var future (async (+ 1 2)))  ; Creates Future with value 3
-(future .on_success (x -> (println x)))  ; Register callback
+(future .on_success (block [x] (println x)))  ; Register callback
 (await future)  ; Returns 3, callback already executed
 ```
 

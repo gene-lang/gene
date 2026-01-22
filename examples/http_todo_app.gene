@@ -137,7 +137,7 @@
   (fn /all [self]
     (var query (new Query /table))
     (var data (/orm .query query))
-    (data .map (row ->
+    (data .map (block [row]
       (var props {})
       (for [i v] in row
         ($set props (@ (/columns ./ i)) v)
@@ -165,9 +165,9 @@
     )
     (var sql #"
       INSERT INTO #{/.class/table} (#(columns .join ", "))
-      VALUES(#((columns .map (col -> "?")) .join ", "))"
+      VALUES(#((columns .map (block [col] "?")) .join ", "))"
     )
-    (var params (columns .map (col -> (./ self col))))
+    (var params (columns .map (block [col] (./ self col))))
     (/.class/orm .exec sql params...)
   )
 
@@ -587,7 +587,7 @@
     (var todos (Todo/all Todo))
     (.render
       (UL ^class "list-reset"
-        (todos .map (todo ->
+        (todos .map (block [todo]
           todo/.to_html
         )) ...
       )

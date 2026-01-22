@@ -1880,10 +1880,22 @@ proc new_block*(matcher: RootMatcher,  body: sink seq[Value]): Block =
 proc to_block*(node: Value): Block {.gcsafe.} =
   let matcher = new_arg_matcher()
   var body_start: int
-  if node.gene.type == "->".to_symbol_value():
+  let type_val = node.gene.type
+
+  if type_val.kind == VkSymbol and type_val.str == "block":
+    # New syntax: (block [args] body...)
+    if node.gene.children.len > 0 and node.gene.children[0].kind == VkArray:
+      matcher.parse(node.gene.children[0])
+      body_start = 1
+    else:
+      # (block body...) with no args array - treat as empty args
+      body_start = 0
+  elif type_val == "->".to_symbol_value():
+    # Old syntax: (-> body...) - no parameters
     body_start = 0
   else:
-    matcher.parse(node.gene.type)
+    # Old syntax: (params -> body...) - params is the type
+    matcher.parse(type_val)
     body_start = 1
 
   matcher.check_hint()

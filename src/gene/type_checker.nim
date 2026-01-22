@@ -452,6 +452,23 @@ proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], prop
   let ct = self.resolve(callee_type)
   if ct == nil or ct.kind == TkAny:
     return ANY_TYPE
+  # Allow calling type variables (unknown types) - they might be callable
+  if ct.kind == TkVar:
+    # Type-check arguments but don't enforce
+    for arg in args:
+      discard self.check_expr(arg)
+    for k, v in props:
+      discard self.check_expr(v)
+    return ANY_TYPE
+  # Allow calling named types (class instances) - they might have a call method
+  # Also allow calling applied types (Array, Map, etc.) - they have methods
+  if ct.kind in {TkNamed, TkApplied}:
+    # Type-check arguments but don't enforce
+    for arg in args:
+      discard self.check_expr(arg)
+    for k, v in props:
+      discard self.check_expr(v)
+    return ANY_TYPE
   if ct.kind != TkFn:
     raise new_exception(types.Exception, "Type error: calling non-function in " & context)
   # Split params into positional and keyword-only
@@ -899,6 +916,40 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
   self.pop_scope()
   return fn_type
 
+proc check_block(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check a block expression: (block [params] body...)
+  var body_start = 0
+  var args_val: Value = NIL
+
+  # Check if first child is an array (parameters)
+  if gene.children.len > 0 and gene.children[0].kind == VkArray:
+    args_val = gene.children[0]
+    body_start = 1
+
+  let (params, is_variadic) = self.parse_param_annotations(args_val)
+  var fn_params: seq[ParamType] = @[]
+
+  # Build parameter types
+  for (var_name, label, typ) in params:
+    let t = if typ != nil: typ else: self.fresh_var()
+    fn_params.add(ParamType(label: label, typ: t))
+
+  # Push scope for block body and define parameters
+  self.push_scope()
+  for i, (var_name, label, typ) in params:
+    if var_name.len > 0 and var_name != "_":
+      self.define(var_name, fn_params[i].typ)
+
+  # Type-check body
+  var last: TypeExpr = TypeExpr(kind: TkNamed, name: "Nil")
+  for i in body_start..<gene.children.len:
+    last = self.check_expr(gene.children[i])
+
+  self.pop_scope()
+
+  # Block returns a function type
+  return TypeExpr(kind: TkFn, params: fn_params, ret: last, variadic: is_variadic)
+
 proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: ClassInfo): TypeExpr =
   if gene.children.len == 0:
     return ANY_TYPE
@@ -997,22 +1048,21 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
     discard self.parse_type_expr(parent_val)
     parent_name = parent_val.str
 
-  if not gene.props.hasKey("fields".to_key()):
-    raise new_exception(types.Exception, "Class " & class_name & " requires ^fields")
-  let fields_val = gene.props["fields".to_key()]
-  if fields_val.kind != VkMap:
-    raise new_exception(types.Exception, "^fields must be a map in class " & class_name)
-
   var cls = ClassInfo(
     name: class_name,
     parent: parent_name,
     fields: initTable[string, TypeExpr](),
     methods: initTable[string, TypeExpr]()
   )
-  for k, v in map_data(fields_val):
-    let key_name = key_to_string(k)
-    let t = self.parse_type_expr(v)
-    cls.fields[key_name] = t
+
+  # ^fields is optional - parse if provided
+  if gene.props.hasKey("fields".to_key()):
+    let fields_val = gene.props["fields".to_key()]
+    if fields_val.kind == VkMap:
+      for k, v in map_data(fields_val):
+        let key_name = key_to_string(k)
+        let t = self.parse_type_expr(v)
+        cls.fields[key_name] = t
 
   self.classes[class_name] = cls
 
@@ -1057,9 +1107,10 @@ proc check_complex_symbol(self: TypeChecker, sym: Value): TypeExpr =
     if rt.kind == TkNamed and self.classes.hasKey(rt.name):
       let cls = self.classes[rt.name]
       let ft = self.find_field(cls, field_name)
-      if ft == nil:
-        raise new_exception(types.Exception, "Type error: unknown field " & field_name & " on " & rt.name)
-      return ft
+      if ft != nil:
+        return ft
+      # Field not declared in ^fields - Gene allows dynamic fields, return Any
+      return ANY_TYPE
   return ANY_TYPE
 
 proc check_expr(self: TypeChecker, v: Value): TypeExpr =
@@ -1077,15 +1128,20 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
   of VkComplexSymbol:
     return self.check_complex_symbol(v)
   of VkArray:
-    # Infer array element type
+    # Infer array element type - be lenient with type variables to avoid
+    # over-constraining (e.g., [x y] shouldn't force x and y to be same type)
     var elem_type: TypeExpr = nil
     for item in array_data(v):
       let t = self.check_expr(item)
+      let rt = self.resolve(t)
       if elem_type == nil:
-        elem_type = t
+        elem_type = rt
+      elif rt.kind == TkVar or elem_type.kind == TkVar:
+        # Don't unify type variables - use Any to avoid over-constraining
+        elem_type = ANY_TYPE
       else:
         try:
-          self.unify(elem_type, t, "array")
+          self.unify(elem_type, rt, "array")
         except CatchableError:
           elem_type = ANY_TYPE
     if elem_type == nil:
@@ -1096,6 +1152,9 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
   of VkGene:
     let gene = v.gene
     if gene == nil:
+      return ANY_TYPE
+    # Handle selectors early - they use special syntax with * and **
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "@":
       return ANY_TYPE
     # Infix operators
     if gene.children.len > 0 and gene.children[0].kind == VkSymbol:
@@ -1113,6 +1172,8 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return self.check_var(gene)
       of "fn":
         return self.check_fn(gene)
+      of "block":
+        return self.check_block(gene)
       of "class":
         return self.check_class(gene)
       of "import":
@@ -1183,6 +1244,7 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
       of "?":
         # ? operator for Result/Option propagation
         return self.check_question_op(gene)
+      # Note: "@" (selectors) is handled early before infix operator check
       else:
         discard
 

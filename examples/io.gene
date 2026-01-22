@@ -73,15 +73,15 @@ catch *
 (var future_c (gene/io/read_async output_file))
 
 # Set up success callbacks
-(future_a .on_success (content ->
+(future_a .on_success (block [content]
   (println "Future A completed with" (content/.length) "characters")
 ))
 
-(future_b .on_success (content ->
+(future_b .on_success (block [content]
   (println "Future B completed with" (content/.length) "characters")
 ))
 
-(future_c .on_success (content ->
+(future_c .on_success (block [content]
   (println "Future C completed with" (content/.length) "characters")
 ))
 
@@ -104,11 +104,11 @@ catch *
   (var read_future (gene/io/read_async file_path))
 
   # Chain processing
-  (read_future .on_success (content ->
+  (read_future .on_success (block [content]
     (println "Processing file content...")
     (var processed_content (content/.to_upper))
     (var write_future (gene/io/write_async "/tmp/processed.txt" processed_content))
-    (write_future .on_success (->
+    (write_future .on_success (block []
       (println "Processed content written to /tmp/processed.txt")
     ))
     (await write_future)
