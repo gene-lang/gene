@@ -93,9 +93,11 @@ g/1  # => 2
   .update :age 31)  # => (user ^name "Alice" ^age 31)
 
 # Pattern matching
-(match data
-  [(user :name $n :age $a) (str n " is " a)]
-  [(admin :name $n) (str "Admin: " n)])
+(case data
+  when 1 ...
+  when 2 ...
+  else ...
+)
 ```
 
 ## 2. Everything Is an Object

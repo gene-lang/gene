@@ -162,9 +162,9 @@ gene check                 # Static verification where possible
 (Err ^code "db/NOT_FOUND" ^entity "user" ^id 123)
 
 # Pattern matching
-(match (fetch-user id)
-  (Ok user) (process user)
-  (Err e)   (log/error e/.code))
+(case (fetch-user id)
+  when (Ok user) (process user)
+  when (Err e)   (log/error e/.code))
 ```
 
 ### Namespaced Error Codes

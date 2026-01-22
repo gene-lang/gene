@@ -296,9 +296,9 @@ This change is **fully backward compatible**:
 
 ### Alternative 3: Use match/case statement
 ```gene
-(match action
-  "index" (controller .index "test")
-  "create" (controller .create "test")
+(case action
+  when "index" (controller .index "test")
+  when "create" (controller .create "test")
 )
 ```
 **Pros**: Works with current VM
