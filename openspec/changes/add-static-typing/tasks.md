@@ -21,4 +21,4 @@
 - [x] 4.1 Wire type-checking into CLI (`gene check` and/or `gene run --typecheck`).
 - [x] 4.2 Add Nim tests for parser + checker.
 - [x] 4.3 Add Gene testsuite cases for typed code and errors.
-- [ ] 4.4 Update docs/examples to match the new syntax rules.
+- [x] 4.4 Update docs/examples to match the new syntax rules.

@@ -19,7 +19,7 @@ Types are inferred at compile time. Explicit annotations optional for clarity.
 (var ratio: Float 1)    # Force Float, not Int
 
 # Function types inferred from body
-(fn double [x]          # (Int) -> Int
+(fn double [x]          # (Fn [Int] Int)
   (x * 2))
 
 # Explicit signature
@@ -60,8 +60,8 @@ Int Float Bool String Symbol Char Nil
 ### Function Types
 
 ```gene
-(A B) -> R            # Pure function
-(A B) -> R ! [E1 E2]  # Function with effects
+(Fn [A B] R)            # Pure function
+(Fn [A B] R) ! [E1 E2]  # Function with effects
 ```
 
 ### Generic Functions
@@ -72,7 +72,7 @@ Int Float Bool String Symbol Char Nil
     None
     (Some arr/0)))
 
-(fn map [arr: (Array T) f: (T) -> U] -> (Array U)
+(fn map [arr: (Array T) f: (Fn [T] U)] -> (Array U)
   ...)
 ```
 

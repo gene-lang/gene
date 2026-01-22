@@ -83,7 +83,7 @@
 # PURE FUNCTIONS (No Effects)
 #==============================================================================
 
-# Type inferred from usage: (Int Int) -> Int
+# Type inferred from usage: (Fn [Int Int] Int)
 (fn add [a b]
   (a + b))
 

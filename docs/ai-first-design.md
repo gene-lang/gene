@@ -42,8 +42,8 @@ Int Float Bool String Symbol Char Nil
 (Result T E)        # (Ok T) | (Err E)
 
 # Functions
-(A B) -> R         # Pure
-(A B) -> R ! [E]   # With effects (Phase 3)
+(Fn [A B] R)         # Pure
+(Fn [A B] R) ! [E]   # With effects (Phase 3)
 
 # Union
 (A | B | C)
@@ -58,9 +58,9 @@ Int Float Bool String Symbol Char Nil
 (var arr [1 2 3])            # arr: (Array Int)
 (var map {^a 1 ^b 2})        # map: (Map Symbol Int)
 
-(fn double [x] (x * 2))      # (Int) -> Int (inferred from *)
+(fn double [x] (x * 2))      # (Fn [Int] Int) (inferred from *)
 
-(fn first [arr]              # (Array T) -> (Option T)
+(fn first [arr]              # (Fn [(Array T)] (Option T))
   (if (arr .empty?) None (Some arr/0)))
 ```
 
