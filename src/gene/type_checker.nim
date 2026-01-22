@@ -32,6 +32,7 @@ type
     of TkFn:
       params*: seq[ParamType]
       ret*: TypeExpr
+      variadic*: bool
     of TkVar:
       id*: int
 
@@ -397,11 +398,13 @@ proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
   else:
     raise new_exception(types.Exception, "Invalid type expression: " & $v.kind)
 
-proc parse_param_annotations(self: TypeChecker, args: Value): seq[(string, string, TypeExpr)] =
-  ## Returns (var_name, keyword_label, type) for each param in order.
+proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, string, TypeExpr)], bool) =
+  ## Returns (params, is_variadic) where params is (var_name, keyword_label, type) for each param.
   if args.kind != VkArray:
-    return @[]
+    return (@[], false)
   let items = array_data(args)
+  var params: seq[(string, string, TypeExpr)] = @[]
+  var is_variadic = false
   var i = 0
   while i < items.len:
     let item = items[i]
@@ -413,7 +416,12 @@ proc parse_param_annotations(self: TypeChecker, args: Value): seq[(string, strin
       var name = item.str
       var label = ""
       var typ: TypeExpr = nil
-      if name.endsWith(":"):
+      # Check for rest parameter (ends with ...)
+      if name.endsWith("..."):
+        is_variadic = true
+        name = name[0..^4]  # Remove "..."
+        typ = TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
+      elif name.endsWith(":"):
         name = name[0..^2]
         if i + 1 >= items.len:
           raise new_exception(types.Exception, "Missing type for parameter " & name)
@@ -422,14 +430,15 @@ proc parse_param_annotations(self: TypeChecker, args: Value): seq[(string, strin
       if name.startsWith("^"):
         label = name[1..^1]
         name = label
-      result.add((name, label, typ))
+      params.add((name, label, typ))
       i += 1
     elif item.kind == VkArray:
       # Destructuring not typed yet
-      result.add(("_", "", nil))
+      params.add(("_", "", nil))
       i += 1
     else:
       i += 1
+  return (params, is_variadic)
 
 proc resolve_self(self: TypeChecker, t: TypeExpr): TypeExpr =
   let rt = self.resolve(t)
@@ -453,19 +462,34 @@ proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], prop
       kw_params[p.label] = p
     else:
       pos_params.add(p)
+
+  # For variadic functions, the last positional param is the rest param
+  # Don't include it in regular positional checking
+  var required_params = pos_params.len
+  if ct.variadic and pos_params.len > 0:
+    required_params = pos_params.len - 1  # Last param is the rest param
+
   let pos_count = args.len
-  if pos_count > pos_params.len:
+  # For variadic functions, only check we have enough for required params
+  if not ct.variadic and pos_count > pos_params.len:
     raise new_exception(types.Exception, "Type error: too many positional arguments in " & context)
-  for i in 0..<pos_count:
+  # Check types for non-rest parameters
+  let check_count = min(pos_count, required_params)
+  for i in 0..<check_count:
     let arg_type = self.check_expr(args[i])
     self.unify(pos_params[i].typ, arg_type, context)
-  # Keyword args
+  # For variadic, remaining args go into the rest param - just type-check them
+  for i in check_count..<pos_count:
+    discard self.check_expr(args[i])
+  # Keyword args - be lenient since Gene's keyword syntax is complex (^^, ^!, etc.)
   for k, v in props:
     let key_name = key_to_string(k)
-    if not kw_params.hasKey(key_name):
-      raise new_exception(types.Exception, "Type error: unknown keyword argument " & key_name & " in " & context)
-    let arg_type = self.check_expr(v)
-    self.unify(kw_params[key_name].typ, arg_type, context)
+    if kw_params.hasKey(key_name):
+      let arg_type = self.check_expr(v)
+      self.unify(kw_params[key_name].typ, arg_type, context)
+    else:
+      # Unknown keyword - just type-check the value without enforcing
+      discard self.check_expr(v)
   return self.resolve_self(ct.ret)
 
 proc check_method_call(self: TypeChecker, recv_type: TypeExpr, method_name: string, args: seq[Value], props: Table[Key, Value], context: string): TypeExpr =
@@ -841,17 +865,25 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
       return_type = self.parse_type_expr(gene.children[body_start + 1])
       body_start += 2
 
-  let params = self.parse_param_annotations(args_val)
+  let (params, is_variadic) = self.parse_param_annotations(args_val)
   var fn_params: seq[ParamType] = @[]
-  self.push_scope()
+  # First pass: build parameter types for function signature
   for (var_name, label, typ) in params:
     let t = if typ != nil: typ else: self.fresh_var()
     fn_params.add(ParamType(label: label, typ: t))
-    if var_name.len > 0 and var_name != "_":
-      self.define(var_name, t)
 
-  # Pre-bind function name for recursion
-  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type)
+  # Build function type and define in OUTER scope first
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic)
+  if name.len > 0 and name != "<unnamed>":
+    self.define(name, fn_type)
+
+  # Now push scope for function body and define parameters
+  self.push_scope()
+  for i, (var_name, label, typ) in params:
+    if var_name.len > 0 and var_name != "_":
+      self.define(var_name, fn_params[i].typ)
+
+  # Also define function name in inner scope for recursion
   if name.len > 0 and name != "<unnamed>":
     self.define(name, fn_type)
 
@@ -881,7 +913,7 @@ proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Clas
       return_type = self.parse_type_expr(gene.children[body_start + 1])
       body_start += 2
 
-  let params = self.parse_param_annotations(args_val)
+  let (params, is_variadic) = self.parse_param_annotations(args_val)
   var fn_params: seq[ParamType] = @[]
   self.push_scope()
   for (var_name, label, typ) in params:
@@ -890,7 +922,7 @@ proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Clas
     if var_name.len > 0 and var_name != "_":
       self.define(var_name, t)
 
-  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type)
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic)
   cls.ctor_type = fn_type
 
   let saved_return = self.current_return
@@ -922,7 +954,7 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
       return_type = self.parse_type_expr(gene.children[body_start + 1])
       body_start += 2
 
-  let params = self.parse_param_annotations(args_val)
+  let (params, is_variadic) = self.parse_param_annotations(args_val)
   var fn_params: seq[ParamType] = @[]
   # Implicit self param
   fn_params.add(ParamType(label: "", typ: TypeExpr(kind: TkNamed, name: "Self")))
@@ -934,7 +966,7 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
     if var_name.len > 0 and var_name != "_":
       self.define(var_name, t)
 
-  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type)
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic)
   cls.methods[method_name] = fn_type
 
   let saved_return = self.current_return
