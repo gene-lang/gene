@@ -12,8 +12,8 @@ Types are inferred at compile time. Explicit annotations optional for clarity.
 # Inferred types
 (var count 0)           # count: Int
 (var name "alice")      # name: String
-(var items [1 2 3])     # items: Array[Int]
-(var scores {^a 95 ^b 87})  # scores: Map[Symbol, Int]
+(var items [1 2 3])     # items: (Array Int)
+(var scores {^a 95 ^b 87})  # scores: (Map Symbol Int)
 
 # Explicit when needed
 (var ratio: Float 1)    # Force Float, not Int
@@ -23,7 +23,7 @@ Types are inferred at compile time. Explicit annotations optional for clarity.
   (x * 2))
 
 # Explicit signature
-(fn divide [a: Int b: Int] -> Result[Int, Error]
+(fn divide [a: Int b: Int] -> (Result Int Error)
   ...)
 ```
 
@@ -50,29 +50,29 @@ Int Float Bool String Symbol Char Nil
 ### Compound Types
 
 ```gene
-Array[T]              # [1 2 3]: Array[Int]
-Map[K, V]             # {^a 1}: Map[Symbol, Int]
-Tuple[A, B, ...]      # (: 1 "a"): Tuple[Int, String]
-Option[T]             # Some[T] | None
-Result[T, E]          # Ok[T] | Err[E]
+(Array T)             # [1 2 3]: (Array Int)
+(Map K V)             # {^a 1}: (Map Symbol Int)
+(Tuple A B ...)       # (: 1 "a"): (Tuple Int String)
+(Option T)            # (Some T) | None
+(Result T E)          # (Ok T) | (Err E)
 ```
 
 ### Function Types
 
 ```gene
-(A, B) -> R           # Pure function
-(A, B) -> R ! [E1, E2] # Function with effects
+(A B) -> R            # Pure function
+(A B) -> R ! [E1 E2]  # Function with effects
 ```
 
 ### Generic Functions
 
 ```gene
-(fn first [arr: Array[T]] -> Option[T]
+(fn first [arr: (Array T)] -> (Option T)
   (if (arr .empty?)
     None
     (Some arr/0)))
 
-(fn map [arr: Array[T] f: (T) -> U] -> Array[U]
+(fn map [arr: (Array T) f: (T) -> U] -> (Array U)
   ...)
 ```
 
@@ -80,7 +80,7 @@ Result[T, E]          # Ok[T] | Err[E]
 
 ```gene
 (type UserId (Int | String))
-(type ApiResult (Ok[Data] | Err[ApiError] | Loading))
+(type ApiResult ((Ok Data) | (Err ApiError) | Loading))
 ```
 
 ## Effect System
@@ -95,11 +95,11 @@ Effects are part of the type signature. Compiler enforces effect boundaries.
   (a + b))
 
 # With effects
-(fn save [user: User] -> Result[User, DbError] ! [Db]
+(fn save [user: User] -> (Result User DbError) ! [Db]
   (db/insert user))
 
 # Multiple effects
-(fn process [id: Int] -> Result[Data, Error] ! [Db, Http, Log]
+(fn process [id: Int] -> (Result Data Error) ! [Db Http Log]
   (var user (db/get id))
   (var data (http/fetch user/.url))
   (log/info "processed" id)
@@ -134,7 +134,7 @@ Console     # stdin/stdout
 ### Preconditions and Postconditions
 
 ```gene
-(fn withdraw [account: Account amount: Int] -> Result[Account, Error] ! [Db]
+(fn withdraw [account: Account amount: Int] -> (Result Account Error) ! [Db]
   ^pre [(amount > 0)
         (account/.balance >= amount)]
   ^post [(result .is_ok) => (result/.value/.balance == account/.balance - amount)]
@@ -155,7 +155,7 @@ gene check                 # Static verification where possible
 ### Result Type
 
 ```gene
-(type Result[T, E] (Ok[T] | Err[E]))
+(type (Result T E) ((Ok T) | (Err E)))
 
 # Creating results
 (Ok 42)
@@ -183,7 +183,7 @@ gene check                 # Static verification where possible
 ### Intent and Documentation
 
 ```gene
-(fn create_user [email: String password: String] -> Result[User, Error] ! [Db, Email]
+(fn create_user [email: String password: String] -> (Result User Error) ! [Db Email]
   ^intent "Create user account with email verification"
   ^version "1.0.0"
 
@@ -327,7 +327,7 @@ gene fmt --check file.gene # Verify canonical
   ^name (Option String)
 })
 
-(fn create_user [email: String] -> Result[User, Error] ! [Db]
+(fn create_user [email: String] -> (Result User Error) ! [Db]
   ...)
 ```
 

@@ -36,14 +36,14 @@ Enhanced for AI:
 Int Float Bool String Symbol Char Nil
 
 # Compound
-Array[T]
-Map[K, V]
-Option[T]           # Some[T] | None
-Result[T, E]        # Ok[T] | Err[E]
+(Array T)
+(Map K V)
+(Option T)          # (Some T) | None
+(Result T E)        # (Ok T) | (Err E)
 
 # Functions
-(A, B) -> R         # Pure
-(A, B) -> R ! [E]   # With effects (Phase 3)
+(A B) -> R         # Pure
+(A B) -> R ! [E]   # With effects (Phase 3)
 
 # Union
 (A | B | C)
@@ -55,12 +55,12 @@ Result[T, E]        # Ok[T] | Err[E]
 (var x 1)                    # x: Int
 (var y 1.5)                  # y: Float
 (var s "hello")              # s: String
-(var arr [1 2 3])            # arr: Array[Int]
-(var map {^a 1 ^b 2})        # map: Map[Symbol, Int]
+(var arr [1 2 3])            # arr: (Array Int)
+(var map {^a 1 ^b 2})        # map: (Map Symbol Int)
 
 (fn double [x] (x * 2))      # (Int) -> Int (inferred from *)
 
-(fn first [arr]              # Array[T] -> Option[T]
+(fn first [arr]              # (Array T) -> (Option T)
   (if (arr .empty?) None (Some arr/0)))
 ```
 
@@ -71,11 +71,11 @@ Result[T, E]        # Ok[T] | Err[E]
 (var x: Float 1)             # Force Float
 
 # Function parameters and return
-(fn divide [a: Int b: Int] -> Result[Int, Error]
+(fn divide [a: Int b: Int] -> (Result Int Error)
   ...)
 
 # Generic constraints
-(fn sort [arr: Array[T]] -> Array[T]
+(fn sort [arr: (Array T)] -> (Array T)
   ^where [(T : Comparable)]
   ...)
 ```
@@ -112,8 +112,8 @@ error[E001]: Type mismatch
 
 ```gene
 # Built-in types
-(type Option[T] (Some[T] | None))
-(type Result[T, E] (Ok[T] | Err[E]))
+(type (Option T) ((Some T) | None))
+(type (Result T E) ((Ok T) | (Err E)))
 
 # Err carries structured data
 (Err ^code "db/NOT_FOUND" ^entity "user" ^id 123)
@@ -135,12 +135,12 @@ error[E001]: Type mismatch
 
 ```gene
 # ? operator propagates errors
-(fn get-user-email [id: Int] -> Result[String, Error] ! [Db]
+(fn get-user-email [id: Int] -> (Result String Error) ! [Db]
   (var user (db/get-user id)?)  # Returns early if Err
   (Ok user/.email))
 
 # Equivalent to:
-(fn get-user-email [id: Int] -> Result[String, Error] ! [Db]
+(fn get-user-email [id: Int] -> (Result String Error) ! [Db]
   (match (db/get-user id)
     (Err e) (Err e)
     (Ok user) (Ok user/.email)))
@@ -182,11 +182,11 @@ error[E001]: Type mismatch
   (a + b))
 
 # Function with effects
-(fn save-user [user: User] -> Result[User, DbError] ! [Db]
+(fn save-user [user: User] -> (Result User DbError) ! [Db]
   (db/insert user))
 
 # Multiple effects
-(fn process [id: Int] -> Result[Data, Error] ! [Db, Http, Log]
+(fn process [id: Int] -> (Result Data Error) ! [Db Http Log]
   (var user (db/get id)?)
   (var data (http/fetch user/.url)?)
   (log/info "processed" id)
@@ -253,7 +253,7 @@ effect Async     # Async operations
 ### Contract Syntax
 
 ```gene
-(fn withdraw [account: Account amount: Int] -> Result[Account, Error] ! [Db]
+(fn withdraw [account: Account amount: Int] -> (Result Account Error) ! [Db]
   ^pre [
     (amount > 0)
     (account/.balance >= amount)
@@ -528,7 +528,7 @@ catch
   ^created_at DateTime
 })
 
-(fn create_user [email: String password: String] -> Result[User, Error] ! [Db]
+(fn create_user [email: String password: String] -> (Result User Error) ! [Db]
   ...)
 
 (fn- helper [x: Int] -> Int  # Private (fn- not fn)

@@ -29,9 +29,9 @@
 (import std/option [Option Some None])
 (import std/result [Result Ok Err])
 (import std/time [DateTime now])
-(import db: db)
-(import http: http)
-(import email: email)
+(import mysql: db)
+(import http_async: http)
+(import email)
 (import crypto [hash verify_hash])
 
 #==============================================================================
@@ -83,7 +83,7 @@
 # PURE FUNCTIONS (No Effects)
 #==============================================================================
 
-# Type inferred from usage: (Int, Int) -> Int
+# Type inferred from usage: (Int Int) -> Int
 (fn add [a b]
   (a + b))
 
@@ -92,7 +92,7 @@
   (a * b))
 
 # Generic function
-(fn first [arr: Array[T]] -> Option[T]
+(fn first [arr: (Array T)] -> (Option T)
   (if (arr .empty?)
     None
     (Some arr/0)))
@@ -129,7 +129,7 @@
 #==============================================================================
 
 # Database effect only
-(fn get_user [id: UserId] -> Result[User, ApiError] ! [Db]
+(fn get_user [id: UserId] -> (Result User ApiError) ! [Db]
   ^intent "Fetch user by ID from database"
   ^examples [
     {^in [1] ^out (Ok (User ^id 1 ^email "alice@example.com" ...))}
@@ -141,7 +141,7 @@
     None       (Err {^code "auth/USER_NOT_FOUND" ^id id})))
 
 # Multiple effects: Db + Log
-(fn create_user [email: Email password: Password name: String] -> Result[User, ApiError] ! [Db, Log]
+(fn create_user [email: Email password: Password name: String] -> (Result User ApiError) ! [Db Log]
   ^intent "Create a new user account with validation"
   ^pre [
     (validate_email email)
@@ -191,7 +191,7 @@
       ^active true))))
 
 # Authentication with Db effect
-(fn authenticate [email: Email password: Password] -> Result[User, ApiError] ! [Db]
+(fn authenticate [email: Email password: Password] -> (Result User ApiError) ! [Db]
   ^intent "Authenticate user with email and password"
 
   (match (db/query_one "SELECT * FROM users WHERE email = ?" [email])
@@ -202,7 +202,7 @@
         (Err {^code "auth/INVALID_CREDENTIALS"}))))
 
 # Financial transaction with multiple effects
-(fn transfer_money [from: Int to: Int amount: Float] -> Result[Transaction, ApiError] ! [Db, Log]
+(fn transfer_money [from: Int to: Int amount: Float] -> (Result Transaction ApiError) ! [Db Log]
   ^intent "Transfer money between accounts"
   ^pre [
     (amount > 0)
@@ -253,7 +253,7 @@
       ^amount amount
       ^timestamp (now)))))
 
-(fn get_balance [account_id: Int] -> Result[Float, ApiError] ! [Db]
+(fn get_balance [account_id: Int] -> (Result Float ApiError) ! [Db]
   (match (db/query_one "SELECT balance FROM accounts WHERE id = ?" [account_id])
     None (Err {^code "account/NOT_FOUND" ^id account_id})
     (Some row) (Ok row/.balance)))
@@ -336,7 +336,7 @@
 # CONTEXT-DEPENDENT FUNCTIONS
 #==============================================================================
 
-(fn handle_request [req: Request] -> Result[Response, ApiError] ! [Db, Http, Log]
+(fn handle_request [req: Request] -> (Result Response ApiError) ! [Db Http Log]
   ^requires [current_user permissions]
   ^intent "Handle authenticated API request"
 
@@ -354,7 +354,7 @@
     (process_request req)))
 
 # Using context
-(fn main [] -> Nil ! [Db, Http, Log, Console]
+(fn main [] -> Nil ! [Db Http Log Console]
   (with-context [
     (current_user (User ^id 1 ^email "admin@example.com" ...))
     (permissions ["read" "write" "admin"])
@@ -369,7 +369,7 @@
 # PATTERN MATCHING
 #==============================================================================
 
-(fn describe_result [r: Result[Int, ApiError]] -> String
+(fn describe_result [r: (Result Int ApiError)] -> String
   (match r
     (Ok n) (if (n > 100)
              "Large success"
@@ -379,7 +379,7 @@
     (Err {^code code})
       (++ "Error: " code)))
 
-(fn process_option [opt: Option[Int]] -> Int
+(fn process_option [opt: (Option Int)] -> Int
   (match opt
     (Some n) (n * 2)
     None     0))
@@ -388,7 +388,7 @@
 # ERROR PROPAGATION WITH ?
 #==============================================================================
 
-(fn get_user_balance [user_id: UserId] -> Result[Float, ApiError] ! [Db]
+(fn get_user_balance [user_id: UserId] -> (Result Float ApiError) ! [Db]
   ^intent "Get the balance of a user's primary account"
 
   # ? propagates Err automatically
@@ -426,7 +426,7 @@
 # OBSERVABILITY
 #==============================================================================
 
-(fn traced_operation [data: Data] -> Result[Output, ApiError] ! [Db, Http]
+(fn traced_operation [data: Data] -> (Result Output ApiError) ! [Db Http]
   ^intent "Perform operation with full tracing"
 
   (with-trace
@@ -435,7 +435,7 @@
       (var external (http/get data/.api_url)?)
       (process user external))))
 
-(fn preview_transfer [from: Int to: Int amount: Float] -> Array[Effect]
+(fn preview_transfer [from: Int to: Int amount: Float] -> (Array Effect)
   ^intent "Preview what a transfer would do without executing"
 
   (dry-run
@@ -445,7 +445,7 @@
 # ASYNC OPERATIONS
 #==============================================================================
 
-(fn fetch_all_users [ids: Array[UserId]] -> Result[Array[User], ApiError] ! [Db, Async]
+(fn fetch_all_users [ids: (Array UserId)] -> (Result (Array User) ApiError) ! [Db Async]
   ^intent "Fetch multiple users concurrently"
 
   # Launch concurrent fetches
@@ -476,7 +476,7 @@
     ^created_at row/.created_at
     ^active row/.active))
 
-(fn- process_request [req: Request] -> Result[Response, ApiError] ! [Db, Http]
+(fn- process_request [req: Request] -> (Result Response ApiError) ! [Db Http]
   # Implementation details...
   (Ok (Response ^status 200 ^body "OK")))
 
@@ -484,7 +484,7 @@
 # MAIN ENTRY POINT
 #==============================================================================
 
-(fn main [] -> Nil ! [Db, Console, Log]
+(fn main [] -> Nil ! [Db Console Log]
   (do
     (println "AI-First Gene Example")
 
