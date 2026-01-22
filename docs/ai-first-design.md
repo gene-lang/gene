@@ -38,14 +38,16 @@ Int Float Bool String Symbol Char Nil
 # Compound
 (Array T)
 (Map K V)
-(Option T)          # (Some T) | None
-(Result T E)        # (Ok T) | (Err E)
+
+# Enums (ADTs) - defined via enum declaration (Phase 2)
+(Option T)          # enum: (Some T) | None
+(Result T E)        # enum: (Ok T) | (Err E)
 
 # Functions
 (Fn [A B] R)         # Pure
 (Fn [A B] R) ! [E]   # With effects (Phase 3)
 
-# Union
+# Union (ad-hoc, distinct from enum)
 (A | B | C)
 ```
 
@@ -76,7 +78,7 @@ Int Float Bool String Symbol Char Nil
 
 # Generic constraints
 (fn sort [arr: (Array T)] -> (Array T)
-  ^where [(T : Comparable)]
+  ^where {^T Comparable}
   ...)
 ```
 
@@ -86,10 +88,10 @@ Int Float Bool String Symbol Char Nil
 error[E001]: Type mismatch
   --> src/app.gene:15:10
    |
-15 |   (+ x "hello")
-   |      - ^^^^^^^ expected Int, found String
-   |      |
-   |      x has type Int
+15 |   (x + "hello")
+   |    -   ^^^^^^^ expected Int, found String
+   |    |
+   |    x has type Int
 ```
 
 ### Tasks
@@ -104,69 +106,166 @@ error[E001]: Type mismatch
 
 ---
 
-## Phase 2: Result Type & Structured Errors
+## Phase 2: Algebraic Data Types & Pattern Matching
 
-**Goal**: Replace exceptions with explicit Result types.
+**Goal**: First-class ADTs (enums) with generated constructors and exhaustive pattern matching.
 
-### Result and Option Types
+### Enum Declaration
 
 ```gene
-# Built-in types
-(type (Option T) ((Some T) | None))
-(type (Result T E) ((Ok T) | (Err E)))
+# Syntax: (enum Name [TypeParams] variants...)
+# Each variant is either:
+#   - A symbol (nullary constructor): None
+#   - A gene with fields: (Ok [value: T])
 
-# Err carries structured data
-(Err ^code "db/NOT_FOUND" ^entity "user" ^id 123)
+(enum Option [T]
+  (Some [value: T])
+  None
+)
+
+(enum Result [T E]
+  (Ok [value: T])
+  (Err [error: E])
+)
+
+# User-defined types work the same way
+(enum Tree [T]
+  (Node [left: (Tree T) right: (Tree T)])
+  (Leaf [value: T])
+)
+
+(enum Color
+  Red
+  Green
+  Blue
+  (RGB [r: Int g: Int b: Int])
+)
 ```
+
+### Generated Constructors
+
+When you declare an enum, constructors are **automatically generated**:
+
+```gene
+(enum Option [T]
+  (Some [value: T])   # Generates: (fn Some [value: T] -> (Option T) ...)
+  None                # Generates: (var None: (Option Nil) ...)
+)
+
+# Usage - these are regular function/value references
+(Some 42)            # => Option[Int] with tag Some, value 42
+None                 # => Option[Nil] singleton
+```
+
+### Internal Representation
+
+ADT values are represented as tagged Gene values:
+
+```gene
+(Some 42)
+# Internally:
+# Gene {
+#   type: Symbol("Some"),
+#   children: [42],
+#   props: {^_enum: Option, ^_variant: 0}
+# }
+
+None
+# Internally:
+# Gene {
+#   type: Symbol("None"),
+#   props: {^_enum: Option, ^_variant: 1}
+# }
+```
+
+The `^_enum` property enables:
+- Type checking (is this an Option or Result?)
+- Exhaustiveness checking (did you handle all variants?)
 
 ### Pattern Matching
 
 ```gene
-(match (fetch-user id)
-  (Ok user) (process user)
-  (Err e)   (handle-error e/.code))
+# case/when works on any enum
+(case (fetch-user id)
+  when (Ok user) (process user)
+  when (Err e)   (handle-error e/.code)
+)
 
-(match (find-item id)
-  (Some item) item
-  None        default-item)
+(case color
+  when Red   "#FF0000"
+  when Green "#00FF00"
+  when Blue  "#0000FF"
+  when (RGB r g b) (format #"#{r:02x}{g:02x}{b:02x}")
+)
+
+# Nested patterns
+(case tree
+  when (Leaf v) v
+  when (Node (Leaf l) (Leaf r)) (l + r)
+  when (Node left right) ((sum left) + (sum right))
+)
 ```
 
-### Error Propagation
+### Exhaustiveness Checking
+
+The compiler warns when not all variants are handled:
 
 ```gene
-# ? operator propagates errors
+(case opt
+  when (Some x) x
+)
+# Warning: Non-exhaustive pattern match
+#   Missing: None
+```
+
+### Error Propagation with ?
+
+```gene
+# ? operator propagates Err variants
 (fn get-user-email [id: Int] -> (Result String Error) ! [Db]
-  (var user (db/get-user id)?)  # Returns early if Err
+  (var user (db/get-user? id))  # Returns early if Err
   (Ok user/.email))
 
 # Equivalent to:
 (fn get-user-email [id: Int] -> (Result String Error) ! [Db]
-  (match (db/get-user id)
-    (Err e) (Err e)
-    (Ok user) (Ok user/.email)))
+  (case (db/get-user id)
+    when (Err e) (Err e)
+    when (Ok user) (Ok user/.email)))
 ```
 
-### Namespaced Error Codes
+### Structured Error Data
+
+```gene
+# Err can carry structured data via properties
+(Err "not found" ^code db/NOT_FOUND ^entity "user" ^id 123)
+
+# Access in handler
+(case result
+  when (Err e)
+    (println "Error:" e/code)
+)
+```
+
+### Namespaced Error Codes (Convention)
 
 ```gene
 # Convention: namespace/CODE
-"db/NOT_FOUND"
-"db/CONNECTION_FAILED"
-"http/TIMEOUT"
-"http/NOT_FOUND"
-"auth/FORBIDDEN"
-"auth/INVALID_TOKEN"
-"validation/INVALID_EMAIL"
-"validation/REQUIRED_FIELD"
+db/NOT_FOUND
+db/CONNECTION_FAILED
+http/TIMEOUT
+auth/FORBIDDEN
+validation/INVALID_EMAIL
 ```
 
 ### Tasks
 
-- [ ] Add Option and Result to type system
-- [ ] Implement Some, None, Ok, Err constructors
-- [ ] Add pattern matching for algebraic types
-- [ ] Implement ? operator for error propagation
-- [ ] Document error code conventions
+- [ ] Implement `enum` declaration syntax in parser
+- [ ] Generate constructors from enum definitions
+- [ ] Store enum metadata (^_enum, ^_variant) in values
+- [ ] Implement generic pattern matching on any enum
+- [ ] Add exhaustiveness checking
+- [ ] Implement ? operator for Result propagation
+- [ ] Remove hard-coded Ok/Err/Some/None from stdlib
 
 ---
 
@@ -187,8 +286,8 @@ error[E001]: Type mismatch
 
 # Multiple effects
 (fn process [id: Int] -> (Result Data Error) ! [Db Http Log]
-  (var user (db/get id)?)
-  (var data (http/fetch user/.url)?)
+  (var user (db/get? id))
+  (var data (http/fetch? user/.url))
   (log/info "processed" id)
   (Ok data))
 ```
@@ -254,13 +353,14 @@ effect Async     # Async operations
 
 ```gene
 (fn withdraw [account: Account amount: Int] -> (Result Account Error) ! [Db]
-  ^pre [
+  ^pre (block []
     (amount > 0)
     (account/.balance >= amount)
-  ]
-  ^post [
-    (result .is_ok) => (result/.value/.balance == account/.balance - amount)
-  ]
+  )
+  ^post (block []
+    # How to pass result?
+    (result/.value/.balance == (account/.balance - amount))
+  )
 
   (var new-balance (account/.balance - amount))
   (db/update account ^balance new-balance))
@@ -353,11 +453,12 @@ gene fmt --diff file.gene  # Show diff
 ### Providing Context
 
 ```gene
-(with-context [
-  (user_id 123)
-  (permissions ["read" "write"])
-  (db (db/connect url))
-]
+(with-context
+  {
+    ^user_id 123
+    ^permissions ["read" "write"]
+    ^db (db/connect url)
+  }
   (handle-request request))
 ```
 
