@@ -1,0 +1,28 @@
+# Typed function and class definitions
+
+(type UserId Int)
+
+(fn add [a: Int b: Int] -> Int
+  (a + b)
+)
+
+(fn make_id [n: Int] -> UserId
+  n
+)
+
+(class Point
+  ^fields {^x Int ^y Int}
+  (ctor [x: Int y: Int]
+    (/x = x)
+    (/y = y)
+  )
+  (method sum [] -> Int
+    (+ /x /y)
+  )
+)
+
+(var p (new Point 2 3))
+(print "add=" (add 1 2))
+(print "id=" (make_id 7))
+(print "sum=" (p .sum))
+(print "All typed function tests completed")
