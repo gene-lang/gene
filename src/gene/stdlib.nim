@@ -3110,6 +3110,71 @@ proc init_gene_core_functions() =
   App.app.global_ns.ns["#Str".to_key()] = vm_str_interpolation.to_value()
   App.app.global_ns.ns["not_found".to_key()] = NOT_FOUND
 
+  # Result type constructors: Ok and Err
+  # (Ok value) creates a Gene with type "Ok" and the value as child
+  # (Err value) creates a Gene with type "Err" and the value as child
+  proc vm_ok(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let val = if get_positional_count(arg_count, has_keyword_args) > 0:
+      get_positional_arg(args, 0, has_keyword_args)
+    else:
+      NIL
+    var gene = new_gene("Ok".to_symbol_value())
+    gene.children.add(val)
+    # Copy any properties from args
+    if has_keyword_args:
+      for i in 0..<arg_count:
+        let arg = args[i]
+        if arg.kind == VkGene and arg.gene != nil:
+          for k, v in arg.gene.props:
+            gene.props[k] = v
+          break
+    return gene.to_gene_value()
+
+  proc vm_err(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let val = if get_positional_count(arg_count, has_keyword_args) > 0:
+      get_positional_arg(args, 0, has_keyword_args)
+    else:
+      NIL
+    var gene = new_gene("Err".to_symbol_value())
+    gene.children.add(val)
+    # Copy any properties (like ^code, ^context, etc.)
+    if has_keyword_args:
+      for i in 0..<arg_count:
+        let arg = args[i]
+        if arg.kind == VkGene and arg.gene != nil:
+          for k, v in arg.gene.props:
+            gene.props[k] = v
+          break
+    return gene.to_gene_value()
+
+  # Option type constructors: Some and None
+  proc vm_some(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let val = if get_positional_count(arg_count, has_keyword_args) > 0:
+      get_positional_arg(args, 0, has_keyword_args)
+    else:
+      NIL
+    var gene = new_gene("Some".to_symbol_value())
+    gene.children.add(val)
+    return gene.to_gene_value()
+
+  # None is just a symbol, not a function
+  let none_gene = new_gene("None".to_symbol_value())
+  let none_val = none_gene.to_gene_value()
+
+  var ok_fn = new_ref(VkNativeFn)
+  ok_fn.native_fn = vm_ok
+  App.app.global_ns.ns["Ok".to_key()] = ok_fn.to_ref_value()
+
+  var err_fn = new_ref(VkNativeFn)
+  err_fn.native_fn = vm_err
+  App.app.global_ns.ns["Err".to_key()] = err_fn.to_ref_value()
+
+  var some_fn = new_ref(VkNativeFn)
+  some_fn.native_fn = vm_some
+  App.app.global_ns.ns["Some".to_key()] = some_fn.to_ref_value()
+
+  App.app.global_ns.ns["None".to_key()] = none_val
+
 proc init_os_io_namespaces() =
   proc os_exec_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:

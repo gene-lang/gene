@@ -1,0 +1,73 @@
+# Result and Option type tests
+# NOTE: Multi-branch match on Result/Option is postponed
+# For now, test constructors and basic usage
+
+# Ok and Err constructors
+(var ok_val (Ok 42))
+(var err_val (Err "something went wrong"))
+
+# Some and None constructors
+(var some_val (Some "hello"))
+(var none_val None)
+
+# Print constructed values
+(println "ok_val = " ok_val)
+# Expected: ok_val = (Ok 42)
+
+(println "err_val = " err_val)
+# Expected: err_val = (Err "something went wrong")
+
+(println "some_val = " some_val)
+# Expected: some_val = (Some "hello")
+
+(println "none_val = " none_val)
+# Expected: none_val = (None)
+
+# Function returning Result
+(fn divide [a b]
+  (if (b == 0)
+    (Err "division by zero")
+  else
+    (Ok (a / b))))
+
+# Function returning Option
+(fn find_positive [n]
+  (if (n > 0)
+    (Some n)
+  else
+    None))
+
+# Test divide - just verify it returns something
+(var result1 (divide 10 2))
+(println "divide(10, 2) = " result1)
+# Expected: divide(10, 2) = (Ok 5.0)
+
+(var result2 (divide 10 0))
+(println "divide(10, 0) = " result2)
+# Expected: divide(10, 0) = (Err "division by zero")
+
+# Test find_positive
+(var opt1 (find_positive 5))
+(println "find_positive(5) = " opt1)
+# Expected: find_positive(5) = (Some 5)
+
+(var opt2 (find_positive -3))
+(println "find_positive(-3) = " opt2)
+# Expected: find_positive(-3) = (None)
+
+# For loop test
+(var sum 0)
+(for x in [1 2 3 4 5]
+  (sum = (sum + x)))
+(println "sum of [1 2 3 4 5] = " sum)
+# Expected: sum of [1 2 3 4 5] = 15
+
+# While loop test
+(var count 0)
+(while (count < 3)
+  (count = (count + 1)))
+(println "count after while = " count)
+# Expected: count after while = 3
+
+(println "Result/Option tests completed")
+# Expected: Result/Option tests completed

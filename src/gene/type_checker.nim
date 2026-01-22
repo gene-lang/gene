@@ -567,6 +567,162 @@ proc check_return(self: TypeChecker, gene: ptr Gene): TypeExpr =
     self.unify(self.current_return, ret_type, "return")
   return ret_type
 
+proc check_match(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check match expression: (match expr (Pattern1) body1 (Pattern2) body2 ...)
+  if gene.children.len < 2:
+    return ANY_TYPE
+
+  let scrutinee_type = self.check_expr(gene.children[0])
+  var result_type: TypeExpr = nil
+  var i = 1
+
+  while i < gene.children.len:
+    let pattern = gene.children[i]
+    i += 1
+    if i >= gene.children.len:
+      break
+    let body = gene.children[i]
+    i += 1
+
+    self.push_scope()
+
+    # Extract bindings from pattern
+    if pattern.kind == VkGene and pattern.gene != nil:
+      let pat_gene = pattern.gene
+      if pat_gene.`type`.kind == VkSymbol:
+        let ctor = pat_gene.`type`.str
+        # Handle Result/Option patterns
+        if ctor == "Ok" or ctor == "Some":
+          if pat_gene.children.len > 0 and pat_gene.children[0].kind == VkSymbol:
+            let bound_name = pat_gene.children[0].str
+            # For Ok[T], the bound variable has type T
+            let rt = self.resolve(scrutinee_type)
+            if rt.kind == TkApplied and rt.args.len > 0:
+              self.define(bound_name, rt.args[0])
+            else:
+              self.define(bound_name, ANY_TYPE)
+        elif ctor == "Err":
+          if pat_gene.children.len > 0 and pat_gene.children[0].kind == VkSymbol:
+            let bound_name = pat_gene.children[0].str
+            let rt = self.resolve(scrutinee_type)
+            if rt.kind == TkApplied and rt.args.len > 1:
+              self.define(bound_name, rt.args[1])
+            else:
+              self.define(bound_name, ANY_TYPE)
+    elif pattern.kind == VkSymbol:
+      # Wildcard or variable binding
+      let name = pattern.str
+      if name != "_" and name != "None":
+        self.define(name, scrutinee_type)
+
+    let body_type = self.check_expr(body)
+    self.pop_scope()
+
+    if result_type == nil:
+      result_type = body_type
+    else:
+      try:
+        self.unify(result_type, body_type, "match")
+      except CatchableError:
+        result_type = TypeExpr(kind: TkUnion, members: @[result_type, body_type])
+
+  if result_type == nil:
+    return ANY_TYPE
+  return result_type
+
+proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check for loop: (for x in collection body...)
+  if gene.children.len < 3:
+    return ANY_TYPE
+
+  let var_name = if gene.children[0].kind == VkSymbol: gene.children[0].str else: "_"
+  # children[1] should be "in" symbol
+  let collection = gene.children[2]
+  let collection_type = self.check_expr(collection)
+
+  self.push_scope()
+
+  # Infer element type from collection
+  let ct = self.resolve(collection_type)
+  var elem_type = ANY_TYPE
+  if ct.kind == TkApplied and ct.ctor == "Array" and ct.args.len > 0:
+    elem_type = ct.args[0]
+
+  if var_name != "_":
+    self.define(var_name, elem_type)
+
+  # Check body
+  for i in 3..<gene.children.len:
+    discard self.check_expr(gene.children[i])
+
+  self.pop_scope()
+  return TypeExpr(kind: TkNamed, name: "Nil")
+
+proc check_while(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check while loop: (while cond body...)
+  if gene.children.len < 1:
+    return ANY_TYPE
+
+  let cond_type = self.check_expr(gene.children[0])
+  if cond_type.kind != TkAny:
+    self.unify(TypeExpr(kind: TkNamed, name: "Bool"), cond_type, "while condition")
+
+  self.push_scope()
+  for i in 1..<gene.children.len:
+    discard self.check_expr(gene.children[i])
+  self.pop_scope()
+
+  return TypeExpr(kind: TkNamed, name: "Nil")
+
+proc check_try(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check try/catch: (try body... catch pattern handler...)
+  var try_type: TypeExpr = ANY_TYPE
+  var catch_type: TypeExpr = ANY_TYPE
+  var in_catch = false
+
+  for i in 0..<gene.children.len:
+    let child = gene.children[i]
+    if child.kind == VkSymbol and child.str == "catch":
+      in_catch = true
+      continue
+
+    if in_catch:
+      self.push_scope()
+      # Bind $ex for catch-all
+      self.define("$ex", ANY_TYPE)
+      catch_type = self.check_expr(child)
+      self.pop_scope()
+    else:
+      try_type = self.check_expr(child)
+
+  # Result is union of try and catch types
+  if catch_type.kind != TkAny:
+    try:
+      self.unify(try_type, catch_type, "try/catch")
+      return try_type
+    except CatchableError:
+      return TypeExpr(kind: TkUnion, members: @[try_type, catch_type])
+  return try_type
+
+proc check_question_op(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check ? operator for Result/Option propagation
+  ## (expr)? extracts Ok/Some value or returns early with Err/None
+  if gene.children.len == 0:
+    return ANY_TYPE
+
+  let inner_type = self.check_expr(gene.children[0])
+  let rt = self.resolve(inner_type)
+
+  # For Result[T, E], returns T (or propagates Err[E])
+  # For Option[T], returns T (or propagates None)
+  if rt.kind == TkApplied:
+    if rt.ctor == "Result" and rt.args.len >= 1:
+      return rt.args[0]
+    elif rt.ctor == "Option" and rt.args.len >= 1:
+      return rt.args[0]
+
+  return ANY_TYPE
+
 proc check_infix(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if gene.children.len < 2:
     return ANY_TYPE
@@ -608,6 +764,18 @@ proc check_infix(self: TypeChecker, gene: ptr Gene): TypeExpr =
     # Assignment
     self.unify(left_type, right_type, "=")
     return left_type
+  of "+=", "-=", "*=", "/=":
+    # Compound assignment - type is same as left operand
+    return left_type
+  of "?":
+    # Postfix ? for error propagation: (expr ?)
+    let rt = self.resolve(left_type)
+    if rt.kind == TkApplied:
+      if rt.ctor == "Result" and rt.args.len >= 1:
+        return rt.args[0]
+      elif rt.ctor == "Option" and rt.args.len >= 1:
+        return rt.args[0]
+    return ANY_TYPE
   else:
     return ANY_TYPE
 
@@ -875,7 +1043,7 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
     # Infix operators
     if gene.children.len > 0 and gene.children[0].kind == VkSymbol:
       let op = gene.children[0].str
-      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||"]:
+      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "+=", "-=", "*=", "/="]:
         return self.check_infix(gene)
       if gene.children[0].str.startsWith("."):
         let method_name = gene.children[0].str[1..^1]
@@ -917,6 +1085,38 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
           let alias_type = self.parse_type_expr(gene.children[1])
           self.types[alias_name] = alias_type
         return ANY_TYPE
+      of "match":
+        return self.check_match(gene)
+      of "for":
+        return self.check_for(gene)
+      of "while":
+        return self.check_while(gene)
+      of "try":
+        return self.check_try(gene)
+      of "Ok":
+        # Ok constructor: (Ok value) -> Result[T, E]
+        if gene.children.len > 0:
+          let inner_type = self.check_expr(gene.children[0])
+          return TypeExpr(kind: TkApplied, ctor: "Result", args: @[inner_type, ANY_TYPE])
+        return TypeExpr(kind: TkApplied, ctor: "Result", args: @[ANY_TYPE, ANY_TYPE])
+      of "Err":
+        # Err constructor: (Err value) -> Result[T, E]
+        if gene.children.len > 0:
+          let inner_type = self.check_expr(gene.children[0])
+          return TypeExpr(kind: TkApplied, ctor: "Result", args: @[ANY_TYPE, inner_type])
+        return TypeExpr(kind: TkApplied, ctor: "Result", args: @[ANY_TYPE, ANY_TYPE])
+      of "Some":
+        # Some constructor: (Some value) -> Option[T]
+        if gene.children.len > 0:
+          let inner_type = self.check_expr(gene.children[0])
+          return TypeExpr(kind: TkApplied, ctor: "Option", args: @[inner_type])
+        return TypeExpr(kind: TkApplied, ctor: "Option", args: @[ANY_TYPE])
+      of "None":
+        # None constructor -> Option[T]
+        return TypeExpr(kind: TkApplied, ctor: "Option", args: @[ANY_TYPE])
+      of "?":
+        # ? operator for Result/Option propagation
+        return self.check_question_op(gene)
       else:
         discard
 
