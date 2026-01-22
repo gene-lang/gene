@@ -1,0 +1,54 @@
+# Typed function definitions and calls
+
+(type UserId Int)
+
+(fn add [a: Int b: Int] -> Int
+  (a + b)
+)
+
+(fn make_id [n: Int] -> UserId
+  n
+)
+
+(fn add_kw [a: Int ^b: Int] -> Int
+  (+ a b)
+)
+
+(fn inc [x: Int] -> Int
+  (+ x 1)
+)
+
+(fn apply_twice [f: (Fn [Int] Int) x: Int] -> Int
+  (f (f x))
+)
+
+(class Point
+  ^fields {^x Int ^y Int}
+  (ctor [x: Int y: Int]
+    (/x = x)
+    (/y = y)
+  )
+  (method sum [] -> Int
+    (+ /x /y)
+  )
+)
+
+(var p (new Point 2 3))
+
+(println "add(1,2) = " (add 1 2))
+# Expected: add(1,2) = 3
+
+(println "id(7) = " (make_id 7))
+# Expected: id(7) = 7
+
+(println "sum = " (p .sum))
+# Expected: sum = 5
+
+(println "add_kw(1, ^b 2) = " (add_kw 1 ^b 2))
+# Expected: add_kw(1, ^b 2) = 3
+
+(println "apply_twice(inc, 3) = " (apply_twice inc 3))
+# Expected: apply_twice(inc, 3) = 5
+
+(println "Typed function tests completed")
+# Expected: Typed function tests completed
