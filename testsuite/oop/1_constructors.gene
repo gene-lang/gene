@@ -6,6 +6,7 @@
 # Test 1: Basic macro constructor
 (println "Test 1: Basic macro constructor")
 (class LazyPoint
+  ^fields {^x Any ^y Any}
   (ctor! [x y]
     (/x = x)      # Keep x as symbol
     (/y = y)      # Keep y as symbol
@@ -25,6 +26,7 @@
 # Test 2: Regular constructor still works
 (println "Test 2: Regular constructor")
 (class Point
+  ^fields {^x Any ^y Any}
   (ctor [x y]
     (/x = x)      # Regular assignment
     (/y = y)      # Regular assignment
@@ -39,6 +41,7 @@
 # Test 3: Macro constructor with complex symbol expression
 (println "Test 3: Macro constructor with complex expression")
 (class SymbolStore
+  ^fields {^sym Any}
   (ctor! [sym]
     (/sym = sym)  # Store the symbol unevaluated
   )
@@ -58,6 +61,7 @@
 # Test 5: Multiple macro constructor arguments
 (println "Test 5: Multiple macro constructor arguments")
 (class MultiSymbol
+  ^fields {^x Any ^y Any ^z Any}
   (ctor! [x y z]
     (/x = x)
     (/y = y)

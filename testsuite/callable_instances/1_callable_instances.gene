@@ -2,6 +2,7 @@
 
 # 0-arg callable
 (class ZeroArgCallable
+  ^fields {}
   (method call []
     "zero"
   )
@@ -13,6 +14,7 @@
 
 # 1-arg callable
 (class OneArgCallable
+  ^fields {}
   (method call [x]
     (* x 2)
   )
@@ -24,6 +26,7 @@
 
 # 2-arg callable
 (class TwoArgCallable
+  ^fields {}
   (method call [x y]
     (+ x y)
   )
@@ -35,6 +38,7 @@
 
 # 3-arg callable
 (class ThreeArgCallable
+  ^fields {}
   (method call [a b c]
     (+ a (+ b c))
   )

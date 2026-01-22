@@ -71,6 +71,7 @@
 )
 
 (class C
+  ^fields {}
   (method m1 [x]
     (println "m1" x)
     (x + 1)

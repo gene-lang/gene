@@ -20,6 +20,7 @@
 )
 
 (class MacroC
+  ^fields {}
   (method m! [expr]
     (println "macro" ($caller_eval expr))
     ($caller_eval expr)

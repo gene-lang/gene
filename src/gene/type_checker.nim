@@ -621,8 +621,16 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if first.kind == VkArray:
     args_val = first
     body_start = 1
-  elif first.kind in {VkSymbol, VkString, VkComplexSymbol}:
+  elif first.kind in {VkSymbol, VkString}:
     name = first.str
+    if gene.children.len < 2:
+      return ANY_TYPE
+    args_val = gene.children[1]
+    body_start = 2
+  elif first.kind == VkComplexSymbol:
+    let parts = first.ref.csymbol
+    if parts.len > 0:
+      name = parts[^1]
     if gene.children.len < 2:
       return ANY_TYPE
     args_val = gene.children[1]
