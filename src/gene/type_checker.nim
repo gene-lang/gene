@@ -158,17 +158,32 @@ proc unify(self: TypeChecker, a: TypeExpr, b: TypeExpr, context: string) =
     for i in 0..<ta.args.len:
       self.unify(ta.args[i], tb.args[i], context)
   of TkUnion:
-    # Accept if any member matches
-    var ok = false
-    for m in ta.members:
-      try:
-        self.unify(m, tb, context)
-        ok = true
-        break
-      except CatchableError:
-        discard
-    if not ok:
-      raise new_exception(types.Exception, "Type error: expected one of " & type_to_string(ta) & ", got " & type_to_string(tb) & " in " & context)
+    # Union type unification
+    if tb.kind == TkUnion:
+      # Union to union: each member of tb must be in ta
+      for mb in tb.members:
+        var found = false
+        for ma in ta.members:
+          try:
+            self.unify(ma, mb, context)
+            found = true
+            break
+          except CatchableError:
+            discard
+        if not found:
+          raise new_exception(types.Exception, "Type error: expected one of " & type_to_string(ta) & ", got " & type_to_string(tb) & " in " & context)
+    else:
+      # Non-union to union: tb must match at least one member
+      var ok = false
+      for m in ta.members:
+        try:
+          self.unify(m, tb, context)
+          ok = true
+          break
+        except CatchableError:
+          discard
+      if not ok:
+        raise new_exception(types.Exception, "Type error: expected one of " & type_to_string(ta) & ", got " & type_to_string(tb) & " in " & context)
   of TkFn:
     if ta.params.len != tb.params.len:
       raise new_exception(types.Exception, "Type error: function arity mismatch in " & context)
