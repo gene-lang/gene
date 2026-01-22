@@ -1,0 +1,83 @@
+# Case/when pattern matching tests
+
+# Test basic case/when with Ok pattern
+(var r1 (Ok 42))
+(case r1
+  when (Ok v)
+    (println v)
+  when (Err e)
+    (println "error:" e)
+)
+# Expected: 42
+
+# Test case/when with Err pattern
+(var r2 (Err "failed"))
+(case r2
+  when (Ok v)
+    (println "value:" v)
+  when (Err e)
+    (println e)
+)
+# Expected: failed
+
+# Test case/when with None pattern
+(var r3 None)
+(case r3
+  when (Ok v)
+    (println "Ok:" v)
+  when None
+    (println "None")
+)
+# Expected: None
+
+# Test case/when with Some pattern (Option type)
+(var o1 (Some "hello"))
+(case o1
+  when (Some x)
+    (println x)
+  when None
+    (println "none")
+)
+# Expected: hello
+
+# Test case/when with _ (ignore binding)
+(var r4 (Ok 100))
+(case r4
+  when (Ok _)
+    (println "got ok")
+  when (Err _)
+    (println "got err")
+)
+# Expected: got ok
+
+# Test case/when return value
+(var r5 (Ok 10))
+(var result
+  (case r5
+    when (Ok n) (n * 2)
+    when (Err e) -1
+  ))
+(println result)
+# Expected: 20
+
+# Test case/when with else
+(var r6 (Ok 5))
+(case r6
+  when (Ok v)
+    (println "Ok:" v)
+  else
+    (println "not ok")
+)
+# Expected: Ok: 5
+
+# Test regular case/when with values (not patterns)
+(var x 2)
+(case x
+  when 1
+    (println "one")
+  when 2
+    (println "two")
+  when 3
+    (println "three")
+)
+# Expected: two

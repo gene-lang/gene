@@ -663,6 +663,10 @@ type
     IkAwait        # Wait for Future to complete
     IkTryUnwrap    # ? operator: unwrap Ok/Some or return early with Err/None
 
+    # Pattern matching
+    IkMatchGeneType  # Check if value matches Gene type (arg0=type symbol), pushes bool
+    IkGetGeneChild   # Get gene.children[arg0], pushes child value
+
     # Threading
     IkSpawnThread  # Spawn a new thread (pops: return_value flag, CompilationUnit; pushes: thread ref or future)
 

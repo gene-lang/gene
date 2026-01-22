@@ -2,6 +2,11 @@ import tables, strutils
 
 import ./types
 
+# Case expression keys (same as in compiler/case.nim)
+const CASE_TARGET_KEY = "case_target"
+const CASE_WHEN_KEY = "case_when"
+const CASE_ELSE_KEY = "case_else"
+
 # Simple static type checker for Gene AST.
 # This is intentionally conservative: Any is treated as the top type.
 
@@ -686,6 +691,94 @@ proc check_match(self: TypeChecker, gene: ptr Gene): TypeExpr =
     return ANY_TYPE
   return result_type
 
+proc check_case(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  ## Type check case expression: (case x when (Ok v) body1 when None body2)
+  ## Normalized form uses props: case_target, case_when (array), case_else
+
+  # Get the normalized props
+  let target_key = CASE_TARGET_KEY.to_key()
+  let when_key = CASE_WHEN_KEY.to_key()
+  let else_key = CASE_ELSE_KEY.to_key()
+
+  if not gene.props.hasKey(target_key):
+    return ANY_TYPE
+
+  let target = gene.props[target_key]
+  let whens = gene.props.getOrDefault(when_key, NIL)
+  let else_body = gene.props.getOrDefault(else_key, NIL)
+
+  let scrutinee_type = self.check_expr(target)
+  var result_type: TypeExpr = nil
+
+  # Process when clauses (stored as pairs: [value1, body1, value2, body2, ...])
+  if whens.kind == VkArray:
+    let arr = array_data(whens)
+    var i = 0
+    while i < arr.len:
+      if i + 1 >= arr.len:
+        break
+
+      let when_value = arr[i]
+      let when_body = arr[i + 1]
+
+      self.push_scope()
+
+      # Extract bindings from pattern
+      if when_value.kind == VkGene and when_value.gene != nil:
+        let pat_gene = when_value.gene
+        if pat_gene.`type`.kind == VkSymbol:
+          let ctor = pat_gene.`type`.str
+          # Handle Result/Option patterns
+          if ctor == "Ok" or ctor == "Some":
+            if pat_gene.children.len > 0 and pat_gene.children[0].kind == VkSymbol:
+              let bound_name = pat_gene.children[0].str
+              if bound_name != "_":
+                # For Ok[T], the bound variable has type T
+                let rt = self.resolve(scrutinee_type)
+                if rt.kind == TkApplied and rt.args.len > 0:
+                  self.define(bound_name, rt.args[0])
+                else:
+                  self.define(bound_name, ANY_TYPE)
+          elif ctor == "Err":
+            if pat_gene.children.len > 0 and pat_gene.children[0].kind == VkSymbol:
+              let bound_name = pat_gene.children[0].str
+              if bound_name != "_":
+                let rt = self.resolve(scrutinee_type)
+                if rt.kind == TkApplied and rt.args.len > 1:
+                  self.define(bound_name, rt.args[1])
+                else:
+                  self.define(bound_name, ANY_TYPE)
+
+      let body_type = self.check_expr(when_body)
+      self.pop_scope()
+
+      if result_type == nil:
+        result_type = body_type
+      else:
+        try:
+          self.unify(result_type, body_type, "case")
+        except CatchableError:
+          result_type = TypeExpr(kind: TkUnion, members: @[result_type, body_type])
+
+      i += 2
+
+  # Process else clause
+  if else_body != NIL:
+    self.push_scope()
+    let else_type = self.check_expr(else_body)
+    self.pop_scope()
+    if result_type == nil:
+      result_type = else_type
+    else:
+      try:
+        self.unify(result_type, else_type, "case else")
+      except CatchableError:
+        result_type = TypeExpr(kind: TkUnion, members: @[result_type, else_type])
+
+  if result_type == nil:
+    return ANY_TYPE
+  return result_type
+
 proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
   ## Type check for loop: (for x in collection body...)
   if gene.children.len < 3:
@@ -1109,7 +1202,10 @@ proc check_complex_symbol(self: TypeChecker, sym: Value): TypeExpr =
       let ft = self.find_field(cls, field_name)
       if ft != nil:
         return ft
-      # Field not declared in ^fields - Gene allows dynamic fields, return Any
+      # If class declared fields with ^fields, accessing undeclared field is an error
+      if cls.fields.len > 0:
+        raise new_exception(types.Exception, "Unknown field: " & field_name & " on class " & rt.name)
+      # Class has no declared fields - Gene allows dynamic fields, return Any
       return ANY_TYPE
   return ANY_TYPE
 
@@ -1205,6 +1301,8 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return ANY_TYPE
       of "match":
         return self.check_match(gene)
+      of "case":
+        return self.check_case(gene)
       of "for":
         return self.check_for(gene)
       of "while":

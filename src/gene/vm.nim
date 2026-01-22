@@ -5422,6 +5422,41 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.push(val)
         {.pop.}
 
+      of IkMatchGeneType:
+        # Pattern matching: check if value matches Gene type
+        # arg0 = type symbol to match (e.g., "Ok", "Err", "Some", "None")
+        {.push checks: off.}
+        let val = self.frame.pop()
+        let expected_type = inst.arg0.str  # Symbol string
+
+        var matched = false
+        # Handle None as both symbol and Gene
+        if expected_type == "None":
+          if val.kind == VkSymbol and val.str == "None":
+            matched = true
+          elif val.kind == VkGene and val.gene != nil:
+            if val.gene.`type`.kind == VkSymbol and val.gene.`type`.str == "None":
+              matched = true
+        elif val.kind == VkGene and val.gene != nil:
+          if val.gene.`type`.kind == VkSymbol and val.gene.`type`.str == expected_type:
+            matched = true
+
+        self.frame.push(val)  # Keep the value on stack for later use
+        self.frame.push(if matched: TRUE else: FALSE)
+        {.pop.}
+
+      of IkGetGeneChild:
+        # Get gene.children[arg0]
+        {.push checks: off.}
+        let val = self.frame.pop()
+        let idx = inst.arg0.int64.int
+
+        if val.kind == VkGene and val.gene != nil and idx < val.gene.children.len:
+          self.frame.push(val.gene.children[idx])
+        else:
+          self.frame.push(NIL)
+        {.pop.}
+
       # Superinstructions for performance
       of IkPushCallPop:
         # Combined PUSH; CALL; POP for void function calls

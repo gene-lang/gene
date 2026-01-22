@@ -500,30 +500,61 @@ proc compile_if(self: Compiler, gene: ptr Gene) =
 
   self.end_scope()
 
+proc is_result_option_pattern(v: Value): bool =
+  ## Check if value is a Result/Option pattern like (Ok a), (Err e), (Some x), or None
+  if v.kind == VkSymbol and v.str == "None":
+    return true
+  if v.kind == VkGene and v.gene != nil:
+    if v.gene.`type`.kind == VkSymbol:
+      let type_name = v.gene.`type`.str
+      if type_name in ["Ok", "Err", "Some", "None"]:
+        return true
+  return false
+
+proc get_pattern_info(v: Value): tuple[type_name: string, binding: string] =
+  ## Extract pattern info: type name and optional binding variable
+  if v.kind == VkSymbol and v.str == "None":
+    return ("None", "")
+  if v.kind == VkGene and v.gene != nil:
+    let type_name = v.gene.`type`.str
+    var binding = ""
+    if v.gene.children.len > 0 and v.gene.children[0].kind == VkSymbol:
+      binding = v.gene.children[0].str
+      if binding == "_":
+        binding = ""  # _ means ignore binding
+    return (type_name, binding)
+  return ("", "")
+
 proc compile_case(self: Compiler, gene: ptr Gene) =
   ## Compile case expression:
   ## (case target when val1 body1 when val2 body2 else body3)
   ##
+  ## Supports pattern matching for Result/Option types:
+  ## (case result
+  ##   when (Ok value) (println value)
+  ##   when (Err e) (println "error:" e)
+  ## )
+  ##
   ## Generates code that:
   ## 1. Evaluates target once
-  ## 2. For each when: compare with value, jump to body if equal
+  ## 2. For each when: compare with value or pattern, jump to body if match
   ## 3. Fall through to else if no match
-  
+
   normalize_case(gene)
-  
+
   self.start_scope()
-  
+
   let end_label = new_label()
   var next_label = new_label()
-  
+
   # Get the normalized props
   let target = gene.props[CASE_TARGET_KEY.to_key()]
   let whens = gene.props[CASE_WHEN_KEY.to_key()]
   let else_body = gene.props[CASE_ELSE_KEY.to_key()]
-  
+
   # Compile target and keep it on stack
   self.compile(target)
-  
+
   # Process when clauses (stored as pairs: [value1, body1, value2, body2, ...])
   if whens.kind == VkArray:
     let arr = array_data(whens)
@@ -531,57 +562,102 @@ proc compile_case(self: Compiler, gene: ptr Gene) =
     while i < arr.len:
       if i + 1 >= arr.len:
         break
-      
+
       let when_value = arr[i]
       let when_body = arr[i + 1]
-      
+
       # Label for this when clause
       if i > 0:
         self.emit(Instruction(kind: IkNoop, label: next_label))
         next_label = new_label()
-      
-      # Duplicate target for comparison
-      self.emit(Instruction(kind: IkDup))
-      
-      # Compile the when value
-      self.compile(when_value)
-      
-      # Compare: target == when_value
-      self.emit(Instruction(kind: IkEq))
-      
-      # Jump to next when if not equal
-      self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
-      
-      # Pop the duplicated target before executing body
-      self.emit(Instruction(kind: IkPop))
-      
-      # Compile the when body (preserves tail position)
-      self.start_scope()
-      let old_tail = self.tail_position
-      self.compile(when_body)
-      self.tail_position = old_tail
-      self.end_scope()
-      
+
+      # Check if this is a Result/Option pattern
+      if is_result_option_pattern(when_value):
+        let (type_name, binding) = get_pattern_info(when_value)
+
+        # Use pattern matching instruction
+        # Stack: [target]
+        self.emit(Instruction(kind: IkMatchGeneType, arg0: type_name.to_symbol_value()))
+        # Stack: [target, bool]
+
+        # Jump to next when if not matched
+        self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
+        # Stack: [target]
+
+        # Start scope for body with potential binding
+        self.start_scope()
+
+        # If there's a binding, extract the inner value and bind it
+        if binding.len > 0:
+          # Duplicate target to extract child
+          self.emit(Instruction(kind: IkDup))
+          # Stack: [target, target]
+          self.emit(Instruction(kind: IkGetGeneChild, arg0: 0.to_value()))
+          # Stack: [target, child]
+
+          # Register the binding variable properly with numeric index
+          let var_index = self.scope_tracker.next_index
+          self.scope_tracker.mappings[binding.to_key()] = var_index
+          self.add_scope_start()
+          self.scope_tracker.next_index.inc()
+          self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+          # Stack: [target, child] (IkVar doesn't pop)
+          self.emit(Instruction(kind: IkPop))
+          # Stack: [target]
+
+        # Pop the target before executing body
+        self.emit(Instruction(kind: IkPop))
+        # Stack: []
+
+        # Compile the when body
+        let old_tail = self.tail_position
+        self.compile(when_body)
+        self.tail_position = old_tail
+        self.end_scope()
+      else:
+        # Regular value comparison (original behavior)
+        # Duplicate target for comparison
+        self.emit(Instruction(kind: IkDup))
+
+        # Compile the when value
+        self.compile(when_value)
+
+        # Compare: target == when_value
+        self.emit(Instruction(kind: IkEq))
+
+        # Jump to next when if not equal
+        self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
+
+        # Pop the duplicated target before executing body
+        self.emit(Instruction(kind: IkPop))
+
+        # Compile the when body (preserves tail position)
+        self.start_scope()
+        let old_tail = self.tail_position
+        self.compile(when_body)
+        self.tail_position = old_tail
+        self.end_scope()
+
       # Jump to end
       self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
-      
+
       i += 2
-  
+
   # Else clause
   self.emit(Instruction(kind: IkNoop, label: next_label))
-  
+
   # Pop the remaining target value before else body
   self.emit(Instruction(kind: IkPop))
-  
+
   # Compile else body (preserves tail position)
   self.start_scope()
   let old_tail_else = self.tail_position
   self.compile(else_body)
   self.tail_position = old_tail_else
   self.end_scope()
-  
+
   self.emit(Instruction(kind: IkNoop, label: end_label))
-  
+
   self.end_scope()
 
 proc compile_var(self: Compiler, gene: ptr Gene) =
