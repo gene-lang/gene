@@ -16,6 +16,7 @@ type
     help: bool
     quote_str: bool
     filter: bool
+    type_check: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -29,6 +30,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  --compile: show compilation details")
   manager.add_help("  --quote-str: output strings with quotes")
   manager.add_help("  --filter: treat code as predicate, output $line when true")
+  manager.add_help("  --no-typecheck: disable static type checking")
 
 let short_no_val = {'d', 'h'}
 let long_no_val = @[
@@ -38,10 +40,11 @@ let long_no_val = @[
   "help",
   "quote-str",
   "filter",
+  "no-typecheck",
 ]
 
 proc parse_options(args: seq[string]): PipeOptions =
-  result = PipeOptions()
+  result = PipeOptions(type_check: true)
   var code_parts: seq[string] = @[]
 
   if args.len == 0:
@@ -67,6 +70,8 @@ proc parse_options(args: seq[string]): PipeOptions =
         result.quote_str = true
       of "filter":
         result.filter = true
+      of "no-typecheck":
+        result.type_check = false
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -186,7 +191,7 @@ Notes:
   # Compile code once before processing lines
   var compiled: CompilationUnit
   try:
-    compiled = parse_and_compile(code)
+    compiled = parse_and_compile(code, type_check = options.type_check)
 
     if options.compile or options.debugging:
       echo "=== Compiled Code ==="

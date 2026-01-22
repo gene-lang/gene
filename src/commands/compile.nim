@@ -19,6 +19,7 @@ type
     force: bool      # Force rebuild even if cache is up-to-date
     emit_debug: bool # Include debug info in GIR
     eager_functions: bool
+    type_check: bool
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
 
@@ -29,6 +30,7 @@ let long_no_val = @[
   "force",
   "emit-debug",
   "eager",
+  "no-typecheck",
 ]
 
 let help_text = """
@@ -45,6 +47,7 @@ Options:
   --force                 Rebuild even if cache is up-to-date
   --emit-debug            Include debug info in GIR files
   --eager                Eagerly compile function bodies (compile command only)
+  --no-typecheck          Disable static type checking
 
 Examples:
   gene compile file.gene                  # Compile to build/file.gir
@@ -57,6 +60,7 @@ Examples:
 proc parseArgs(args: seq[string]): CompileOptions =
   result.format = ""  # Will be set based on context
   result.out_dir = "build"
+  result.type_check = true
   
   # Workaround: get_opt reads from command line when given empty args
   if args.len == 0:
@@ -91,6 +95,8 @@ proc parseArgs(args: seq[string]): CompileOptions =
         result.emit_debug = true
       of "eager":
         result.eager_functions = true
+      of "no-typecheck":
+        result.type_check = false
       else:
         stderr.writeLine("Error: Unknown option: " & key)
         quit(1)
@@ -149,7 +155,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
             stderr.writeLine("Error: Failed to open file: " & file)
             quit(1)
           defer: stream.close()
-          let compiled = parse_and_compile(stream, file, options.eager_functions)
+          let compiled = parse_and_compile(stream, file, options.eager_functions, options.type_check)
 
           # Save to GIR file
           save_gir(compiled, gir_path, file, options.emit_debug)

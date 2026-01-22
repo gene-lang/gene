@@ -19,6 +19,7 @@ type
     trace_instruction: bool
     compile: bool
     repl_on_error: bool
+    type_check: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -28,6 +29,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("eval <code>: evaluate <code> as a gene expression")
   manager.add_help("  -d, --debug: enable debug output")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
+  manager.add_help("  --no-typecheck: disable static type checking")
   manager.add_help("  --csv: print result as CSV")
   manager.add_help("  --gene: print result as gene expression")
   manager.add_help("  --line: evaluate as a single line")
@@ -41,10 +43,11 @@ let long_no_val = @[
   "trace",
   "trace-instruction",
   "compile",
+  "no-typecheck",
 ]
 
 proc parse_options(args: seq[string]): Options =
-  result = Options()
+  result = Options(type_check: true)
   var code_parts: seq[string] = @[]
   
   # Workaround: get_opt reads from command line when given empty args
@@ -73,6 +76,8 @@ proc parse_options(args: seq[string]): Options =
         result.trace_instruction = true
       of "compile":
         result.compile = true
+      of "no-typecheck":
+        result.type_check = false
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -142,7 +147,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     # Handle trace-instruction option
     if options.trace_instruction:
       # Show both compilation and execution with trace
-      let compiled = parse_and_compile(code)
+      let compiled = parse_and_compile(code, type_check = options.type_check)
       echo "=== Compilation Output ==="
       echo "Instructions:"
       for i, instr in compiled.instructions:
@@ -164,7 +169,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo $value
     # Show compilation details if requested
     elif options.compile or options.debugging:
-      let compiled = parse_and_compile(code)
+      let compiled = parse_and_compile(code, type_check = options.type_check)
       echo "=== Compilation Output ==="
       echo "Instructions:"
       for i, instr in compiled.instructions:

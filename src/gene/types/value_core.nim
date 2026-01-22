@@ -1766,6 +1766,28 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   if node.gene == nil:
     raise new_exception(type_defs.Exception, "Gene pointer is nil")
 
+  proc strip_type_annotations(args: Value): Value =
+    if args.kind != VkArray:
+      return args
+    let src = array_data(args)
+    var out_args = new_array_value()
+    var i = 0
+    while i < src.len:
+      let item = src[i]
+      if item.kind == VkSymbol and item.str.endsWith(":"):
+        let base = item.str[0..^2]
+        array_data(out_args).add(base.to_symbol_value())
+        i.inc
+        if i < src.len:
+          i.inc # Skip type expression
+        continue
+      elif item.kind == VkArray:
+        array_data(out_args).add(strip_type_annotations(item))
+      else:
+        array_data(out_args).add(item)
+      i.inc
+    return out_args
+
   var name: string
   let matcher = new_arg_matcher()
   var body_start: int
@@ -1778,7 +1800,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   case first.kind:
     of VkArray:
       name = "<unnamed>"
-      matcher.parse(first)
+      matcher.parse(strip_type_annotations(first))
       body_start = 1
     of VkSymbol, VkString:
       name = first.str
@@ -1790,7 +1812,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         is_generator = true
       if node.gene.children.len < 2:
         raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
-      let args = node.gene.children[1]
+      let args = strip_type_annotations(node.gene.children[1])
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
@@ -1805,7 +1827,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         is_generator = true
       if node.gene.children.len < 2:
         raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
-      let args = node.gene.children[1]
+      let args = strip_type_annotations(node.gene.children[1])
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
@@ -1814,6 +1836,14 @@ proc to_function*(node: Value): Function {.gcsafe.} =
       raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
 
   matcher.check_hint()
+  # Skip optional return type annotation: (-> Type)
+  if body_start < node.gene.children.len:
+    let maybe_arrow = node.gene.children[body_start]
+    if maybe_arrow.kind == VkSymbol and maybe_arrow.str == "->":
+      if body_start + 1 >= node.gene.children.len:
+        raise new_exception(type_defs.Exception, "Invalid function definition: missing return type after ->")
+      body_start += 2
+
   var body: seq[Value] = @[]
   for i in body_start..<node.gene.children.len:
     body.add node.gene.children[i]

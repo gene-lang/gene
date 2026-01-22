@@ -23,6 +23,7 @@ type
     profile_instructions: bool
     no_gir_cache: bool  # Ignore GIR cache
     force_compile: bool  # Force recompilation even if cache is up-to-date
+    type_check: bool
     file: string
     args: seq[string]
 
@@ -32,6 +33,7 @@ proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
   manager.add_help("run <file>: parse and execute <file>")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
+  manager.add_help("  --no-typecheck: disable static type checking")
 
 let short_no_val = {'d'}
 let long_no_val = @[
@@ -43,9 +45,10 @@ let long_no_val = @[
   "profile-instructions",
   "no-gir-cache",
   "force-compile",
+  "no-typecheck",
 ]
 proc parse_options(args: seq[string]): Options =
-  result = Options()
+  result = Options(type_check: true)
   var found_file = false
   
   # Workaround: get_opt reads from command line when given empty args
@@ -85,6 +88,8 @@ proc parse_options(args: seq[string]): Options =
           result.no_gir_cache = true
         of "force-compile":
           result.force_compile = true
+        of "no-typecheck":
+          result.type_check = false
         else:
           echo "Unknown option: ", key
           discard
@@ -237,7 +242,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       # so we can inspect compilation output and then execute
       let code = if code != "": code else: readFile(file)
       echo "=== Compilation Output ==="
-      let compiled = parse_and_compile(code, file)
+      let compiled = parse_and_compile(code, file, type_check = options.type_check)
       echo "Instructions:"
       for i, instr in compiled.instructions:
         echo fmt"{i:04X} {instr}"
@@ -267,7 +272,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       # For trace/debug modes, we need to read the file into memory
       let code = if code != "": code else: readFile(file)
       echo "=== Compilation Output ==="
-      let compiled = parse_and_compile(code, file)
+      let compiled = parse_and_compile(code, file, type_check = options.type_check)
       echo "Instructions:"
       for i, instr in compiled.instructions:
         echo fmt"{i:03d}: {instr}"

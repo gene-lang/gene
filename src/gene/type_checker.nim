@@ -1,0 +1,924 @@
+import tables, strutils
+
+import ./types
+
+# Simple static type checker for Gene AST.
+# This is intentionally conservative: Any is treated as the top type.
+
+type
+  TypeKind* = enum
+    TkAny,
+    TkNamed,
+    TkApplied,
+    TkUnion,
+    TkFn,
+    TkVar
+
+  ParamType* = object
+    label*: string  # "" for positional, non-empty for keyword-only
+    typ*: TypeExpr
+
+  TypeExpr* = ref object
+    case kind*: TypeKind
+    of TkAny:
+      discard
+    of TkNamed:
+      name*: string
+    of TkApplied:
+      ctor*: string
+      args*: seq[TypeExpr]
+    of TkUnion:
+      members*: seq[TypeExpr]
+    of TkFn:
+      params*: seq[ParamType]
+      ret*: TypeExpr
+    of TkVar:
+      id*: int
+
+  ClassInfo* = ref object
+    name*: string
+    parent*: string
+    fields*: Table[string, TypeExpr]
+    methods*: Table[string, TypeExpr]
+    ctor_type*: TypeExpr
+
+  TypeChecker* = ref object
+    strict*: bool
+    next_var_id*: int
+    subs*: Table[int, TypeExpr]
+    scopes*: seq[Table[string, TypeExpr]]
+    types*: Table[string, TypeExpr]
+    classes*: Table[string, ClassInfo]
+    current_return*: TypeExpr
+    current_class*: string
+
+let ANY_TYPE = TypeExpr(kind: TkAny)
+
+const BUILTIN_TYPE_NAMES = [
+  "Any", "Self", "Int", "Float", "Bool", "String", "Nil",
+  "Array", "Map", "Result", "Option", "Tuple"
+]
+
+proc is_builtin_type_name(name: string): bool {.inline.} =
+  for n in BUILTIN_TYPE_NAMES:
+    if n == name:
+      return true
+  return false
+
+proc is_known_type_name(self: TypeChecker, name: string): bool {.inline.} =
+  if is_builtin_type_name(name):
+    return true
+  if self.types.hasKey(name):
+    return true
+  if self.classes.hasKey(name):
+    return true
+  return false
+
+proc key_to_string(key: Key): string {.inline.} =
+  try:
+    result = cast[Value](key).str
+  except CatchableError:
+    result = "<keyword>"
+
+proc new_type_checker*(strict: bool = true): TypeChecker =
+  result = TypeChecker(
+    strict: strict,
+    next_var_id: 0,
+    subs: initTable[int, TypeExpr](),
+    scopes: @[initTable[string, TypeExpr]()],
+    types: initTable[string, TypeExpr](),
+    classes: initTable[string, ClassInfo](),
+    current_return: ANY_TYPE,
+    current_class: ""
+  )
+
+proc fresh_var(self: TypeChecker): TypeExpr =
+  let id = self.next_var_id
+  self.next_var_id.inc
+  result = TypeExpr(kind: TkVar, id: id)
+
+proc resolve(self: TypeChecker, t: TypeExpr): TypeExpr =
+  if t == nil:
+    return ANY_TYPE
+  if t.kind == TkVar and self.subs.hasKey(t.id):
+    return self.resolve(self.subs[t.id])
+  result = t
+
+proc type_to_string(t: TypeExpr): string
+
+proc occurs(self: TypeChecker, id: int, t: TypeExpr): bool =
+  let rt = self.resolve(t)
+  case rt.kind
+  of TkVar:
+    return rt.id == id
+  of TkApplied:
+    for a in rt.args:
+      if self.occurs(id, a):
+        return true
+  of TkUnion:
+    for m in rt.members:
+      if self.occurs(id, m):
+        return true
+  of TkFn:
+    for p in rt.params:
+      if self.occurs(id, p.typ):
+        return true
+    if self.occurs(id, rt.ret):
+      return true
+  else:
+    discard
+  return false
+
+proc unify(self: TypeChecker, a: TypeExpr, b: TypeExpr, context: string) =
+  let ta = self.resolve(a)
+  let tb = self.resolve(b)
+  if ta == tb:
+    return
+  if ta.kind == TkAny or tb.kind == TkAny:
+    return
+  if ta.kind == TkVar:
+    if self.occurs(ta.id, tb):
+      raise new_exception(types.Exception, "Type error: recursive type in " & context)
+    self.subs[ta.id] = tb
+    return
+  if tb.kind == TkVar:
+    if self.occurs(tb.id, ta):
+      raise new_exception(types.Exception, "Type error: recursive type in " & context)
+    self.subs[tb.id] = ta
+    return
+  if ta.kind != tb.kind:
+    raise new_exception(types.Exception, "Type error: expected " & type_to_string(ta) & ", got " & type_to_string(tb) & " in " & context)
+  case ta.kind
+  of TkNamed:
+    if ta.name != tb.name:
+      raise new_exception(types.Exception, "Type error: expected " & ta.name & ", got " & tb.name & " in " & context)
+  of TkApplied:
+    if ta.ctor != tb.ctor or ta.args.len != tb.args.len:
+      raise new_exception(types.Exception, "Type error: expected " & type_to_string(ta) & ", got " & type_to_string(tb) & " in " & context)
+    for i in 0..<ta.args.len:
+      self.unify(ta.args[i], tb.args[i], context)
+  of TkUnion:
+    # Accept if any member matches
+    var ok = false
+    for m in ta.members:
+      try:
+        self.unify(m, tb, context)
+        ok = true
+        break
+      except CatchableError:
+        discard
+    if not ok:
+      raise new_exception(types.Exception, "Type error: expected one of " & type_to_string(ta) & ", got " & type_to_string(tb) & " in " & context)
+  of TkFn:
+    if ta.params.len != tb.params.len:
+      raise new_exception(types.Exception, "Type error: function arity mismatch in " & context)
+    for i in 0..<ta.params.len:
+      self.unify(ta.params[i].typ, tb.params[i].typ, context)
+    self.unify(ta.ret, tb.ret, context)
+  of TkAny, TkVar:
+    discard
+
+proc type_to_string(t: TypeExpr): string =
+  if t == nil:
+    return "Any"
+  let rt = t
+  case rt.kind
+  of TkAny:
+    return "Any"
+  of TkNamed:
+    return rt.name
+  of TkApplied:
+    var parts: seq[string] = @[rt.ctor]
+    for a in rt.args:
+      parts.add(type_to_string(a))
+    return "(" & parts.join(" ") & ")"
+  of TkUnion:
+    var parts: seq[string] = @[]
+    for m in rt.members:
+      parts.add(type_to_string(m))
+    return "(" & parts.join(" | ") & ")"
+  of TkFn:
+    var params: seq[string] = @[]
+    for p in rt.params:
+      if p.label.len > 0:
+        params.add("^" & p.label & " " & type_to_string(p.typ))
+      else:
+        params.add(type_to_string(p.typ))
+    return "(Fn [" & params.join(" ") & "] " & type_to_string(rt.ret) & ")"
+  of TkVar:
+    return "T" & $rt.id
+
+proc push_scope(self: TypeChecker) =
+  self.scopes.add(initTable[string, TypeExpr]())
+
+proc pop_scope(self: TypeChecker) =
+  if self.scopes.len > 1:
+    discard self.scopes.pop()
+
+proc define(self: TypeChecker, name: string, t: TypeExpr) =
+  if name.len == 0 or name == "_":
+    return
+  self.scopes[^1][name] = t
+
+proc lookup(self: TypeChecker, name: string): TypeExpr =
+  for i in countdown(self.scopes.len - 1, 0):
+    if self.scopes[i].hasKey(name):
+      return self.scopes[i][name]
+  return nil
+
+proc get_class_info(self: TypeChecker, name: string): ClassInfo =
+  if self.classes.hasKey(name):
+    return self.classes[name]
+  return nil
+
+proc find_method(self: TypeChecker, cls: ClassInfo, method_name: string): TypeExpr =
+  var current = cls
+  var visited = initTable[string, bool]()
+  while current != nil:
+    if visited.hasKey(current.name):
+      break
+    visited[current.name] = true
+    if current.methods.hasKey(method_name):
+      return current.methods[method_name]
+    if current.parent.len == 0:
+      break
+    current = self.get_class_info(current.parent)
+  return nil
+
+proc find_field(self: TypeChecker, cls: ClassInfo, field_name: string): TypeExpr =
+  var current = cls
+  var visited = initTable[string, bool]()
+  while current != nil:
+    if visited.hasKey(current.name):
+      break
+    visited[current.name] = true
+    if current.fields.hasKey(field_name):
+      return current.fields[field_name]
+    if current.parent.len == 0:
+      break
+    current = self.get_class_info(current.parent)
+  return nil
+
+proc register_imported_type(self: TypeChecker, name: string) =
+  if name.len == 0:
+    return
+  if name.contains("/") or name.contains("."):
+    return
+  if name[0].isUpperAscii:
+    if not self.types.hasKey(name) and not self.classes.hasKey(name):
+      self.types[name] = TypeExpr(kind: TkNamed, name: name)
+
+proc collect_import_types(self: TypeChecker, v: Value) =
+  case v.kind
+  of VkSymbol:
+    self.register_imported_type(v.str)
+  of VkComplexSymbol:
+    let parts = v.ref.csymbol
+    if parts.len > 0:
+      self.register_imported_type(parts[^1])
+  of VkArray:
+    for item in array_data(v):
+      self.collect_import_types(item)
+  of VkGene:
+    if v.gene != nil:
+      self.collect_import_types(v.gene.`type`)
+      for child in v.gene.children:
+        self.collect_import_types(child)
+  else:
+    discard
+
+proc check_import(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  for child in gene.children:
+    self.collect_import_types(child)
+  return ANY_TYPE
+
+proc is_union_gene(gene: ptr Gene): bool =
+  if gene == nil:
+    return false
+  if gene.`type`.kind == VkSymbol and gene.`type`.str == "|":
+    return true
+  for child in gene.children:
+    if child.kind == VkSymbol and child.str == "|":
+      return true
+  return false
+
+proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr
+
+proc parse_fn_params(self: TypeChecker, v: Value): seq[ParamType] =
+  if v.kind != VkArray:
+    return @[]
+  let items = array_data(v)
+  var i = 0
+  while i < items.len:
+    let item = items[i]
+    if item.kind == VkSymbol and item.str.startsWith("^"):
+      let label = item.str[1..^1]
+      if i + 1 >= items.len:
+        raise new_exception(types.Exception, "Invalid Fn type: missing type for " & item.str)
+      let t = self.parse_type_expr(items[i + 1])
+      result.add(ParamType(label: label, typ: t))
+      i += 2
+    else:
+      let t = self.parse_type_expr(item)
+      result.add(ParamType(label: "", typ: t))
+      i += 1
+
+proc parse_union(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  var parts: seq[TypeExpr] = @[]
+  if gene.`type`.kind == VkSymbol and gene.`type`.str == "|":
+    for child in gene.children:
+      parts.add(self.parse_type_expr(child))
+  else:
+    parts.add(self.parse_type_expr(gene.`type`))
+    var i = 0
+    while i < gene.children.len:
+      let child = gene.children[i]
+      if child.kind == VkSymbol and child.str == "|":
+        if i + 1 >= gene.children.len:
+          raise new_exception(types.Exception, "Invalid union type: trailing '|'")
+        parts.add(self.parse_type_expr(gene.children[i + 1]))
+        i += 2
+      else:
+        i += 1
+  return TypeExpr(kind: TkUnion, members: parts)
+
+proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
+  case v.kind
+  of VkSymbol:
+    let name = v.str
+    if name == "Any":
+      return ANY_TYPE
+    if name == "Self":
+      return TypeExpr(kind: TkNamed, name: "Self")
+    if self.types.hasKey(name):
+      return self.types[name]
+    if self.classes.hasKey(name):
+      return TypeExpr(kind: TkNamed, name: name)
+    if self.strict and not is_known_type_name(self, name):
+      raise new_exception(types.Exception, "Unknown type: " & name)
+    return TypeExpr(kind: TkNamed, name: name)
+  of VkGene:
+    let gene = v.gene
+    if gene == nil:
+      return ANY_TYPE
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
+      if gene.children.len < 2:
+        raise new_exception(types.Exception, "Invalid Fn type: expected params and return")
+      let params = self.parse_fn_params(gene.children[0])
+      let ret = self.parse_type_expr(gene.children[1])
+      return TypeExpr(kind: TkFn, params: params, ret: ret)
+    if is_union_gene(gene):
+      return self.parse_union(gene)
+    # Generic constructor: (Array T)
+    if gene.`type`.kind == VkSymbol:
+      let ctor_name = gene.`type`.str
+      if self.strict and not is_known_type_name(self, ctor_name):
+        raise new_exception(types.Exception, "Unknown type: " & ctor_name)
+      var args: seq[TypeExpr] = @[]
+      for child in gene.children:
+        args.add(self.parse_type_expr(child))
+      return TypeExpr(kind: TkApplied, ctor: ctor_name, args: args)
+    return ANY_TYPE
+  else:
+    raise new_exception(types.Exception, "Invalid type expression: " & $v.kind)
+
+proc parse_param_annotations(self: TypeChecker, args: Value): seq[(string, string, TypeExpr)] =
+  ## Returns (var_name, keyword_label, type) for each param in order.
+  if args.kind != VkArray:
+    return @[]
+  let items = array_data(args)
+  var i = 0
+  while i < items.len:
+    let item = items[i]
+    if item.kind == VkSymbol and item.str == "=":
+      # Skip default value
+      i += 2
+      continue
+    if item.kind == VkSymbol:
+      var name = item.str
+      var label = ""
+      var typ: TypeExpr = nil
+      if name.endsWith(":"):
+        name = name[0..^2]
+        if i + 1 >= items.len:
+          raise new_exception(types.Exception, "Missing type for parameter " & name)
+        typ = self.parse_type_expr(items[i + 1])
+        i += 1
+      if name.startsWith("^"):
+        label = name[1..^1]
+        name = label
+      result.add((name, label, typ))
+      i += 1
+    elif item.kind == VkArray:
+      # Destructuring not typed yet
+      result.add(("_", "", nil))
+      i += 1
+    else:
+      i += 1
+
+proc resolve_self(self: TypeChecker, t: TypeExpr): TypeExpr =
+  let rt = self.resolve(t)
+  if rt.kind == TkNamed and rt.name == "Self" and self.current_class.len > 0:
+    return TypeExpr(kind: TkNamed, name: self.current_class)
+  return rt
+
+proc check_expr(self: TypeChecker, v: Value): TypeExpr
+
+proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], props: Table[Key, Value], context: string): TypeExpr =
+  let ct = self.resolve(callee_type)
+  if ct == nil or ct.kind == TkAny:
+    return ANY_TYPE
+  if ct.kind != TkFn:
+    raise new_exception(types.Exception, "Type error: calling non-function in " & context)
+  # Split params into positional and keyword-only
+  var pos_params: seq[ParamType] = @[]
+  var kw_params = initTable[string, ParamType]()
+  for p in ct.params:
+    if p.label.len > 0:
+      kw_params[p.label] = p
+    else:
+      pos_params.add(p)
+  let pos_count = args.len
+  if pos_count > pos_params.len:
+    raise new_exception(types.Exception, "Type error: too many positional arguments in " & context)
+  for i in 0..<pos_count:
+    let arg_type = self.check_expr(args[i])
+    self.unify(pos_params[i].typ, arg_type, context)
+  # Keyword args
+  for k, v in props:
+    let key_name = key_to_string(k)
+    if not kw_params.hasKey(key_name):
+      raise new_exception(types.Exception, "Type error: unknown keyword argument " & key_name & " in " & context)
+    let arg_type = self.check_expr(v)
+    self.unify(kw_params[key_name].typ, arg_type, context)
+  return self.resolve_self(ct.ret)
+
+proc check_method_call(self: TypeChecker, recv_type: TypeExpr, method_name: string, args: seq[Value], props: Table[Key, Value], context: string): TypeExpr =
+  let rt = self.resolve(recv_type)
+  if rt == nil or rt.kind == TkAny:
+    return ANY_TYPE
+  if rt.kind == TkNamed and self.classes.hasKey(rt.name):
+    let cls = self.classes[rt.name]
+    let mt = self.find_method(cls, method_name)
+    if mt == nil:
+      raise new_exception(types.Exception, "Type error: unknown method " & method_name & " on " & rt.name)
+    let fn_t = self.resolve(mt)
+    if fn_t.kind != TkFn:
+      return ANY_TYPE
+    # Drop implicit self param
+    var params = fn_t.params
+    if params.len > 0:
+      params = params[1..^1]
+    let fake = TypeExpr(kind: TkFn, params: params, ret: fn_t.ret)
+    return self.check_call(fake, args, props, context)
+  return ANY_TYPE
+
+proc check_super_call(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if self.current_class.len == 0:
+    raise new_exception(types.Exception, "Type error: super used outside of a class")
+  let cls = self.get_class_info(self.current_class)
+  if cls == nil or cls.parent.len == 0:
+    raise new_exception(types.Exception, "Type error: super has no superclass in " & self.current_class)
+  let parent_cls = self.get_class_info(cls.parent)
+  if parent_cls == nil:
+    raise new_exception(types.Exception, "Type error: unknown superclass " & cls.parent)
+  if gene.children.len == 0:
+    raise new_exception(types.Exception, "Type error: super requires a member")
+  let member = gene.children[0]
+  if member.kind != VkSymbol or not member.str.startsWith("."):
+    raise new_exception(types.Exception, "Type error: super requires a dotted member (e.g. .m or .ctor)")
+  let member_name = member.str[1..^1]
+  let is_ctor = member_name == "ctor" or member_name == "ctor!"
+  let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
+  if is_ctor:
+    if parent_cls.ctor_type != nil:
+      discard self.check_call(parent_cls.ctor_type, args, gene.props, "super ctor")
+    return ANY_TYPE
+  let mt = self.find_method(parent_cls, member_name)
+  if mt == nil:
+    raise new_exception(types.Exception, "Type error: unknown super method " & member_name & " on " & parent_cls.name)
+  let fn_t = self.resolve(mt)
+  if fn_t.kind != TkFn:
+    return ANY_TYPE
+  var params = fn_t.params
+  if params.len > 0:
+    params = params[1..^1]
+  let fake = TypeExpr(kind: TkFn, params: params, ret: fn_t.ret)
+  return self.check_call(fake, args, gene.props, "super " & member_name)
+
+proc check_var(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len == 0:
+    return ANY_TYPE
+  var name_val = gene.children[0]
+  var name = ""
+  var annotated: TypeExpr = nil
+  var value_index = 1
+  if name_val.kind == VkSymbol:
+    name = name_val.str
+    if name.endsWith(":"):
+      name = name[0..^2]
+      if gene.children.len > 1:
+        annotated = self.parse_type_expr(gene.children[1])
+        value_index = 2
+  if gene.children.len > value_index:
+    let value_type = self.check_expr(gene.children[value_index])
+    if annotated != nil:
+      self.unify(annotated, value_type, "var " & name)
+      self.define(name, annotated)
+      return annotated
+    else:
+      self.define(name, value_type)
+      return value_type
+  if annotated != nil:
+    self.define(name, annotated)
+    return annotated
+  self.define(name, ANY_TYPE)
+  return ANY_TYPE
+
+proc check_if(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len < 2:
+    return ANY_TYPE
+  let cond_type = self.check_expr(gene.children[0])
+  if cond_type.kind != TkAny:
+    self.unify(TypeExpr(kind: TkNamed, name: "Bool"), cond_type, "if condition")
+  let then_type = self.check_expr(gene.children[1])
+  if gene.children.len > 2:
+    let else_type = self.check_expr(gene.children[2])
+    try:
+      self.unify(then_type, else_type, "if")
+      return then_type
+    except CatchableError:
+      return TypeExpr(kind: TkUnion, members: @[then_type, else_type])
+  return then_type
+
+proc check_do(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  var last: TypeExpr = ANY_TYPE
+  for child in gene.children:
+    last = self.check_expr(child)
+  return last
+
+proc check_return(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  let ret_type =
+    if gene.children.len > 0:
+      self.check_expr(gene.children[0])
+    else:
+      TypeExpr(kind: TkNamed, name: "Nil")
+  if self.current_return != nil:
+    self.unify(self.current_return, ret_type, "return")
+  return ret_type
+
+proc check_infix(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len < 2:
+    return ANY_TYPE
+  let op = gene.children[0]
+  if op.kind != VkSymbol:
+    return ANY_TYPE
+  let left_type = self.check_expr(gene.`type`)
+  let right_type = self.check_expr(gene.children[1])
+  case op.str
+  of "+", "-", "*", "/":
+    # numeric only (Int/Float)
+    let left_res = self.resolve(left_type)
+    let right_res = self.resolve(right_type)
+    let want_float =
+      (left_res.kind == TkNamed and left_res.name == "Float") or
+      (right_res.kind == TkNamed and right_res.name == "Float")
+    if want_float:
+      if left_type.kind != TkAny:
+        self.unify(TypeExpr(kind: TkNamed, name: "Float"), left_type, op.str)
+      if right_type.kind != TkAny:
+        self.unify(TypeExpr(kind: TkNamed, name: "Float"), right_type, op.str)
+      return TypeExpr(kind: TkNamed, name: "Float")
+    if left_type.kind != TkAny:
+      self.unify(TypeExpr(kind: TkNamed, name: "Int"), left_type, op.str)
+    if right_type.kind != TkAny:
+      self.unify(TypeExpr(kind: TkNamed, name: "Int"), right_type, op.str)
+    return TypeExpr(kind: TkNamed, name: "Int")
+  of "++":
+    if left_type.kind != TkAny:
+      self.unify(TypeExpr(kind: TkNamed, name: "String"), left_type, "++")
+    if right_type.kind != TkAny:
+      self.unify(TypeExpr(kind: TkNamed, name: "String"), right_type, "++")
+    return TypeExpr(kind: TkNamed, name: "String")
+  of "==", "!=", "<", "<=", ">", ">=":
+    return TypeExpr(kind: TkNamed, name: "Bool")
+  of "&&", "||":
+    return TypeExpr(kind: TkNamed, name: "Bool")
+  of "=":
+    # Assignment
+    self.unify(left_type, right_type, "=")
+    return left_type
+  else:
+    return ANY_TYPE
+
+proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len == 0:
+    return ANY_TYPE
+  var name = "<unnamed>"
+  var args_val: Value = NIL
+  var body_start = 1
+  let first = gene.children[0]
+  if first.kind == VkArray:
+    args_val = first
+    body_start = 1
+  elif first.kind in {VkSymbol, VkString, VkComplexSymbol}:
+    name = first.str
+    if gene.children.len < 2:
+      return ANY_TYPE
+    args_val = gene.children[1]
+    body_start = 2
+  else:
+    return ANY_TYPE
+
+  # Handle optional return type: (-> Type)
+  var return_type: TypeExpr = ANY_TYPE
+  if body_start < gene.children.len:
+    let maybe_arrow = gene.children[body_start]
+    if maybe_arrow.kind == VkSymbol and maybe_arrow.str == "->":
+      if body_start + 1 >= gene.children.len:
+        raise new_exception(types.Exception, "Missing return type after ->")
+      return_type = self.parse_type_expr(gene.children[body_start + 1])
+      body_start += 2
+
+  let params = self.parse_param_annotations(args_val)
+  var fn_params: seq[ParamType] = @[]
+  self.push_scope()
+  for (var_name, label, typ) in params:
+    let t = if typ != nil: typ else: self.fresh_var()
+    fn_params.add(ParamType(label: label, typ: t))
+    if var_name.len > 0 and var_name != "_":
+      self.define(var_name, t)
+
+  # Pre-bind function name for recursion
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type)
+  if name.len > 0 and name != "<unnamed>":
+    self.define(name, fn_type)
+
+  let saved_return = self.current_return
+  self.current_return = return_type
+  var last: TypeExpr = TypeExpr(kind: TkNamed, name: "Nil")
+  for i in body_start..<gene.children.len:
+    last = self.check_expr(gene.children[i])
+  # If no explicit return type, allow inferred last expr
+  if return_type != ANY_TYPE and return_type != nil:
+    self.unify(return_type, last, "fn " & name)
+  self.current_return = saved_return
+  self.pop_scope()
+  return fn_type
+
+proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: ClassInfo): TypeExpr =
+  if gene.children.len == 0:
+    return ANY_TYPE
+  let args_val = gene.children[0]
+  var body_start = 1
+  var return_type: TypeExpr = TypeExpr(kind: TkNamed, name: class_name)
+  if body_start < gene.children.len:
+    let maybe_arrow = gene.children[body_start]
+    if maybe_arrow.kind == VkSymbol and maybe_arrow.str == "->":
+      if body_start + 1 >= gene.children.len:
+        raise new_exception(types.Exception, "Missing return type after ->")
+      return_type = self.parse_type_expr(gene.children[body_start + 1])
+      body_start += 2
+
+  let params = self.parse_param_annotations(args_val)
+  var fn_params: seq[ParamType] = @[]
+  self.push_scope()
+  for (var_name, label, typ) in params:
+    let t = if typ != nil: typ else: self.fresh_var()
+    fn_params.add(ParamType(label: label, typ: t))
+    if var_name.len > 0 and var_name != "_":
+      self.define(var_name, t)
+
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type)
+  cls.ctor_type = fn_type
+
+  let saved_return = self.current_return
+  let saved_class = self.current_class
+  self.current_return = return_type
+  self.current_class = class_name
+  for i in body_start..<gene.children.len:
+    discard self.check_expr(gene.children[i])
+  self.current_return = saved_return
+  self.current_class = saved_class
+  self.pop_scope()
+  return fn_type
+
+proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: ClassInfo): TypeExpr =
+  if gene.children.len < 2:
+    return ANY_TYPE
+  let name_val = gene.children[0]
+  if name_val.kind != VkSymbol:
+    return ANY_TYPE
+  let method_name = name_val.str
+  let args_val = gene.children[1]
+  var body_start = 2
+  var return_type: TypeExpr = ANY_TYPE
+  if body_start < gene.children.len:
+    let maybe_arrow = gene.children[body_start]
+    if maybe_arrow.kind == VkSymbol and maybe_arrow.str == "->":
+      if body_start + 1 >= gene.children.len:
+        raise new_exception(types.Exception, "Missing return type after ->")
+      return_type = self.parse_type_expr(gene.children[body_start + 1])
+      body_start += 2
+
+  let params = self.parse_param_annotations(args_val)
+  var fn_params: seq[ParamType] = @[]
+  # Implicit self param
+  fn_params.add(ParamType(label: "", typ: TypeExpr(kind: TkNamed, name: "Self")))
+  self.push_scope()
+  self.define("self", TypeExpr(kind: TkNamed, name: class_name))
+  for (var_name, label, typ) in params:
+    let t = if typ != nil: typ else: self.fresh_var()
+    fn_params.add(ParamType(label: label, typ: t))
+    if var_name.len > 0 and var_name != "_":
+      self.define(var_name, t)
+
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type)
+  cls.methods[method_name] = fn_type
+
+  let saved_return = self.current_return
+  let saved_class = self.current_class
+  self.current_return = return_type
+  self.current_class = class_name
+  for i in body_start..<gene.children.len:
+    discard self.check_expr(gene.children[i])
+  self.current_return = saved_return
+  self.current_class = saved_class
+  self.pop_scope()
+  return fn_type
+
+proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len == 0:
+    return ANY_TYPE
+  let name_val = gene.children[0]
+  if name_val.kind != VkSymbol:
+    return ANY_TYPE
+  let class_name = name_val.str
+  var body_start = 1
+  var parent_name = ""
+  if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
+    body_start = 3
+    let parent_val = gene.children[2]
+    if parent_val.kind != VkSymbol:
+      raise new_exception(types.Exception, "Invalid superclass for " & class_name)
+    discard self.parse_type_expr(parent_val)
+    parent_name = parent_val.str
+
+  if not gene.props.hasKey("fields".to_key()):
+    raise new_exception(types.Exception, "Class " & class_name & " requires ^fields")
+  let fields_val = gene.props["fields".to_key()]
+  if fields_val.kind != VkMap:
+    raise new_exception(types.Exception, "^fields must be a map in class " & class_name)
+
+  var cls = ClassInfo(
+    name: class_name,
+    parent: parent_name,
+    fields: initTable[string, TypeExpr](),
+    methods: initTable[string, TypeExpr]()
+  )
+  for k, v in map_data(fields_val):
+    let key_name = key_to_string(k)
+    let t = self.parse_type_expr(v)
+    cls.fields[key_name] = t
+
+  self.classes[class_name] = cls
+
+  for i in body_start..<gene.children.len:
+    let child = gene.children[i]
+    if child.kind == VkGene and child.gene != nil and child.gene.`type`.kind == VkSymbol:
+      let k = child.gene.`type`.str
+      if k == "method":
+        discard self.check_method(child.gene, class_name, cls)
+      elif k == "ctor" or k == "ctor!":
+        discard self.check_ctor(child.gene, class_name, cls)
+
+  return TypeExpr(kind: TkNamed, name: class_name)
+
+proc check_symbol(self: TypeChecker, sym: Value): TypeExpr =
+  if sym.kind != VkSymbol:
+    return ANY_TYPE
+  let name = sym.str
+  if name == "self" and self.current_class.len > 0:
+    return TypeExpr(kind: TkNamed, name: self.current_class)
+  let t = self.lookup(name)
+  if t != nil:
+    return t
+  return ANY_TYPE
+
+proc check_complex_symbol(self: TypeChecker, sym: Value): TypeExpr =
+  if sym.kind != VkComplexSymbol:
+    return ANY_TYPE
+  let parts = sym.ref.csymbol
+  if parts.len == 0:
+    return ANY_TYPE
+  var base_name = parts[0]
+  if base_name == "":
+    base_name = "self"
+  let base_type = self.lookup(base_name)
+  if parts.len == 2 and parts[1].startsWith("."):
+    let method_name = parts[1][1..^1]
+    return self.check_method_call(base_type, method_name, @[], initTable[Key, Value](), "method")
+  if parts.len == 2 and not parts[1].startsWith("."):
+    let field_name = parts[1]
+    let rt = self.resolve(base_type)
+    if rt.kind == TkNamed and self.classes.hasKey(rt.name):
+      let cls = self.classes[rt.name]
+      let ft = self.find_field(cls, field_name)
+      if ft == nil:
+        raise new_exception(types.Exception, "Type error: unknown field " & field_name & " on " & rt.name)
+      return ft
+  return ANY_TYPE
+
+proc check_expr(self: TypeChecker, v: Value): TypeExpr =
+  case v.kind
+  of VkInt:
+    return TypeExpr(kind: TkNamed, name: "Int")
+  of VkFloat:
+    return TypeExpr(kind: TkNamed, name: "Float")
+  of VkBool:
+    return TypeExpr(kind: TkNamed, name: "Bool")
+  of VkString:
+    return TypeExpr(kind: TkNamed, name: "String")
+  of VkSymbol:
+    return self.check_symbol(v)
+  of VkComplexSymbol:
+    return self.check_complex_symbol(v)
+  of VkArray:
+    # Infer array element type
+    var elem_type: TypeExpr = nil
+    for item in array_data(v):
+      let t = self.check_expr(item)
+      if elem_type == nil:
+        elem_type = t
+      else:
+        try:
+          self.unify(elem_type, t, "array")
+        except CatchableError:
+          elem_type = ANY_TYPE
+    if elem_type == nil:
+      elem_type = ANY_TYPE
+    return TypeExpr(kind: TkApplied, ctor: "Array", args: @[elem_type])
+  of VkMap:
+    return TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE])
+  of VkGene:
+    let gene = v.gene
+    if gene == nil:
+      return ANY_TYPE
+    # Infix operators
+    if gene.children.len > 0 and gene.children[0].kind == VkSymbol:
+      let op = gene.children[0].str
+      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||"]:
+        return self.check_infix(gene)
+      if gene.children[0].str.startsWith("."):
+        let method_name = gene.children[0].str[1..^1]
+        let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
+        return self.check_method_call(self.check_expr(gene.`type`), method_name, args, gene.props, "method")
+
+    if gene.`type`.kind == VkSymbol:
+      case gene.`type`.str
+      of "var":
+        return self.check_var(gene)
+      of "fn":
+        return self.check_fn(gene)
+      of "class":
+        return self.check_class(gene)
+      of "import":
+        return self.check_import(gene)
+      of "if":
+        return self.check_if(gene)
+      of "do":
+        return self.check_do(gene)
+      of "return":
+        return self.check_return(gene)
+      of "super":
+        return self.check_super_call(gene)
+      of "new", "new!":
+        if gene.children.len == 0:
+          return ANY_TYPE
+        let class_val = gene.children[0]
+        if class_val.kind == VkSymbol and self.classes.hasKey(class_val.str):
+          let cls = self.classes[class_val.str]
+          if cls.ctor_type != nil:
+            let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
+            discard self.check_call(cls.ctor_type, args, gene.props, "new")
+          return TypeExpr(kind: TkNamed, name: class_val.str)
+        return ANY_TYPE
+      of "type":
+        if gene.children.len >= 2 and gene.children[0].kind == VkSymbol:
+          let alias_name = gene.children[0].str
+          let alias_type = self.parse_type_expr(gene.children[1])
+          self.types[alias_name] = alias_type
+        return ANY_TYPE
+      else:
+        discard
+
+    # Function call
+    let callee_type = self.check_expr(gene.`type`)
+    return self.check_call(callee_type, gene.children, gene.props, "call")
+  else:
+    return ANY_TYPE
+
+proc type_check_node*(self: TypeChecker, node: Value) =
+  if node == NIL:
+    return
+  discard self.check_expr(node)

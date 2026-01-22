@@ -2,6 +2,7 @@ import tables, strutils, streams
 
 import ./types
 import ./parser
+import ./type_checker
 import "./compiler/if"
 import "./compiler/case"
 
@@ -588,6 +589,14 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     not_allowed("var requires a name")
   apply_container_to_child(gene, 0)
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
+  # Strip optional type annotation: (var x: Type value)
+  if gene.children.len >= 2:
+    let name_val = gene.children[0]
+    if name_val.kind == VkSymbol and name_val.str.ends_with(":"):
+      let base_name = name_val.str[0..^2].to_symbol_value()
+      gene.children[0] = base_name
+      gene.children.delete(1) # Remove the type expression
+
   let name = gene.children[0]
 
   # Handle global variables like $x
@@ -2728,6 +2737,10 @@ proc compile_gene(self: Compiler, input: Value) =
       of "class":
         self.compile_class(gene)
         return
+      of "type":
+        # Type aliases are compile-time only for now.
+        self.emit(Instruction(kind: IkPushNil))
+        return
       of "object":
         self.compile_object(gene)
         return
@@ -3658,7 +3671,7 @@ proc replace_chunk*(self: var CompilationUnit, start_pos: int, end_pos: int, rep
   self.instructions[start_pos..end_pos] = replacement
 
 # Parse and compile functions - unified interface for future streaming implementation
-proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false): CompilationUnit =
+proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false, type_check = true): CompilationUnit =
   ## Parse and compile Gene code from a string with streaming compilation
   ## Parse one item -> compile immediately -> repeat
 
@@ -3679,6 +3692,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.start_scope()
   
   var is_first = true
+  let checker = if type_check: new_type_checker(true) else: nil
   
   # Streaming compilation: parse one -> compile one -> repeat
   try:
@@ -3690,6 +3704,16 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
           self.emit(Instruction(kind: IkPop))
 
         self.last_error_trace = nil
+        if checker != nil:
+          try:
+            checker.type_check_node(node)
+          except CatchableError as e:
+            var trace: SourceTrace = nil
+            if node.kind == VkGene and node.gene != nil:
+              trace = node.gene.trace
+            let location = trace_location(trace)
+            let message = if location.len > 0: location & ": " & e.msg else: e.msg
+            raise new_exception(types.Exception, message)
         try:
           # Compile current item
           self.compile(node)
@@ -3715,7 +3739,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   
   return self.output
 
-proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: ScopeTracker, eager_functions = false): CompilationUnit =
+proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: ScopeTracker, eager_functions = false, type_check = true): CompilationUnit =
   ## Parse and compile Gene code for REPL inputs with a persistent scope tracker.
   ## The REPL root scope is created outside of compiled code.
 
@@ -3741,6 +3765,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.emit(Instruction(kind: IkStart))
 
   var is_first = true
+  let checker = if type_check: new_type_checker(true) else: nil
 
   try:
     while true:
@@ -3750,6 +3775,16 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
           self.emit(Instruction(kind: IkPop))
 
         self.last_error_trace = nil
+        if checker != nil:
+          try:
+            checker.type_check_node(node)
+          except CatchableError as e:
+            var trace: SourceTrace = nil
+            if node.kind == VkGene and node.gene != nil:
+              trace = node.gene.trace
+            let location = trace_location(trace)
+            let message = if location.len > 0: location & ": " & e.msg else: e.msg
+            raise new_exception(types.Exception, message)
         try:
           self.compile(node)
           is_first = false
@@ -3771,7 +3806,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
 
   return self.output
 
-proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false): CompilationUnit =
+proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false, type_check = true): CompilationUnit =
   ## Parse and compile Gene code from a stream with streaming compilation
   ## This is more memory-efficient for large files as it doesn't load everything into memory
   ## Parse one item -> compile immediately -> repeat
@@ -3792,6 +3827,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   self.start_scope()
 
   var is_first = true
+  let checker = if type_check: new_type_checker(true) else: nil
 
   # Streaming compilation: parse one -> compile one -> repeat
   try:
@@ -3803,6 +3839,16 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
           self.output.instructions.add(Instruction(kind: IkPop))
 
         self.last_error_trace = nil
+        if checker != nil:
+          try:
+            checker.type_check_node(node)
+          except CatchableError as e:
+            var trace: SourceTrace = nil
+            if node.kind == VkGene and node.gene != nil:
+              trace = node.gene.trace
+            let location = trace_location(trace)
+            let message = if location.len > 0: location & ": " & e.msg else: e.msg
+            raise new_exception(types.Exception, message)
         try:
           # Compile current item
           self.compile(node)
