@@ -402,7 +402,7 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
   let keywords = @["var", "fn", "if", "do", "class", "new", "import", "export",
                    "try", "catch", "throw", "async", "await", "for", "while",
                    "return", "break", "continue", "let", "const", "module",
-                   "ns", "namespace"]
+                   "ns", "namespace", "comptime"]
 
   for keyword in keywords:
     result.add(CompletionItem(

@@ -2529,7 +2529,7 @@ proc compile_gene(self: Compiler, input: Value) =
     if first_child.kind == VkSymbol:
       if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
         # Don't convert if the type is already an operator or special form
-        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->", "@"]:
+        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->", "@"]:
           # Convert infix to prefix notation and compile
           # (6 / 2) becomes (/ 6 2)
           # (i + 1) becomes (+ i 1)
@@ -2550,7 +2550,7 @@ proc compile_gene(self: Compiler, input: Value) =
         return
     elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == "":
       # Don't convert if the type is already an operator or special form
-      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "macro", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->"]:
+      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->"]:
         # Convert infix to prefix notation and compile
         # (6 / 2) becomes (/ 6 2)
         # (i + 1) becomes (+ i 1)
@@ -2821,6 +2821,10 @@ proc compile_gene(self: Compiler, input: Value) =
       of "class":
         self.compile_class(gene)
         return
+      of "interface":
+        # Compile-time only for now.
+        self.emit(Instruction(kind: IkPushNil))
+        return
       of "type":
         # Type aliases are compile-time only for now.
         self.emit(Instruction(kind: IkPushNil))
@@ -2895,6 +2899,10 @@ proc compile_gene(self: Compiler, input: Value) =
         return
       of "import":
         self.compile_import(gene)
+        return
+      of "comptime":
+        # Compile-time only; runtime ignores for now.
+        self.emit(Instruction(kind: IkPushNil))
         return
       else:
         let s = `type`.str
@@ -3754,8 +3762,83 @@ proc replace_chunk*(self: var CompilationUnit, start_pos: int, end_pos: int, rep
   self.replace_traces_range(start_pos, end_pos, replacement_count)
   self.instructions[start_pos..end_pos] = replacement
 
+proc is_module_def_node(v: Value): bool =
+  if v.kind != VkGene or v.gene == nil:
+    return false
+  let gt = v.gene.`type`
+  if gt.kind != VkSymbol:
+    return false
+  case gt.str:
+  of "fn", "class", "ns", "enum", "type", "object", "import", "interface", "comptime":
+    return true
+  else:
+    return false
+
+proc is_module_init_fn(v: Value): bool =
+  if v.kind != VkGene or v.gene == nil:
+    return false
+  let gt = v.gene.`type`
+  if gt.kind != VkSymbol or gt.str != "fn":
+    return false
+  if v.gene.children.len == 0:
+    return false
+  let name = v.gene.children[0]
+  case name.kind
+  of VkSymbol, VkString:
+    return name.str == "__init__"
+  else:
+    return false
+
+proc append_init_items(init_fn: Value, items: seq[Value]) =
+  if init_fn.kind != VkGene or init_fn.gene == nil:
+    return
+  for item in items:
+    init_fn.gene.children.add(item)
+
+proc build_init_fn(items: seq[Value]): Value =
+  let g = new_gene("fn".to_symbol_value())
+  g.children.add("__init__".to_symbol_value())
+  let args = new_array_value()
+  g.children.add(args)
+  for item in items:
+    g.children.add(item)
+  result = g.to_gene_value()
+
+proc build_init_call(): Value =
+  let g = new_gene("__init__".to_symbol_value())
+  result = g.to_gene_value()
+
+proc normalize_module_nodes(nodes: seq[Value], run_init: bool): seq[Value] =
+  var defs: seq[Value] = @[]
+  var init_items: seq[Value] = @[]
+  var init_fn: Value = NIL
+
+  for node in nodes:
+    if is_module_init_fn(node):
+      if init_fn != NIL:
+        not_allowed("Duplicate __init__ definition in module")
+      init_fn = node
+      defs.add(node)
+    elif is_module_def_node(node):
+      defs.add(node)
+    else:
+      init_items.add(node)
+
+  if init_items.len > 0:
+    if init_fn != NIL:
+      append_init_items(init_fn, init_items)
+    else:
+      let auto_init = build_init_fn(init_items)
+      defs.add(auto_init)
+      init_fn = auto_init
+
+  if run_init and init_fn != NIL:
+    defs.add(build_init_call())
+
+  result = defs
+
 # Parse and compile functions - unified interface for future streaming implementation
-proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false, type_check = true): CompilationUnit =
+proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false): CompilationUnit =
   ## Parse and compile Gene code from a string with streaming compilation
   ## Parse one item -> compile immediately -> repeat
 
@@ -3777,41 +3860,78 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   
   var is_first = true
   let checker = if type_check: new_type_checker(true) else: nil
-  
-  # Streaming compilation: parse one -> compile one -> repeat
-  try:
-    while true:
-      let node = parser.read()
-      if node != PARSER_IGNORE:
-        # Pop previous result before compiling next item (except for first)
-        if not is_first:
-          self.emit(Instruction(kind: IkPop))
 
-        self.last_error_trace = nil
-        if checker != nil:
-          try:
-            checker.type_check_node(node)
-          except CatchableError as e:
-            var trace: SourceTrace = nil
-            if node.kind == VkGene and node.gene != nil:
-              trace = node.gene.trace
-            let location = trace_location(trace)
-            let message = if location.len > 0: location & ": " & e.msg else: e.msg
-            raise new_exception(types.Exception, message)
+  if module_mode:
+    var nodes: seq[Value] = @[]
+    try:
+      while true:
+        let node = parser.read()
+        if node != PARSER_IGNORE:
+          nodes.add(node)
+    except ParseEofError:
+      discard
+
+    let normalized = normalize_module_nodes(nodes, run_init)
+    for node in normalized:
+      if not is_first:
+        self.emit(Instruction(kind: IkPop))
+
+      self.last_error_trace = nil
+      if checker != nil:
         try:
-          # Compile current item
-          self.compile(node)
-          is_first = false
+          checker.type_check_node(node)
         except CatchableError as e:
-          var trace = self.last_error_trace
-          if trace.is_nil and node.kind == VkGene:
+          var trace: SourceTrace = nil
+          if node.kind == VkGene and node.gene != nil:
             trace = node.gene.trace
           let location = trace_location(trace)
           let message = if location.len > 0: location & ": " & e.msg else: e.msg
           raise new_exception(types.Exception, message)
-  except ParseEofError:
-    # Expected end of input
-    discard
+      try:
+        self.compile(node)
+        is_first = false
+      except CatchableError as e:
+        var trace = self.last_error_trace
+        if trace.is_nil and node.kind == VkGene:
+          trace = node.gene.trace
+        let location = trace_location(trace)
+        let message = if location.len > 0: location & ": " & e.msg else: e.msg
+        raise new_exception(types.Exception, message)
+  else:
+    # Streaming compilation: parse one -> compile one -> repeat
+    try:
+      while true:
+        let node = parser.read()
+        if node != PARSER_IGNORE:
+          # Pop previous result before compiling next item (except for first)
+          if not is_first:
+            self.emit(Instruction(kind: IkPop))
+
+          self.last_error_trace = nil
+          if checker != nil:
+            try:
+              checker.type_check_node(node)
+            except CatchableError as e:
+              var trace: SourceTrace = nil
+              if node.kind == VkGene and node.gene != nil:
+                trace = node.gene.trace
+              let location = trace_location(trace)
+              let message = if location.len > 0: location & ": " & e.msg else: e.msg
+              raise new_exception(types.Exception, message)
+          try:
+            # Compile current item
+            self.compile(node)
+            is_first = false
+          except CatchableError as e:
+            var trace = self.last_error_trace
+            if trace.is_nil and node.kind == VkGene:
+              trace = node.gene.trace
+            let location = trace_location(trace)
+            let message = if location.len > 0: location & ": " & e.msg else: e.msg
+            raise new_exception(types.Exception, message)
+    except ParseEofError:
+      # Expected end of input
+      discard
   
   # Finalize compilation
   self.end_scope()
@@ -3820,6 +3940,8 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
+  if module_mode:
+    self.output.kind = CkModule
   
   return self.output
 
@@ -3887,10 +4009,12 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
+  if module_mode:
+    self.output.kind = CkModule
 
   return self.output
 
-proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false, type_check = true): CompilationUnit =
+proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false): CompilationUnit =
   ## Parse and compile Gene code from a stream with streaming compilation
   ## This is more memory-efficient for large files as it doesn't load everything into memory
   ## Parse one item -> compile immediately -> repeat
@@ -3913,40 +4037,78 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   var is_first = true
   let checker = if type_check: new_type_checker(true) else: nil
 
-  # Streaming compilation: parse one -> compile one -> repeat
-  try:
-    while true:
-      let node = parser.read()
-      if node != PARSER_IGNORE:
-        # Pop previous result before compiling next item (except for first)
-        if not is_first:
-          self.output.instructions.add(Instruction(kind: IkPop))
+  if module_mode:
+    var nodes: seq[Value] = @[]
+    try:
+      while true:
+        let node = parser.read()
+        if node != PARSER_IGNORE:
+          nodes.add(node)
+    except ParseEofError:
+      discard
 
-        self.last_error_trace = nil
-        if checker != nil:
-          try:
-            checker.type_check_node(node)
-          except CatchableError as e:
-            var trace: SourceTrace = nil
-            if node.kind == VkGene and node.gene != nil:
-              trace = node.gene.trace
-            let location = trace_location(trace)
-            let message = if location.len > 0: location & ": " & e.msg else: e.msg
-            raise new_exception(types.Exception, message)
+    let normalized = normalize_module_nodes(nodes, run_init)
+    for node in normalized:
+      if not is_first:
+        self.output.instructions.add(Instruction(kind: IkPop))
+
+      self.last_error_trace = nil
+      if checker != nil:
         try:
-          # Compile current item
-          self.compile(node)
-          is_first = false
+          checker.type_check_node(node)
         except CatchableError as e:
-          var trace = self.last_error_trace
-          if trace.is_nil and node.kind == VkGene:
+          var trace: SourceTrace = nil
+          if node.kind == VkGene and node.gene != nil:
             trace = node.gene.trace
           let location = trace_location(trace)
           let message = if location.len > 0: location & ": " & e.msg else: e.msg
           raise new_exception(types.Exception, message)
-  except ParseEofError:
-    # Expected end of input
-    discard
+      try:
+        # Compile current item
+        self.compile(node)
+        is_first = false
+      except CatchableError as e:
+        var trace = self.last_error_trace
+        if trace.is_nil and node.kind == VkGene:
+          trace = node.gene.trace
+        let location = trace_location(trace)
+        let message = if location.len > 0: location & ": " & e.msg else: e.msg
+        raise new_exception(types.Exception, message)
+  else:
+    # Streaming compilation: parse one -> compile one -> repeat
+    try:
+      while true:
+        let node = parser.read()
+        if node != PARSER_IGNORE:
+          # Pop previous result before compiling next item (except for first)
+          if not is_first:
+            self.output.instructions.add(Instruction(kind: IkPop))
+
+          self.last_error_trace = nil
+          if checker != nil:
+            try:
+              checker.type_check_node(node)
+            except CatchableError as e:
+              var trace: SourceTrace = nil
+              if node.kind == VkGene and node.gene != nil:
+                trace = node.gene.trace
+              let location = trace_location(trace)
+              let message = if location.len > 0: location & ": " & e.msg else: e.msg
+              raise new_exception(types.Exception, message)
+          try:
+            # Compile current item
+            self.compile(node)
+            is_first = false
+          except CatchableError as e:
+            var trace = self.last_error_trace
+            if trace.is_nil and node.kind == VkGene:
+              trace = node.gene.trace
+            let location = trace_location(trace)
+            let message = if location.len > 0: location & ": " & e.msg else: e.msg
+            raise new_exception(types.Exception, message)
+    except ParseEofError:
+      # Expected end of input
+      discard
 
   # Finalize compilation
   self.end_scope()

@@ -7501,8 +7501,27 @@ proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value])
   else:
     not_allowed("Value is not callable: " & $callable.kind)
 
+proc maybe_run_module_init*(self: ptr VirtualMachine): tuple[ran: bool, value: Value] =
+  if self.frame == nil or self.frame.ns == nil:
+    return (false, NIL)
+  let ns = self.frame.ns
+  let ran_key = "__init_ran__".to_key()
+  if ns.members.getOrDefault(ran_key, FALSE) == TRUE:
+    return (false, NIL)
+  let main_key = "__is_main__".to_key()
+  if ns.members.getOrDefault(main_key, FALSE) != TRUE:
+    return (false, NIL)
+  let init_key = "__init__".to_key()
+  if not ns.members.hasKey(init_key):
+    return (false, NIL)
+  let init_val = ns.members[init_key]
+  if init_val == NIL:
+    return (false, NIL)
+  ns.members[ran_key] = TRUE
+  return (true, self.exec_callable(init_val, @[]))
+
 proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
-  let compiled = parse_and_compile(code, module_name)
+  let compiled = parse_and_compile(code, module_name, module_mode = true, run_init = false)
 
   let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
   ns["__module_name__".to_key()] = module_name.to_value()
@@ -7530,11 +7549,15 @@ proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
   # Self is now passed as argument, not stored in frame
   self.cu = compiled
 
-  self.exec()
+  let result = self.exec()
+  let init_result = self.maybe_run_module_init()
+  if init_result.ran:
+    return init_result.value
+  return result
 
 proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value =
   ## Execute Gene code from a stream (more memory-efficient for large files)
-  let compiled = parse_and_compile(stream, module_name)
+  let compiled = parse_and_compile(stream, module_name, module_mode = true, run_init = false)
 
   let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
   ns["__module_name__".to_key()] = module_name.to_value()
@@ -7554,7 +7577,11 @@ proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value
   # Self is now passed as argument, not stored in frame
   self.cu = compiled
 
-  self.exec()
+  let result = self.exec()
+  let init_result = self.maybe_run_module_init()
+  if init_result.ran:
+    return init_result.value
+  return result
 
 # Generator execution implementation
 proc exec_generator_impl*(self: ptr VirtualMachine, gen: GeneratorObj): Value {.exportc.} =

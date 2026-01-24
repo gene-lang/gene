@@ -530,8 +530,7 @@ proc compile_module*(path: string): CompilationUnit =
       not_allowed("Failed to open module '" & path & "'")
 
   let code = readFile(actual_path)
-  let parsed = read_all(code)
-  return compile(parsed)
+  return parse_and_compile(code, actual_path, module_mode = true, run_init = false)
 
 proc load_module*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a module from file and return its namespace

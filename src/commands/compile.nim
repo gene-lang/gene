@@ -46,7 +46,7 @@ Options:
   -a, --addresses         Show instruction addresses
   --force                 Rebuild even if cache is up-to-date
   --emit-debug            Include debug info in GIR files
-  --eager                Eagerly compile function bodies (compile command only)
+  --eager                 Eagerly compile function bodies (default for GIR output)
   --no-typecheck          Disable static type checking
 
 Examples:
@@ -116,6 +116,10 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       options.format = "gir"  # Default to GIR for files
     else:
       options.format = "pretty"  # Default to pretty for eval/stdin
+
+  # Static/AOT direction: default to eager compilation for GIR output
+  if options.format == "gir" and not options.eager_functions:
+    options.eager_functions = true
   
   if options.help:
     echo help_text
@@ -155,7 +159,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
             stderr.writeLine("Error: Failed to open file: " & file)
             quit(1)
           defer: stream.close()
-          let compiled = parse_and_compile(stream, file, options.eager_functions, options.type_check)
+          let compiled = parse_and_compile(stream, file, options.eager_functions, options.type_check, module_mode = true, run_init = false)
 
           # Save to GIR file
           save_gir(compiled, gir_path, file, options.emit_debug)

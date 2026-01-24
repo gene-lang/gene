@@ -185,6 +185,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     VM.cu = compiled
     try:
       discard VM.exec()
+      discard VM.maybe_run_module_init()
     except CatchableError as e:
       return handle_exec_error(e)
 
@@ -222,6 +223,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         VM.cu = compiled
         try:
           discard VM.exec()
+          discard VM.maybe_run_module_init()
         except CatchableError as e:
           return handle_exec_error(e)
 
@@ -242,7 +244,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       # so we can inspect compilation output and then execute
       let code = if code != "": code else: readFile(file)
       echo "=== Compilation Output ==="
-      let compiled = parse_and_compile(code, file, type_check = options.type_check)
+      let compiled = parse_and_compile(code, file, type_check = options.type_check, module_mode = true, run_init = false)
       echo "Instructions:"
       for i, instr in compiled.instructions:
         echo fmt"{i:04X} {instr}"
@@ -268,11 +270,14 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         VM.frame.update(new_frame(ns))
       VM.cu = compiled
       value = VM.exec()
+      let init_result = VM.maybe_run_module_init()
+      if init_result.ran:
+        value = init_result.value
     elif options.compile or options.debugging:
       # For trace/debug modes, we need to read the file into memory
       let code = if code != "": code else: readFile(file)
       echo "=== Compilation Output ==="
-      let compiled = parse_and_compile(code, file, type_check = options.type_check)
+      let compiled = parse_and_compile(code, file, type_check = options.type_check, module_mode = true, run_init = false)
       echo "Instructions:"
       for i, instr in compiled.instructions:
         echo fmt"{i:03d}: {instr}"
@@ -285,6 +290,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         echo "=== Execution Trace ==="
         VM.cu = compiled
       value = VM.exec()
+      let init_result = VM.maybe_run_module_init()
+      if init_result.ran:
+        value = init_result.value
     else:
       # Normal execution
       # Check if code was already read (from stdin or --eval)
