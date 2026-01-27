@@ -1,4 +1,7 @@
+import os, unittest
+
 import gene/types except Exception
+import gene/vm
 
 import ./helpers
 
@@ -70,6 +73,41 @@ test_vm """
   (import value from "tests/fixtures/mod_if_main")
   value
 """, 0
+
+test_vm """
+  (comptime
+    (var target "mod1")
+    (if (target == "mod1")
+      (import a from "tests/fixtures/mod1")
+    else
+      (import b from "tests/fixtures/mod1")
+    )
+  )
+  a
+""", 1
+
+test "Compilation & VM: comptime import uses $env":
+  init_all()
+  let previous = getEnv("GENE_TARGET", "")
+  try:
+    putEnv("GENE_TARGET", "mod1")
+    let code = cleanup("""
+      (comptime
+        (var target ($env "GENE_TARGET"))
+        (if (target == "mod1")
+          (import a from "tests/fixtures/mod1")
+        else
+          (import b from "tests/fixtures/mod1")
+        )
+      )
+      a
+    """)
+    check VM.exec(code, "test_code") == 1
+  finally:
+    if previous.len > 0:
+      putEnv("GENE_TARGET", previous)
+    else:
+      delEnv("GENE_TARGET")
 
 # test_vm """
 #   (ns n

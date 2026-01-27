@@ -1,0 +1,16 @@
+# Comptime conditional import tests
+
+(comptime
+  (var target "math")
+  (if (target == "math")
+    (import * from "math_lib")
+  else
+    (import * from "string_lib")
+  )
+)
+
+(println "comptime add =" (add 2 3))
+# Expected: comptime add = 5
+
+(println "Comptime import tests completed")
+# Expected: Comptime import tests completed

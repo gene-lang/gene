@@ -322,7 +322,7 @@ catch *
   )
   (method add [x y]
     (var result (x + y))
-    (/.store "last" result)
+    (.store "last" result)
     result
   )
 )

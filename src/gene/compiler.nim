@@ -1,4 +1,4 @@
-import tables, strutils, streams
+import tables, strutils, streams, os
 
 import ./types
 import ./parser
@@ -422,6 +422,8 @@ proc start_scope(self: Compiler) =
   self.scope_trackers.add(scope_tracker)
   # ScopeStart is added when the first variable is declared
 proc add_scope_start(self: Compiler) =
+  if self.module_init_mode and self.scope_trackers.len == 1:
+    return
   if self.scope_tracker.next_index == 0:
     if self.skip_root_scope_start and self.scope_trackers.len == 1:
       self.scope_tracker.scope_started = true
@@ -432,6 +434,9 @@ proc add_scope_start(self: Compiler) =
     self.started_scope_depth.inc()
 
 proc end_scope(self: Compiler) =
+  if (self.module_init_mode or self.preserve_root_scope) and self.scope_trackers.len == 1:
+    discard self.scope_trackers.pop()
+    return
   # If we added a ScopeStart (either because we have variables or we explicitly marked it),
   # we need to add the corresponding ScopeEnd
   let should_end = self.scope_tracker.next_index > 0 or self.scope_tracker.scope_started
@@ -760,8 +765,34 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
   if name.kind != VkSymbol:
     not_allowed("Variable name must be a symbol, got " & $name.kind)
     
+  let key = name.str.to_key()
+  if self.scope_tracker.mappings.has_key(key):
+    let index = self.scope_tracker.mappings[key]
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+      self.add_scope_start()
+      self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
+    else:
+      self.add_scope_start()
+      self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
+    return
+
+  if self.module_init_mode:
+    let found = self.scope_tracker.locate(key)
+    if found.local_index >= 0:
+      var parent_index = found.parent_index
+      if parent_index == 0:
+        parent_index = 1
+      if gene.children.len > 1:
+        self.compile(gene.children[1])
+      else:
+        self.emit(Instruction(kind: IkPushNil))
+      self.add_scope_start()
+      self.emit(Instruction(kind: IkVarAssignInherited, arg0: found.local_index.to_value(), arg1: parent_index))
+      return
+
   let index = self.scope_tracker.next_index
-  self.scope_tracker.mappings[name.str.to_key()] = index
+  self.scope_tracker.mappings[key] = index
   if gene.children.len > 1:
     self.compile(gene.children[1])
     self.add_scope_start()
@@ -3146,16 +3177,20 @@ proc optimize_noops(self: CompilationUnit) =
         removed_count.inc()
     else:
       var modified_inst = inst
-      if pending_labels.len > 0 and inst.label == 0:
-        modified_inst.label = pending_labels[0]
-        pending_labels.delete(0)
+      if pending_labels.len > 0:
+        if inst.label == 0:
+          modified_inst.label = pending_labels[0]
+          if pending_labels.len > 1:
+            for j in 1..<pending_labels.len:
+              new_instructions.add(Instruction(kind: IkNoop, label: pending_labels[j]))
+              new_traces.add(nil)
+        else:
+          for label in pending_labels:
+            new_instructions.add(Instruction(kind: IkNoop, label: label))
+            new_traces.add(nil)
+        pending_labels = @[]
       new_instructions.add(modified_inst)
       new_traces.add(trace)
-
-      for label in pending_labels:
-        new_instructions.add(Instruction(kind: IkNoop, label: label))
-        new_traces.add(nil)
-      pending_labels = @[]
 
   for label in pending_labels:
     new_instructions.add(Instruction(kind: IkNoop, label: label))
@@ -3211,6 +3246,7 @@ proc compile*(f: Function, eager_functions: bool) =
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.module_init_mode = f.name == "__init__"
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
 
@@ -3762,6 +3798,401 @@ proc replace_chunk*(self: var CompilationUnit, start_pos: int, end_pos: int, rep
   self.replace_traces_range(start_pos, end_pos, replacement_count)
   self.instructions[start_pos..end_pos] = replacement
 
+proc is_module_def_node(v: Value): bool
+
+type
+  # Lightweight compile-time evaluator used to expand (comptime ...) blocks.
+  ComptimeEnv = object
+    vars: Table[string, Value]
+
+  ComptimeResult = object
+    value: Value
+    emitted: seq[Value]
+
+proc merge_emitted(dest: var seq[Value], src: seq[Value]) {.inline.} =
+  if src.len > 0:
+    dest.add(src)
+
+proc new_comptime_env(): ComptimeEnv =
+  ComptimeEnv(vars: initTable[string, Value]())
+
+proc is_comptime_node(v: Value): bool =
+  if v.kind != VkGene or v.gene == nil:
+    return false
+  let gt = v.gene.`type`
+  gt.kind == VkSymbol and gt.str == "comptime"
+
+proc eval_comptime_expr(expr: Value, env: var ComptimeEnv): ComptimeResult
+
+proc eval_comptime_stream(stream_val: Value, env: var ComptimeEnv): ComptimeResult =
+  result.value = NIL
+  case stream_val.kind
+  of VkStream:
+    for item in stream_val.ref.stream:
+      let r = eval_comptime_expr(item, env)
+      merge_emitted(result.emitted, r.emitted)
+      result.value = r.value
+  else:
+    result = eval_comptime_expr(stream_val, env)
+
+proc comptime_add(a, b: Value): Value =
+  if is_small_int(a) and is_small_int(b):
+    return (to_int(a) + to_int(b)).to_value()
+  if is_float(a) or is_float(b):
+    return (to_float(a) + to_float(b)).to_value()
+  not_allowed("comptime: + expects numbers")
+
+proc comptime_sub(a, b: Value): Value =
+  if is_small_int(a) and is_small_int(b):
+    return (to_int(a) - to_int(b)).to_value()
+  if is_float(a) or is_float(b):
+    return (to_float(a) - to_float(b)).to_value()
+  not_allowed("comptime: - expects numbers")
+
+proc comptime_mul(a, b: Value): Value =
+  if is_small_int(a) and is_small_int(b):
+    return (to_int(a) * to_int(b)).to_value()
+  if is_float(a) or is_float(b):
+    return (to_float(a) * to_float(b)).to_value()
+  not_allowed("comptime: * expects numbers")
+
+proc comptime_div(a, b: Value): Value =
+  if is_small_int(a) and is_small_int(b):
+    return (to_int(a).float64 / to_int(b).float64).to_value()
+  if is_float(a) or is_float(b):
+    return (to_float(a) / to_float(b)).to_value()
+  not_allowed("comptime: / expects numbers")
+
+proc comptime_concat(a, b: Value): Value =
+  if a.kind == VkString and b.kind == VkString:
+    return new_str_value(a.str & b.str)
+  not_allowed("comptime: ++ expects two strings")
+
+proc comptime_compare(op: string, a, b: Value): Value =
+  if is_small_int(a) and is_small_int(b):
+    let ai = to_int(a)
+    let bi = to_int(b)
+    case op
+    of "<": return (ai < bi).to_value()
+    of "<=": return (ai <= bi).to_value()
+    of ">": return (ai > bi).to_value()
+    of ">=": return (ai >= bi).to_value()
+    else: discard
+  if is_float(a) or is_float(b):
+    let af = to_float(a)
+    let bf = to_float(b)
+    case op
+    of "<": return (af < bf).to_value()
+    of "<=": return (af <= bf).to_value()
+    of ">": return (af > bf).to_value()
+    of ">=": return (af >= bf).to_value()
+    else: discard
+  if a.kind == VkString and b.kind == VkString:
+    case op
+    of "<": return (a.str < b.str).to_value()
+    of "<=": return (a.str <= b.str).to_value()
+    of ">": return (a.str > b.str).to_value()
+    of ">=": return (a.str >= b.str).to_value()
+    else: discard
+  not_allowed("comptime: comparison expects numbers or strings")
+
+proc eval_comptime_operator(op: string, args: seq[Value], env: var ComptimeEnv): ComptimeResult =
+  case op
+  of "=":
+    if args.len != 2:
+      not_allowed("comptime: = expects exactly 2 arguments")
+    if args[0].kind != VkSymbol:
+      not_allowed("comptime: assignment expects a symbol on the left")
+    let r = eval_comptime_expr(args[1], env)
+    merge_emitted(result.emitted, r.emitted)
+    env.vars[args[0].str] = r.value
+    result.value = r.value
+    return
+  of "+=", "-=":
+    if args.len != 2 or args[0].kind != VkSymbol:
+      not_allowed("comptime: compound assignment expects a symbol and a value")
+    let current =
+      if env.vars.hasKey(args[0].str): env.vars[args[0].str]
+      else: NIL
+    let rhs = eval_comptime_expr(args[1], env)
+    merge_emitted(result.emitted, rhs.emitted)
+    let new_val =
+      if op == "+=": comptime_add(current, rhs.value)
+      else: comptime_sub(current, rhs.value)
+    env.vars[args[0].str] = new_val
+    result.value = new_val
+    return
+  of "&&", "||":
+    if args.len != 2:
+      not_allowed("comptime: logical operator expects 2 arguments")
+    let left = eval_comptime_expr(args[0], env)
+    merge_emitted(result.emitted, left.emitted)
+    if op == "&&":
+      if not to_bool(left.value):
+        result.value = FALSE
+        return
+    else:
+      if to_bool(left.value):
+        result.value = TRUE
+        return
+    let right = eval_comptime_expr(args[1], env)
+    merge_emitted(result.emitted, right.emitted)
+    result.value = (right.value != FALSE and right.value != NIL).to_value()
+    return
+  else:
+    discard
+
+  if args.len == 0:
+    not_allowed("comptime: operator expects arguments")
+
+  # Evaluate arguments before applying operator
+  var values: seq[Value] = @[]
+  for arg in args:
+    let r = eval_comptime_expr(arg, env)
+    merge_emitted(result.emitted, r.emitted)
+    values.add(r.value)
+
+  case op
+  of "+":
+    var acc = values[0]
+    for i in 1..<values.len:
+      acc = comptime_add(acc, values[i])
+    result.value = acc
+  of "-":
+    if values.len == 1:
+      if is_small_int(values[0]):
+        result.value = (-to_int(values[0])).to_value()
+      elif is_float(values[0]):
+        result.value = (-to_float(values[0])).to_value()
+      else:
+        not_allowed("comptime: unary - expects number")
+    else:
+      var acc = values[0]
+      for i in 1..<values.len:
+        acc = comptime_sub(acc, values[i])
+      result.value = acc
+  of "*":
+    var acc = values[0]
+    for i in 1..<values.len:
+      acc = comptime_mul(acc, values[i])
+    result.value = acc
+  of "/":
+    var acc = values[0]
+    for i in 1..<values.len:
+      acc = comptime_div(acc, values[i])
+    result.value = acc
+  of "++":
+    var acc = values[0]
+    for i in 1..<values.len:
+      acc = comptime_concat(acc, values[i])
+    result.value = acc
+  of "==":
+    if values.len != 2:
+      not_allowed("comptime: == expects exactly 2 arguments")
+    result.value = (values[0] == values[1]).to_value()
+  of "!=":
+    if values.len != 2:
+      not_allowed("comptime: != expects exactly 2 arguments")
+    result.value = (values[0] != values[1]).to_value()
+  of "<", "<=", ">", ">=":
+    if values.len != 2:
+      not_allowed("comptime: comparison expects exactly 2 arguments")
+    result.value = comptime_compare(op, values[0], values[1])
+  else:
+    not_allowed("comptime: unsupported operator " & op)
+
+proc eval_comptime_var(gene: ptr Gene, env: var ComptimeEnv): ComptimeResult =
+  if gene.children.len == 0:
+    result.value = NIL
+    return
+  var name_val = gene.children[0]
+  if name_val.kind != VkSymbol:
+    not_allowed("comptime: var expects a symbol name")
+  var name = name_val.str
+  var value_index = 1
+  if name.endsWith(":"):
+    name = name[0..^2]
+    if gene.children.len > 1:
+      value_index = 2
+  if gene.children.len > value_index:
+    let r = eval_comptime_expr(gene.children[value_index], env)
+    merge_emitted(result.emitted, r.emitted)
+    env.vars[name] = r.value
+    result.value = r.value
+  else:
+    env.vars[name] = NIL
+    result.value = NIL
+
+proc eval_comptime_if(gene: ptr Gene, env: var ComptimeEnv): ComptimeResult =
+  normalize_if(gene)
+  let cond_val = gene.props.get_or_default("cond".to_key(), NIL)
+  let cond_res = eval_comptime_expr(cond_val, env)
+  merge_emitted(result.emitted, cond_res.emitted)
+
+  if cond_res.value:
+    let then_stream = gene.props.get_or_default("then".to_key(), NIL)
+    let then_res = eval_comptime_stream(then_stream, env)
+    merge_emitted(result.emitted, then_res.emitted)
+    result.value = then_res.value
+    return
+
+  if gene.props.hasKey("elif".to_key()):
+    let elifs = array_data(gene.props["elif".to_key()])
+    var i = 0
+    while i + 1 < elifs.len:
+      let elif_cond = eval_comptime_expr(elifs[i], env)
+      merge_emitted(result.emitted, elif_cond.emitted)
+      if elif_cond.value:
+        let elif_body = eval_comptime_stream(elifs[i + 1], env)
+        merge_emitted(result.emitted, elif_body.emitted)
+        result.value = elif_body.value
+        return
+      i += 2
+
+  let else_stream = gene.props.get_or_default("else".to_key(), NIL)
+  let else_res = eval_comptime_stream(else_stream, env)
+  merge_emitted(result.emitted, else_res.emitted)
+  result.value = else_res.value
+
+proc eval_comptime_env_call(gene: ptr Gene, env: var ComptimeEnv): ComptimeResult =
+  if gene.children.len == 0:
+    not_allowed("comptime: $env/get_env expects at least 1 argument")
+  let name_res = eval_comptime_expr(gene.children[0], env)
+  merge_emitted(result.emitted, name_res.emitted)
+  let name =
+    if name_res.value.kind == VkString:
+      name_res.value.str
+    elif name_res.value.kind == VkSymbol:
+      name_res.value.str
+    else:
+      not_allowed("comptime: $env/get_env expects a string or symbol")
+      ""
+  let value = getEnv(name, "")
+  if value == "":
+    if gene.children.len > 1:
+      let default_res = eval_comptime_expr(gene.children[1], env)
+      merge_emitted(result.emitted, default_res.emitted)
+      result.value = default_res.value
+    else:
+      result.value = NIL
+  else:
+    result.value = value.to_value()
+
+proc eval_comptime_expr(expr: Value, env: var ComptimeEnv): ComptimeResult =
+  case expr.kind
+  of VkNil, VkVoid, VkBool, VkInt, VkFloat, VkChar, VkBytes, VkString, VkRegex, VkRange:
+    result.value = expr
+  of VkSymbol:
+    if env.vars.hasKey(expr.str):
+      result.value = env.vars[expr.str]
+    else:
+      not_allowed("comptime: unknown variable " & expr.str)
+  of VkComplexSymbol:
+    result.value = expr
+  of VkQuote:
+    result.value = expr.ref.quote
+  of VkUnquote:
+    if expr.ref.unquote_discard:
+      let r = eval_comptime_expr(expr.ref.unquote, env)
+      merge_emitted(result.emitted, r.emitted)
+      result.value = NIL
+    else:
+      result = eval_comptime_expr(expr.ref.unquote, env)
+  of VkArray:
+    let out_val = new_array_value()
+    for item in array_data(expr):
+      let r = eval_comptime_expr(item, env)
+      merge_emitted(result.emitted, r.emitted)
+      array_data(out_val).add(r.value)
+    result.value = out_val
+  of VkMap:
+    let out_val = new_map_value()
+    for k, v in map_data(expr):
+      let r = eval_comptime_expr(v, env)
+      merge_emitted(result.emitted, r.emitted)
+      map_data(out_val)[k] = r.value
+    result.value = out_val
+  of VkGene:
+    let gene = expr.gene
+    if gene == nil:
+      result.value = NIL
+      return
+
+    # Infix notation: (x + y) => type=x, children=[+, y]
+    if gene.children.len >= 1 and gene.children[0].kind == VkSymbol:
+      let op = gene.children[0].str
+      if op in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "++", "=", "+=", "-="]:
+        if gene.`type`.kind != VkSymbol or gene.`type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "interface", "comptime", "type", "object", "$", ".", "->", "@"]:
+          let args = @[gene.`type`] & gene.children[1..^1]
+          result = eval_comptime_operator(op, args, env)
+          return
+
+    if gene.`type`.kind == VkSymbol:
+      case gene.`type`.str
+      of "var":
+        result = eval_comptime_var(gene, env)
+        return
+      of "do":
+        if gene.children.len == 0:
+          result.value = NIL
+          return
+        var last: ComptimeResult
+        for child in gene.children:
+          let r = eval_comptime_expr(child, env)
+          merge_emitted(result.emitted, r.emitted)
+          last = r
+        result.value = last.value
+        return
+      of "if":
+        result = eval_comptime_if(gene, env)
+        return
+      of "not":
+        if gene.children.len != 1:
+          not_allowed("comptime: not expects exactly 1 argument")
+        let r = eval_comptime_expr(gene.children[0], env)
+        merge_emitted(result.emitted, r.emitted)
+        result.value = (not to_bool(r.value)).to_value()
+        return
+      of "comptime":
+        for child in gene.children:
+          let r = eval_comptime_expr(child, env)
+          merge_emitted(result.emitted, r.emitted)
+        result.value = NIL
+        return
+      of "$env", "get_env":
+        result = eval_comptime_env_call(gene, env)
+        return
+      of "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||":
+        result = eval_comptime_operator(gene.`type`.str, gene.children, env)
+        return
+      else:
+        discard
+
+    if is_module_def_node(expr) and gene.`type`.kind == VkSymbol and gene.`type`.str != "comptime":
+      result.emitted.add(expr)
+      result.value = NIL
+      return
+
+    not_allowed("comptime: unsupported expression")
+  else:
+    result.value = expr
+
+proc eval_comptime_block(node: Value, env: var ComptimeEnv): seq[Value] =
+  if node.kind != VkGene or node.gene == nil:
+    return @[]
+  for child in node.gene.children:
+    let r = eval_comptime_expr(child, env)
+    merge_emitted(result, r.emitted)
+
+proc expand_comptime_nodes(nodes: seq[Value], env: var ComptimeEnv): seq[Value] =
+  for node in nodes:
+    if is_comptime_node(node):
+      let emitted = eval_comptime_block(node, env)
+      if emitted.len > 0:
+        result.add(expand_comptime_nodes(emitted, env))
+    else:
+      result.add(node)
+
 proc is_module_def_node(v: Value): bool =
   if v.kind != VkGene or v.gene == nil:
     return false
@@ -3807,6 +4238,39 @@ proc build_init_fn(items: seq[Value]): Value =
 proc build_init_call(): Value =
   let g = new_gene("__init__".to_symbol_value())
   result = g.to_gene_value()
+
+proc predeclare_module_vars(self: Compiler, nodes: seq[Value]) =
+  for node in nodes:
+    if node.kind != VkGene or node.gene == nil:
+      continue
+    let gt = node.gene.`type`
+    if gt.kind != VkSymbol or gt.str != "var":
+      continue
+    if node.gene.children.len == 0:
+      continue
+    let name_val = node.gene.children[0]
+    if name_val.kind != VkSymbol:
+      continue
+    var name = name_val.str
+    if name.len == 0:
+      continue
+    if name == "$ns":
+      continue
+    if name[0] == '$':
+      continue
+    if name.contains("/"):
+      continue
+    if name.endsWith(":"):
+      if name.len <= 1:
+        continue
+      name = name[0..^2]
+      if name.len == 0:
+        continue
+    let key = name.to_key()
+    if not self.scope_tracker.mappings.has_key(key):
+      let index = self.scope_tracker.next_index
+      self.scope_tracker.mappings[key] = index
+      self.scope_tracker.next_index.inc()
 
 proc normalize_module_nodes(nodes: seq[Value], run_init: bool): seq[Value] =
   var defs: seq[Value] = @[]
@@ -3855,6 +4319,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.preserve_root_scope = module_mode
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
   
@@ -3871,7 +4336,14 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
     except ParseEofError:
       discard
 
-    let normalized = normalize_module_nodes(nodes, run_init)
+    var comptime_env = new_comptime_env()
+    let expanded = expand_comptime_nodes(nodes, comptime_env)
+    self.predeclare_module_vars(expanded)
+    if self.scope_tracker.next_index > 0 and not self.scope_tracker.scope_started:
+      self.emit(Instruction(kind: IkScopeStart, arg0: self.scope_tracker.to_value()))
+      self.scope_tracker.scope_started = true
+      self.started_scope_depth.inc()
+    let normalized = normalize_module_nodes(expanded, run_init)
     for node in normalized:
       if not is_first:
         self.emit(Instruction(kind: IkPop))
@@ -4009,8 +4481,6 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
-  if module_mode:
-    self.output.kind = CkModule
 
   return self.output
 
@@ -4031,6 +4501,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.preserve_root_scope = module_mode
   self.output.instructions.add(Instruction(kind: IkStart))
   self.start_scope()
 
@@ -4047,7 +4518,14 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
     except ParseEofError:
       discard
 
-    let normalized = normalize_module_nodes(nodes, run_init)
+    var comptime_env = new_comptime_env()
+    let expanded = expand_comptime_nodes(nodes, comptime_env)
+    self.predeclare_module_vars(expanded)
+    if self.scope_tracker.next_index > 0 and not self.scope_tracker.scope_started:
+      self.emit(Instruction(kind: IkScopeStart, arg0: self.scope_tracker.to_value()))
+      self.scope_tracker.scope_started = true
+      self.started_scope_depth.inc()
+    let normalized = normalize_module_nodes(expanded, run_init)
     for node in normalized:
       if not is_first:
         self.output.instructions.add(Instruction(kind: IkPop))
@@ -4117,6 +4595,8 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
+  if module_mode:
+    self.output.kind = CkModule
 
   return self.output
 

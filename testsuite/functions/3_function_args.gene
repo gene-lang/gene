@@ -3,14 +3,14 @@
 # ====================
 # Positional arguments
 # ====================
-(fn f [a]
+(fn f1 [a]
   (println "a:" a)
 )
-(f 1)
+(f1 1)
 # Expected: a: 1
 
 (try
-  (f) # Should throw error
+  (f1) # Should throw error
 catch *
   (println "Error caught")
 )
@@ -27,31 +27,31 @@ catch *
 (println "Skipping type error test (compile-time)")
 # Expected: Skipping type error test (compile-time)
 
-(fn f [a = 1]
+(fn f2 [a = 1]
   (println "a:" a)
 )
 
-(f)
+(f2)
 # Expected: a: 1
-(f 2)
+(f2 2)
 # Expected: a: 2
 
 # NOTE: With static typing, (f 1 2) is now a compile-time error
 (println "Skipping type error test (compile-time)")
 # Expected: Skipping type error test (compile-time)
 
-(fn f [a b...]
+(fn f3 [a b...]
   (println "a:" a "b:" b)
 )
-(f 1)
+(f3 1)
 # Expected: a: 1 b: []
-(f 1 2)
+(f3 1 2)
 # Expected: a: 1 b: [2]
-(f 1 2 3)
+(f3 1 2 3)
 # Expected: a: 1 b: [2 3]
 
 (try
-  (f) # Should throw error
+  (f3) # Should throw error
 catch *
   (println "Error caught")
 )
@@ -60,17 +60,17 @@ catch *
 # =================
 # Keyword arguments
 # =================
-(fn f [^a ^^b ^!c ^d = 4]
+(fn f4 [^a ^^b ^!c ^d = 4]
   (println "a:" a "b:" b "c:" c "d:" d)
 )
-(f ^a 1)
+(f4 ^a 1)
 # Expected: a: 1 b: true c: nil d: 4
 
-(f ^a 1 ^!b ^^c ^d 5)
+(f4 ^a 1 ^!b ^^c ^d 5)
 # Expected: a: 1 b: nil c: true d: 5
 
 (try
-  (f) # Should throw error
+  (f4) # Should throw error
 catch *
   (println "Error caught")
 )

@@ -478,6 +478,8 @@ type
     loop_stack*: seq[LoopInfo]
     started_scope_depth*: int16
     tail_position*: bool  # Track if we're in tail position for tail call optimization
+    module_init_mode*: bool  # True when compiling module __init__ body
+    preserve_root_scope*: bool  # Leave root scope open (module globals)
     eager_functions*: bool
     trace_stack*: seq[SourceTrace]
     last_error_trace*: SourceTrace
@@ -785,6 +787,7 @@ type
     frame*: Frame
     trace*: bool
     exec_depth*: int           # Tracks nested exec() invocations
+    exec_handler_base_stack*: seq[int]  # Exception handler base per exec() depth
     exception_handlers*: seq[ExceptionHandler]
     current_exception*: Value
     repl_exception*: Value

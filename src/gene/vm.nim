@@ -26,6 +26,15 @@ template is_function_like(kind: FrameKind): bool =
 template same_value_identity(a: Value, b: Value): bool =
   cast[uint64](a) == cast[uint64](b)
 
+proc skip_wildcard_import_key(key: Key): bool {.inline.} =
+  key == "__module_name__".to_key() or
+  key == "__is_main__".to_key() or
+  key == "__init__".to_key() or
+  key == "__init_ran__".to_key() or
+  key == "__compiled__".to_key() or
+  key == "gene".to_key() or
+  key == "genex".to_key()
+
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
@@ -41,6 +50,21 @@ proc execute_future_callbacks*(self: ptr VirtualMachine, future_obj: FutureObj)
 proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
 proc spawn_thread(code: ptr Gene, return_value: bool): Value
 proc poll_event_loop*(self: ptr VirtualMachine)
+proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran: bool, value: Value]
+
+proc drain_pending_futures(self: ptr VirtualMachine) =
+  if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+    return
+  var max_iterations = 100
+  var iteration = 0
+  while (self.pending_futures.len > 0 or self.thread_futures.len > 0) and iteration < max_iterations:
+    iteration.inc()
+    self.event_loop_counter = EVENT_LOOP_POLL_INTERVAL
+    self.poll_enabled = true
+    self.poll_event_loop()
+
+    if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+      break
 
 import ./vm/async
 
@@ -209,7 +233,8 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
   #     exception_value = repl_thrown
   #     self.current_exception = exception_value
 
-  if self.exception_handlers.len > 0:
+  let handler_base = if self.exec_handler_base_stack.len > 0: self.exec_handler_base_stack[^1] else: 0
+  if self.exception_handlers.len > handler_base:
     let handler = self.exception_handlers[^1]
 
     if handler.catch_pc == CATCH_PC_ASYNC_BLOCK:
@@ -1534,6 +1559,8 @@ proc exec*(self: ptr VirtualMachine): Value =
   self.exec_depth.inc()
   defer:
     self.exec_depth.dec()
+    if self.exec_handler_base_stack.len > 0:
+      discard self.exec_handler_base_stack.pop()
 
   # Reset self.pc for new execution (unless we're resuming a generator)
   # Generators set their PC before calling exec and need to preserve it
@@ -1552,6 +1579,7 @@ proc exec*(self: ptr VirtualMachine): Value =
   if root_entry:
     self.current_exception = NIL
     self.exception_handlers.setLen(0)
+  self.exec_handler_base_stack.add(self.exception_handlers.len)
 
   # Hot VM execution loop - disable checks for maximum performance
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
@@ -1613,20 +1641,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         if self.frame.caller_frame == nil:
           # Before returning, drain any pending futures with callbacks
           # This ensures callbacks execute even if the main code has finished
-          if self.pending_futures.len > 0 or self.thread_futures.len > 0:
-            var max_iterations = 100  # Limit drain iterations
-            var iteration = 0
-            while (self.pending_futures.len > 0 or self.thread_futures.len > 0) and iteration < max_iterations:
-              iteration.inc()
-
-              # Force immediate polling by resetting counter and enabling poll
-              self.event_loop_counter = EVENT_LOOP_POLL_INTERVAL
-              self.poll_enabled = true
-              self.poll_event_loop()
-
-              # If no more pending work, break
-              if self.pending_futures.len == 0 and self.thread_futures.len == 0:
-                break
+          self.drain_pending_futures()
 
           return v
         else:
@@ -1771,8 +1786,13 @@ proc exec*(self: ptr VirtualMachine): Value =
         while parent_index > 0:
           parent_index.dec()
           scope = scope.parent
+        if scope == nil:
+          raise new_exception(types.Exception, "IkVarAssignInherited: scope is nil")
+        let index = inst.arg0.int64.int
+        while scope.members.len <= index:
+          scope.members.add(NIL)
         {.push checks: off}
-        scope.members[inst.arg0.int64.int] = value
+        scope.members[index] = value
         {.pop.}
 
       of IkAssign:
@@ -4341,10 +4361,13 @@ proc exec*(self: ptr VirtualMachine): Value =
         case data_value.kind
         of VkFunctionDef:
           let info = to_function_def_info(data_value)
-          scope_tracker_obj = new_scope_tracker(info.scope_tracker)
+          if f.name == "__init__":
+            scope_tracker_obj = copy_scope_tracker(info.scope_tracker)
+          else:
+            scope_tracker_obj = new_scope_tracker(info.scope_tracker)
           if info.compiled_body.kind == VkCompiledUnit:
             f.body_compiled = info.compiled_body.ref.cu
-          # Store input back to function for reflection (already parsed above)
+            # Store input back to function for reflection (already parsed above)
         of VkScopeTracker:
           scope_tracker_obj = new_scope_tracker(data_value.ref.scope_tracker)
         else:
@@ -4557,7 +4580,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if item.name == "*":
                   # Wildcard import: copy all members from extension namespace
                   for key, value in ext_ns.members:
-                    if value != NIL:
+                    if value != NIL and not skip_wildcard_import_key(key):
                       self.frame.ns.members[key] = value
                 else:
                   let value = resolve_import_value(ext_ns, item.name)
@@ -4582,7 +4605,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             let saved_cu = self.cu
             let saved_frame = self.frame
             let saved_pc = self.pc
-          
+
             # Create a new frame for module execution
             self.frame = new_frame()
             self.frame.ns = module_ns
@@ -4591,6 +4614,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             # Execute the module
             self.cu = cu
             discard self.exec()
+            discard self.run_module_init(module_ns)
             
             # Restore the original state
             self.cu = saved_cu
@@ -4605,7 +4629,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               if item.name == "*":
                 # Wildcard import: copy all members from module namespace
                 for key, value in module_ns.members:
-                  if value != NIL:
+                  if value != NIL and not skip_wildcard_import_key(key):
                     self.frame.ns.members[key] = value
               else:
                 let value = resolve_import_value(module_ns, item.name)
@@ -4627,7 +4651,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             if item.name == "*":
               # Wildcard import: copy all members from cached namespace
               for key, value in cached_ns.members:
-                if value != NIL:
+                if value != NIL and not skip_wildcard_import_key(key):
                   self.frame.ns.members[key] = value
             else:
               let value = resolve_import_value(cached_ns, item.name)
@@ -7501,24 +7525,42 @@ proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value])
   else:
     not_allowed("Value is not callable: " & $callable.kind)
 
+proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran: bool, value: Value] =
+  if module_ns == nil:
+    return (false, NIL)
+  let ran_key = "__init_ran__".to_key()
+  if module_ns.members.getOrDefault(ran_key, FALSE) == TRUE:
+    return (false, NIL)
+  let init_key = "__init__".to_key()
+  if not module_ns.members.hasKey(init_key):
+    return (false, NIL)
+  let init_val = module_ns.members[init_key]
+  if init_val == NIL:
+    return (false, NIL)
+  module_ns.members[ran_key] = TRUE
+
+  let saved_frame = self.frame
+  var frame_changed = false
+  if saved_frame == nil or saved_frame.ns != module_ns:
+    self.frame = new_frame(module_ns)
+    frame_changed = true
+
+  let result = self.exec_callable(init_val, @[])
+  if frame_changed:
+    self.frame = saved_frame
+  return (true, result)
+
 proc maybe_run_module_init*(self: ptr VirtualMachine): tuple[ran: bool, value: Value] =
   if self.frame == nil or self.frame.ns == nil:
     return (false, NIL)
   let ns = self.frame.ns
-  let ran_key = "__init_ran__".to_key()
-  if ns.members.getOrDefault(ran_key, FALSE) == TRUE:
-    return (false, NIL)
   let main_key = "__is_main__".to_key()
   if ns.members.getOrDefault(main_key, FALSE) != TRUE:
     return (false, NIL)
-  let init_key = "__init__".to_key()
-  if not ns.members.hasKey(init_key):
-    return (false, NIL)
-  let init_val = ns.members[init_key]
-  if init_val == NIL:
-    return (false, NIL)
-  ns.members[ran_key] = TRUE
-  return (true, self.exec_callable(init_val, @[]))
+  let init_result = self.run_module_init(ns)
+  if init_result.ran:
+    self.drain_pending_futures()
+  return init_result
 
 proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
   let compiled = parse_and_compile(code, module_name, module_mode = true, run_init = false)

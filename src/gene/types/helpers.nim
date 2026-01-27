@@ -13,6 +13,7 @@ proc new_vm_ptr*(): ptr VirtualMachine =
   ## Allocate and initialize a new VM instance for the current thread.
   result = cast[ptr VirtualMachine](alloc0(sizeof(VirtualMachine)))
   result[].exec_depth = 0
+  result[].exec_handler_base_stack = @[]
   result[].exception_handlers = @[]
   result[].current_exception = NIL
   result[].repl_exception = NIL
