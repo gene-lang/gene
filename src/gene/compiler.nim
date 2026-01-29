@@ -420,6 +420,7 @@ proc compile_do(self: Compiler, gene: ptr Gene) =
 proc start_scope(self: Compiler) =
   let scope_tracker = new_scope_tracker(self.scope_tracker)
   self.scope_trackers.add(scope_tracker)
+  self.declared_names.add(initTable[Key, bool]())
   # ScopeStart is added when the first variable is declared
 proc add_scope_start(self: Compiler) =
   if self.module_init_mode and self.scope_trackers.len == 1:
@@ -436,6 +437,8 @@ proc add_scope_start(self: Compiler) =
 proc end_scope(self: Compiler) =
   if (self.module_init_mode or self.preserve_root_scope) and self.scope_trackers.len == 1:
     discard self.scope_trackers.pop()
+    if self.declared_names.len > 0:
+      discard self.declared_names.pop()
     return
   # If we added a ScopeStart (either because we have variables or we explicitly marked it),
   # we need to add the corresponding ScopeEnd
@@ -447,6 +450,8 @@ proc end_scope(self: Compiler) =
     if should_pop_started_scope and self.started_scope_depth > 0:
       self.started_scope_depth.dec()
   discard self.scope_trackers.pop()
+  if self.declared_names.len > 0:
+    discard self.declared_names.pop()
 
 proc compile_if(self: Compiler, gene: ptr Gene) =
   normalize_if(gene)
@@ -766,42 +771,37 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     not_allowed("Variable name must be a symbol, got " & $name.kind)
     
   let key = name.str.to_key()
-  if self.scope_tracker.mappings.has_key(key):
-    let index = self.scope_tracker.mappings[key]
-    if gene.children.len > 1:
-      self.compile(gene.children[1])
-      self.add_scope_start()
-      self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
-    else:
-      self.add_scope_start()
-      self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
-    return
+  var declared_here = false
+  if self.declared_names.len > 0:
+    declared_here = self.declared_names[^1].has_key(key)
 
-  if self.module_init_mode:
-    let found = self.scope_tracker.locate(key)
-    if found.local_index >= 0:
-      var parent_index = found.parent_index
-      if parent_index == 0:
-        parent_index = 1
-      if gene.children.len > 1:
-        self.compile(gene.children[1])
-      else:
-        self.emit(Instruction(kind: IkPushNil))
-      self.add_scope_start()
-      self.emit(Instruction(kind: IkVarAssignInherited, arg0: found.local_index.to_value(), arg1: parent_index))
-      return
+  let has_mapping = self.scope_tracker.mappings.has_key(key)
+  let use_existing = has_mapping and not declared_here
+  var index: int16
+  var new_binding = false
+  if use_existing:
+    # First declaration of a predeclared name in this scope.
+    index = self.scope_tracker.mappings[key]
+  else:
+    # New binding (including shadowing an existing name in this scope).
+    index = self.scope_tracker.next_index
+    self.scope_tracker.mappings[key] = index
+    new_binding = true
 
-  let index = self.scope_tracker.next_index
-  self.scope_tracker.mappings[key] = index
   if gene.children.len > 1:
     self.compile(gene.children[1])
     self.add_scope_start()
-    self.scope_tracker.next_index.inc()
+    if new_binding:
+      self.scope_tracker.next_index.inc()
     self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
   else:
     self.add_scope_start()
-    self.scope_tracker.next_index.inc()
+    if new_binding:
+      self.scope_tracker.next_index.inc()
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
+
+  if self.declared_names.len > 0:
+    self.declared_names[^1][key] = true
 
 proc compile_container_assignment(self: Compiler, container_expr: Value, name_sym: Value, operator: string, rhs: Value) =
   if name_sym.kind != VkSymbol:
@@ -1928,13 +1928,9 @@ proc compile_gene_default(self: Compiler, gene: ptr Gene) {.inline.} =
     self.emit(Instruction(kind: IkGeneAddChild))
     i += 1
 
-  # Use IkTailCall when in tail position
-  if self.tail_position:
-    when DEBUG:
-      echo "DEBUG: Generating IkTailCall in compile_gene_default"
-    self.emit(Instruction(kind: IkTailCall))
-  else:
-    self.emit(Instruction(kind: IkGeneEnd))
+  # compile_gene_default is used for literal Gene construction (quoted/_ forms).
+  # It should never tail-call; always finish with IkGeneEnd.
+  self.emit(Instruction(kind: IkGeneEnd))
 
 # For a call that is unsure whether it is a function call or a macro call,
 # we need to handle both cases and decide at runtime:
@@ -3249,6 +3245,7 @@ proc compile*(f: Function, eager_functions: bool) =
   self.module_init_mode = f.name == "__init__"
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
+  self.declared_names.add(initTable[Key, bool]())
 
   # generate code for arguments
   for i, m in f.matcher.children:
@@ -3302,6 +3299,7 @@ proc compile*(b: Block, eager_functions: bool) =
   )
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(b.scope_tracker)
+  self.declared_names.add(initTable[Key, bool]())
 
   # generate code for arguments
   for i, m in b.matcher.children:
@@ -4339,7 +4337,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
     var comptime_env = new_comptime_env()
     let expanded = expand_comptime_nodes(nodes, comptime_env)
     self.predeclare_module_vars(expanded)
-    if self.scope_tracker.next_index > 0 and not self.scope_tracker.scope_started:
+    if not self.scope_tracker.scope_started:
       self.emit(Instruction(kind: IkScopeStart, arg0: self.scope_tracker.to_value()))
       self.scope_tracker.scope_started = true
       self.started_scope_depth.inc()
@@ -4438,6 +4436,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
     trace_stack: @[],
     method_access_mode: MamAutoCall,
     scope_trackers: @[root_tracker],
+    declared_names: @[initTable[Key, bool]()],
     skip_root_scope_start: true
   )
   self.emit(Instruction(kind: IkStart))
@@ -4521,7 +4520,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
     var comptime_env = new_comptime_env()
     let expanded = expand_comptime_nodes(nodes, comptime_env)
     self.predeclare_module_vars(expanded)
-    if self.scope_tracker.next_index > 0 and not self.scope_tracker.scope_started:
+    if not self.scope_tracker.scope_started:
       self.emit(Instruction(kind: IkScopeStart, arg0: self.scope_tracker.to_value()))
       self.scope_tracker.scope_started = true
       self.started_scope_depth.inc()

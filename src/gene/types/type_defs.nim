@@ -474,6 +474,7 @@ type
     output*: CompilationUnit
     quote_level*: int
     scope_trackers*: seq[ScopeTracker]
+    declared_names*: seq[Table[Key, bool]]
     skip_root_scope_start*: bool
     loop_stack*: seq[LoopInfo]
     started_scope_depth*: int16
