@@ -779,46 +779,38 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
   var old_index: int16
   if has_mapping:
     old_index = self.scope_tracker.mappings[key]
+  let old_next_index = self.scope_tracker.next_index
 
   let use_existing = has_mapping and not declared_here
   var index: int16
   var new_binding = false
   if use_existing:
     # First declaration of a predeclared name in this scope.
-    index = self.scope_tracker.mappings[key]
+    index = old_index
   else:
     # New binding (including shadowing an existing name in this scope).
-    index = self.scope_tracker.next_index
-    self.scope_tracker.mappings[key] = index
-    self.scope_tracker.next_index.inc()
+    index = old_next_index
     new_binding = true
 
-  # Avoid resolving the new binding inside its own initializer.
-  var restore_mapping = false
-  var restore_index: int16
+  # Avoid resolving the new binding (and any new scope) inside its own initializer.
   if gene.children.len > 1:
-    if declared_here and has_mapping:
-      # Shadowing: make initializer see the previous binding.
-      restore_mapping = true
-      restore_index = self.scope_tracker.mappings[key]
-      self.scope_tracker.mappings[key] = old_index
-    elif not declared_here:
-      # First declaration: hide binding during initializer.
-      if self.scope_tracker.mappings.has_key(key):
-        restore_mapping = true
-        restore_index = self.scope_tracker.mappings[key]
-        self.scope_tracker.mappings.del(key)
-
-  if gene.children.len > 1:
+    # Ensure lookups inside the initializer see the pre-declaration scope.
+    self.scope_tracker.next_index = old_next_index
     self.compile(gene.children[1])
+    if new_binding:
+      self.scope_tracker.mappings[key] = index
+      self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
     self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
   else:
+    if new_binding:
+      self.scope_tracker.mappings[key] = index
+      self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
 
-  if restore_mapping:
-    self.scope_tracker.mappings[key] = restore_index
+  if not new_binding:
+    self.scope_tracker.next_index = old_next_index
 
   if self.declared_names.len > 0:
     self.declared_names[^1][key] = true
@@ -3288,6 +3280,8 @@ proc compile*(f: Function, eager_functions: bool) =
   # Set next_index to reflect the number of parameters so child scopes can find them
   if f.matcher.children.len > 0:
     self.scope_tracker.next_index = f.matcher.children.len.int16
+    # Function frames with params already create a runtime scope; avoid extra ScopeStart.
+    self.scope_tracker.scope_started = true
 
   # Mark that we're in tail position for the function body
   self.tail_position = true
@@ -3342,6 +3336,8 @@ proc compile*(b: Block, eager_functions: bool) =
   # Set next_index to reflect the number of parameters so child scopes can find them
   if b.matcher.children.len > 0:
     self.scope_tracker.next_index = b.matcher.children.len.int16
+    # Block frames with params already create a runtime scope; avoid extra ScopeStart.
+    self.scope_tracker.scope_started = true
 
   self.compile(b.body)
 
