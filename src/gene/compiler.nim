@@ -425,7 +425,7 @@ proc start_scope(self: Compiler) =
 proc add_scope_start(self: Compiler) =
   if self.module_init_mode and self.scope_trackers.len == 1:
     return
-  if self.scope_tracker.next_index == 0:
+  if not self.scope_tracker.scope_started:
     if self.skip_root_scope_start and self.scope_trackers.len == 1:
       self.scope_tracker.scope_started = true
       return
@@ -776,6 +776,10 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     declared_here = self.declared_names[^1].has_key(key)
 
   let has_mapping = self.scope_tracker.mappings.has_key(key)
+  var old_index: int16
+  if has_mapping:
+    old_index = self.scope_tracker.mappings[key]
+
   let use_existing = has_mapping and not declared_here
   var index: int16
   var new_binding = false
@@ -786,19 +790,35 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     # New binding (including shadowing an existing name in this scope).
     index = self.scope_tracker.next_index
     self.scope_tracker.mappings[key] = index
+    self.scope_tracker.next_index.inc()
     new_binding = true
+
+  # Avoid resolving the new binding inside its own initializer.
+  var restore_mapping = false
+  var restore_index: int16
+  if gene.children.len > 1:
+    if declared_here and has_mapping:
+      # Shadowing: make initializer see the previous binding.
+      restore_mapping = true
+      restore_index = self.scope_tracker.mappings[key]
+      self.scope_tracker.mappings[key] = old_index
+    elif not declared_here:
+      # First declaration: hide binding during initializer.
+      if self.scope_tracker.mappings.has_key(key):
+        restore_mapping = true
+        restore_index = self.scope_tracker.mappings[key]
+        self.scope_tracker.mappings.del(key)
 
   if gene.children.len > 1:
     self.compile(gene.children[1])
     self.add_scope_start()
-    if new_binding:
-      self.scope_tracker.next_index.inc()
     self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
   else:
     self.add_scope_start()
-    if new_binding:
-      self.scope_tracker.next_index.inc()
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
+
+  if restore_mapping:
+    self.scope_tracker.mappings[key] = restore_index
 
   if self.declared_names.len > 0:
     self.declared_names[^1][key] = true
