@@ -794,12 +794,22 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
 
   # Avoid resolving the new binding (and any new scope) inside its own initializer.
   if gene.children.len > 1:
-    # Ensure lookups inside the initializer see the pre-declaration scope.
-    self.scope_tracker.next_index = old_next_index
-    self.compile(gene.children[1])
-    if new_binding:
+    # For shadowing (new_binding when has_mapping): allocate new index but don't add mapping yet
+    # so initializer captures parent scope
+    if new_binding and has_mapping:
+      # Shadowing case: compile initializer WITHOUT the new binding in scope
+      self.scope_tracker.next_index = old_next_index
+      self.compile(gene.children[1])
+      # NOW add the new binding
       self.scope_tracker.mappings[key] = index
       self.scope_tracker.next_index = old_next_index + 1
+    else:
+      # Normal case or redeclaration
+      self.scope_tracker.next_index = old_next_index
+      self.compile(gene.children[1])
+      if new_binding:
+        self.scope_tracker.mappings[key] = index
+        self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
     self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
   else:
