@@ -25,18 +25,21 @@ The type checker already has:
 - ✅ Class/method types
 
 ### Phase 1: Enable & Integrate (Week 1) 🔥 PRIORITY
-- [ ] **Make type checking DEFAULT** (currently optional)
+- [x] **Make type checking DEFAULT** (already enabled, type_check=true)
+- [x] **Enable gradual typing** (strict=false, allows unknown types)
 - [ ] Integrate with `nimble build` / `gene compile`
 - [ ] Add `--no-type-check` flag for legacy code
 - [ ] Fix any broken tests (may expose existing bugs)
-- [ ] Document how to add type annotations
+- [x] Document how to add type annotations (dispatch-example.gene)
 
 ### Phase 2: Runtime Type Info (Week 2-3) 🎯 CORE MVP
-- [ ] Add `type_id` field to Value struct (or NaN-boxing?)
-- [ ] Store type info at runtime for primitives
-- [ ] Implement `(x .is Type)` runtime check
+- [x] Runtime type checking using NaN tags (runtime_types.nim)
+- [x] Type validation helpers (is_int, is_float, etc.)
+- [x] Type name extraction (runtime_type_name)
+- [x] Type compatibility checking (is_compatible)
+- [ ] Implement `(x .is Type)` runtime check in VM
 - [ ] Emit RTTI in compiled code for user types
-- [ ] Class/instance type tracking
+- [x] Class/instance type tracking (using InstanceObj.class_obj)
 
 ### Phase 3: `Any` Type & Gradual Typing (Week 4)
 - [ ] Make missing annotations default to `Any`

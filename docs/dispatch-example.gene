@@ -1,0 +1,62 @@
+# Two-Phase Dispatch Example
+# Demonstrates name resolution followed by type validation
+
+# Example 1: Simple typed function
+(fn (add [x ^Int y ^Int]) ^Int
+  (+ x y))
+
+# Call with correct types - works
+(add 1 2)  # => 3
+
+# Call with wrong types - runtime type error
+# (add 1.5 2)  # Error: argument x must be Int, got Float
+
+# Example 2: Generic function (gradual typing)
+(fn [T] (identity [x ^T]) ^T
+  x)
+
+# Works with any type (T is inferred from argument)
+(identity 42)       # T = Int, returns 42
+(identity "hello")  # T = String, returns "hello"
+(identity [1 2 3])  # T = Array, returns [1 2 3]
+
+# Example 3: Function without type annotations (fully dynamic)
+(fn (flexible [x y])
+  (+ x y))
+
+(flexible 1 2)       # Works: 3
+(flexible 1.5 2.5)   # Works: 4.0
+(flexible "a" "b")   # Works: "ab"
+
+# Example 4: Gradual migration
+# Start without types
+(fn (process [data])
+  (. data length))
+
+# Add types incrementally
+(fn (process [data ^Array]) ^Int
+  (. data length))
+
+# Example 5: Type hierarchy
+# Numeric is a supertype of Int and Float
+(fn (square [x ^Numeric]) ^Numeric
+  (* x x))
+
+(square 5)    # Works: Int is Numeric
+(square 2.5)  # Works: Float is Numeric
+
+# Example 6: Dispatch flow
+# (process data)
+#   ↓
+# 1. Resolve "process" by name → find function
+#   ↓  
+# 2. Check argument types
+#   ↓
+# 3. If types match or are compatible → call
+#    If types don't match → raise error
+
+# The dispatch system:
+# - Phase 1: Name resolution (find the function)
+# - Phase 2: Type validation (check arguments)
+# - No overloading (single function per name for now)
+# - Gradual typing (missing annotations = Any)
