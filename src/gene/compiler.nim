@@ -4348,7 +4348,8 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.start_scope()
   
   var is_first = true
-  let checker = if type_check: new_type_checker(true) else: nil
+  # Gradual typing: non-strict mode allows unknown types (treated as Any)
+  let checker = if type_check: new_type_checker(strict = false) else: nil
 
   if module_mode:
     var nodes: seq[Value] = @[]
@@ -4468,7 +4469,8 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.emit(Instruction(kind: IkStart))
 
   var is_first = true
-  let checker = if type_check: new_type_checker(true) else: nil
+  # Gradual typing: non-strict mode allows unknown types (treated as Any)
+  let checker = if type_check: new_type_checker(strict = false) else: nil
 
   try:
     while true:
@@ -4531,7 +4533,8 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   self.start_scope()
 
   var is_first = true
-  let checker = if type_check: new_type_checker(true) else: nil
+  # Gradual typing: non-strict mode allows unknown types (treated as Any)
+  let checker = if type_check: new_type_checker(strict = false) else: nil
 
   if module_mode:
     var nodes: seq[Value] = @[]
