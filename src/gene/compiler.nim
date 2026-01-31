@@ -803,6 +803,18 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
       # NOW add the new binding
       self.scope_tracker.mappings[key] = index
       self.scope_tracker.next_index = old_next_index + 1
+    elif use_existing:
+      # Pre-declared variable (e.g. module-level var): temporarily remove the
+      # mapping while compiling the initializer so that inner functions
+      # (closures) do NOT capture the variable being defined.  This allows
+      # patterns like:
+      #   (fn f [] 1)
+      #   (var f (fn [] ((f) + 1)))   # inner f should resolve to namespace fn
+      self.scope_tracker.mappings.del(key)
+      self.scope_tracker.next_index = old_next_index
+      self.compile(gene.children[1])
+      # Restore the mapping after the initializer is compiled
+      self.scope_tracker.mappings[key] = index
     else:
       # Normal case or redeclaration
       self.scope_tracker.next_index = old_next_index
