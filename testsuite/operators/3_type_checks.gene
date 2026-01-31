@@ -1,0 +1,82 @@
+# Type check operator tests (.is)
+
+# Integer type check
+(println (1 .is Int))
+# Expected: true
+
+# String type check
+(println ("hello" .is String))
+# Expected: true
+
+# Float type check
+(println (3.14 .is Float))
+# Expected: true
+
+# Bool type check
+(println (true .is Bool))
+# Expected: true
+
+# Nil type check
+(println (nil .is Nil))
+# Expected: true
+
+# Array type check
+(println ([1 2 3] .is Array))
+# Expected: true
+
+# Map type check
+(println ({^a 1 ^b 2} .is Map))
+# Expected: true
+
+# Negative checks - Int is not String
+(println (1 .is String))
+# Expected: false
+
+# String is not Int
+(println ("hello" .is Int))
+# Expected: false
+
+# Inheritance - everything is Object
+(println (1 .is Object))
+# Expected: true
+
+(println ("hello" .is Object))
+# Expected: true
+
+(println ([1 2] .is Object))
+# Expected: true
+
+# Class instance type check
+(class Animal
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)))
+
+(var animal (new Animal "Rex"))
+(println (animal .is Animal))
+# Expected: true
+
+(println (animal .is Object))
+# Expected: true
+
+(println (animal .is Int))
+# Expected: false
+
+# Subclass inheritance check
+(class Dog < Animal
+  ^fields {^breed Any}
+  (ctor [name]
+    (/name = name)))
+
+(var dog (new Dog "Buddy"))
+(println (dog .is Dog))
+# Expected: true
+
+(println (dog .is Animal))
+# Expected: true
+
+(println (dog .is Object))
+# Expected: true
+
+(println "All type check tests completed")
+# Expected: All type check tests completed

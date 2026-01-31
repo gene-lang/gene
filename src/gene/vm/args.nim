@@ -1,5 +1,6 @@
 import tables, sets
 import ../types
+import ../types/runtime_types
 
 proc resolve_property_instance(scope: Scope): Value =
   if scope.is_nil or scope.tracker.is_nil:
@@ -121,7 +122,24 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
   if not has_value_splat and pos_index < pos_count:
     raise new_exception(types.Exception, "Expected " & $pos_index & " arguments, got " & $pos_count)
 
+  # Runtime type validation for annotated parameters
+  if matcher.has_type_annotations:
+    for i, param in matcher.children:
+      if param.type_name.len > 0 and i < scope.members.len:
+        let value = scope.members[i]
+        if value != NIL:  # Don't validate nil/missing args (handled by required check)
+          validate_type(value, param.type_name, key_to_name(param.name_key))
+
   assign_property_params(matcher, scope)
+
+# Inline type validation for fast paths
+template validate_fast_path_types(matcher: RootMatcher, scope: Scope) =
+  if matcher.has_type_annotations:
+    for i, param in matcher.children:
+      if param.type_name.len > 0 and i < scope.members.len:
+        let value = scope.members[i]
+        if value != NIL:
+          validate_type(value, param.type_name, key_to_name(param.name_key))
 
 # Optimized version for zero arguments
 proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
@@ -133,7 +151,7 @@ proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
 # Optimized version for single argument
 proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.} =
   ## Ultra-fast path for single-argument functions
-  if matcher.is_simple_positional(1):
+  if matcher.is_simple_positional(1) and not matcher.has_type_annotations:
     ensure_scope_capacity(scope, 1)
     scope.members[0] = arg
     return
@@ -144,7 +162,7 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
                          arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
   ## Process arguments directly from stack to scope
   ## Supports positional arguments only (keywords handled by process_args_direct_kw).
-  if (not has_keyword_args) and matcher.is_simple_positional(arg_count):
+  if (not has_keyword_args) and matcher.is_simple_positional(arg_count) and not matcher.has_type_annotations:
     ensure_scope_capacity(scope, arg_count)
     {.push checks: off.}
     var i = 0
@@ -167,7 +185,7 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
   ## Handles both positional and named arguments
 
   if args.kind == VkGene:
-    if args.gene.props.len == 0 and matcher.is_simple_positional(args.gene.children.len):
+    if args.gene.props.len == 0 and matcher.is_simple_positional(args.gene.children.len) and not matcher.has_type_annotations:
       ensure_scope_capacity(scope, args.gene.children.len)
       {.push checks: off.}
       var i = 0

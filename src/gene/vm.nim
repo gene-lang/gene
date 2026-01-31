@@ -3406,6 +3406,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                   # So we should pass ALL arguments including self
                   if is_method_frame(frame):
                     process_args(f.matcher, frame.args, frame.scope)
+                  elif f.matcher.has_type_annotations:
+                    # Type-annotated functions must go through process_args for runtime type validation
+                    process_args(f.matcher, frame.args, frame.scope)
                   else:
                     # Optimization: Fast paths for common argument patterns
                     if frame.args.kind == VkGene:

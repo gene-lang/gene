@@ -1766,7 +1766,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   if node.gene == nil:
     raise new_exception(type_defs.Exception, "Gene pointer is nil")
 
-  proc strip_type_annotations(args: Value): Value =
+  # Extract type annotations as name -> type_name mapping, and strip them from args
+  proc strip_type_annotations(args: Value, type_map: var Table[string, string]): Value =
     if args.kind != VkArray:
       return args
     let src = array_data(args)
@@ -1779,20 +1780,41 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         array_data(out_args).add(base.to_symbol_value())
         i.inc
         if i < src.len:
+          let type_val = src[i]
+          if type_val.kind == VkSymbol:
+            type_map[base] = type_val.str
           i.inc # Skip type expression
         continue
       elif item.kind == VkArray:
-        array_data(out_args).add(strip_type_annotations(item))
+        array_data(out_args).add(strip_type_annotations(item, type_map))
       else:
         array_data(out_args).add(item)
       i.inc
     return out_args
+
+  # Apply collected type annotations to matcher children
+  proc apply_type_annotations(matcher: RootMatcher, type_map: Table[string, string]) =
+    if type_map.len == 0:
+      return
+    for child in matcher.children:
+      try:
+        let name = cast[Value](child.name_key).str
+        if type_map.hasKey(name):
+          child.type_name = type_map[name]
+          matcher.has_type_annotations = true
+      except CatchableError:
+        discard
+    # When type annotations are present, disable the simple-data fast path
+    # so that process_args_core is always called (which does type validation)
+    if matcher.has_type_annotations:
+      matcher.hint_mode = MhDefault
 
   var name: string
   let matcher = new_arg_matcher()
   var body_start: int
   var is_generator = false
   var is_macro_like = false
+  var type_map = initTable[string, string]()
 
   if node.gene.children.len == 0:
     raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
@@ -1800,7 +1822,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   case first.kind:
     of VkArray:
       name = "<unnamed>"
-      matcher.parse(strip_type_annotations(first))
+      matcher.parse(strip_type_annotations(first, type_map))
+      apply_type_annotations(matcher, type_map)
       body_start = 1
     of VkSymbol, VkString:
       name = first.str
@@ -1812,10 +1835,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         is_generator = true
       if node.gene.children.len < 2:
         raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
-      let args = strip_type_annotations(node.gene.children[1])
+      let args = strip_type_annotations(node.gene.children[1], type_map)
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
+      apply_type_annotations(matcher, type_map)
       body_start = 2
     of VkComplexSymbol:
       name = first.ref.csymbol[^1]
@@ -1827,10 +1851,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         is_generator = true
       if node.gene.children.len < 2:
         raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
-      let args = strip_type_annotations(node.gene.children[1])
+      let args = strip_type_annotations(node.gene.children[1], type_map)
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
+      apply_type_annotations(matcher, type_map)
       body_start = 2
     else:
       raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")

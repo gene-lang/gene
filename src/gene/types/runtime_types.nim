@@ -52,22 +52,22 @@ proc is_gene*(v: Value): bool {.inline.} =
 proc validate_int*(v: Value, param_name: string = "argument") {.inline.} =
   ## Validate that a value is an integer, raise exception if not
   if not is_int(v):
-    raise newException(ValueError, param_name & " must be Int, got " & $v.kind)
+    raise new_exception(type_defs.Exception, param_name & " must be Int, got " & $v.kind)
 
 proc validate_float*(v: Value, param_name: string = "argument") {.inline.} =
   ## Validate that a value is a float, raise exception if not
   if not is_float(v):
-    raise newException(ValueError, param_name & " must be Float, got " & $v.kind)
+    raise new_exception(type_defs.Exception, param_name & " must be Float, got " & $v.kind)
 
 proc validate_bool*(v: Value, param_name: string = "argument") {.inline.} =
   ## Validate that a value is a boolean, raise exception if not
   if not is_bool(v):
-    raise newException(ValueError, param_name & " must be Bool, got " & $v.kind)
+    raise new_exception(type_defs.Exception, param_name & " must be Bool, got " & $v.kind)
 
 proc validate_string*(v: Value, param_name: string = "argument") {.inline.} =
   ## Validate that a value is a string, raise exception if not
   if not is_string(v):
-    raise newException(ValueError, param_name & " must be String, got " & $v.kind)
+    raise new_exception(type_defs.Exception, param_name & " must be String, got " & $v.kind)
 
 # Get runtime type name as string
 proc runtime_type_name*(v: Value): string =
@@ -86,10 +86,8 @@ proc runtime_type_name*(v: Value): string =
   of VkInstance:
     # For instances, try to get the class name
     let inst = cast[ptr InstanceObj](v.raw and PAYLOAD_MASK)
-    if inst != nil and inst.class_obj != NIL:
-      let cls = cast[ptr Class](inst.class_obj.raw and PAYLOAD_MASK)
-      if cls != nil:
-        return cls.name.str
+    if inst != nil and inst.instance_class != nil:
+      return inst.instance_class.name
     "Instance"
   of VkGene: "Gene"
   of VkFuture: "Future"
@@ -126,8 +124,8 @@ proc is_compatible*(value: Value, expected_type: string): bool =
 
 proc validate_type*(value: Value, expected_type: string, param_name: string = "argument") =
   ## Validate that a value is compatible with an expected type
-  ## Raises an exception if not compatible
+  ## Raises a Gene exception if not compatible (catchable by Gene try/catch)
   if not is_compatible(value, expected_type):
     let actual = runtime_type_name(value)
-    raise newException(ValueError, 
-      param_name & " must be " & expected_type & ", got " & actual)
+    raise new_exception(type_defs.Exception,
+      "Type error: expected " & expected_type & ", got " & actual & " in " & param_name)

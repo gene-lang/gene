@@ -1,0 +1,53 @@
+# Typed function parameter tests
+# Tests runtime type validation on function calls using colon syntax (name: Type)
+
+# Function with type annotations
+(fn add [x: Int y: Int]
+  (x + y))
+
+# Correct types should work
+(println "add(3, 4) = " (add 3 4))
+# Expected: add(3, 4) = 7
+
+# Function with string param
+(fn greet [name: String]
+  name)
+
+(println "greet = " (greet "World"))
+# Expected: greet = World
+
+# Mixed typed and untyped params (gradual typing)
+(fn mixed [x: Int y]
+  (x + y))
+
+(println "mixed(3, 4) = " (mixed 3 4))
+# Expected: mixed(3, 4) = 7
+
+# Float type annotation
+(fn double_float [x: Float]
+  (x * 2.0))
+
+(println "double_float(3.5) = " (double_float 3.5))
+# Expected: double_float(3.5) = 7.0
+
+# Bool type annotation
+(fn negate [b: Bool]
+  (not b))
+
+(println "negate(true) = " (negate true))
+# Expected: negate(true) = false
+
+# Multiple typed params
+(fn describe [name: String count: Int]
+  (println name " x " count))
+(describe "items" 5)
+# Expected: items x 5
+
+# Untyped function still works (no validation)
+(fn flexible [x y]
+  (x + y))
+(println "flexible(3, 4) = " (flexible 3 4))
+# Expected: flexible(3, 4) = 7
+
+(println "All typed parameter tests completed")
+# Expected: All typed parameter tests completed

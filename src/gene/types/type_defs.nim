@@ -420,6 +420,7 @@ type
     mode*: MatchingMode
     hint_mode*: MatchingHintMode
     children*: seq[Matcher]
+    has_type_annotations*: bool  # True if any child has a type annotation
 
   MatchingHintMode* {.size: sizeof(int16) .} = enum
     MhDefault
@@ -448,6 +449,7 @@ type
     is_splat*: bool
     min_left*: int # Minimum number of args following this
     children*: seq[Matcher]
+    type_name*: string  # Runtime type annotation (e.g. "Int", "String", "Any")
     # required*: bool # computed property: true if splat is false and default value is not given
 
   # MatchedFieldKind* = enum
