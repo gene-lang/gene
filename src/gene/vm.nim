@@ -7548,7 +7548,7 @@ proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran
     self.frame = new_frame(module_ns)
     frame_changed = true
 
-  let result = self.exec_callable(init_val, @[])
+  let result = self.exec_callable(init_val, @[module_ns.to_value()])
   if frame_changed:
     self.frame = saved_frame
   return (true, result)
