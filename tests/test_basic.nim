@@ -193,6 +193,11 @@ test_vm """
 # self in the module should return the module in current implementation
 # test_vm "self", <module>
 
+test_vm """
+  (var /x 1)
+  /x
+""", 1
+
 # Namespace assignment and access via $ns
 test_vm """
   ($ns/a = 1)

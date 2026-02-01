@@ -243,6 +243,8 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
           self.emit(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
         else:
           self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
+      elif r.csymbol[0] == "self":
+        self.emit(Instruction(kind: IkSelf))
       else:
         self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
     for s in r.csymbol[1..^1]:
