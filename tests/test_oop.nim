@@ -49,7 +49,7 @@ test_vm """
 # Nested class definition
 test_vm """
   (class A
-    (class B)
+    (class /B)
   )
   A/B
 """, proc(r: Value) =

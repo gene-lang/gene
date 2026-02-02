@@ -483,6 +483,7 @@ type
     tail_position*: bool  # Track if we're in tail position for tail call optimization
     module_init_mode*: bool  # True when compiling module __init__ body
     preserve_root_scope*: bool  # Leave root scope open (module globals)
+    local_definitions*: bool  # Treat defs as local bindings (module/ns/class bodies)
     eager_functions*: bool
     trace_stack*: seq[SourceTrace]
     last_error_trace*: SourceTrace
@@ -864,6 +865,7 @@ type
     stack_index*: uint16
     stack_max*: uint16  # Track highest stack position for GC cleanup
     call_bases*: CallBaseStack
+    collection_bases*: CallBaseStack
     from_exec_function*: bool  # Set when frame is created by exec_function
     is_generator*: bool  # Set when executing in generator context
 

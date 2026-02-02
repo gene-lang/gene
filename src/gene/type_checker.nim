@@ -58,12 +58,14 @@ type
     classes*: Table[string, ClassInfo]
     current_return*: TypeExpr
     current_class*: string
+    init_self_stack*: seq[TypeExpr]
 
 let ANY_TYPE = TypeExpr(kind: TkAny)
 
 const BUILTIN_TYPE_NAMES = [
   "Any", "Self", "Int", "Float", "Bool", "String", "Nil",
-  "Array", "Map", "Result", "Option", "Tuple"
+  "Array", "Map", "Result", "Option", "Tuple",
+  "Module", "Namespace", "Class"
 ]
 
 proc is_builtin_type_name(name: string): bool {.inline.} =
@@ -96,7 +98,8 @@ proc new_type_checker*(strict: bool = true): TypeChecker =
     types: initTable[string, TypeExpr](),
     classes: initTable[string, ClassInfo](),
     current_return: ANY_TYPE,
-    current_class: ""
+    current_class: "",
+    init_self_stack: @[]
   )
 
 proc fresh_var(self: TypeChecker): TypeExpr =
@@ -246,6 +249,11 @@ proc lookup(self: TypeChecker, name: string): TypeExpr =
   for i in countdown(self.scopes.len - 1, 0):
     if self.scopes[i].hasKey(name):
       return self.scopes[i][name]
+  return nil
+
+proc current_init_self(self: TypeChecker): TypeExpr =
+  if self.init_self_stack.len > 0:
+    return self.init_self_stack[^1]
   return nil
 
 proc get_class_info(self: TypeChecker, name: string): ClassInfo =
@@ -995,6 +1003,11 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
       body_start += 2
 
   let (params, is_variadic, prop_splats) = self.parse_param_annotations(args_val)
+  var has_self_param = false
+  for (var_name, _, _) in params:
+    if var_name == "self":
+      has_self_param = true
+      break
   var fn_params: seq[ParamType] = @[]
   # First pass: build parameter types for function signature
   for (var_name, label, typ) in params:
@@ -1008,6 +1021,10 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   # Now push scope for function body and define parameters
   self.push_scope()
+  if name == "__init__" and not has_self_param:
+    let init_self = self.current_init_self()
+    let self_type = if init_self != nil: init_self else: TypeExpr(kind: TkNamed, name: "Module")
+    self.define("self", self_type)
   for i, (var_name, label, typ) in params:
     if var_name.len > 0 and var_name != "_":
       self.define(var_name, fn_params[i].typ)
@@ -1186,6 +1203,7 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   self.classes[class_name] = cls
 
+  var init_items: seq[Value] = @[]
   for i in body_start..<gene.children.len:
     let child = gene.children[i]
     if child.kind == VkGene and child.gene != nil and child.gene.`type`.kind == VkSymbol:
@@ -1194,8 +1212,51 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
         discard self.check_method(child.gene, class_name, cls)
       elif k == "ctor" or k == "ctor!":
         discard self.check_ctor(child.gene, class_name, cls)
+      else:
+        init_items.add(child)
+    else:
+      init_items.add(child)
+
+  if init_items.len > 0:
+    let class_self = TypeExpr(kind: TkNamed, name: "Class")
+    self.push_scope()
+    self.define("self", class_self)
+    self.init_self_stack.add(class_self)
+    for item in init_items:
+      discard self.check_expr(item)
+    discard self.init_self_stack.pop()
+    self.pop_scope()
 
   return TypeExpr(kind: TkNamed, name: class_name)
+
+proc check_ns(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len == 0:
+    return ANY_TYPE
+  let name_val = gene.children[0]
+  var ns_name = ""
+  case name_val.kind
+  of VkSymbol, VkString:
+    ns_name = name_val.str
+  of VkComplexSymbol:
+    let parts = name_val.ref.csymbol
+    if parts.len > 0:
+      ns_name = parts[^1]
+  else:
+    discard
+
+  let ns_type = TypeExpr(kind: TkNamed, name: "Namespace")
+  if ns_name.len > 0:
+    self.define(ns_name, ns_type)
+
+  if gene.children.len > 1:
+    self.push_scope()
+    self.define("self", ns_type)
+    self.init_self_stack.add(ns_type)
+    for i in 1..<gene.children.len:
+      discard self.check_expr(gene.children[i])
+    discard self.init_self_stack.pop()
+    self.pop_scope()
+  return ns_type
 
 proc check_symbol(self: TypeChecker, sym: Value): TypeExpr =
   if sym.kind != VkSymbol:
@@ -1299,6 +1360,8 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return self.check_block(gene)
       of "class":
         return self.check_class(gene)
+      of "ns":
+        return self.check_ns(gene)
       of "interface":
         return ANY_TYPE
       of "import":

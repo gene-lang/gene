@@ -75,6 +75,19 @@ When the VM encounters a symbol, it resolves in this order:
 - Gene namespace: Must use `gene/...`
 - Genex namespace: Must use `genex/...`
 
+## Module / Namespace / Class Bodies
+
+Bindings inside module, namespace, and class bodies are **lexical by default**.
+Use an explicit namespace write to export members:
+
+```gene
+(var local_value 1)     # local binding
+(var /exported 2)       # exported to current namespace
+
+(fn local_fn [x] x)
+(fn /exported_fn [x] x)
+```
+
 ## Namespace Prefixes
 
 | Prefix | Namespace | Example |

@@ -1,9 +1,9 @@
-(var $ns/a 1)
-(var $ns/b 2)
+(var /a 1)
+(var /b 2)
 
-(ns n
-  (var $ns/one 1)
-  (var $ns/two 2)
+(ns /n
+  (var /one 1)
+  (var /two 2)
 
-  (fn f [a] a)
+  (fn /f [a] a)
 )

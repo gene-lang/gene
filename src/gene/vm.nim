@@ -2850,7 +2850,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkArrayStart:
         # Mark current stack position as array base
-        self.frame.call_bases.push(self.frame.stack_index)
+        self.frame.collection_bases.push(self.frame.stack_index)
 
       of IkArrayAddSpread:
         # Spread operator - pop array and push all its elements onto stack
@@ -2868,7 +2868,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkArrayEnd:
         # Collect all elements from call base into array
-        let base = self.frame.pop_call_base()
+        let base = self.frame.collection_bases.pop()
         let count = int(self.frame.stack_index) - int(base)
 
         # Create array with exact capacity
@@ -2884,7 +2884,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.push(arr)
 
       of IkStreamStart:
-        self.frame.call_bases.push(self.frame.stack_index)
+        self.frame.collection_bases.push(self.frame.stack_index)
 
       of IkStreamAddSpread:
         let value = self.frame.pop()
@@ -2904,7 +2904,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.push(item)
 
       of IkStreamEnd:
-        let base = self.frame.pop_call_base()
+        let base = self.frame.collection_bases.pop()
         let count = int(self.frame.stack_index) - int(base)
 
         let stream_ref = new_ref(VkStream)
@@ -4387,36 +4387,45 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkFunction)
         r.fn = f
         let v = r.to_ref_value()
+
+        var define_in_ns = true
+        if info.input.kind == VkGene and info.input.gene != nil:
+          let local_key = "local_def".to_key()
+          if info.input.gene.props.has_key(local_key) and info.input.gene.props[local_key] == TRUE:
+            define_in_ns = false
+          if info.input.gene.children.len > 0 and info.input.gene.children[0].kind == VkArray:
+            define_in_ns = false
         
         # Handle namespaced function definitions
-        if info.input.kind == VkGene and info.input.gene.children.len > 0:
-          let first = info.input.gene.children[0]
-          case first.kind:
-          of VkComplexSymbol:
-            # n/m/f or $ns/f - define in target namespace
-            var ns = self.frame.ns
-            for i in 0..<first.ref.csymbol.len - 1:
-              let part = first.ref.csymbol[i]
-              if part == "":
-                continue  # Skip empty parts
-              if part == "$ns" and i == 0:
-                continue  # $ns means current namespace, already set
-              let key = part.to_key()
-              if ns.has_key(key):
-                let nsval = ns[key]
-                if nsval.kind == VkNamespace:
-                  ns = nsval.ref.ns
+        if define_in_ns:
+          if info.input.kind == VkGene and info.input.gene.children.len > 0:
+            let first = info.input.gene.children[0]
+            case first.kind:
+            of VkComplexSymbol:
+              # n/m/f or $ns/f - define in target namespace
+              var ns = self.frame.ns
+              for i in 0..<first.ref.csymbol.len - 1:
+                let part = first.ref.csymbol[i]
+                if part == "":
+                  continue  # Skip empty parts
+                if part == "$ns" and i == 0:
+                  continue  # $ns means current namespace, already set
+                let key = part.to_key()
+                if ns.has_key(key):
+                  let nsval = ns[key]
+                  if nsval.kind == VkNamespace:
+                    ns = nsval.ref.ns
+                  else:
+                    raise new_exception(types.Exception, fmt"{part} is not a namespace")
                 else:
-                  raise new_exception(types.Exception, fmt"{part} is not a namespace")
-              else:
-                raise new_exception(types.Exception, fmt"Namespace {part} not found")
-            ns[f.name.to_key()] = v
+                  raise new_exception(types.Exception, fmt"Namespace {part} not found")
+              ns[f.name.to_key()] = v
+            else:
+              # Simple name - define in current namespace
+              f.ns[f.name.to_key()] = v
           else:
-            # Simple name - define in current namespace
+            # Fallback for other cases
             f.ns[f.name.to_key()] = v
-        else:
-          # Fallback for other cases
-          f.ns[f.name.to_key()] = v
         
         self.frame.push(v)
         {.pop.}
@@ -4538,8 +4547,12 @@ proc exec*(self: ptr VirtualMachine): Value =
         let name = inst.arg0
         var parent_ns: Namespace = nil
 
+        let flags = inst.arg1
+        let has_container = (flags and 1) != 0
+        let local_def = (flags and 2) != 0
+
         # Check if we have a container (for nested namespaces like app/models)
-        if inst.arg1 != 0:
+        if has_container:
           let container_value = self.frame.pop()
           if container_value.kind == VkNil:
             not_allowed("Cannot create nested namespace '" & name.str & "': parent namespace not found. Did you forget to create the parent namespace first?")
@@ -4551,11 +4564,12 @@ proc exec*(self: ptr VirtualMachine): Value =
         r.ns = ns
         let v = r.to_ref_value()
 
-        # Store in appropriate parent
-        if parent_ns != nil:
-          parent_ns[cast[Key](name.raw)] = v
-        else:
-          self.frame.ns[cast[Key](name.raw)] = v
+        # Store in appropriate parent unless local-only
+        if not local_def:
+          if parent_ns != nil:
+            parent_ns[cast[Key](name.raw)] = v
+          else:
+            self.frame.ns[cast[Key](name.raw)] = v
 
         self.frame.push(v)
 
@@ -4613,6 +4627,9 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.frame = new_frame()
             self.frame.ns = module_ns
             # Module namespace is now passed as argument, not stored as self
+            let args_gene = new_gene(NIL)
+            args_gene.children.add(module_ns.to_value())
+            self.frame.args = args_gene.to_gene_value()
             
             # Execute the module
             self.cu = cu
@@ -4683,7 +4700,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         var class_name: string
         var target_ns = self.frame.ns
         var class_key: Key
-        if inst.arg1 != 0:
+        let flags = inst.arg1
+        let has_container = (flags and 1) != 0
+        let local_def = (flags and 2) != 0
+        if has_container:
           let container_value = self.frame.pop()
           target_ns = namespace_from_value(container_value)
         case name.kind
@@ -4715,7 +4735,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        target_ns.members[class_key] = v
+        if not local_def:
+          target_ns.members[class_key] = v
         self.frame.push(v)
 
       of IkNew:
@@ -4835,7 +4856,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         var class_name: string
         var target_ns = self.frame.ns
         var class_key: Key
-        if inst.arg1 != 0:
+        let flags = inst.arg1
+        let has_container = (flags and 1) != 0
+        let local_def = (flags and 2) != 0
+        if has_container:
           let container_value = self.frame.pop()
           target_ns = namespace_from_value(container_value)
         case name.kind
@@ -4866,7 +4890,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        target_ns.members[class_key] = v
+        if not local_def:
+          target_ns.members[class_key] = v
         self.frame.push(v)
 
       of IkResolveMethod:
@@ -7592,6 +7617,9 @@ proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
     self.frame.update(new_frame(ns))
   
   # Self is now passed as argument, not stored in frame
+  let args_gene = new_gene(NIL)
+  args_gene.children.add(ns.to_value())
+  self.frame.args = args_gene.to_gene_value()
   self.cu = compiled
 
   let result = self.exec()
@@ -7620,6 +7648,9 @@ proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value
     self.frame.update(new_frame(ns))
 
   # Self is now passed as argument, not stored in frame
+  let args_gene = new_gene(NIL)
+  args_gene.children.add(ns.to_value())
+  self.frame.args = args_gene.to_gene_value()
   self.cu = compiled
 
   let result = self.exec()

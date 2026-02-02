@@ -2190,6 +2190,7 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.stack_index = 0
   self.stack_max = 0
   self.call_bases.reset()
+  self.collection_bases.reset()
 
 proc free*(self: var Frame) =
   {.push checks: off, optimization: speed.}
@@ -2221,6 +2222,7 @@ proc new_frame*(): Frame {.inline.} =
   result.stack_index = 0
   result.stack_max = 0
   result.call_bases.init()
+  result.collection_bases.init()
   {.pop.}
 
 proc new_frame*(ns: Namespace): Frame {.inline.} =

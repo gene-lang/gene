@@ -62,8 +62,8 @@ test_vm """
 """, 1
 
 test_vm """
-  (ns n
-    (ns m)
+  (ns /n
+    (ns /m)
   )
   (fn n/m/f [] 1)
   (n/m/f)
@@ -252,10 +252,10 @@ test_vm """
 """, 1
 
 test_vm """
-  (fn f [] 1)    # first f in namespace
+  (fn /f [] 1)    # first f in namespace
   (var f        # second f in scope
     (fn []
-      ((f) + 1) # reference to first f because second f is defined after the anonymous function
+      (($ns/f) + 1) # reference to namespace f
     )
   )
   (f)           # second f

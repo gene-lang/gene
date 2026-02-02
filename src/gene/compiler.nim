@@ -11,6 +11,9 @@ const DEBUG = false
 proc container_key(): Key {.inline.} =
   "container".to_key()
 
+proc local_def_key(): Key {.inline.} =
+  "local_def".to_key()
+
 proc build_container_value(parts: seq[string]): Value =
   if parts.len == 0:
     return NIL
@@ -124,7 +127,8 @@ proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_init*(input: Value): CompilationUnit  # Forward declaration
+proc compile_init*(input: Value, local_defs = false): CompilationUnit  # Forward declaration
+proc predeclare_local_defs(self: Compiler, nodes: seq[Value])  # Forward declaration
 
 proc compile(self: Compiler, input: seq[Value]) =
   for i, v in input:
@@ -169,6 +173,40 @@ proc compile_var_op_literal(self: Compiler, symbolVal: Value, literal: Value, op
     self.emit(Instruction(kind: IkData, arg0: literal))
     return true
   false
+
+proc simple_def_name(name_val: Value): string =
+  ## Return a simple local name for defs (fn/class/ns/etc) or "" when not eligible.
+  case name_val.kind
+  of VkSymbol, VkString:
+    let name = name_val.str
+    if name.len == 0:
+      return ""
+    if name.contains("/") or name.starts_with("$"):
+      return ""
+    return name
+  else:
+    return ""
+
+proc reserve_local_binding(self: Compiler, name: string): tuple[index: int16, new_binding: bool, old_next_index: int16, key: Key] =
+  let key = name.to_key()
+  var declared_here = false
+  if self.declared_names.len > 0:
+    declared_here = self.declared_names[^1].has_key(key)
+
+  let has_mapping = self.scope_tracker.mappings.has_key(key)
+  let old_next_index = self.scope_tracker.next_index
+  var index: int16
+  var new_binding = false
+
+  if has_mapping and not declared_here:
+    index = self.scope_tracker.mappings[key]
+  else:
+    index = old_next_index
+    new_binding = true
+    self.scope_tracker.mappings[key] = index
+    self.scope_tracker.next_index = old_next_index + 1
+
+  result = (index, new_binding, old_next_index, key)
 
 # Translate $x to global/x and $x/y to global/x/y
 proc translate_symbol(input: Value): Value =
@@ -813,11 +851,16 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
       # patterns like:
       #   (fn f [] 1)
       #   (var f (fn [] ((f) + 1)))   # inner f should resolve to namespace fn
-      self.scope_tracker.mappings.del(key)
-      self.scope_tracker.next_index = old_next_index
-      self.compile(gene.children[1])
-      # Restore the mapping after the initializer is compiled
-      self.scope_tracker.mappings[key] = index
+      if self.local_definitions:
+        # In local-def mode, keep the mapping so closures can capture locals
+        # (e.g. recursive or forward-referenced local bindings).
+        self.compile(gene.children[1])
+      else:
+        self.scope_tracker.mappings.del(key)
+        self.scope_tracker.next_index = old_next_index
+        self.compile(gene.children[1])
+        # Restore the mapping after the initializer is compiled
+        self.scope_tracker.mappings[key] = index
     else:
       # Normal case or redeclaration
       self.scope_tracker.next_index = old_next_index
@@ -1483,7 +1526,11 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
   
   self.emit(Instruction(kind: IkNoop, label: end_label))
 
-proc compile_fn(self: Compiler, input: Value) =
+proc mark_local_fn(input: Value) =
+  if input.kind == VkGene and input.gene != nil:
+    input.gene.props[local_def_key()] = TRUE
+
+proc compile_fn(self: Compiler, input: Value, define_binding = true) =
   if input.kind == VkGene and input.gene != nil and input.gene.type == "fn".to_symbol_value():
     if input.gene.children.len == 0:
       not_allowed("fn requires a name or argument list")
@@ -1498,6 +1545,39 @@ proc compile_fn(self: Compiler, input: Value) =
         not_allowed("fn argument list must be an array, e.g. [a b]")
     else:
       not_allowed("fn requires a name or argument list")
+
+  var local_binding = false
+  var local_index: int16
+  var local_key: Key
+  var local_new_binding = false
+  var local_old_next: int16
+
+  var should_define = define_binding
+  if input.kind == VkGene and input.gene != nil:
+    let first = input.gene.children[0]
+    case first.kind
+    of VkArray:
+      should_define = false
+    of VkSymbol, VkString:
+      let name = first.str
+      if should_define and self.local_definitions and name != "__init__":
+        let simple_name = simple_def_name(first)
+        if simple_name.len > 0:
+          local_binding = true
+          should_define = false
+          let reserved = self.reserve_local_binding(simple_name)
+          local_index = reserved.index
+          local_new_binding = reserved.new_binding
+          local_old_next = reserved.old_next_index
+          local_key = reserved.key
+    of VkComplexSymbol:
+      discard
+    else:
+      discard
+
+  if not should_define:
+    mark_local_fn(input)
+
   let tracker_copy = copy_scope_tracker(self.scope_tracker)
 
   var compiled_body: CompilationUnit = nil
@@ -1509,6 +1589,14 @@ proc compile_fn(self: Compiler, input: Value) =
 
   let info = new_function_def_info(tracker_copy, compiled_body, input)
   self.emit(Instruction(kind: IkFunction, arg0: info.to_value()))
+
+  if local_binding:
+    self.add_scope_start()
+    self.emit(Instruction(kind: IkVar, arg0: local_index.to_value()))
+    if not local_new_binding:
+      self.scope_tracker.next_index = local_old_next
+    if self.declared_names.len > 0:
+      self.declared_names[^1][local_key] = true
 
 proc compile_return(self: Compiler, gene: ptr Gene) =
   if gene.children.len > 0:
@@ -1527,17 +1615,41 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
   let container_flag = (if container_expr != NIL: 1.int32 else: 0.int32)
 
+  var local_def = false
+  var local_index: int16
+  var local_key: Key
+  var local_new_binding = false
+  var local_old_next: int16
+  if self.local_definitions and container_expr == NIL:
+    let simple_name = simple_def_name(gene.children[0])
+    if simple_name.len > 0:
+      local_def = true
+      let reserved = self.reserve_local_binding(simple_name)
+      local_index = reserved.index
+      local_key = reserved.key
+      local_new_binding = reserved.new_binding
+      local_old_next = reserved.old_next_index
+
   # If we have a container, compile it first to push it onto the stack
   if container_expr != NIL:
     self.compile(container_expr)
 
   # Emit namespace instruction with container flag
-  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0], arg1: container_flag))
+  let flags = container_flag or (if local_def: 2.int32 else: 0.int32)
+  self.emit(Instruction(kind: IkNamespace, arg0: gene.children[0], arg1: flags))
+
+  if local_def:
+    self.add_scope_start()
+    self.emit(Instruction(kind: IkVar, arg0: local_index.to_value()))
+    if not local_new_binding:
+      self.scope_tracker.next_index = local_old_next
+    if self.declared_names.len > 0:
+      self.declared_names[^1][local_key] = true
 
   # Handle namespace body if present
   if gene.children.len > 1:
     let body = new_stream_value(gene.children[1..^1])
-    let compiled = compile_init(body)
+    let compiled = compile_init(body, local_defs = true)
     let r = new_ref(VkCompiledUnit)
     r.cu = compiled
     self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
@@ -1603,7 +1715,7 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
       fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
-  self.compile_fn(fn_value)
+  self.compile_fn(fn_value, define_binding = false)
   
   # Add the method to the class
   self.emit(Instruction(kind: IkDefineMethod, arg0: name))
@@ -1639,7 +1751,7 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
       fn_value.gene.children.add(gene.children[i])
   
   # Compile the function definition
-  self.compile_fn(fn_value)
+  self.compile_fn(fn_value, define_binding = false)
   
   # Set as constructor for the class
   self.emit(Instruction(kind: IkDefineConstructor))
@@ -1650,21 +1762,45 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
   let has_container = container_expr != NIL
   let container_flag = (if has_container: 1.int32 else: 0.int32)
 
+  var local_def = false
+  var local_index: int16
+  var local_key: Key
+  var local_new_binding = false
+  var local_old_next: int16
+  if self.local_definitions and not has_container:
+    let simple_name = simple_def_name(class_name)
+    if simple_name.len > 0:
+      local_def = true
+      let reserved = self.reserve_local_binding(simple_name)
+      local_index = reserved.index
+      local_key = reserved.key
+      local_new_binding = reserved.new_binding
+      local_old_next = reserved.old_next_index
+
   # If we have a container, compile it first to push it onto the stack
   if has_container:
     self.compile(container_expr)
 
   # Emit class or subclass instruction
+  let flags = container_flag or (if local_def: 2.int32 else: 0.int32)
   if parent_class != NIL:
     self.compile(parent_class)
-    self.emit(Instruction(kind: IkSubClass, arg0: class_name, arg1: container_flag))
+    self.emit(Instruction(kind: IkSubClass, arg0: class_name, arg1: flags))
   else:
-    self.emit(Instruction(kind: IkClass, arg0: class_name, arg1: container_flag))
+    self.emit(Instruction(kind: IkClass, arg0: class_name, arg1: flags))
+
+  if local_def:
+    self.add_scope_start()
+    self.emit(Instruction(kind: IkVar, arg0: local_index.to_value()))
+    if not local_new_binding:
+      self.scope_tracker.next_index = local_old_next
+    if self.declared_names.len > 0:
+      self.declared_names[^1][local_key] = true
 
   # Compile class body if present
   if gene.children.len > body_start:
     let body = new_stream_value(gene.children[body_start..^1])
-    let compiled = compile_init(body)
+    let compiled = compile_init(body, local_defs = true)
     let r = new_ref(VkCompiledUnit)
     r.cu = compiled
     self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
@@ -3284,6 +3420,7 @@ proc compile*(f: Function, eager_functions: bool) =
     method_access_mode: MamAutoCall
   )
   self.module_init_mode = f.name == "__init__"
+  self.local_definitions = self.module_init_mode
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(f.scope_tracker)
   self.declared_names.add(initTable[Key, bool]())
@@ -3807,19 +3944,28 @@ proc compile_import(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkGeneEnd))
   self.emit(Instruction(kind: IkImport))
 
-proc compile_init*(input: Value): CompilationUnit =
+proc compile_init*(input: Value, local_defs = false): CompilationUnit =
   let self = Compiler(
     output: new_compilation_unit(),
     tail_position: false,
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.local_definitions = local_defs
   self.output.skip_return = true
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
 
   self.last_error_trace = nil
   try:
+    if local_defs:
+      var nodes: seq[Value] = @[]
+      case input.kind
+      of VkStream:
+        nodes = input.ref.stream
+      else:
+        nodes = @[input]
+      self.predeclare_local_defs(nodes)
     self.compile(input)
   except CatchableError as e:
     var trace = self.last_error_trace
@@ -4282,6 +4428,39 @@ proc build_init_call(): Value =
   let g = new_gene("__init__".to_symbol_value())
   result = g.to_gene_value()
 
+proc predeclare_local_defs(self: Compiler, nodes: seq[Value]) =
+  if not self.local_definitions:
+    return
+  proc predeclare_name(name: string) =
+    let key = name.to_key()
+    if not self.scope_tracker.mappings.has_key(key):
+      let index = self.scope_tracker.next_index
+      self.scope_tracker.mappings[key] = index
+      self.scope_tracker.next_index.inc()
+
+  for node in nodes:
+    if node.kind != VkGene or node.gene == nil:
+      continue
+    let gt = node.gene.`type`
+    if gt.kind != VkSymbol:
+      continue
+    case gt.str
+    of "fn":
+      if node.gene.children.len == 0:
+        continue
+      let first = node.gene.children[0]
+      let name = simple_def_name(first)
+      if name.len > 0 and name != "__init__":
+        predeclare_name(name)
+    of "class", "ns", "object":
+      if node.gene.children.len == 0:
+        continue
+      let name = simple_def_name(node.gene.children[0])
+      if name.len > 0:
+        predeclare_name(name)
+    else:
+      discard
+
 proc predeclare_module_vars(self: Compiler, nodes: seq[Value]) =
   for node in nodes:
     if node.kind != VkGene or node.gene == nil:
@@ -4314,6 +4493,9 @@ proc predeclare_module_vars(self: Compiler, nodes: seq[Value]) =
       let index = self.scope_tracker.next_index
       self.scope_tracker.mappings[key] = index
       self.scope_tracker.next_index.inc()
+
+  # Predeclare local defs (fn/class/ns/object) for module mode when enabled.
+  self.predeclare_local_defs(nodes)
 
 proc normalize_module_nodes(nodes: seq[Value], run_init: bool): seq[Value] =
   var defs: seq[Value] = @[]
@@ -4363,6 +4545,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
     method_access_mode: MamAutoCall
   )
   self.preserve_root_scope = module_mode
+  self.local_definitions = module_mode
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
   

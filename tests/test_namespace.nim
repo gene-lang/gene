@@ -41,7 +41,7 @@ test_vm """
 # Nested namespaces and path access (migrated from test_vm_namespace.nim)
 test_vm """
   (ns n
-    (ns m)
+    (ns /m)
   )
   n
 """, proc(r: Value) =
@@ -50,7 +50,7 @@ test_vm """
 
 test_vm """
   (ns n
-    (ns m)
+    (ns /m)
   )
   n/m
 """, proc(r: Value) =

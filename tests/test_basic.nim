@@ -198,6 +198,24 @@ test_vm """
   /x
 """, 1
 
+test_vm """
+  (fn add [a b]
+    (a + b)
+  )
+  [(if $ns/add
+     false
+   else
+     true)
+   (add 1 2)]
+""", new_array_value(true, 3)
+
+test_vm """
+  (fn /add [a b]
+    (a + b)
+  )
+  ($ns/add 1 2)
+""", 3
+
 # Namespace assignment and access via $ns
 test_vm """
   ($ns/a = 1)
@@ -207,7 +225,7 @@ test_vm """
 # Namespace nested path assignment
 test_vm """
   (ns n
-    (ns m)
+    (ns /m)
   )
   (n/m/a = 1)
   n/m/a
@@ -215,7 +233,7 @@ test_vm """
 
 test_vm """
   (ns n
-    (class C
+    (class /C
       (method m _
         1
       )

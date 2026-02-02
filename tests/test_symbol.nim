@@ -46,7 +46,7 @@ test_vm """
 
 test_vm """
   (ns n
-    (ns m)
+    (ns /m)
   )
 """, proc(r: Value) =
   check r.ref.ns.name == "n"
@@ -54,7 +54,7 @@ test_vm """
 
 test_vm """
   (ns n
-    (ns m)
+    (ns /m)
   )
   n/m
 """, proc(r: Value) =

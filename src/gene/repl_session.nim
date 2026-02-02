@@ -11,14 +11,15 @@ proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope
   if caller_frame.isNil:
     if repl_frame.isNil:
       repl_frame = new_frame(ns)
-      repl_frame.kind = FkFunction
-      repl_frame.scope = scope
-      repl_frame.ns = ns
-    repl_frame.stack_index = 0
-    repl_frame.call_bases.reset()
-    vm.frame = repl_frame
-    vm.cu = compiled
-    return vm.exec()
+    repl_frame.kind = FkFunction
+    repl_frame.scope = scope
+    repl_frame.ns = ns
+  repl_frame.stack_index = 0
+  repl_frame.call_bases.reset()
+  repl_frame.collection_bases.reset()
+  vm.frame = repl_frame
+  vm.cu = compiled
+  return vm.exec()
 
   let new_repl_frame = new_frame()
   new_repl_frame.kind = FkFunction
