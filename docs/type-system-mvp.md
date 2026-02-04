@@ -3,7 +3,7 @@
 **Project Lead:** Sunni (AI Assistant)  
 **Started:** 2026-01-29  
 **Target:** Q1 2026 (MVP)  
-**Status:** 🟢 In Progress (~30% Complete)
+**Status:** 🟢 In Progress (~50% Complete)
 
 ## Vision
 
@@ -44,11 +44,12 @@ The type checker already has:
 - [x] Inheritance support in `.is` checks
 - [ ] Emit RTTI in compiled code for user types (deferred)
 
-### Phase 3: `Any` Type & Gradual Typing (Week 4)
-- [ ] Make missing annotations default to `Any`
-- [ ] Remove strict mode requirement
-- [ ] Allow `Any -> Concrete` at runtime (with check)
-- [ ] Test gradual migration path
+### Phase 3: `Any` Type & Gradual Typing (Week 4) ✅ COMPLETE
+- [x] Make missing annotations default to `Any` (untyped params accept anything)
+- [x] Remove strict mode requirement (strict=false in compiler)
+- [x] Allow `Any -> Concrete` at runtime (deferred to runtime validation)
+- [x] Test gradual migration path (8_gradual_typing.gene)
+- [x] Class inheritance in type validation (runtime + compile-time)
 
 ### Phase 4: Auto-Converters (Week 5)
 - [ ] Define conversion rules (Int -> Float safe, etc.)

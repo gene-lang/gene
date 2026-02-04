@@ -84,10 +84,11 @@ Any     -> Concrete (runtime check with NaN tag)
 - [x] Add argument type validation phase (validate_type in args.nim)
 - [x] Runtime type checks using NaN tags
 
-### Phase 3: Gradual Generics (Week 3)
-- [ ] Ensure type variables default to Any at runtime
-- [ ] No monomorphization (single code path)
-- [ ] Allow generic functions to work with dynamic types
+### Phase 3: Gradual Generics (Week 3) ✅
+- [x] Ensure type variables default to Any at runtime (untyped params = Any)
+- [x] No monomorphization (single code path)
+- [x] Allow generic functions to work with dynamic types
+- [x] Class inheritance works with type validation
 
 ### Phase 4: Runtime Type Info (Week 4) ✅
 - [x] Add type_id to object headers (using InstanceObj.class_obj)
