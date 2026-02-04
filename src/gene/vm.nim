@@ -11,6 +11,8 @@ import ./vm/args
 import ./vm/module
 import ./vm/utils
 import ./serdes
+import ./native/runtime
+import ./native/hir
 const DEBUG_VM = false
 const
   CATCH_PC_ASYNC_BLOCK = -2
@@ -25,6 +27,48 @@ template is_function_like(kind: FrameKind): bool =
 
 template same_value_identity(a: Value, b: Value): bool =
   cast[uint64](a) == cast[uint64](b)
+
+proc native_args_supported(f: Function, args: seq[Value]): bool =
+  if f.matcher.is_nil or not f.matcher.has_type_annotations:
+    return false
+  if f.matcher.children.len != args.len:
+    return false
+  for i, param in f.matcher.children:
+    let type_name = param.type_name.toLowerAscii()
+    if type_name notin ["int", "int64", "i64"]:
+      return false
+    if args[i].kind != VkInt:
+      return false
+  true
+
+proc try_native_call(self: ptr VirtualMachine, f: Function, args: seq[Value], out_value: var Value): bool =
+  if not self.native_code:
+    return false
+  if f.is_generator or f.async or f.is_macro_like:
+    return false
+  if not native_args_supported(f, args):
+    return false
+  if not f.native_ready:
+    if f.native_failed:
+      return false
+    if f.body_compiled == nil:
+      f.compile()
+    let compiled = compile_to_native(f.body_compiled, f.name)
+    if not compiled.ok:
+      f.native_failed = true
+      return false
+    f.native_entry = compiled.entry
+    f.native_ready = true
+  let fn_ptr = cast[NativeFnPtr](f.native_entry)
+  if args.len == 0:
+    out_value = fn_ptr(nil, 0).to_value()
+    return true
+  var native_args: seq[system.int64] = @[]
+  native_args.setLen(args.len)
+  for i, arg in args:
+    native_args[i] = arg.to_int()
+  out_value = fn_ptr(cast[ptr UncheckedArray[system.int64]](native_args[0].addr), args.len.int32).to_value()
+  true
 
 proc skip_wildcard_import_key(key: Key): bool {.inline.} =
   key == "__module_name__".to_key() or
@@ -5681,48 +5725,52 @@ proc exec*(self: ptr VirtualMachine): Value =
           if f.is_generator:
             self.frame.push(new_generator_value(f, @[]))
           else:
-            if f.body_compiled == nil:
-              f.compile()
-
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              if scope != nil:
-                scope.ref_count.inc()
+            var native_result: Value
+            if self.try_native_call(f, @[], native_result):
+              self.frame.push(native_result)
             else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
+              if f.body_compiled == nil:
+                f.compile()
 
-            var new_frame = new_frame()
-            new_frame.kind = FkFunction
-            new_frame.target = target
-            new_frame.scope = scope
-            # OPTIMIZATION: Direct argument processing without Gene objects
-            if not f.matcher.is_empty():
-              process_args_zero(f.matcher, scope)
-            # No need to set new_frame.args for zero-argument functions
-            new_frame.caller_frame = self.frame
-            self.frame.ref_count.inc()
-            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-            new_frame.ns = f.ns
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            # If this is an async function, set up exception handler
-            if f.async:
-              self.exception_handlers.add(ExceptionHandler(
-                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
-                finally_pc: -1,
-                frame: self.frame,
-                scope: self.frame.scope,
-                cu: self.cu,
-                saved_value: NIL,
-                has_saved_value: false,
-                in_finally: false
-              ))
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = target
+              new_frame.scope = scope
+              # OPTIMIZATION: Direct argument processing without Gene objects
+              if not f.matcher.is_empty():
+                process_args_zero(f.matcher, scope)
+              # No need to set new_frame.args for zero-argument functions
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
 
-            self.frame = new_frame
-            self.cu = f.body_compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  scope: self.frame.scope,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
         of VkNativeFn:
           # Zero arguments - use new signature with nil pointer
@@ -5852,50 +5900,54 @@ proc exec*(self: ptr VirtualMachine): Value =
           if f.is_generator:
             self.frame.push(new_generator_value(f, @[arg]))
           else:
-            if f.body_compiled == nil:
-              f.compile()
-
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              if scope != nil:
-                scope.ref_count.inc()
+            var native_result: Value
+            if self.try_native_call(f, @[arg], native_result):
+              self.frame.push(native_result)
             else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
+              if f.body_compiled == nil:
+                f.compile()
 
-            var new_frame = new_frame()
-            new_frame.kind = FkFunction
-            new_frame.target = target
-            new_frame.scope = scope
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            # OPTIMIZATION: Direct single-argument processing without Gene objects
-            if not f.matcher.is_empty():
-              process_args_one(f.matcher, arg, scope)
-            # No need to set new_frame.args for single-parameter functions
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = target
+              new_frame.scope = scope
 
-            new_frame.caller_frame = self.frame
-            self.frame.ref_count.inc()
-            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-            new_frame.ns = f.ns
+              # OPTIMIZATION: Direct single-argument processing without Gene objects
+              if not f.matcher.is_empty():
+                process_args_one(f.matcher, arg, scope)
+              # No need to set new_frame.args for single-parameter functions
 
-            # If this is an async function, set up exception handler
-            if f.async:
-              self.exception_handlers.add(ExceptionHandler(
-                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
-                finally_pc: -1,
-                frame: self.frame,
-                scope: self.frame.scope,
-                cu: self.cu,
-                saved_value: NIL,
-                has_saved_value: false,
-                in_finally: false
-              ))
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
 
-            self.frame = new_frame
-            self.cu = f.body_compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  scope: self.frame.scope,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
         of VkNativeFn:
           # Single argument - use new signature with helper
@@ -6045,51 +6097,55 @@ proc exec*(self: ptr VirtualMachine): Value =
           if f.is_generator:
             self.frame.push(new_generator_value(f, args))
           else:
-            if f.body_compiled == nil:
-              f.compile()
-
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              if scope != nil:
-                scope.ref_count.inc()
+            var native_result: Value
+            if self.try_native_call(f, args, native_result):
+              self.frame.push(native_result)
             else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
+              if f.body_compiled == nil:
+                f.compile()
 
-            var new_frame = new_frame()
-            new_frame.kind = FkFunction
-            new_frame.target = target
-            new_frame.scope = scope
-
-            # OPTIMIZATION: Direct multi-argument processing without Gene objects
-            if not f.matcher.is_empty():
-              if args.len > 0:
-                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
               else:
-                process_args_zero(f.matcher, scope)
-            new_frame.caller_frame = self.frame
-            self.frame.ref_count.inc()
-            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-            new_frame.ns = f.ns
+                scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            # If this is an async function, set up exception handler
-            if f.async:
-              self.exception_handlers.add(ExceptionHandler(
-                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
-                finally_pc: -1,
-                frame: self.frame,
-                scope: self.frame.scope,
-                cu: self.cu,
-                saved_value: NIL,
-                has_saved_value: false,
-                in_finally: false
-              ))
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = target
+              new_frame.scope = scope
 
-            self.frame = new_frame
-            self.cu = f.body_compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              # OPTIMIZATION: Direct multi-argument processing without Gene objects
+              if not f.matcher.is_empty():
+                if args.len > 0:
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+                else:
+                  process_args_zero(f.matcher, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  scope: self.frame.scope,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
         of VkNativeFn:
           let result = call_native_fn(target.ref.native_fn, self, args)
@@ -6187,50 +6243,54 @@ proc exec*(self: ptr VirtualMachine): Value =
           if f.is_generator:
             self.frame.push(new_generator_value(f, args))
           else:
-            if f.body_compiled == nil:
-              f.compile()
-
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              if scope != nil:
-                scope.ref_count.inc()
+            var native_result: Value
+            if self.try_native_call(f, args, native_result):
+              self.frame.push(native_result)
             else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
+              if f.body_compiled == nil:
+                f.compile()
 
-            var new_frame = new_frame()
-            new_frame.kind = FkFunction
-            new_frame.target = target
-            new_frame.scope = scope
-
-            if not f.matcher.is_empty():
-              let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
-              if args.len > 0 or kw_pairs.len > 0:
-                process_args_direct_kw(f.matcher, args_ptr, args.len, kw_pairs, scope)
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
               else:
-                process_args_zero(f.matcher, scope)
-            new_frame.caller_frame = self.frame
-            self.frame.ref_count.inc()
-            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-            new_frame.ns = f.ns
+                scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            if f.async:
-              self.exception_handlers.add(ExceptionHandler(
-                catch_pc: CATCH_PC_ASYNC_FUNCTION,
-                finally_pc: -1,
-                frame: self.frame,
-                scope: self.frame.scope,
-                cu: self.cu,
-                saved_value: NIL,
-                has_saved_value: false,
-                in_finally: false
-              ))
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = target
+              new_frame.scope = scope
 
-            self.frame = new_frame
-            self.cu = f.body_compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              if not f.matcher.is_empty():
+                let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
+                if args.len > 0 or kw_pairs.len > 0:
+                  process_args_direct_kw(f.matcher, args_ptr, args.len, kw_pairs, scope)
+                else:
+                  process_args_zero(f.matcher, scope)
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,
+                  finally_pc: -1,
+                  frame: self.frame,
+                  scope: self.frame.scope,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
         of VkNativeFn:
           var native_args = newSeq[Value](args.len + 1)
@@ -6318,54 +6378,58 @@ proc exec*(self: ptr VirtualMachine): Value =
           if f.is_generator:
             self.frame.push(new_generator_value(f, args))
           else:
-            if f.body_compiled == nil:
-              f.compile()
-
-            var scope: Scope
-            if f.matcher.is_empty():
-              scope = f.parent_scope
-              if scope != nil:
-                scope.ref_count.inc()
+            var native_result: Value
+            if self.try_native_call(f, args, native_result):
+              self.frame.push(native_result)
             else:
-              scope = new_scope(f.scope_tracker, f.parent_scope)
+              if f.body_compiled == nil:
+                f.compile()
 
-            var new_frame = new_frame()
-            new_frame.kind = FkFunction
-            new_frame.target = target
-            new_frame.scope = scope
-
-            # OPTIMIZATION: Direct multi-argument processing without Gene objects
-            if not f.matcher.is_empty():
-              # Convert seq[Value] to ptr UncheckedArray[Value] for direct processing
-              if args.len > 0:
-                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
               else:
-                process_args_zero(f.matcher, scope)
-            # No need to set new_frame.args for optimized argument processing
+                scope = new_scope(f.scope_tracker, f.parent_scope)
 
-            new_frame.caller_frame = self.frame
-            self.frame.ref_count.inc()
-            new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
-            new_frame.ns = f.ns
+              var new_frame = new_frame()
+              new_frame.kind = FkFunction
+              new_frame.target = target
+              new_frame.scope = scope
 
-            # If this is an async function, set up exception handler
-            if f.async:
-              self.exception_handlers.add(ExceptionHandler(
-                catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
-                finally_pc: -1,
-                frame: self.frame,
-                scope: self.frame.scope,
-                cu: self.cu,
-                saved_value: NIL,
-                has_saved_value: false,
-                in_finally: false
-              ))
+              # OPTIMIZATION: Direct multi-argument processing without Gene objects
+              if not f.matcher.is_empty():
+                # Convert seq[Value] to ptr UncheckedArray[Value] for direct processing
+                if args.len > 0:
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+                else:
+                  process_args_zero(f.matcher, scope)
+              # No need to set new_frame.args for optimized argument processing
 
-            self.frame = new_frame
-            self.cu = f.body_compiled
-            self.pc = 0
-            inst = self.cu.instructions[self.pc].addr
-            continue
+              new_frame.caller_frame = self.frame
+              self.frame.ref_count.inc()
+              new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
+              new_frame.ns = f.ns
+
+              # If this is an async function, set up exception handler
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,  # Special marker for async function
+                  finally_pc: -1,
+                  frame: self.frame,
+                  scope: self.frame.scope,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
+              self.frame = new_frame
+              self.cu = f.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
 
         of VkNativeFn:
           # Multi-argument - use new signature with helper
@@ -7328,6 +7392,10 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
     return NIL
   
   let f = fn.ref.fn
+
+  var native_result: Value
+  if self.try_native_call(f, args, native_result):
+    return native_result
   
   # Compile if needed
   if f.body_compiled == nil:

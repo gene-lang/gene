@@ -28,6 +28,7 @@ proc new_vm_ptr*(): ptr VirtualMachine =
   result[].thread_futures = initTable[int, FutureObj]()
   result[].message_callbacks = @[]
   result[].aop_contexts = @[]
+  result[].native_code = false
   result[].profile_data = initTable[string, FunctionProfile]()
   result[].profile_stack = @[]
   result[].thread_local_ns = nil

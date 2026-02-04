@@ -10,41 +10,41 @@ This document describes the design for compiling typed Gene functions to native 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Gene Source (.gene)                              │
+│                     Gene Source (.gene)                             │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Parser (parser.nim)                              │
+│                     Parser (parser.nim)                             │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Compiler (compiler.nim)                          │
-│   • Extract type annotations                                         │
-│   • Mark native-eligible functions                                   │
+│                     Compiler (compiler.nim)                         │
+│   • Extract type annotations                                        │
+│   • Mark native-eligible functions                                  │
 │   • Generate bytecode (existing) AND HIR (new)                      │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                     ┌───────────┴───────────┐
                     ▼                       ▼
-┌───────────────────────────┐   ┌───────────────────────────────────┐
-│  Bytecode (existing)      │   │  HIR (new: native/hir.nim)        │
-│  CompilationUnit          │   │  SSA-form typed IR                │
-└───────────────────────────┘   └───────────────────────────────────┘
+┌───────────────────────────┐    ┌───────────────────────────────────┐
+│  Bytecode (existing)      │    │  HIR (new: native/hir.nim)        │
+│  CompilationUnit          │    │  SSA-form typed IR                │
+└───────────────────────────┘    └───────────────────────────────────┘
                     │                       │
                     ▼                       ▼
-┌───────────────────────────┐   ┌───────────────────────────────────┐
-│  VM Interpreter           │   │  Native Codegen (x86-64)          │
-│  (vm.nim)                 │   │  (native/x86_64.nim - future)     │
-└───────────────────────────┘   └───────────────────────────────────┘
+┌───────────────────────────┐    ┌───────────────────────────────────┐
+│  VM Interpreter           │    │  Native Codegen (x86-64)          │
+│  (vm.nim)                 │    │  (native/x86_64.nim - future)     │
+└───────────────────────────┘    └───────────────────────────────────┘
                     │                       │
                     └───────────┬───────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     Unified Execution                                │
-│   • Native functions called directly when types match                │
-│   • VM handles dynamic fallback                                      │
+│                     Unified Execution                               │
+│   • Native functions called directly when types match               │
+│   • VM handles dynamic fallback                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

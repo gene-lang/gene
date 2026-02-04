@@ -24,6 +24,7 @@ type
     no_gir_cache: bool  # Ignore GIR cache
     force_compile: bool  # Force recompilation even if cache is up-to-date
     type_check: bool
+    native_code: bool
     file: string
     args: seq[string]
 
@@ -34,6 +35,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("run <file>: parse and execute <file>")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
+  manager.add_help("  --native-code: enable native code execution when available")
 
 let short_no_val = {'d'}
 let long_no_val = @[
@@ -47,6 +49,7 @@ let long_no_val = @[
   "force-compile",
   "no-typecheck",
   "no-type-check",
+  "native-code",
 ]
 proc parse_options(args: seq[string]): Options =
   result = Options(type_check: true)
@@ -91,6 +94,8 @@ proc parse_options(args: seq[string]): Options =
           result.force_compile = true
         of "no-typecheck", "no-type-check":
           result.type_check = false
+        of "native-code":
+          result.native_code = true
         else:
           echo "Unknown option: ", key
           discard
@@ -152,6 +157,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       return failure("File not found: " & file)
 
   init_app_and_vm()
+  VM.native_code = options.native_code
   init_stdlib()
   set_program_args(file, options.args)
   VM.repl_on_error = options.repl_on_error

@@ -1,17 +1,28 @@
-## Test bytecode to HIR conversion
+## Test bytecode to HIR conversion and x86-64 code generation
 ##
-## Compiles the fib function from Gene source, then converts bytecode to HIR.
+## Compiles the fib function from Gene source, converts bytecode to HIR,
+## then generates x86-64 machine code.
 
 import ../src/gene/types
 import ../src/gene/compiler
 import ../src/gene/native/hir
 import ../src/gene/native/bytecode_to_hir
-import std/strformat
+when defined(amd64):
+  import ../src/gene/native/x86_64_codegen as codegen
+elif defined(arm64) or defined(aarch64):
+  import ../src/gene/native/arm64_codegen as codegen
+else:
+  import ../src/gene/native/x86_64_codegen as codegen
+import std/[strformat, tables]
+
+when defined(posix):
+  import std/posix
 
 const FIB_SOURCE = """
 (fn fib [n: Int] -> Int
   (if (<= n 1)
     n
+  else
     (+ (fib (- n 1)) (fib (- n 2)))))
 """
 
@@ -24,9 +35,26 @@ proc printBytecode(cu: CompilationUnit, name: string) =
       let paramName = cast[Value](child.name_key).str()
       echo fmt"  Param: {paramName}, type: {child.type_name}"
   echo ""
+  echo "Labels: "
+  for label, pc in cu.labels.pairs:
+    echo fmt"  L{label} -> PC {pc}"
+  echo ""
   for i, inst in cu.instructions:
     let label = if inst.label != 0: fmt"L{inst.label}: " else: "     "
-    echo fmt"{i:3}: {label}{inst.kind}"
+    var extra = ""
+    if inst.kind in {IkJump, IkJumpIfFalse}:
+      extra = fmt" -> PC {inst.arg0.int64}"
+    elif inst.kind == IkJumpIfMatchSuccess:
+      extra = fmt" -> PC {inst.arg1}"
+    elif inst.kind in {IkVarResolve, IkVarLeValue, IkVarSubValue}:
+      extra = fmt" var[{inst.arg0.int64}]"
+    elif inst.kind == IkData:
+      extra = fmt" = {inst.arg0}"
+    elif inst.kind == IkPushValue:
+      extra = fmt" = {inst.arg0}"
+    elif inst.kind == IkResolveSymbol:
+      extra = fmt" '{inst.arg0.str()}'"
+    echo fmt"{i:3}: {label}{inst.kind}{extra}"
 
 proc main() =
   echo "=== Compiling fib function ==="
@@ -72,7 +100,7 @@ proc main() =
   echo ""
   
   # Check eligibility
-  let eligible = isNativeEligible(funcCu)
+  let eligible = isNativeEligible(funcCu, "fib")
   echo fmt"Native eligible: {eligible}"
   echo ""
   
@@ -82,10 +110,66 @@ proc main() =
   echo "=== HIR Output ==="
   echo ""
   echo $hirFunc
-  
+
   echo ""
-  echo "=== Comparison Complete ==="
+  echo "=== Generating Native Code ==="
+  echo ""
+
+  # Generate machine code
+  let machineCode = codegen.generateCode(hirFunc)
+
+  # Print disassembly
+  echo codegen.disassemble(machineCode)
+
+  echo ""
+  echo "=== Testing Native Code Execution ==="
+  echo ""
+
+  when defined(posix):
+    # MAP_ANONYMOUS is 0x1000 on macOS, 0x20 on Linux
+    const MAP_ANON_FLAG = when defined(macosx): 0x1000.cint else: 0x20.cint
+    # MAP_JIT is required on macOS for executable memory (0x800)
+    const MAP_JIT_FLAG = when defined(macosx): 0x800.cint else: 0.cint
+
+    when defined(macosx):
+      proc pthread_jit_write_protect_np(enable: cint) {.importc.}
+    proc clear_cache(start, `end`: ptr char) {.importc: "__builtin___clear_cache".}
+
+    type FibFunc = proc(n: int64): int64 {.cdecl.}
+
+    let codeSize = machineCode.len
+    let mem = mmap(nil, codeSize.cint,
+                   PROT_READ or PROT_WRITE or PROT_EXEC,
+                   MAP_PRIVATE or MAP_ANON_FLAG or MAP_JIT_FLAG,
+                   -1.cint, 0.Off)
+
+    if mem == MAP_FAILED:
+      echo "ERROR: mmap failed"
+    else:
+      when defined(macosx):
+        pthread_jit_write_protect_np(0)
+      # Copy code to executable memory
+      copyMem(mem, machineCode[0].unsafeAddr, codeSize)
+      when defined(macosx):
+        pthread_jit_write_protect_np(1)
+
+      clear_cache(cast[ptr char](mem), cast[ptr char](cast[uint64](mem) + uint64(codeSize)))
+
+      # Cast to function pointer and call
+      let fib = cast[FibFunc](mem)
+
+      echo "Testing fib function:"
+      for n in 0..10:
+        let result = fib(n.int64)
+        echo fmt"  fib({n}) = {result}"
+
+      # Clean up
+      discard munmap(mem, codeSize.cint)
+  else:
+    echo "Execution test only supported on POSIX systems"
+
+  echo ""
+  echo "=== Code Generation Complete ==="
 
 when isMainModule:
   main()
-

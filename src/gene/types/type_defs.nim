@@ -398,6 +398,9 @@ type
     # matching_hint*: MatchingHint
     body*: seq[Value]
     body_compiled*: CompilationUnit
+    native_entry*: pointer  # JIT entry point (NativeFnPtr)
+    native_ready*: bool
+    native_failed*: bool
     # ret*: Expr
 
   Block* = ref object
@@ -825,6 +828,7 @@ type
     # Scheduler mode
     scheduler_running*: bool  # Set to true when run_forever is active, false to stop
     aop_contexts*: seq[AopContext]  # Stack of active around advice contexts
+    native_code*: bool  # Enable native code execution when available
 
   VmCallback* = proc() {.gcsafe.}
 

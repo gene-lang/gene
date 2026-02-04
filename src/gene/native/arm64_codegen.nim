@@ -1,0 +1,314 @@
+## ARM64 (AArch64) Code Generator for Gene HIR
+##
+## Generates native ARM64 machine code from HIR.
+## Uses AArch64 Procedure Call Standard (AAPCS64).
+##
+## Register allocation strategy (simple, no spilling for now):
+##   - Parameters: x0-x7 (first 8 args)
+##   - Return value: x0
+##   - HIR registers are stored on the stack
+
+import std/[tables, strformat]
+import ./hir
+
+type
+  Arm64Reg* = enum
+    X0 = 0, X1, X2, X3, X4, X5, X6, X7,
+    X8, X9, X10, X11, X12, X13, X14, X15,
+    X16, X17, X18, X19, X20, X21, X22, X23,
+    X24, X25, X26, X27, X28, X29, X30, SP
+
+  FixupKind = enum
+    FkB
+    FkBl
+    FkCbz
+
+  CodeFixup = object
+    offset: int
+    target: HirBlockId
+    kind: FixupKind
+
+  CodeBuffer* = ref object
+    code*: seq[byte]
+    labels*: Table[HirBlockId, int]
+    fixups*: seq[CodeFixup]
+
+  CodegenContext* = ref object
+    buf*: CodeBuffer
+    fn*: HirFunction
+    stackSize*: int32
+    regOffsets*: Table[int32, int32]  # HIR reg -> stack offset from SP
+    fnEntryOffset*: int
+    recursiveCallFixups*: seq[int]
+
+const
+  INSN_STP_FP_LR = 0xA9BF7BFD'u32  # stp x29, x30, [sp, #-16]!
+  INSN_MOV_FP_SP = 0x910003FD'u32  # mov x29, sp
+  INSN_LDP_FP_LR = 0xA8C17BFD'u32  # ldp x29, x30, [sp], #16
+  INSN_RET       = 0xD65F03C0'u32  # ret
+
+proc newCodeBuffer*(): CodeBuffer =
+  CodeBuffer(
+    code: @[],
+    labels: initTable[HirBlockId, int](),
+    fixups: @[]
+  )
+
+proc emitU32*(buf: CodeBuffer, val: uint32) {.inline.} =
+  buf.code.add(byte(val and 0xFF))
+  buf.code.add(byte((val shr 8) and 0xFF))
+  buf.code.add(byte((val shr 16) and 0xFF))
+  buf.code.add(byte((val shr 24) and 0xFF))
+
+proc currentOffset*(buf: CodeBuffer): int {.inline.} =
+  buf.code.len
+
+proc markLabel*(buf: CodeBuffer, blockId: HirBlockId) =
+  buf.labels[blockId] = buf.currentOffset()
+
+proc readU32(buf: CodeBuffer, offset: int): uint32 =
+  uint32(buf.code[offset]) or
+    (uint32(buf.code[offset + 1]) shl 8) or
+    (uint32(buf.code[offset + 2]) shl 16) or
+    (uint32(buf.code[offset + 3]) shl 24)
+
+proc writeU32(buf: CodeBuffer, offset: int, val: uint32) =
+  buf.code[offset] = byte(val and 0xFF)
+  buf.code[offset + 1] = byte((val shr 8) and 0xFF)
+  buf.code[offset + 2] = byte((val shr 16) and 0xFF)
+  buf.code[offset + 3] = byte((val shr 24) and 0xFF)
+
+proc resolveFixups*(buf: CodeBuffer) =
+  for fixup in buf.fixups:
+    if fixup.target notin buf.labels:
+      raise newException(ValueError, fmt"Unresolved label: {fixup.target}")
+    let targetOffset = buf.labels[fixup.target]
+    let imm = int32((targetOffset - fixup.offset) div 4)
+    case fixup.kind
+    of FkB, FkBl:
+      let imm26 = uint32(imm) and 0x03FF_FFFF'u32
+      let instr = buf.readU32(fixup.offset)
+      let patched = (instr and 0xFC00_0000'u32) or imm26
+      buf.writeU32(fixup.offset, patched)
+    of FkCbz:
+      let imm19 = uint32(imm) and 0x7FFFF'u32
+      let instr = buf.readU32(fixup.offset)
+      let patched = (instr and 0xFF00_001F'u32) or (imm19 shl 5)
+      buf.writeU32(fixup.offset, patched)
+
+proc emitB*(buf: CodeBuffer, target: HirBlockId) =
+  let offset = buf.currentOffset()
+  buf.emitU32(0x1400_0000'u32)
+  buf.fixups.add(CodeFixup(offset: offset, target: target, kind: FkB))
+
+proc emitBl*(buf: CodeBuffer, target: HirBlockId) =
+  let offset = buf.currentOffset()
+  buf.emitU32(0x9400_0000'u32)
+  buf.fixups.add(CodeFixup(offset: offset, target: target, kind: FkBl))
+
+proc emitCbz*(buf: CodeBuffer, reg: Arm64Reg, target: HirBlockId) =
+  let rt = uint32(ord(reg) and 0x1F)
+  let offset = buf.currentOffset()
+  buf.emitU32(0xB400_0000'u32 or rt)
+  buf.fixups.add(CodeFixup(offset: offset, target: target, kind: FkCbz))
+
+proc emitMovz*(buf: CodeBuffer, reg: Arm64Reg, imm16: uint16, shift: int32) =
+  let hw = uint32(shift div 16) and 0x3
+  let instr = 0xD280_0000'u32 or (hw shl 21) or (uint32(imm16) shl 5) or uint32(ord(reg) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitMovk*(buf: CodeBuffer, reg: Arm64Reg, imm16: uint16, shift: int32) =
+  let hw = uint32(shift div 16) and 0x3
+  let instr = 0xF280_0000'u32 or (hw shl 21) or (uint32(imm16) shl 5) or uint32(ord(reg) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitMovImm64*(buf: CodeBuffer, reg: Arm64Reg, imm: int64) =
+  var value = uint64(imm)
+  var first = true
+  for shift in [0'i32, 16, 32, 48]:
+    let part = uint16((value shr shift) and 0xFFFF)
+    if part != 0'u16 or (value == 0 and first):
+      if first:
+        buf.emitMovz(reg, part, shift)
+        first = false
+      else:
+        buf.emitMovk(reg, part, shift)
+
+proc emitAddRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
+  let instr = 0x8B00_0000'u32 or
+    (uint32(ord(src2) and 0x1F) shl 16) or
+    (uint32(ord(src1) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitSubRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
+  let instr = 0xCB00_0000'u32 or
+    (uint32(ord(src2) and 0x1F) shl 16) or
+    (uint32(ord(src1) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitCmpRegReg*(buf: CodeBuffer, left, right: Arm64Reg) =
+  let instr = 0xEB00_0000'u32 or
+    (uint32(ord(right) and 0x1F) shl 16) or
+    (uint32(ord(left) and 0x1F) shl 5) or
+    31'u32
+  buf.emitU32(instr)
+
+proc emitCsetLe*(buf: CodeBuffer, dst: Arm64Reg) =
+  let instr = 0x9A9F_C7E0'u32 or uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitSubSpImm*(buf: CodeBuffer, imm: int32) =
+  let imm12 = uint32(imm) and 0xFFF
+  let instr = 0xD100_0000'u32 or (imm12 shl 10) or (31'u32 shl 5) or 31'u32
+  buf.emitU32(instr)
+
+proc emitAddSpImm*(buf: CodeBuffer, imm: int32) =
+  let imm12 = uint32(imm) and 0xFFF
+  let instr = 0x9100_0000'u32 or (imm12 shl 10) or (31'u32 shl 5) or 31'u32
+  buf.emitU32(instr)
+
+proc emitStrReg*(buf: CodeBuffer, reg: Arm64Reg, offset: int32) =
+  if offset mod 8 != 0:
+    raise newException(ValueError, "ARM64 STR offset must be multiple of 8")
+  let imm12 = uint32(offset div 8) and 0xFFF
+  let instr = 0xF900_0000'u32 or (imm12 shl 10) or (31'u32 shl 5) or uint32(ord(reg) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitLdrReg*(buf: CodeBuffer, reg: Arm64Reg, offset: int32) =
+  if offset mod 8 != 0:
+    raise newException(ValueError, "ARM64 LDR offset must be multiple of 8")
+  let imm12 = uint32(offset div 8) and 0xFFF
+  let instr = 0xF940_0000'u32 or (imm12 shl 10) or (31'u32 shl 5) or uint32(ord(reg) and 0x1F)
+  buf.emitU32(instr)
+
+proc newCodegenContext*(fn: HirFunction): CodegenContext =
+  result = CodegenContext(
+    buf: newCodeBuffer(),
+    fn: fn,
+    regOffsets: initTable[int32, int32](),
+    fnEntryOffset: 0,
+    recursiveCallFixups: @[]
+  )
+
+  for i in 0..<fn.regCount:
+    result.regOffsets[i] = int32(i) * 8
+
+  result.stackSize = ((fn.regCount * 8 + 15) div 16) * 16
+
+proc regOffset*(ctx: CodegenContext, reg: HirReg): int32 =
+  ctx.regOffsets[int32(reg)]
+
+proc loadReg*(ctx: CodegenContext, dst: Arm64Reg, hirReg: HirReg) =
+  ctx.buf.emitLdrReg(dst, ctx.regOffset(hirReg))
+
+proc storeReg*(ctx: CodegenContext, hirReg: HirReg, src: Arm64Reg) =
+  ctx.buf.emitStrReg(src, ctx.regOffset(hirReg))
+
+proc genOp*(ctx: CodegenContext, op: HirOp)
+
+proc genConstI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.buf.emitMovImm64(X0, op.constI64)
+  ctx.storeReg(op.dest, X0)
+
+proc genAddI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitAddRegReg(X0, X0, X1)
+  ctx.storeReg(op.dest, X0)
+
+proc genSubI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitSubRegReg(X0, X0, X1)
+  ctx.storeReg(op.dest, X0)
+
+proc genLeI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitCmpRegReg(X0, X1)
+  ctx.buf.emitCsetLe(X0)
+  ctx.storeReg(op.dest, X0)
+
+proc genBr*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.brCond)
+  ctx.buf.emitCbz(X0, op.brElse)
+  ctx.buf.emitB(op.brThen)
+
+proc genJump*(ctx: CodegenContext, op: HirOp) =
+  ctx.buf.emitB(op.jumpTarget)
+
+proc genRet*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.retValue)
+  if ctx.stackSize > 0:
+    ctx.buf.emitAddSpImm(ctx.stackSize)
+  ctx.buf.emitU32(INSN_LDP_FP_LR)
+  ctx.buf.emitU32(INSN_RET)
+
+proc genCall*(ctx: CodegenContext, op: HirOp) =
+  const argRegs = [X0, X1, X2, X3, X4, X5, X6, X7]
+  if op.callArgs.len > argRegs.len:
+    raise newException(ValueError, "Too many arguments for native call: " & $op.callArgs.len)
+  for i in 0..<op.callArgs.len:
+    ctx.loadReg(argRegs[i], op.callArgs[i])
+  if op.callTarget != ctx.fn.name:
+    raise newException(ValueError, "External native calls not supported: " & op.callTarget)
+  let offset = ctx.buf.currentOffset()
+  ctx.buf.emitU32(0x9400_0000'u32)  # bl placeholder
+  ctx.recursiveCallFixups.add(offset)
+  ctx.storeReg(op.dest, X0)
+
+proc genOp*(ctx: CodegenContext, op: HirOp) =
+  case op.kind
+  of HokConstI64: ctx.genConstI64(op)
+  of HokAddI64: ctx.genAddI64(op)
+  of HokSubI64: ctx.genSubI64(op)
+  of HokLeI64: ctx.genLeI64(op)
+  of HokBr: ctx.genBr(op)
+  of HokJump: ctx.genJump(op)
+  of HokRet: ctx.genRet(op)
+  of HokCall: ctx.genCall(op)
+  else:
+    raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
+
+proc genPrologue*(ctx: CodegenContext) =
+  ctx.buf.emitU32(INSN_STP_FP_LR)
+  ctx.buf.emitU32(INSN_MOV_FP_SP)
+  if ctx.stackSize > 0:
+    ctx.buf.emitSubSpImm(ctx.stackSize)
+
+  # Store parameters to stack slots
+  const argRegs = [X0, X1, X2, X3, X4, X5, X6, X7]
+  let count = min(ctx.fn.params.len, argRegs.len)
+  for i in 0..<count:
+    ctx.buf.emitStrReg(argRegs[i], int32(i) * 8)
+
+proc genBlock*(ctx: CodegenContext, blk: HirBlock) =
+  ctx.buf.markLabel(blk.id)
+  for op in blk.ops:
+    ctx.genOp(op)
+
+proc generateCode*(fn: HirFunction): seq[byte] =
+  let ctx = newCodegenContext(fn)
+  ctx.fnEntryOffset = 0
+  ctx.genPrologue()
+  for blk in fn.blocks:
+    ctx.genBlock(blk)
+  ctx.buf.resolveFixups()
+  for offset in ctx.recursiveCallFixups:
+    let imm = int32((ctx.fnEntryOffset - offset) div 4)
+    let imm26 = uint32(imm) and 0x03FF_FFFF'u32
+    let instr = ctx.buf.readU32(offset)
+    let patched = (instr and 0xFC00_0000'u32) or imm26
+    ctx.buf.writeU32(offset, patched)
+  result = ctx.buf.code
+
+proc disassemble*(code: seq[byte]): string =
+  result = "Generated code (" & $code.len & " bytes):\n"
+  for i, b in code:
+    if i mod 16 == 0:
+      if i > 0: result &= "\n"
+      result &= fmt"{i:04x}: "
+    result &= fmt"{b:02x} "
+  result &= "\n"

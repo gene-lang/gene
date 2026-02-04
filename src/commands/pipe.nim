@@ -17,6 +17,7 @@ type
     quote_str: bool
     filter: bool
     type_check: bool
+    native_code: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -31,6 +32,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  --quote-str: output strings with quotes")
   manager.add_help("  --filter: treat code as predicate, output $line when true")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
+  manager.add_help("  --native-code: enable native code execution when available")
 
 let short_no_val = {'d', 'h'}
 let long_no_val = @[
@@ -42,6 +44,7 @@ let long_no_val = @[
   "filter",
   "no-typecheck",
   "no-type-check",
+  "native-code",
 ]
 
 proc parse_options(args: seq[string]): PipeOptions =
@@ -73,6 +76,8 @@ proc parse_options(args: seq[string]): PipeOptions =
         result.filter = true
       of "no-typecheck", "no-type-check":
         result.type_check = false
+      of "native-code":
+        result.native_code = true
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -112,6 +117,7 @@ Options:
   --quote-str             Output strings with quotes (for Gene-parseable output)
   --filter                Treat code as predicate; output $line when true
   --no-type-check         Disable static type checking (alias: --no-typecheck)
+  --native-code           Enable native code execution when available
 
 Examples:
   # Output lines as-is
@@ -187,6 +193,7 @@ Notes:
 
   # Initialize VM
   init_app_and_vm()
+  VM.native_code = options.native_code
   init_stdlib()
   set_program_args("<pipe>", @[])
 

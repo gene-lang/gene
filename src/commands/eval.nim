@@ -20,6 +20,7 @@ type
     compile: bool
     repl_on_error: bool
     type_check: bool
+    native_code: bool
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -30,6 +31,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  -d, --debug: enable debug output")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
+  manager.add_help("  --native-code: enable native code execution when available")
   manager.add_help("  --csv: print result as CSV")
   manager.add_help("  --gene: print result as gene expression")
   manager.add_help("  --line: evaluate as a single line")
@@ -45,6 +47,7 @@ let long_no_val = @[
   "compile",
   "no-typecheck",
   "no-type-check",
+  "native-code",
 ]
 
 proc parse_options(args: seq[string]): Options =
@@ -79,6 +82,8 @@ proc parse_options(args: seq[string]): Options =
         result.compile = true
       of "no-typecheck", "no-type-check":
         result.type_check = false
+      of "native-code":
+        result.native_code = true
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -135,6 +140,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return failure("No code provided to evaluate")
   
   init_app_and_vm()
+  VM.native_code = options.native_code
   init_stdlib()
   set_program_args("<eval>", @[])
   VM.repl_on_error = options.repl_on_error

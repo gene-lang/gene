@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+# Usage:
+# benchme_native [gene args...]
+
+echo "=== Gene Benchmark (native code) ==="
+echo "Date: $(date '+%Y-%m-%d %H:%M:%S %A')"
+echo "Git commit: $(git rev-parse HEAD)"
+echo "Nim version: $(nim --version 2>&1 | head -1)"
+echo ""
+
+# Build Gene if needed
+if [ ! -f "./gene" ] && [ ! -f "./bin/gene" ]; then
+  echo "Building Gene..."
+  nimble build 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate" || true
+  echo ""
+fi
+
+# Find Gene executable
+GENE_CMD=""
+if [ -f "./gene" ]; then
+  GENE_CMD="./gene"
+elif [ -f "./bin/gene" ]; then
+  GENE_CMD="./bin/gene"
+else
+  echo "Error: Gene executable not found"
+  exit 1
+fi
+
+echo "Using Gene executable: $GENE_CMD"
+echo ""
+
+# Run benchmark
+echo "Running benchmark with --native-code..."
+$GENE_CMD run --native-code benchmarks/computation/fibonacci.gene "$@"
