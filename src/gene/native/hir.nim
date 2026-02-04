@@ -240,9 +240,41 @@ proc emitSubI64*(b: HirBuilder, left, right: HirReg): HirReg =
   result = b.allocReg()
   b.emit(HirOp(kind: HokSubI64, dest: result, destType: HtI64, binLeft: left, binRight: right))
 
+proc emitMulI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokMulI64, dest: result, destType: HtI64, binLeft: left, binRight: right))
+
+proc emitDivI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokDivI64, dest: result, destType: HtI64, binLeft: left, binRight: right))
+
+proc emitNegI64*(b: HirBuilder, value: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokNegI64, dest: result, destType: HtI64, unaryArg: value))
+
 proc emitLeI64*(b: HirBuilder, left, right: HirReg): HirReg =
   result = b.allocReg()
   b.emit(HirOp(kind: HokLeI64, dest: result, destType: HtBool, binLeft: left, binRight: right))
+
+proc emitLtI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokLtI64, dest: result, destType: HtBool, binLeft: left, binRight: right))
+
+proc emitGeI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokGeI64, dest: result, destType: HtBool, binLeft: left, binRight: right))
+
+proc emitGtI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokGtI64, dest: result, destType: HtBool, binLeft: left, binRight: right))
+
+proc emitEqI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokEqI64, dest: result, destType: HtBool, binLeft: left, binRight: right))
+
+proc emitNeI64*(b: HirBuilder, left, right: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokNeI64, dest: result, destType: HtBool, binLeft: left, binRight: right))
 
 proc emitBr*(b: HirBuilder, cond: HirReg, thenBlock, elseBlock: HirBlockId) =
   b.emit(HirOp(kind: HokBr, dest: newHirReg(-1), destType: HtVoid,

@@ -155,8 +155,50 @@ proc emitCmpRegReg*(buf: CodeBuffer, left, right: Arm64Reg) =
     31'u32
   buf.emitU32(instr)
 
+proc emitCsetCond*(buf: CodeBuffer, dst: Arm64Reg, cond: uint32) =
+  ## CSET is alias of CSINC with inverted condition (cond xor 1).
+  let inv = cond xor 1
+  let instr = 0x9A9F_07E0'u32 or (inv shl 12) or uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
 proc emitCsetLe*(buf: CodeBuffer, dst: Arm64Reg) =
-  let instr = 0x9A9F_C7E0'u32 or uint32(ord(dst) and 0x1F)
+  buf.emitCsetCond(dst, 0xD)
+
+proc emitCsetLt*(buf: CodeBuffer, dst: Arm64Reg) =
+  buf.emitCsetCond(dst, 0xB)
+
+proc emitCsetGe*(buf: CodeBuffer, dst: Arm64Reg) =
+  buf.emitCsetCond(dst, 0xA)
+
+proc emitCsetGt*(buf: CodeBuffer, dst: Arm64Reg) =
+  buf.emitCsetCond(dst, 0xC)
+
+proc emitCsetEq*(buf: CodeBuffer, dst: Arm64Reg) =
+  buf.emitCsetCond(dst, 0x0)
+
+proc emitCsetNe*(buf: CodeBuffer, dst: Arm64Reg) =
+  buf.emitCsetCond(dst, 0x1)
+
+proc emitMulRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
+  let instr = 0x9B00_7C00'u32 or
+    (uint32(ord(src2) and 0x1F) shl 16) or
+    (uint32(ord(src1) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitSdivRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
+  let instr = 0x9AC0_0C00'u32 or
+    (uint32(ord(src2) and 0x1F) shl 16) or
+    (uint32(ord(src1) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitNegReg*(buf: CodeBuffer, dst, src: Arm64Reg) =
+  # neg dst, src  => sub dst, xzr, src
+  let instr = 0xCB00_0000'u32 or
+    (uint32(ord(src) and 0x1F) shl 16) or
+    (31'u32 shl 5) or
+    uint32(ord(dst) and 0x1F)
   buf.emitU32(instr)
 
 proc emitSubSpImm*(buf: CodeBuffer, imm: int32) =
@@ -224,11 +266,63 @@ proc genSubI64*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitSubRegReg(X0, X0, X1)
   ctx.storeReg(op.dest, X0)
 
+proc genMulI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitMulRegReg(X0, X0, X1)
+  ctx.storeReg(op.dest, X0)
+
+proc genDivI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitSdivRegReg(X0, X0, X1)
+  ctx.storeReg(op.dest, X0)
+
+proc genNegI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.unaryArg)
+  ctx.buf.emitNegReg(X0, X0)
+  ctx.storeReg(op.dest, X0)
+
 proc genLeI64*(ctx: CodegenContext, op: HirOp) =
   ctx.loadReg(X0, op.binLeft)
   ctx.loadReg(X1, op.binRight)
   ctx.buf.emitCmpRegReg(X0, X1)
   ctx.buf.emitCsetLe(X0)
+  ctx.storeReg(op.dest, X0)
+
+proc genLtI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitCmpRegReg(X0, X1)
+  ctx.buf.emitCsetLt(X0)
+  ctx.storeReg(op.dest, X0)
+
+proc genGeI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitCmpRegReg(X0, X1)
+  ctx.buf.emitCsetGe(X0)
+  ctx.storeReg(op.dest, X0)
+
+proc genGtI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitCmpRegReg(X0, X1)
+  ctx.buf.emitCsetGt(X0)
+  ctx.storeReg(op.dest, X0)
+
+proc genEqI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitCmpRegReg(X0, X1)
+  ctx.buf.emitCsetEq(X0)
+  ctx.storeReg(op.dest, X0)
+
+proc genNeI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.binLeft)
+  ctx.loadReg(X1, op.binRight)
+  ctx.buf.emitCmpRegReg(X0, X1)
+  ctx.buf.emitCsetNe(X0)
   ctx.storeReg(op.dest, X0)
 
 proc genBr*(ctx: CodegenContext, op: HirOp) =
@@ -264,7 +358,15 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokConstI64: ctx.genConstI64(op)
   of HokAddI64: ctx.genAddI64(op)
   of HokSubI64: ctx.genSubI64(op)
+  of HokMulI64: ctx.genMulI64(op)
+  of HokDivI64: ctx.genDivI64(op)
+  of HokNegI64: ctx.genNegI64(op)
   of HokLeI64: ctx.genLeI64(op)
+  of HokLtI64: ctx.genLtI64(op)
+  of HokGeI64: ctx.genGeI64(op)
+  of HokGtI64: ctx.genGtI64(op)
+  of HokEqI64: ctx.genEqI64(op)
+  of HokNeI64: ctx.genNeI64(op)
   of HokBr: ctx.genBr(op)
   of HokJump: ctx.genJump(op)
   of HokRet: ctx.genRet(op)

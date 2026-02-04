@@ -99,6 +99,18 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     # Argument mismatch - shouldn't happen for typed functions
     discard
     
+  of IkVarAddValue:
+    # var[arg0] + Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitAddI64(paramReg, constReg)
+    ctx.push(resultReg, HtI64)
+    pc += 1  # Skip Data instruction
+
   of IkVarLeValue:
     # var[arg0] <= Data[pc+1].arg0  (arg1 is parent_index, 0 for local)
     let varIdx = inst.arg0.int64.int
@@ -112,6 +124,54 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     ctx.push(resultReg, HtBool)
     pc += 1  # Skip Data instruction
 
+  of IkVarLtValue:
+    # var[arg0] < Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitLtI64(paramReg, constReg)
+    ctx.push(resultReg, HtBool)
+    pc += 1  # Skip Data instruction
+
+  of IkVarGtValue:
+    # var[arg0] > Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitGtI64(paramReg, constReg)
+    ctx.push(resultReg, HtBool)
+    pc += 1
+
+  of IkVarGeValue:
+    # var[arg0] >= Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitGeI64(paramReg, constReg)
+    ctx.push(resultReg, HtBool)
+    pc += 1
+
+  of IkVarEqValue:
+    # var[arg0] == Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitEqI64(paramReg, constReg)
+    ctx.push(resultReg, HtBool)
+    pc += 1
+
   of IkVarSubValue:
     # var[arg0] - Data[pc+1].arg0  (arg1 is parent_index, 0 for local)
     let varIdx = inst.arg0.int64.int
@@ -123,6 +183,30 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     let resultReg = ctx.builder.emitSubI64(paramReg, constReg)
     ctx.push(resultReg, HtI64)
     pc += 1  # Skip Data instruction
+
+  of IkVarMulValue:
+    # var[arg0] * Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitMulI64(paramReg, constReg)
+    ctx.push(resultReg, HtI64)
+    pc += 1
+
+  of IkVarDivValue:
+    # var[arg0] / Data[pc+1].arg0
+    let varIdx = inst.arg0.int64.int
+    let dataInst = ctx.cu.instructions[pc + 1]
+    let constVal = dataInst.arg0.to_int()
+
+    let paramReg = newHirReg(varIdx.int32)
+    let constReg = ctx.builder.emitConstI64(constVal)
+    let resultReg = ctx.builder.emitDivI64(paramReg, constReg)
+    ctx.push(resultReg, HtI64)
+    pc += 1
     
   of IkData:
     # Data instruction - should be consumed by previous instruction
@@ -184,6 +268,84 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     let left = ctx.pop()
     let resultReg = ctx.builder.emitAddI64(left.reg, right.reg)
     ctx.push(resultReg, HtI64)
+
+  of IkAddValue:
+    # Add literal to top of stack
+    let left = ctx.pop()
+    let constReg = ctx.builder.emitConstI64(inst.arg0.to_int())
+    let resultReg = ctx.builder.emitAddI64(left.reg, constReg)
+    ctx.push(resultReg, HtI64)
+
+  of IkSub:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitSubI64(left.reg, right.reg)
+    ctx.push(resultReg, HtI64)
+
+  of IkSubValue:
+    let left = ctx.pop()
+    let constReg = ctx.builder.emitConstI64(inst.arg0.to_int())
+    let resultReg = ctx.builder.emitSubI64(left.reg, constReg)
+    ctx.push(resultReg, HtI64)
+
+  of IkMul:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitMulI64(left.reg, right.reg)
+    ctx.push(resultReg, HtI64)
+
+  of IkDiv:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitDivI64(left.reg, right.reg)
+    ctx.push(resultReg, HtI64)
+
+  of IkNeg:
+    let value = ctx.pop()
+    let resultReg = ctx.builder.emitNegI64(value.reg)
+    ctx.push(resultReg, HtI64)
+
+  of IkLt:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitLtI64(left.reg, right.reg)
+    ctx.push(resultReg, HtBool)
+
+  of IkLtValue:
+    let left = ctx.pop()
+    let constReg = ctx.builder.emitConstI64(inst.arg0.to_int())
+    let resultReg = ctx.builder.emitLtI64(left.reg, constReg)
+    ctx.push(resultReg, HtBool)
+
+  of IkLe:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitLeI64(left.reg, right.reg)
+    ctx.push(resultReg, HtBool)
+
+  of IkGt:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitGtI64(left.reg, right.reg)
+    ctx.push(resultReg, HtBool)
+
+  of IkGe:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitGeI64(left.reg, right.reg)
+    ctx.push(resultReg, HtBool)
+
+  of IkEq:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitEqI64(left.reg, right.reg)
+    ctx.push(resultReg, HtBool)
+
+  of IkNe:
+    let right = ctx.pop()
+    let left = ctx.pop()
+    let resultReg = ctx.builder.emitNeI64(left.reg, right.reg)
+    ctx.push(resultReg, HtBool)
 
   of IkPop:
     # Pop and discard top of stack
@@ -330,20 +492,29 @@ proc isNativeEligible*(cu: CompilationUnit, fnName: string = ""): bool =
 
   for inst in cu.instructions:
     case inst.kind
-    of IkVarResolve, IkVarLeValue, IkVarSubValue:
+    of IkVarResolve, IkVarAddValue, IkVarSubValue, IkVarMulValue, IkVarDivValue,
+       IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue:
       # Only local scope access is supported
       if inst.arg1.int64 != 0:
         return false
+    of IkAddValue, IkSubValue, IkLtValue:
+      if inst.arg0.kind != VkInt:
+        return false
     of IkPushValue:
       # Only integer literals supported
+      if inst.arg0.kind != VkInt:
+        return false
+    of IkData:
       if inst.arg0.kind != VkInt:
         return false
     of IkResolveSymbol:
       if fnName.len > 0 and inst.arg0.kind in {VkSymbol, VkString}:
         if inst.arg0.str != fnName:
           return false
-    of IkStart, IkJumpIfFalse, IkJump, IkJumpIfMatchSuccess, IkAdd, IkUnifiedCall1,
-       IkPop, IkData, IkScopeEnd, IkEnd, IkReturn, IkThrow:
+    of IkStart, IkJumpIfFalse, IkJump, IkJumpIfMatchSuccess,
+       IkAdd, IkSub, IkMul, IkDiv, IkNeg,
+       IkLt, IkLe, IkGt, IkGe, IkEq, IkNe,
+       IkUnifiedCall1, IkPop, IkScopeEnd, IkEnd, IkReturn, IkThrow:
       discard
     else:
       return false

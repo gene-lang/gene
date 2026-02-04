@@ -29,7 +29,9 @@ proc validate_hir(fn: HirFunction): bool =
   for blk in fn.blocks:
     for op in blk.ops:
       case op.kind
-      of HokConstI64, HokAddI64, HokSubI64, HokLeI64, HokBr, HokJump, HokRet, HokCall:
+      of HokConstI64, HokAddI64, HokSubI64, HokMulI64, HokDivI64, HokNegI64,
+         HokLeI64, HokLtI64, HokGeI64, HokGtI64, HokEqI64, HokNeI64,
+         HokBr, HokJump, HokRet, HokCall:
         if op.kind == HokCall and op.callTarget != fn.name:
           return false
       else:

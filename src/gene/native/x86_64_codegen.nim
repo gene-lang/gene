@@ -188,13 +188,37 @@ proc emitCmpRegReg*(buf: CodeBuffer, left, right: X86Reg) =
   buf.emit(0x39)
   buf.emit(modRM(0b11, right, left))
 
-proc emitSetLE*(buf: CodeBuffer, dst: X86Reg) =
-  ## setle dst (set byte if less or equal)
+proc emitSetCC*(buf: CodeBuffer, dst: X86Reg, opcode: byte) =
+  ## setcc dst (set byte based on condition code opcode)
   if needsRex(dst):
     buf.emit(0x40 or rexFor(dst))
   buf.emit(0x0F)
-  buf.emit(0x9E)
+  buf.emit(opcode)
   buf.emit(modRM(0b11, RAX, dst))  # RAX is placeholder for opcode extension
+
+proc emitSetLE*(buf: CodeBuffer, dst: X86Reg) =
+  ## setle dst (set byte if less or equal)
+  buf.emitSetCC(dst, 0x9E)
+
+proc emitSetLT*(buf: CodeBuffer, dst: X86Reg) =
+  ## setl dst (set byte if less than)
+  buf.emitSetCC(dst, 0x9C)
+
+proc emitSetGE*(buf: CodeBuffer, dst: X86Reg) =
+  ## setge dst (set byte if greater or equal)
+  buf.emitSetCC(dst, 0x9D)
+
+proc emitSetGT*(buf: CodeBuffer, dst: X86Reg) =
+  ## setg dst (set byte if greater than)
+  buf.emitSetCC(dst, 0x9F)
+
+proc emitSetEQ*(buf: CodeBuffer, dst: X86Reg) =
+  ## sete dst (set byte if equal)
+  buf.emitSetCC(dst, 0x94)
+
+proc emitSetNE*(buf: CodeBuffer, dst: X86Reg) =
+  ## setne dst (set byte if not equal)
+  buf.emitSetCC(dst, 0x95)
 
 proc emitMovzxRegByte*(buf: CodeBuffer, dst: X86Reg) =
   ## movzx dst, dl (zero-extend byte to 64-bit)
@@ -202,6 +226,30 @@ proc emitMovzxRegByte*(buf: CodeBuffer, dst: X86Reg) =
   buf.emit(0x0F)
   buf.emit(0xB6)
   buf.emit(modRM(0b11, dst, dst))
+
+proc emitIMulRegReg*(buf: CodeBuffer, dst, src: X86Reg) =
+  ## imul dst, src
+  buf.emit(REX_W or rexForReg(dst, src))
+  buf.emit(0x0F)
+  buf.emit(0xAF)
+  buf.emit(modRM(0b11, dst, src))
+
+proc emitCqo*(buf: CodeBuffer) =
+  ## cqo (sign-extend RAX into RDX:RAX)
+  buf.emit(REX_W)
+  buf.emit(0x99)
+
+proc emitIdivReg*(buf: CodeBuffer, src: X86Reg) =
+  ## idiv src
+  buf.emit(REX_W or rexFor(src))
+  buf.emit(0xF7)
+  buf.emit(byte(0b11_111_000 or regCode(src)))
+
+proc emitNegReg*(buf: CodeBuffer, reg: X86Reg) =
+  ## neg reg
+  buf.emit(REX_W or rexFor(reg))
+  buf.emit(0xF7)
+  buf.emit(byte(0b11_011_000 or regCode(reg)))
 
 proc emitJmp*(buf: CodeBuffer, target: HirBlockId) =
   ## jmp rel32 (with fixup)
@@ -315,11 +363,69 @@ proc genSubI64*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitSubRegReg(RAX, RCX)
   ctx.storeReg(op.dest, RAX)
 
+proc genMulI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitIMulRegReg(RAX, RCX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genDivI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitCqo()
+  ctx.buf.emitIdivReg(RCX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genNegI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.unaryArg)
+  ctx.buf.emitNegReg(RAX)
+  ctx.storeReg(op.dest, RAX)
+
 proc genLeI64*(ctx: CodegenContext, op: HirOp) =
   ctx.loadReg(RAX, op.binLeft)
   ctx.loadReg(RCX, op.binRight)
   ctx.buf.emitCmpRegReg(RAX, RCX)
   ctx.buf.emitSetLE(RAX)
+  ctx.buf.emitMovzxRegByte(RAX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genLtI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitCmpRegReg(RAX, RCX)
+  ctx.buf.emitSetLT(RAX)
+  ctx.buf.emitMovzxRegByte(RAX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genGeI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitCmpRegReg(RAX, RCX)
+  ctx.buf.emitSetGE(RAX)
+  ctx.buf.emitMovzxRegByte(RAX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genGtI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitCmpRegReg(RAX, RCX)
+  ctx.buf.emitSetGT(RAX)
+  ctx.buf.emitMovzxRegByte(RAX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genEqI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitCmpRegReg(RAX, RCX)
+  ctx.buf.emitSetEQ(RAX)
+  ctx.buf.emitMovzxRegByte(RAX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genNeI64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.binLeft)
+  ctx.loadReg(RCX, op.binRight)
+  ctx.buf.emitCmpRegReg(RAX, RCX)
+  ctx.buf.emitSetNE(RAX)
   ctx.buf.emitMovzxRegByte(RAX)
   ctx.storeReg(op.dest, RAX)
 
@@ -367,7 +473,15 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokConstI64: ctx.genConstI64(op)
   of HokAddI64: ctx.genAddI64(op)
   of HokSubI64: ctx.genSubI64(op)
+  of HokMulI64: ctx.genMulI64(op)
+  of HokDivI64: ctx.genDivI64(op)
+  of HokNegI64: ctx.genNegI64(op)
   of HokLeI64: ctx.genLeI64(op)
+  of HokLtI64: ctx.genLtI64(op)
+  of HokGeI64: ctx.genGeI64(op)
+  of HokGtI64: ctx.genGtI64(op)
+  of HokEqI64: ctx.genEqI64(op)
+  of HokNeI64: ctx.genNeI64(op)
   of HokBr: ctx.genBr(op)
   of HokJump: ctx.genJump(op)
   of HokRet: ctx.genRet(op)
