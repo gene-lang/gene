@@ -29,9 +29,20 @@ template same_value_identity(a: Value, b: Value): bool =
   cast[uint64](a) == cast[uint64](b)
 
 proc native_args_supported(f: Function, args: seq[Value]): bool =
+  const nativeArgLimit =
+    when defined(arm64) or defined(aarch64):
+      8
+    elif defined(amd64):
+      6
+    else:
+      0
+  if nativeArgLimit == 0:
+    return false
   if f.matcher.is_nil or not f.matcher.has_type_annotations:
     return false
   if f.matcher.children.len != args.len:
+    return false
+  if args.len > nativeArgLimit:
     return false
   for i, param in f.matcher.children:
     let type_name = param.type_name.toLowerAscii()
@@ -59,15 +70,49 @@ proc try_native_call(self: ptr VirtualMachine, f: Function, args: seq[Value], ou
       return false
     f.native_entry = compiled.entry
     f.native_ready = true
-  let fn_ptr = cast[NativeFnPtr](f.native_entry)
-  if args.len == 0:
-    out_value = fn_ptr(nil, 0).to_value()
-    return true
-  var native_args: seq[system.int64] = @[]
-  native_args.setLen(args.len)
-  for i, arg in args:
-    native_args[i] = arg.to_int()
-  out_value = fn_ptr(cast[ptr UncheckedArray[system.int64]](native_args[0].addr), args.len.int32).to_value()
+  type
+    NativeFn0 = proc(): int64 {.cdecl.}
+    NativeFn1 = proc(a0: int64): int64 {.cdecl.}
+    NativeFn2 = proc(a0, a1: int64): int64 {.cdecl.}
+    NativeFn3 = proc(a0, a1, a2: int64): int64 {.cdecl.}
+    NativeFn4 = proc(a0, a1, a2, a3: int64): int64 {.cdecl.}
+    NativeFn5 = proc(a0, a1, a2, a3, a4: int64): int64 {.cdecl.}
+    NativeFn6 = proc(a0, a1, a2, a3, a4, a5: int64): int64 {.cdecl.}
+    NativeFn7 = proc(a0, a1, a2, a3, a4, a5, a6: int64): int64 {.cdecl.}
+    NativeFn8 = proc(a0, a1, a2, a3, a4, a5, a6, a7: int64): int64 {.cdecl.}
+  case args.len
+  of 0:
+    out_value = cast[NativeFn0](f.native_entry)().to_value()
+  of 1:
+    out_value = cast[NativeFn1](f.native_entry)(args[0].to_int()).to_value()
+  of 2:
+    out_value = cast[NativeFn2](f.native_entry)(args[0].to_int(), args[1].to_int()).to_value()
+  of 3:
+    out_value = cast[NativeFn3](f.native_entry)(args[0].to_int(), args[1].to_int(), args[2].to_int()).to_value()
+  of 4:
+    out_value = cast[NativeFn4](f.native_entry)(
+      args[0].to_int(), args[1].to_int(), args[2].to_int(), args[3].to_int()
+    ).to_value()
+  of 5:
+    out_value = cast[NativeFn5](f.native_entry)(
+      args[0].to_int(), args[1].to_int(), args[2].to_int(), args[3].to_int(), args[4].to_int()
+    ).to_value()
+  of 6:
+    out_value = cast[NativeFn6](f.native_entry)(
+      args[0].to_int(), args[1].to_int(), args[2].to_int(), args[3].to_int(), args[4].to_int(), args[5].to_int()
+    ).to_value()
+  of 7:
+    out_value = cast[NativeFn7](f.native_entry)(
+      args[0].to_int(), args[1].to_int(), args[2].to_int(), args[3].to_int(),
+      args[4].to_int(), args[5].to_int(), args[6].to_int()
+    ).to_value()
+  of 8:
+    out_value = cast[NativeFn8](f.native_entry)(
+      args[0].to_int(), args[1].to_int(), args[2].to_int(), args[3].to_int(),
+      args[4].to_int(), args[5].to_int(), args[6].to_int(), args[7].to_int()
+    ).to_value()
+  else:
+    return false
   true
 
 proc skip_wildcard_import_key(key: Key): bool {.inline.} =

@@ -151,8 +151,8 @@ type
     regCount*: int32          ## Total number of registers used
     isNativeEligible*: bool   ## True if function can be fully native
 
-  ## Native function pointer (for compiled code)
-  NativeFnPtr* = proc(args: ptr UncheckedArray[int64], argc: int32): int64 {.cdecl.}
+  ## Native function pointer (for compiled code). Call with arity-specific signature.
+  NativeFnPtr* = pointer
 
   ## Compiled native function entry
   NativeFunction* = object
@@ -399,4 +399,3 @@ proc buildFibHir*(): HirFunction =
   b.emitRet(sum)
 
   result = b.finalize()
-
