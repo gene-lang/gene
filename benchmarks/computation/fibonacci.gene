@@ -5,7 +5,7 @@
   else
     (+ (fib (- n 1)) (fib (- n 2)))))
 
-(var n 20)
+(var n 24)
 (println "Computing fib(" n ")...")
 # Note: time/now is not yet implemented, so timing is disabled
 # (var start (time/now))

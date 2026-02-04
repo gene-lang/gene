@@ -9,27 +9,42 @@ echo "Git commit: $(git rev-parse HEAD)"
 echo "Nim version: $(nim --version 2>&1 | head -1)"
 echo ""
 
-# Build Gene if needed
-if [ ! -f "./gene" ] && [ ! -f "./bin/gene" ]; then
-  echo "Building Gene..."
-  nimble build 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate" || true
-  echo ""
-fi
+# Run benchmark
+echo "Compiling fibonacci_native benchmark..."
+rm -f bin/fibonacci_native 2>/dev/null
+CMD="nim c --hints:off --mm:orc -d:release -d:danger -d:ssl --out:bin/fibonacci_native benchmarks/computation/fibonacci_native.nim"
+$CMD 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate libraries" || true
 
-# Find Gene executable
-GENE_CMD=""
-if [ -f "./gene" ]; then
-  GENE_CMD="./gene"
-elif [ -f "./bin/gene" ]; then
-  GENE_CMD="./bin/gene"
+if [ -f "./bin/fibonacci_native" ]; then
+  echo ""
+  echo "Running fibonacci_native benchmark..."
+  ./bin/fibonacci_native "$@"
 else
-  echo "Error: Gene executable not found"
+  echo "Error: bin/fibonacci_native not found"
   exit 1
 fi
 
-echo "Using Gene executable: $GENE_CMD"
-echo ""
+# # Build Gene if needed
+# if [ ! -f "./gene" ] && [ ! -f "./bin/gene" ]; then
+#   echo "Building Gene..."
+#   nimble build 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate" || true
+#   echo ""
+# fi
 
-# Run benchmark
-echo "Running benchmark with --native-code..."
-$GENE_CMD run --native-code benchmarks/computation/fibonacci.gene "$@"
+# # Find Gene executable
+# GENE_CMD=""
+# if [ -f "./gene" ]; then
+#   GENE_CMD="./gene"
+# elif [ -f "./bin/gene" ]; then
+#   GENE_CMD="./bin/gene"
+# else
+#   echo "Error: Gene executable not found"
+#   exit 1
+# fi
+
+# echo "Using Gene executable: $GENE_CMD"
+# echo ""
+
+# echo ""
+# echo "Running benchmarks/computation/fibonacci.gene with --native-code..."
+# $GENE_CMD run --native-code benchmarks/computation/fibonacci.gene "$@"
