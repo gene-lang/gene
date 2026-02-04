@@ -1,5 +1,5 @@
 # Fibonacci benchmark for Gene
-(fn fib [n]
+(fn fib [n: Int] -> Int
   (if (<= n 1)
     n
   else
