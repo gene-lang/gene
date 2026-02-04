@@ -3,7 +3,7 @@
 **Project Lead:** Sunni (AI Assistant)  
 **Started:** 2026-01-29  
 **Target:** Q1 2026 (MVP)  
-**Status:** 🟡 Planning
+**Status:** 🟢 In Progress (~30% Complete)
 
 ## Vision
 
@@ -32,14 +32,17 @@ The type checker already has:
 - [ ] Fix any broken tests (may expose existing bugs)
 - [x] Document how to add type annotations (dispatch-example.gene)
 
-### Phase 2: Runtime Type Info (Week 2-3) 🎯 CORE MVP
+### Phase 2: Runtime Type Info (Week 2-3) 🎯 CORE MVP ✅ COMPLETE
 - [x] Runtime type checking using NaN tags (runtime_types.nim)
 - [x] Type validation helpers (is_int, is_float, etc.)
 - [x] Type name extraction (runtime_type_name)
 - [x] Type compatibility checking (is_compatible)
-- [ ] Implement `(x .is Type)` runtime check in VM
-- [ ] Emit RTTI in compiled code for user types
+- [x] Implement `(x .is Type)` runtime check in VM
+- [x] Runtime type validation on function calls (validate_type in args.nim)
+- [x] Gene exceptions for type errors (catchable when try/catch fixed)
 - [x] Class/instance type tracking (using InstanceObj.class_obj)
+- [x] Inheritance support in `.is` checks
+- [ ] Emit RTTI in compiled code for user types (deferred)
 
 ### Phase 3: `Any` Type & Gradual Typing (Week 4)
 - [ ] Make missing annotations default to `Any`

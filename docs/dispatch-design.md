@@ -72,27 +72,27 @@ Any     -> Concrete (runtime check with NaN tag)
 
 ## Implementation Plan
 
-### Phase 1: Enable Type Checking (Week 1)
-- [ ] Make type_check=true by default in compiler
-- [ ] Update CLI to support --no-type-check flag
-- [ ] Make missing annotations default to ^Any
-- [ ] Test with existing code
+### Phase 1: Enable Type Checking (Week 1) ✅
+- [x] Make type_check=true by default in compiler
+- [x] Update CLI to support --no-type-check flag
+- [x] Make missing annotations default to ^Any
+- [x] Test with existing code (65 tests passing)
 
-### Phase 2: Two-Phase Dispatch (Week 2)
-- [ ] Add function signature storage in VM
-- [ ] Implement name resolution phase
-- [ ] Add argument type validation phase
-- [ ] Runtime type checks using NaN tags
+### Phase 2: Two-Phase Dispatch (Week 2) ✅
+- [x] Add function signature storage in VM
+- [x] Implement name resolution phase
+- [x] Add argument type validation phase (validate_type in args.nim)
+- [x] Runtime type checks using NaN tags
 
 ### Phase 3: Gradual Generics (Week 3)
 - [ ] Ensure type variables default to Any at runtime
 - [ ] No monomorphization (single code path)
 - [ ] Allow generic functions to work with dynamic types
 
-### Phase 4: Runtime Type Info (Week 4)
-- [ ] Add type_id to object headers
-- [ ] Implement `.is` type checks
-- [ ] Support runtime type queries
+### Phase 4: Runtime Type Info (Week 4) ✅
+- [x] Add type_id to object headers (using InstanceObj.class_obj)
+- [x] Implement `.is` type checks (all built-in types + inheritance)
+- [x] Support runtime type queries
 
 ## Example
 
@@ -126,6 +126,23 @@ Any     -> Concrete (runtime check with NaN tag)
 (flexible 1 2)       # OK: dynamic
 (flexible "a" "b")   # OK: dynamic
 ```
+
+## Implementation Notes (2026-01-31)
+
+### Runtime Type Validation
+- **Location:** `src/gene/types/runtime_types.nim` (validate_type proc)
+- **Entry points:** 
+  - `src/gene/vm/args.nim` (process_args routes typed functions through validation)
+  - `src/gene/vm.nim` (checks `has_type_annotations` flag)
+- **Error handling:** Raises Gene exceptions (new_exception) - catchable by Gene try/catch (when SIGSEGV bug fixed)
+
+### .is Operator
+- **Location:** `src/gene/vm/is_operator.nim`
+- **Supported types:** Int, Float, Bool, String, Symbol, Char, Nil, Array, Map, Set, Regex, Time, Date, DateTime, Range, Function, Macro, Proc, Class, Instance, Enum, Any
+- **Inheritance:** Works correctly - `(child .is Parent)` returns true
+
+### Known Issues
+- `try/catch` causes SIGSEGV in `value_core.nim:2280 pop` - type errors can't be caught in Gene code yet
 
 ## Notes
 
