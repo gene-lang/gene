@@ -127,6 +127,7 @@ proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
+proc compile_export(self: Compiler, gene: ptr Gene)  # Forward declaration
 proc compile_init*(input: Value, local_defs = false): CompilationUnit  # Forward declaration
 proc predeclare_local_defs(self: Compiler, nodes: seq[Value])  # Forward declaration
 
@@ -2733,7 +2734,7 @@ proc compile_gene(self: Compiler, input: Value) =
     if first_child.kind == VkSymbol:
       if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
         # Don't convert if the type is already an operator or special form
-        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->", "@"]:
+        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "$", ".", "->", "@"]:
           # Convert infix to prefix notation and compile
           # (6 / 2) becomes (/ 6 2)
           # (i + 1) becomes (+ i 1)
@@ -2754,7 +2755,7 @@ proc compile_gene(self: Compiler, input: Value) =
         return
     elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == "":
       # Don't convert if the type is already an operator or special form
-      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "$", ".", "->"]:
+      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "$", ".", "->"]:
         # Convert infix to prefix notation and compile
         # (6 / 2) becomes (/ 6 2)
         # (i + 1) becomes (+ i 1)
@@ -3104,6 +3105,9 @@ proc compile_gene(self: Compiler, input: Value) =
       of "import":
         self.compile_import(gene)
         return
+      of "export":
+        self.compile_export(gene)
+        return
       of "comptime":
         # Compile-time only; runtime ignores for now.
         self.emit(Instruction(kind: IkPushNil))
@@ -3425,6 +3429,17 @@ proc compile*(f: Function, eager_functions: bool) =
   self.scope_trackers.add(f.scope_tracker)
   self.declared_names.add(initTable[Key, bool]())
 
+  let param_count = f.matcher.children.len.int16
+  if self.module_init_mode and param_count > 0 and self.scope_tracker.mappings.len > 0:
+    let self_key = "self".to_key()
+    let has_self = self.scope_tracker.mappings.has_key(self_key) and self.scope_tracker.mappings[self_key] == 0
+    if not has_self:
+      var shifted = initTable[Key, int16]()
+      for k, v in self.scope_tracker.mappings:
+        shifted[k] = v + param_count
+      self.scope_tracker.mappings = shifted
+      self.scope_tracker.next_index = self.scope_tracker.next_index + param_count
+
   # generate code for arguments
   for i, m in f.matcher.children:
     self.scope_tracker.mappings[m.name_key] = i.int16
@@ -3445,7 +3460,8 @@ proc compile*(f: Function, eager_functions: bool) =
 
   # Set next_index to reflect the number of parameters so child scopes can find them
   if f.matcher.children.len > 0:
-    self.scope_tracker.next_index = f.matcher.children.len.int16
+    if self.scope_tracker.next_index < f.matcher.children.len.int16:
+      self.scope_tracker.next_index = f.matcher.children.len.int16
     # Function frames with params already create a runtime scope; avoid extra ScopeStart.
     self.scope_tracker.scope_started = true
 
@@ -3911,6 +3927,27 @@ proc compile_import(self: Compiler, gene: ptr Gene) =
   # echo "DEBUG: gene.children = ", gene.children
   # echo "DEBUG: gene.props = ", gene.props
   
+  # Record module import metadata when compiling a module
+  if self.preserve_root_scope:
+    var module_path = ""
+    var i = 0
+    while i + 1 < gene.children.len:
+      let child = gene.children[i]
+      if child.kind == VkSymbol and child.str == "from":
+        let next = gene.children[i + 1]
+        if next.kind == VkString:
+          module_path = next.str
+        break
+      i.inc()
+    if module_path.len > 0:
+      var exists = false
+      for item in self.output.module_imports:
+        if item == module_path:
+          exists = true
+          break
+      if not exists:
+        self.output.module_imports.add(module_path)
+
   # Compile a gene value for the import, but with "import" as a symbol type
   self.emit(Instruction(kind: IkGeneStart))
   self.emit(Instruction(kind: IkPushValue, arg0: "import".to_symbol_value()))
@@ -3943,6 +3980,46 @@ proc compile_import(self: Compiler, gene: ptr Gene) =
   
   self.emit(Instruction(kind: IkGeneEnd))
   self.emit(Instruction(kind: IkImport))
+
+proc compile_export(self: Compiler, gene: ptr Gene) =
+  # (export [a b]) or (export a b)
+  proc record_export(name: string) =
+    if not self.preserve_root_scope or name.len == 0:
+      return
+    var exists = false
+    for item in self.output.module_exports:
+      if item == name:
+        exists = true
+        break
+    if not exists:
+      self.output.module_exports.add(name)
+
+  var items: seq[Value] = @[]
+  if gene.children.len == 1 and gene.children[0].kind == VkArray:
+    items = array_data(gene.children[0])
+  else:
+    items = gene.children
+
+  if items.len == 0:
+    not_allowed("export expects at least one name")
+
+  let export_list = new_array_value()
+  for item in items:
+    case item.kind
+    of VkSymbol:
+      if item.str.contains("/"):
+        not_allowed("export names must be simple symbols")
+      array_data(export_list).add(item)
+      record_export(item.str)
+    of VkString:
+      if item.str.contains("/"):
+        not_allowed("export names must be simple strings")
+      array_data(export_list).add(item)
+      record_export(item.str)
+    else:
+      not_allowed("export names must be symbols or strings")
+
+  self.emit(Instruction(kind: IkExport, arg0: export_list))
 
 proc compile_init*(input: Value, local_defs = false): CompilationUnit =
   let self = Compiler(
@@ -4311,7 +4388,7 @@ proc eval_comptime_expr(expr: Value, env: var ComptimeEnv): ComptimeResult =
     if gene.children.len >= 1 and gene.children[0].kind == VkSymbol:
       let op = gene.children[0].str
       if op in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "++", "=", "+=", "-="]:
-        if gene.`type`.kind != VkSymbol or gene.`type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "interface", "comptime", "type", "object", "$", ".", "->", "@"]:
+        if gene.`type`.kind != VkSymbol or gene.`type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "interface", "comptime", "type", "object", "$", ".", "->", "@"]:
           let args = @[gene.`type`] & gene.children[1..^1]
           result = eval_comptime_operator(op, args, env)
           return
@@ -4415,10 +4492,39 @@ proc append_init_items(init_fn: Value, items: seq[Value]) =
   for item in items:
     init_fn.gene.children.add(item)
 
+proc ensure_init_self_arg(init_fn: Value) =
+  if init_fn.kind != VkGene or init_fn.gene == nil:
+    return
+  if init_fn.gene.children.len < 2:
+    return
+  let args = init_fn.gene.children[1]
+  var updated: Value = NIL
+  case args.kind
+  of VkArray:
+    let src = array_data(args)
+    if src.len == 0 or src[0].kind != VkSymbol or src[0].str != "self":
+      updated = new_array_value()
+      array_data(updated).add("self".to_symbol_value())
+      for arg in src:
+        array_data(updated).add(arg)
+  of VkSymbol:
+    if args.str == "self":
+      discard
+    else:
+      updated = new_array_value()
+      array_data(updated).add("self".to_symbol_value())
+      if args.str != "_":
+        array_data(updated).add(args)
+  else:
+    discard
+  if updated != NIL:
+    init_fn.gene.children[1] = updated
+
 proc build_init_fn(items: seq[Value]): Value =
   let g = new_gene("fn".to_symbol_value())
   g.children.add("__init__".to_symbol_value())
   let args = new_array_value()
+  array_data(args).add("self".to_symbol_value())
   g.children.add(args)
   for item in items:
     g.children.add(item)
@@ -4426,6 +4532,7 @@ proc build_init_fn(items: seq[Value]): Value =
 
 proc build_init_call(): Value =
   let g = new_gene("__init__".to_symbol_value())
+  g.children.add("self".to_symbol_value())
   result = g.to_gene_value()
 
 proc predeclare_local_defs(self: Compiler, nodes: seq[Value]) =
@@ -4506,6 +4613,7 @@ proc normalize_module_nodes(nodes: seq[Value], run_init: bool): seq[Value] =
     if is_module_init_fn(node):
       if init_fn != NIL:
         not_allowed("Duplicate __init__ definition in module")
+      ensure_init_self_arg(node)
       init_fn = node
       defs.add(node)
     elif is_module_def_node(node):
@@ -4554,6 +4662,10 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   let checker = if type_check: new_type_checker(strict = false) else: nil
 
   if module_mode:
+    let self_key = "self".to_key()
+    if not self.scope_tracker.mappings.has_key(self_key):
+      self.scope_tracker.mappings[self_key] = self.scope_tracker.next_index
+      self.scope_tracker.next_index.inc()
     var nodes: seq[Value] = @[]
     try:
       while true:
@@ -4739,6 +4851,10 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   let checker = if type_check: new_type_checker(strict = false) else: nil
 
   if module_mode:
+    let self_key = "self".to_key()
+    if not self.scope_tracker.mappings.has_key(self_key):
+      self.scope_tracker.mappings[self_key] = self.scope_tracker.next_index
+      self.scope_tracker.next_index.inc()
     var nodes: seq[Value] = @[]
     try:
       while true:

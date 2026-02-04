@@ -322,6 +322,9 @@ proc check_import(self: TypeChecker, gene: ptr Gene): TypeExpr =
     self.collect_import_types(child)
   return ANY_TYPE
 
+proc check_export(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  return ANY_TYPE
+
 proc is_union_gene(gene: ptr Gene): bool =
   if gene == nil:
     return false
@@ -1366,6 +1369,8 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return ANY_TYPE
       of "import":
         return self.check_import(gene)
+      of "export":
+        return self.check_export(gene)
       of "if":
         return self.check_if(gene)
       of "do":

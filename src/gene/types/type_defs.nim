@@ -698,6 +698,9 @@ type
     IkCreateSelector # Build selector from N segments on stack (arg1 = count)
     IkSetMemberDynamic # Set member using key/index from stack
 
+    # Module helpers
+    IkExport         # Export names from module scope into namespace
+
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object
     kind*: InstructionKind
@@ -727,6 +730,8 @@ type
     instruction_traces*: seq[SourceTrace]
     labels*: Table[Label, int]
     inline_caches*: seq[InlineCache]  # Inline caches indexed by PC
+    module_exports*: seq[string]
+    module_imports*: seq[string]
 
   # Used by the compiler to keep track of scopes and variables
   #

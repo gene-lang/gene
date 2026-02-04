@@ -2,7 +2,6 @@ import tables, strutils, hashes, os
 
 import ../types
 import ../compiler
-import ../parser
 import ../gir
 when not defined(noExtensions):
   import ./extension
@@ -13,8 +12,55 @@ type
     alias*: string
     children*: seq[string]  # For nested imports like n/[a b]
 
+# Forward declarations
+proc workspace_src_paths(): seq[string]
+
 # Global module cache
 var ModuleCache* = initTable[string, Namespace]()
+var ModuleLoadState* = initTable[string, bool]()
+var ModuleLoadStack* = newSeq[string]()
+
+let ExportKey* = "__exports__".to_key()
+
+proc ensure_exports_map(ns: Namespace): Value =
+  var exports_val = ns.members.getOrDefault(ExportKey, NIL)
+  if exports_val == NIL or exports_val.kind != VkMap:
+    exports_val = new_map_value()
+    ns.members[ExportKey] = exports_val
+  exports_val
+
+proc add_export*(ns: Namespace, name: string) =
+  if ns == nil or name.len == 0:
+    return
+  let exports_val = ensure_exports_map(ns)
+  map_data(exports_val)[name.to_key()] = TRUE
+
+proc has_exports*(ns: Namespace): bool =
+  if ns == nil:
+    return false
+  let exports_val = ns.members.getOrDefault(ExportKey, NIL)
+  exports_val != NIL and exports_val.kind == VkMap
+
+proc is_exported*(ns: Namespace, path: string): bool =
+  if ns == nil:
+    return false
+  let exports_val = ns.members.getOrDefault(ExportKey, NIL)
+  if exports_val == NIL or exports_val.kind != VkMap:
+    return true
+  let exports_map = map_data(exports_val)
+  if exports_map.hasKey(path.to_key()):
+    return true
+  let parts = path.split("/")
+  if parts.len > 1:
+    var prefix = ""
+    for i in 0..<parts.len - 1:
+      if i == 0:
+        prefix = parts[i]
+      else:
+        prefix &= "/" & parts[i]
+      if exports_map.hasKey(prefix.to_key()):
+        return true
+  return false
 
 const
   PackageNameAllowedChars = {'a'..'z', '0'..'9', '-', '_', '+', '&'}
@@ -105,8 +151,8 @@ proc resolve_native_module(module_path: string, importer_dir: string, package_ro
 
   let base_dir = if importer_dir.len > 0: importer_dir else: getCurrentDir()
   let pkg_dir = if package_root.len > 0: package_root else: base_dir
-  let bases = @[
-    base_dir,
+  let workspace_paths = workspace_src_paths()
+  let bases = @[base_dir] & workspace_paths & @[
     pkg_dir,
     joinPath(pkg_dir, "src"),
     joinPath(pkg_dir, "lib"),
@@ -142,8 +188,8 @@ proc resolve_module_path(module_path: string, importer_dir: string, package_root
 
   let base_dir = if importer_dir.len > 0: importer_dir else: getCurrentDir()
   let pkg_dir = if package_root.len > 0: package_root else: base_dir
-  let candidates = @[
-    base_dir,
+  let workspace_paths = workspace_src_paths()
+  let candidates = @[base_dir] & workspace_paths & @[
     pkg_dir,
     joinPath(pkg_dir, "src"),
     joinPath(pkg_dir, "lib"),
@@ -175,6 +221,22 @@ proc package_search_paths(importer_dir: string): seq[string] =
     for part in env_paths.split(PathSep):
       if part.len > 0:
         result.add(absolutePath(part))
+
+proc workspace_src_paths(): seq[string] =
+  ## Build workspace src roots from GENE_WORKSPACE_PATH.
+  result = @[]
+  let env_paths = getEnv("GENE_WORKSPACE_PATH")
+  if env_paths.len == 0:
+    return
+  for part in env_paths.split(PathSep):
+    if part.len == 0:
+      continue
+    let root = absolutePath(part)
+    let (_, tail) = splitPath(root)
+    if tail == "src":
+      result.add(root)
+    else:
+      result.add(joinPath(root, "src"))
 
 proc locate_package_root(package_name, importer_dir: string, override_path: string): string =
   ## Locate package root by name or explicit override.
@@ -663,14 +725,6 @@ proc handle_import*(vm: ptr VirtualMachine, import_gene: ptr Gene): tuple[path: 
   # Check cache first
   if ModuleCache.hasKey(resolved_path):
     let module_ns = ModuleCache[resolved_path]
-    for item in imports:
-      let value = resolve_import_value(module_ns, item.name)
-      let import_name = if item.alias.len > 0:
-        item.alias
-      else:
-        let parts = item.name.split("/")
-        parts[^1]
-      vm.frame.ns.members[import_name.to_key()] = value
     return (resolved_path, imports, module_ns, is_native, false)
   
   # Module not cached, need to compile and execute it (or load as native)

@@ -22,6 +22,8 @@ proc new_compilation_unit*(): CompilationUnit =
     trace_root: nil,
     instruction_traces: @[],
     inline_caches: @[],
+    module_exports: @[],
+    module_imports: @[],
   )
 
 proc add_instruction*(self: CompilationUnit, instr: Instruction, trace: SourceTrace = nil) =
@@ -60,6 +62,7 @@ proc `$`*(self: Instruction): string =
       IkLtValue, IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue,
       IkMapSetProp, IkMapSetPropValue,
       IkResolveSymbol, IkResolveMethod,
+      IkExport,
       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
       IkSetChild, IkGetChild,
       IkTailCall:

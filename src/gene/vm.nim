@@ -32,8 +32,43 @@ proc skip_wildcard_import_key(key: Key): bool {.inline.} =
   key == "__init__".to_key() or
   key == "__init_ran__".to_key() or
   key == "__compiled__".to_key() or
+  key == "__exports__".to_key() or
   key == "gene".to_key() or
   key == "genex".to_key()
+
+proc resolve_local_or_namespace(self: ptr VirtualMachine, name: string): tuple[found: bool, value: Value] =
+  let key = name.to_key()
+  if self.frame != nil and self.frame.scope != nil and self.frame.scope.tracker != nil:
+    let found = self.frame.scope.tracker.locate(key)
+    if found.local_index >= 0:
+      var scope = self.frame.scope
+      var parent_index = found.parent_index
+      while parent_index > 0 and scope != nil:
+        parent_index.dec()
+        scope = scope.parent
+      if scope != nil and found.local_index < scope.members.len:
+        return (true, scope.members[found.local_index])
+  if self.frame != nil and self.frame.ns != nil and self.frame.ns.members.hasKey(key):
+    return (true, self.frame.ns.members[key])
+  return (false, NIL)
+
+proc import_items(self: ptr VirtualMachine, source_ns: Namespace, items: seq[ImportItem]) =
+  if source_ns == nil or self.frame == nil or self.frame.ns == nil:
+    return
+
+  for item in items:
+    if item.name == "*":
+      for key, value in source_ns.members:
+        if value != NIL and not skip_wildcard_import_key(key):
+          self.frame.ns.members[key] = value
+    else:
+      let value = resolve_import_value(source_ns, item.name)
+      let import_name = if item.alias != "":
+        item.alias
+      else:
+        let parts = item.name.split("/")
+        parts[^1]
+      self.frame.ns.members[import_name.to_key()] = value
 
 import ./vm/arithmetic
 import ./vm/generator
@@ -1689,6 +1724,15 @@ proc exec*(self: ptr VirtualMachine): Value =
         elif inst.arg0.kind == VkScopeTracker:
           self.frame.scope = new_scope(inst.arg0.ref.scope_tracker, self.frame.scope)
           # Scope created with ref_count=1
+          let tracker = inst.arg0.ref.scope_tracker
+          if tracker != nil and self.frame != nil and self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 0:
+            let self_key = "self".to_key()
+            if tracker.mappings.has_key(self_key):
+              let self_idx = tracker.mappings[self_key].int
+              if self_idx >= 0:
+                while self.frame.scope.members.len <= self_idx:
+                  self.frame.scope.members.add(NIL)
+                self.frame.scope.members[self_idx] = self.frame.args.gene.children[0]
         else:
           not_allowed("IkScopeStart: expected ScopeTracker or Nil, got " & $inst.arg0.kind)
       of IkScopeEnd:
@@ -4382,7 +4426,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         f.scope_tracker = scope_tracker_obj
         if not f.matcher.is_empty():
           for child in f.matcher.children:
-            f.scope_tracker.add(child.name_key)
+            if not f.scope_tracker.mappings.hasKey(child.name_key):
+              f.scope_tracker.add(child.name_key)
 
         let r = new_ref(VkFunction)
         r.fn = f
@@ -4593,99 +4638,92 @@ proc exec*(self: ptr VirtualMachine): Value =
               ModuleCache[module_path] = ext_ns
               
               # Import requested symbols
-              for item in imports:
-                if item.name == "*":
-                  # Wildcard import: copy all members from extension namespace
-                  for key, value in ext_ns.members:
-                    if value != NIL and not skip_wildcard_import_key(key):
-                      self.frame.ns.members[key] = value
-                else:
-                  let value = resolve_import_value(ext_ns, item.name)
-
-                  # Determine the name to import as
-                  let import_name = if item.alias != "":
-                    item.alias
-                  else:
-                    # Use the last part of the path
-                    let parts = item.name.split("/")
-                    parts[^1]
-
-                  # Add to current namespace
-                  self.frame.ns.members[import_name.to_key()] = value
+              self.import_items(ext_ns, imports)
             else:
               not_allowed("Native extensions are not supported in this build")
           else:
-            # Compile the module
-            let cu = compile_module(module_path)
-            
-            # Save current state
-            let saved_cu = self.cu
-            let saved_frame = self.frame
-            let saved_pc = self.pc
-
-            # Create a new frame for module execution
-            self.frame = new_frame()
-            self.frame.ns = module_ns
-            # Module namespace is now passed as argument, not stored as self
-            let args_gene = new_gene(NIL)
-            args_gene.children.add(module_ns.to_value())
-            self.frame.args = args_gene.to_gene_value()
-            
-            # Execute the module
-            self.cu = cu
-            discard self.exec()
-            discard self.run_module_init(module_ns)
-            
-            # Restore the original state
-            self.cu = saved_cu
-            self.frame = saved_frame
-            self.pc = saved_pc
-            
-            # Cache the module
-            ModuleCache[module_path] = module_ns
-            
-            # Import requested symbols
-            for item in imports:
-              if item.name == "*":
-                # Wildcard import: copy all members from module namespace
-                for key, value in module_ns.members:
-                  if value != NIL and not skip_wildcard_import_key(key):
-                    self.frame.ns.members[key] = value
+            # Cycle detection
+            if ModuleLoadState.getOrDefault(module_path, false):
+              var cycle: seq[string] = @[]
+              var start = -1
+              for i, entry in ModuleLoadStack:
+                if entry == module_path:
+                  start = i
+                  break
+              if start >= 0:
+                cycle = ModuleLoadStack[start..^1] & @[module_path]
               else:
-                let value = resolve_import_value(module_ns, item.name)
+                cycle = ModuleLoadStack & @[module_path]
+              not_allowed("Cyclic import detected: " & cycle.join(" -> "))
 
-                # Determine the name to import as
-                let import_name = if item.alias != "":
-                  item.alias
-                else:
-                  # Use the last part of the path
-                  let parts = item.name.split("/")
-                  parts[^1]
+            ModuleLoadState[module_path] = true
+            ModuleLoadStack.add(module_path)
 
-                # Add to current namespace
-                self.frame.ns.members[import_name.to_key()] = value
+            # Compile the module
+            try:
+              let cu = compile_module(module_path)
+              
+              # Save current state
+              let saved_cu = self.cu
+              let saved_frame = self.frame
+              let saved_pc = self.pc
+
+              # Create a new frame for module execution
+              self.frame = new_frame()
+              self.frame.ns = module_ns
+              # Module namespace is now passed as argument, not stored as self
+              let args_gene = new_gene(NIL)
+              args_gene.children.add(module_ns.to_value())
+              self.frame.args = args_gene.to_gene_value()
+              
+              # Execute the module
+              self.cu = cu
+              discard self.exec()
+              discard self.run_module_init(module_ns)
+              
+              # Restore the original state
+              self.cu = saved_cu
+              self.frame = saved_frame
+              self.pc = saved_pc
+              
+              # Cache the module
+              ModuleCache[module_path] = module_ns
+              
+              # Import requested symbols
+              self.import_items(module_ns, imports)
+            finally:
+              if ModuleLoadState.hasKey(module_path):
+                ModuleLoadState.del(module_path)
+              if ModuleLoadStack.len > 0 and ModuleLoadStack[^1] == module_path:
+                ModuleLoadStack.setLen(ModuleLoadStack.len - 1)
         else:
           # Module already cached - import requested symbols
           let cached_ns = ModuleCache[module_path]
-          for item in imports:
-            if item.name == "*":
-              # Wildcard import: copy all members from cached namespace
-              for key, value in cached_ns.members:
-                if value != NIL and not skip_wildcard_import_key(key):
-                  self.frame.ns.members[key] = value
-            else:
-              let value = resolve_import_value(cached_ns, item.name)
+          self.import_items(cached_ns, imports)
 
-              # Determine the name to import as
-              let import_name = if item.alias != "":
-                item.alias
-              else:
-                # Use the last part of the path
-                let parts = item.name.split("/")
-                parts[^1]
+        self.frame.push(NIL)
 
-              # Add to current namespace
-              self.frame.ns.members[import_name.to_key()] = value
+      of IkExport:
+        let export_list = inst.arg0
+        if export_list.kind != VkArray:
+          not_allowed("export expects an array of names")
+        if self.frame == nil or self.frame.ns == nil:
+          not_allowed("export requires an active module namespace")
+
+        for item in array_data(export_list):
+          var name = ""
+          case item.kind
+          of VkSymbol, VkString:
+            name = item.str
+          else:
+            not_allowed("export names must be symbols or strings")
+          if name.len == 0:
+            continue
+          let resolved = self.resolve_local_or_namespace(name)
+          if not resolved.found:
+            not_allowed("Cannot export '" & name & "': value not found")
+          self.frame.ns.members[name.to_key()] = resolved.value
+          add_export(self.frame.ns, name)
 
         self.frame.push(NIL)
 
@@ -7573,7 +7611,53 @@ proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran
     self.frame = new_frame(module_ns)
     frame_changed = true
 
-  let result = self.exec_callable(init_val, @[module_ns.to_value()])
+  var result: Value = NIL
+  let module_scope =
+    if saved_frame != nil and saved_frame.ns == module_ns: saved_frame.scope else: nil
+
+  if init_val.kind == VkFunction and module_scope != nil:
+    let f = init_val.ref.fn
+    if f.body_compiled == nil:
+      f.compile()
+
+    # Save current VM state
+    let saved_cu = self.cu
+    let saved_pc = self.pc
+    let saved_frame2 = self.frame
+
+    # Reuse module scope for init so module vars live at module scope
+    module_scope.ref_count.inc()
+
+    let args = @[module_ns.to_value()]
+    if not f.matcher.is_empty():
+      if args.len == 0:
+        process_args_zero(f.matcher, module_scope)
+      elif args.len == 1:
+        process_args_one(f.matcher, args[0], module_scope)
+      else:
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, module_scope)
+
+    let new_frame = new_frame()
+    new_frame.kind = FkFunction
+    new_frame.target = init_val
+    new_frame.scope = module_scope
+    new_frame.ns = f.ns
+    if saved_frame2 != nil:
+      saved_frame2.ref_count.inc()
+    new_frame.caller_frame = saved_frame2
+    new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+    new_frame.from_exec_function = true
+
+    let args_gene = new_gene_value()
+    args_gene.gene.children.add(args[0])
+    new_frame.args = args_gene
+
+    self.frame = new_frame
+    self.cu = f.body_compiled
+    self.pc = 0
+    result = self.exec_continue()
+  else:
+    result = self.exec_callable(init_val, @[module_ns.to_value()])
   if frame_changed:
     self.frame = saved_frame
   return (true, result)

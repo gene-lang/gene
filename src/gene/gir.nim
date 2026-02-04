@@ -4,7 +4,7 @@ import ./types
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 2'u32
+  GIR_VERSION* = 3'u32
   COMPILER_VERSION = "0.1.0"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   
@@ -36,6 +36,8 @@ type
     kind*: string
     unit_id*: Id
     skip_return*: bool
+    module_exports*: seq[string]
+    module_imports*: seq[string]
 
 # Serialization helpers
 proc write_string(stream: Stream, s: string) =
@@ -225,6 +227,14 @@ proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit) =
       idx = trace_index.getOrDefault(cast[pointer](trace), -1)
     stream.write(idx.int32)
 
+  stream.write(cu.module_exports.len.uint32)
+  for name in cu.module_exports:
+    stream.write_string(name)
+
+  stream.write(cu.module_imports.len.uint32)
+  for name in cu.module_imports:
+    stream.write_string(name)
+
 proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
   let kind = cast[CompilationUnitKind](stream.readInt8())
   let skip = stream.readUint8() == 1
@@ -280,6 +290,18 @@ proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
           result.instruction_traces[idx] = nil
       else:
         result.instruction_traces[idx] = nil
+
+  let export_count = stream.readUint32()
+  if export_count > 0:
+    result.module_exports = @[]
+    for _ in 0..<export_count:
+      result.module_exports.add(stream.read_string())
+
+  let import_count = stream.readUint32()
+  if import_count > 0:
+    result.module_imports = @[]
+    for _ in 0..<import_count:
+      result.module_imports.add(stream.read_string())
 
 proc write_instruction(stream: Stream, inst: Instruction) =
   stream.write(inst.kind.uint16)
@@ -392,6 +414,14 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   stream.write(cast[int64](cu.id))
   stream.write(cu.skip_return)
 
+  stream.write(cu.module_exports.len.uint32)
+  for name in cu.module_exports:
+    stream.write_string(name)
+
+  stream.write(cu.module_imports.len.uint32)
+  for name in cu.module_imports:
+    stream.write_string(name)
+
 proc load_gir_file*(path: string): GirFile =
   ## Load a GIR file and return its structured contents
   if not fileExists(path):
@@ -465,6 +495,18 @@ proc load_gir_file*(path: string): GirFile =
   let unit_id = stream.readInt64()
   let skip_return = stream.readBool()
 
+  let export_count = stream.readUint32()
+  var module_exports: seq[string] = @[]
+  if export_count > 0:
+    for _ in 0..<export_count:
+      module_exports.add(stream.read_string())
+
+  let import_count = stream.readUint32()
+  var module_imports: seq[string] = @[]
+  if import_count > 0:
+    for _ in 0..<import_count:
+      module_imports.add(stream.read_string())
+
   result.header = header
   result.constants = constants
   result.symbols = symbols
@@ -479,6 +521,8 @@ proc load_gir_file*(path: string): GirFile =
   result.kind = kind_str
   result.unit_id = unit_id.Id
   result.skip_return = skip_return
+  result.module_exports = module_exports
+  result.module_imports = module_imports
 
 proc load_gir*(path: string): CompilationUnit =
   ## Load a compilation unit from a GIR file
@@ -491,6 +535,8 @@ proc load_gir*(path: string): CompilationUnit =
     result.kind = parseEnum[CompilationUnitKind](gir_file.kind)
   result.id = gir_file.unit_id
   result.skip_return = gir_file.skip_return
+  result.module_exports = gir_file.module_exports
+  result.module_imports = gir_file.module_imports
 
   if gir_file.trace_nodes.len > 0:
     var node_refs: seq[SourceTrace] = @[]
@@ -522,6 +568,20 @@ proc load_gir*(path: string): CompilationUnit =
 proc is_gir_up_to_date*(gir_path: string, source_path: string): bool =
   ## Check if a GIR file is up-to-date with its source
   if not fileExists(gir_path):
+    return false
+
+  # Verify GIR version matches current runtime
+  var stream = newFileStream(gir_path, fmRead)
+  if stream == nil:
+    return false
+  defer: stream.close()
+  var magic: array[4, char]
+  if stream.readData(magic[0].addr, 4) != 4:
+    return false
+  if magic != ['G', 'E', 'N', 'E']:
+    return false
+  let version = stream.readUint32()
+  if version != GIR_VERSION:
     return false
   
   if not fileExists(source_path):

@@ -18,12 +18,12 @@ The system SHALL resolve modules using a deterministic search order:
 The language SHALL support explicit symbol imports with aliasing.
 
 #### Scenario: Named import
-- **WHEN** `(import :math [add sub])` is compiled
+- **WHEN** `(import math/[add sub] from "mod-x")` is compiled
 - **THEN** only `add` and `sub` are introduced into the local scope
 
 #### Scenario: Aliased import
-- **WHEN** `(import :math :as m)` is compiled
-- **THEN** symbols are accessible via the alias `m/*`
+- **WHEN** `(import math/[add:x sub:y] from "mod-x")` is compiled
+- **THEN** symbols are accessible via the aliases `x` and `y`
 
 ### Requirement: Export Semantics
 Modules MUST explicitly export public symbols.
@@ -45,4 +45,3 @@ The system MUST initialize modules topologically respecting dependencies.
 #### Scenario: Dependency-first init
 - **WHEN** module A depends on B
 - **THEN** B initializes before A
-

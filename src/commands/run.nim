@@ -182,6 +182,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       ns["gene".to_key()] = App.app.gene_ns
       ns["genex".to_key()] = App.app.genex_ns
       VM.frame = new_frame(ns)
+      let args_gene = new_gene(NIL)
+      args_gene.children.add(ns.to_value())
+      VM.frame.args = args_gene.to_gene_value()
     VM.cu = compiled
     try:
       discard VM.exec()
@@ -212,14 +215,17 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       except CatchableError:
         compiled = nil
 
-      if not compiled.isNil:
-        if VM.frame == nil:
-          let ns = new_namespace(App.app.global_ns.ref.ns, file)
-          ns["__module_name__".to_key()] = file.to_value()
-          ns["__is_main__".to_key()] = TRUE
-          ns["gene".to_key()] = App.app.gene_ns
-          ns["genex".to_key()] = App.app.genex_ns
-          VM.frame = new_frame(ns)
+        if not compiled.isNil:
+          if VM.frame == nil:
+            let ns = new_namespace(App.app.global_ns.ref.ns, file)
+            ns["__module_name__".to_key()] = file.to_value()
+            ns["__is_main__".to_key()] = TRUE
+            ns["gene".to_key()] = App.app.gene_ns
+            ns["genex".to_key()] = App.app.genex_ns
+            VM.frame = new_frame(ns)
+            let args_gene = new_gene(NIL)
+            args_gene.children.add(ns.to_value())
+            VM.frame.args = args_gene.to_gene_value()
         VM.cu = compiled
         try:
           discard VM.exec()
@@ -260,6 +266,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         ns["genex".to_key()] = App.app.genex_ns
         App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
         VM.frame = new_frame(ns)
+        let args_gene = new_gene(NIL)
+        args_gene.children.add(ns.to_value())
+        VM.frame.args = args_gene.to_gene_value()
       else:
         let ns = new_namespace(App.app.global_ns.ref.ns, file)
         ns["__module_name__".to_key()] = file.to_value()
@@ -268,6 +277,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         ns["genex".to_key()] = App.app.genex_ns
         App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
         VM.frame.update(new_frame(ns))
+        let args_gene = new_gene(NIL)
+        args_gene.children.add(ns.to_value())
+        VM.frame.args = args_gene.to_gene_value()
       VM.cu = compiled
       value = VM.exec()
       let init_result = VM.maybe_run_module_init()
