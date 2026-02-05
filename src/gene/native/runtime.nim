@@ -2,6 +2,7 @@
 import ../types
 import ./hir
 import ./bytecode_to_hir
+import ./trampoline
 
 when defined(amd64):
   import ./x86_64_codegen as codegen
@@ -19,6 +20,7 @@ type
     code*: seq[byte]
     message*: string
     returnFloat*: bool  # True if native function returns float64 (bitcast as int64)
+    descriptors*: seq[CallDescriptor]
 
 when defined(posix):
   import std/posix
@@ -34,7 +36,7 @@ proc validate_hir(fn: HirFunction): bool =
          HokLeI64, HokLtI64, HokGeI64, HokGtI64, HokEqI64, HokNeI64,
          HokConstF64, HokAddF64, HokSubF64, HokMulF64, HokDivF64, HokNegF64,
          HokLeF64, HokLtF64, HokGeF64, HokGtF64, HokEqF64, HokNeF64,
-         HokBr, HokJump, HokRet, HokCall:
+         HokBr, HokJump, HokRet, HokCall, HokCallVM:
         if op.kind == HokCall and op.callTarget != fn.name:
           return false
       else:
@@ -69,30 +71,42 @@ proc make_executable(code: seq[byte]): pointer =
   clear_cache(cast[ptr char](mem), cast[ptr char](cast[uint64](mem) + uint64(size)))
   return mem
 
-proc compile_to_native*(cu: CompilationUnit, fn_name: string): NativeCompileResult =
+proc compile_to_native*(f: Function): NativeCompileResult =
   result.ok = false
 
   when nativeArch == "none":
     result.message = "Native codegen not supported on this architecture"
     return
 
-  if not isNativeEligible(cu, fn_name):
+  if f.is_nil or f.body_compiled.is_nil:
+    result.message = "Function not compiled"
+    return
+
+  if not isNativeEligible(f.body_compiled, f):
     result.message = "Function not eligible for native compilation"
     return
 
+  var hir: HirFunction
+  var has_hir = false
   try:
-    let hir = bytecodeToHir(cu, fn_name)
+    hir = bytecodeToHir(f.body_compiled, f)
+    has_hir = true
     if not validate_hir(hir):
+      release_descriptors(hir.callDescriptors)
       result.message = "HIR contains unsupported operations"
       return
     let code = codegen.generateCode(hir)
     let entry = make_executable(code)
     if entry.is_nil:
+      release_descriptors(hir.callDescriptors)
       result.message = "Failed to allocate executable memory"
       return
     result.ok = true
     result.entry = entry
     result.code = code
     result.returnFloat = hir.returnType == HtF64
+    result.descriptors = hir.callDescriptors
   except CatchableError as e:
+    if has_hir:
+      release_descriptors(hir.callDescriptors)
     result.message = "Native codegen failed: " & e.msg

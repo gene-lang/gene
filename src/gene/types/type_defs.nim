@@ -386,6 +386,20 @@ type
     # class*: Class       # Note that class may be different from method.class
     `method`*: Method
 
+  CallArgType* = enum
+    CatInt64
+    CatFloat64
+
+  CallReturnType* = enum
+    CrtInt64
+    CrtFloat64
+    CrtValue
+
+  CallDescriptor* = object
+    callable*: Value
+    argTypes*: seq[CallArgType]
+    returnType*: CallReturnType
+
   Function* = ref object
     async*: bool
     is_generator*: bool  # True for generator functions
@@ -402,6 +416,7 @@ type
     native_ready*: bool
     native_failed*: bool
     native_return_float*: bool  # True if native return value should be interpreted as float64
+    native_descriptors*: seq[CallDescriptor]
     # ret*: Expr
 
   Block* = ref object
@@ -836,6 +851,12 @@ type
     scheduler_running*: bool  # Set to true when run_forever is active, false to stop
     aop_contexts*: seq[AopContext]  # Stack of active around advice contexts
     native_code*: bool  # Enable native code execution when available
+
+  NativeContext* = object
+    vm*: ptr VirtualMachine
+    trampoline*: pointer
+    descriptors*: ptr UncheckedArray[CallDescriptor]
+    descriptor_count*: int32
 
   VmCallback* = proc() {.gcsafe.}
 

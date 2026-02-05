@@ -7,6 +7,7 @@ import ../src/gene/types
 import ../src/gene/compiler
 import ../src/gene/native/hir
 import ../src/gene/native/bytecode_to_hir
+import ../src/gene/vm
 when defined(amd64):
   import ../src/gene/native/x86_64_codegen as codegen
 elif defined(arm64) or defined(aarch64):
@@ -135,7 +136,7 @@ proc main() =
       proc pthread_jit_write_protect_np(enable: cint) {.importc.}
     proc clear_cache(start, `end`: ptr char) {.importc: "__builtin___clear_cache".}
 
-    type FibFunc = proc(n: int64): int64 {.cdecl.}
+    type FibFunc = proc(ctx: ptr NativeContext, n: int64): int64 {.cdecl.}
 
     let codeSize = machineCode.len
     let mem = mmap(nil, codeSize.cint,
@@ -157,10 +158,17 @@ proc main() =
 
       # Cast to function pointer and call
       let fib = cast[FibFunc](mem)
+      var vm: VirtualMachine
+      var ctx = NativeContext(
+        vm: addr vm,
+        trampoline: cast[pointer](native_trampoline),
+        descriptors: nil,
+        descriptor_count: 0
+      )
 
       echo "Testing fib function:"
       for n in 0..10:
-        let result = fib(n.int64)
+        let result = fib(addr ctx, n.int64)
         echo fmt"  fib({n}) = {result}"
 
       # Clean up

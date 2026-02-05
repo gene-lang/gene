@@ -193,6 +193,10 @@ proc release*(v: Value) {.inline.} =
       of REF_TAG:
         let x = cast[ptr Reference](u and PAYLOAD_MASK)
         if x.ref_count == 1:
+          if x.kind == VkFunction and x.fn != nil and x.fn.native_descriptors.len > 0:
+            for desc in x.fn.native_descriptors:
+              release(desc.callable)
+            x.fn.native_descriptors = @[]
           reset(x[])
           dealloc(x)
         else:

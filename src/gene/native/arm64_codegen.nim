@@ -10,6 +10,7 @@
 
 import std/[tables, strformat]
 import ./hir
+import ./trampoline
 
 type
   Arm64Reg* = enum
@@ -44,6 +45,9 @@ type
     regOffsets*: Table[int32, int32]  # HIR reg -> stack offset from SP
     fnEntryOffset*: int
     recursiveCallFixups*: seq[int]
+    callArgBaseOffset*: int32
+    callArgSlots*: int32
+    ctxSaveOffset*: int32
 
 const
   INSN_STP_FP_LR = 0xA9BF7BFD'u32  # stp x29, x30, [sp, #-16]!
@@ -144,6 +148,19 @@ proc emitAddRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
     (uint32(ord(src1) and 0x1F) shl 5) or
     uint32(ord(dst) and 0x1F)
   buf.emitU32(instr)
+
+proc emitAddRegImm*(buf: CodeBuffer, dst, src: Arm64Reg, imm: int32) =
+  if imm < 0 or imm > 0xFFF:
+    raise newException(ValueError, "ARM64 add immediate out of range")
+  let imm12 = uint32(imm) and 0xFFF
+  let instr = 0x9100_0000'u32 or
+    (imm12 shl 10) or
+    (uint32(ord(src) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitMovRegReg*(buf: CodeBuffer, dst, src: Arm64Reg) =
+  buf.emitAddRegImm(dst, src, 0)
 
 proc emitSubRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
   let instr = 0xCB00_0000'u32 or
@@ -329,19 +346,46 @@ proc emitLdrReg*(buf: CodeBuffer, reg: Arm64Reg, offset: int32) =
   let instr = 0xF940_0000'u32 or (imm12 shl 10) or (31'u32 shl 5) or uint32(ord(reg) and 0x1F)
   buf.emitU32(instr)
 
+proc emitLdrRegBase*(buf: CodeBuffer, reg: Arm64Reg, base: Arm64Reg, offset: int32) =
+  if offset mod 8 != 0:
+    raise newException(ValueError, "ARM64 LDR offset must be multiple of 8")
+  let imm12 = uint32(offset div 8) and 0xFFF
+  let instr = 0xF940_0000'u32 or
+    (imm12 shl 10) or
+    (uint32(ord(base) and 0x1F) shl 5) or
+    uint32(ord(reg) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitBlr*(buf: CodeBuffer, reg: Arm64Reg) =
+  let instr = 0xD63F_0000'u32 or (uint32(ord(reg) and 0x1F) shl 5)
+  buf.emitU32(instr)
+
 proc newCodegenContext*(fn: HirFunction): CodegenContext =
   result = CodegenContext(
     buf: newCodeBuffer(),
     fn: fn,
     regOffsets: initTable[int32, int32](),
     fnEntryOffset: 0,
-    recursiveCallFixups: @[]
+    recursiveCallFixups: @[],
+    callArgBaseOffset: 0,
+    callArgSlots: 0,
+    ctxSaveOffset: 0
   )
 
   for i in 0..<fn.regCount:
     result.regOffsets[i] = int32(i) * 8
 
-  result.stackSize = ((fn.regCount * 8 + 15) div 16) * 16
+  var maxCallArgs = 0
+  for blk in fn.blocks:
+    for op in blk.ops:
+      if op.kind == HokCallVM and op.callVmArgs.len > maxCallArgs:
+        maxCallArgs = op.callVmArgs.len
+  result.callArgSlots = maxCallArgs.int32
+  result.callArgBaseOffset = int32(fn.regCount) * 8
+  result.ctxSaveOffset = result.callArgBaseOffset + result.callArgSlots * 8
+
+  let baseSize = (fn.regCount + result.callArgSlots) * 8 + 8
+  result.stackSize = ((baseSize + 15) div 16) * 16
 
 proc regOffset*(ctx: CodegenContext, reg: HirReg): int32 =
   ctx.regOffsets[int32(reg)]
@@ -529,15 +573,17 @@ proc genRet*(ctx: CodegenContext, op: HirOp) =
     ctx.buf.emitFmovToGpr(X0, D0)
   else:
     ctx.loadReg(X0, op.retValue)
+  ctx.buf.emitLdrReg(X19, ctx.ctxSaveOffset)
   if ctx.stackSize > 0:
     ctx.buf.emitAddSpImm(ctx.stackSize)
   ctx.buf.emitU32(INSN_LDP_FP_LR)
   ctx.buf.emitU32(INSN_RET)
 
 proc genCall*(ctx: CodegenContext, op: HirOp) =
-  const argRegs = [X0, X1, X2, X3, X4, X5, X6, X7]
+  const argRegs = [X1, X2, X3, X4, X5, X6, X7]
   if op.callArgs.len > argRegs.len:
     raise newException(ValueError, "Too many arguments for native call: " & $op.callArgs.len)
+  ctx.buf.emitMovRegReg(X0, X19)
   for i in 0..<op.callArgs.len:
     ctx.loadReg(argRegs[i], op.callArgs[i])
   if op.callTarget != ctx.fn.name:
@@ -545,6 +591,24 @@ proc genCall*(ctx: CodegenContext, op: HirOp) =
   let offset = ctx.buf.currentOffset()
   ctx.buf.emitU32(0x9400_0000'u32)  # bl placeholder
   ctx.recursiveCallFixups.add(offset)
+  ctx.storeReg(op.dest, X0)
+
+proc genCallVM*(ctx: CodegenContext, op: HirOp) =
+  if op.callVmArgs.len > ctx.callArgSlots:
+    raise newException(ValueError, "Too many arguments for trampoline call: " & $op.callVmArgs.len)
+
+  for i in 0..<op.callVmArgs.len:
+    ctx.loadReg(X0, op.callVmArgs[i])
+    let offset = ctx.callArgBaseOffset + int32(i) * 8
+    ctx.buf.emitStrReg(X0, offset)
+
+  ctx.buf.emitMovRegReg(X0, X19)
+  ctx.buf.emitMovImm64(X1, op.callVmDescIdx.int64)
+  ctx.buf.emitAddRegImm(X2, SP, ctx.callArgBaseOffset)
+  ctx.buf.emitMovImm64(X3, op.callVmArgs.len.int64)
+  ctx.buf.emitLdrRegBase(X8, X19, NativeCtxOffsetTrampoline)
+  ctx.buf.emitBlr(X8)
+
   ctx.storeReg(op.dest, X0)
 
 proc genOp*(ctx: CodegenContext, op: HirOp) =
@@ -577,6 +641,7 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokJump: ctx.genJump(op)
   of HokRet: ctx.genRet(op)
   of HokCall: ctx.genCall(op)
+  of HokCallVM: ctx.genCallVM(op)
   else:
     raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
 
@@ -588,7 +653,9 @@ proc genPrologue*(ctx: CodegenContext) =
 
   # Store parameters to stack slots
   # All args arrive as int64 (uniform ABI). F64 params are bitcast in prologue.
-  const argRegs = [X0, X1, X2, X3, X4, X5, X6, X7]
+  ctx.buf.emitStrReg(X19, ctx.ctxSaveOffset)
+  ctx.buf.emitMovRegReg(X19, X0)
+  const argRegs = [X1, X2, X3, X4, X5, X6, X7]
   let count = min(ctx.fn.params.len, argRegs.len)
   for i in 0..<count:
     if ctx.fn.params[i].typ == HtF64:

@@ -17,6 +17,7 @@
 
 import std/[tables, strformat]
 import ./hir
+import ./trampoline
 
 type
   ## x86-64 physical registers
@@ -42,6 +43,8 @@ type
     regOffsets*: Table[int32, int32]     # HIR reg -> stack offset from RBP
     fnEntryOffset*: int                  # Offset of function entry point (for recursive calls)
     recursiveCallFixups*: seq[int]       # Offsets that need to be patched for recursive calls
+    callArgBaseOffset*: int32            # Base offset for trampoline arg buffer
+    callArgSlots*: int32                 # Slots reserved for trampoline arg buffer
 
 # ==================== Code Buffer Operations ====================
 
@@ -148,6 +151,19 @@ proc emitMovRegReg*(buf: CodeBuffer, dst, src: X86Reg) =
   buf.emit(0x89)
   buf.emit(modRM(0b11, src, dst))
 
+proc emitLeaRegMem*(buf: CodeBuffer, dst: X86Reg, base: X86Reg, offset: int32) =
+  ## lea dst, [base + offset]
+  buf.emit(REX_W or rexForReg(dst, base))
+  buf.emit(0x8D)
+  if offset == 0 and base != RBP and base != R13:
+    buf.emit(modRM(0b00, dst, base))
+  elif offset >= -128 and offset <= 127:
+    buf.emit(modRM(0b01, dst, base))
+    buf.emit(byte(offset and 0xFF))
+  else:
+    buf.emit(modRM(0b10, dst, base))
+    buf.emitI32(offset)
+
 proc emitMovRegMem*(buf: CodeBuffer, dst: X86Reg, base: X86Reg, offset: int32) =
   ## mov dst, [base + offset]
   buf.emit(REX_W or rexForReg(dst, base))
@@ -173,6 +189,12 @@ proc emitMovMemReg*(buf: CodeBuffer, base: X86Reg, offset: int32, src: X86Reg) =
   else:
     buf.emit(modRM(0b10, src, base))
     buf.emitI32(offset)
+
+proc emitCallReg*(buf: CodeBuffer, reg: X86Reg) =
+  ## call r/m64
+  buf.emit(REX_W or rexFor(reg))
+  buf.emit(0xFF)
+  buf.emit(byte((0b11 shl 6) or (2 shl 3) or regCode(reg)))
 
 proc emitAddRegReg*(buf: CodeBuffer, dst, src: X86Reg) =
   ## add dst, src
@@ -420,7 +442,9 @@ proc newCodegenContext*(fn: HirFunction): CodegenContext =
     fn: fn,
     regOffsets: initTable[int32, int32](),
     fnEntryOffset: 0,
-    recursiveCallFixups: @[]
+    recursiveCallFixups: @[],
+    callArgBaseOffset: 0,
+    callArgSlots: 0
   )
 
   # Calculate stack layout: each HIR register gets 8 bytes
@@ -428,8 +452,21 @@ proc newCodegenContext*(fn: HirFunction): CodegenContext =
   for i in 0..<fn.regCount:
     result.regOffsets[i] = -8 * (i + 1)
 
-  # Align stack to 16 bytes
-  result.stackSize = ((fn.regCount * 8 + 15) div 16) * 16
+  # Reserve arg buffer for trampoline calls
+  var maxCallArgs = 0
+  for blk in fn.blocks:
+    for op in blk.ops:
+      if op.kind == HokCallVM and op.callVmArgs.len > maxCallArgs:
+        maxCallArgs = op.callVmArgs.len
+  result.callArgSlots = maxCallArgs.int32
+  if result.callArgSlots > 0:
+    result.callArgBaseOffset = -8 * (fn.regCount + result.callArgSlots)
+
+  # Align stack to 16 bytes (account for extra push of r12)
+  let baseSize = (fn.regCount + result.callArgSlots) * 8
+  result.stackSize = ((baseSize + 15) div 16) * 16
+  if (result.stackSize mod 16) == 0:
+    result.stackSize += 8
   if result.stackSize < 16:
     result.stackSize = 16
 
@@ -552,6 +589,7 @@ proc genRet*(ctx: CodegenContext, op: HirOp) =
   # Epilogue
   ctx.buf.emitMovRegReg(RSP, RBP)
   ctx.buf.emitPop(RBP)
+  ctx.buf.emitPop(R12)
   ctx.buf.emitRet()
 
 proc loadRegF64*(ctx: CodegenContext, dst: XmmReg, hirReg: HirReg) =
@@ -647,9 +685,10 @@ proc genNeF64*(ctx: CodegenContext, op: HirOp) =
 
 proc genCall*(ctx: CodegenContext, op: HirOp) =
   # Load arguments into System V ABI registers
-  const argRegs = [RDI, RSI, RDX, RCX, R8, R9]
+  const argRegs = [RSI, RDX, RCX, R8, R9]
   if op.callArgs.len > argRegs.len:
     raise newException(ValueError, "Too many arguments for native call: " & $op.callArgs.len)
+  ctx.buf.emitMovRegReg(RDI, R12)
   for i in 0..<op.callArgs.len:
     ctx.loadReg(argRegs[i], op.callArgs[i])
 
@@ -663,6 +702,24 @@ proc genCall*(ctx: CodegenContext, op: HirOp) =
     raise newException(ValueError, "External native calls not supported: " & op.callTarget)
 
   # Store result
+  ctx.storeReg(op.dest, RAX)
+
+proc genCallVM*(ctx: CodegenContext, op: HirOp) =
+  if op.callVmArgs.len > ctx.callArgSlots:
+    raise newException(ValueError, "Too many arguments for trampoline call: " & $op.callVmArgs.len)
+
+  for i in 0..<op.callVmArgs.len:
+    ctx.loadReg(RAX, op.callVmArgs[i])
+    let offset = ctx.callArgBaseOffset + int32(i) * 8
+    ctx.buf.emitMovMemReg(RBP, offset, RAX)
+
+  ctx.buf.emitMovRegReg(RDI, R12)
+  ctx.buf.emitMovRegImm64(RSI, op.callVmDescIdx.int64)
+  ctx.buf.emitLeaRegMem(RDX, RBP, ctx.callArgBaseOffset)
+  ctx.buf.emitMovRegImm64(RCX, op.callVmArgs.len.int64)
+  ctx.buf.emitMovRegMem(RAX, R12, NativeCtxOffsetTrampoline)
+  ctx.buf.emitCallReg(RAX)
+
   ctx.storeReg(op.dest, RAX)
 
 proc genOp*(ctx: CodegenContext, op: HirOp) =
@@ -695,6 +752,7 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokJump: ctx.genJump(op)
   of HokRet: ctx.genRet(op)
   of HokCall: ctx.genCall(op)
+  of HokCallVM: ctx.genCallVM(op)
   else:
     raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
 
@@ -704,11 +762,13 @@ proc genPrologue*(ctx: CodegenContext) =
   ## Generate function prologue
   ## All args arrive in integer registers (uniform int64 ABI).
   ## F64 params are bitcast from int64 in the prologue.
+  ctx.buf.emitPush(R12)
   ctx.buf.emitPush(RBP)
   ctx.buf.emitMovRegReg(RBP, RSP)
   ctx.buf.emitSubRspImm(ctx.stackSize)
+  ctx.buf.emitMovRegReg(R12, RDI)
 
-  const argRegs = [RDI, RSI, RDX, RCX, R8, R9]
+  const argRegs = [RSI, RDX, RCX, R8, R9]
   let count = min(ctx.fn.params.len, argRegs.len)
   for i in 0..<count:
     if ctx.fn.params[i].typ == HtF64:

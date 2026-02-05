@@ -20,6 +20,7 @@
 ##   }
 
 import std/[tables, strformat, strutils, sequtils]
+import ../types
 
 type
   ## HIR type tags - primitive types that can be represented in registers
@@ -84,6 +85,7 @@ type
     # Function calls
     HokCall         ## %r = call @fn(%args...) : type
     HokCallIndirect ## %r = call %fn_ptr(%args...) : type
+    HokCallVM       ## %r = callvm @desc(%args...) : type
 
     # SSA Phi nodes (for joining control flow)
     HokPhi          ## %r = phi [%a, block1], [%b, block2]
@@ -137,6 +139,10 @@ type
       callIndirectFn*: HirReg
       callIndirectArgs*: seq[HirReg]
       callIndirectRetType*: HirType
+    of HokCallVM:
+      callVmDescIdx*: int32
+      callVmArgs*: seq[HirReg]
+      callVmRetType*: HirType
     of HokPhi:
       phiSources*: seq[tuple[reg: HirReg, fromBlock: HirBlockId]]
     of HokVmCall:
@@ -159,6 +165,7 @@ type
     blocks*: seq[HirBlock]
     regCount*: int32          ## Total number of registers used
     isNativeEligible*: bool   ## True if function can be fully native
+    callDescriptors*: seq[CallDescriptor]
 
   ## Native function pointer (for compiled code). Call with arity-specific signature.
   NativeFnPtr* = pointer
@@ -350,6 +357,11 @@ proc emitCall*(b: HirBuilder, target: string, args: seq[HirReg], retType: HirTyp
   b.emit(HirOp(kind: HokCall, dest: result, destType: retType,
                callTarget: target, callArgs: args, callRetType: retType))
 
+proc emitCallVM*(b: HirBuilder, descIdx: int32, args: seq[HirReg], retType: HirType): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokCallVM, dest: result, destType: retType,
+               callVmDescIdx: descIdx, callVmArgs: args, callVmRetType: retType))
+
 proc emitBoxI64*(b: HirBuilder, value: HirReg): HirReg =
   result = b.allocReg()
   b.emit(HirOp(kind: HokBoxI64, dest: result, destType: HtValue, unaryArg: value))
@@ -433,6 +445,9 @@ proc `$`*(op: HirOp): string =
   of HokCallIndirect:
     let args = op.callIndirectArgs.mapIt($it).join(", ")
     result = fmt"{op.dest} = call {op.callIndirectFn}({args}) : {op.callIndirectRetType}"
+  of HokCallVM:
+    let args = op.callVmArgs.mapIt($it).join(", ")
+    result = fmt"{op.dest} = callvm @{op.callVmDescIdx}({args}) : {op.callVmRetType}"
   of HokPhi:
     var sources: seq[string]
     for src in op.phiSources:

@@ -9,9 +9,11 @@
 ## 3. Convert each bytecode instruction to equivalent HIR operations
 ## 4. Handle control flow by creating basic blocks at branch targets
 
-import std/[tables, strformat, strutils]
+import std/[tables, strformat, strutils, sequtils]
 import ../types
+import ../types/value_core
 import ./hir
+import ./trampoline
 
 type
   ## Tracks the abstract stack during conversion
@@ -19,14 +21,18 @@ type
     reg: HirReg
     typ: HirType
     fnName: string
+    callable: Value
 
   ## Conversion context
   ConversionContext = ref object
     builder: HirBuilder
     cu: CompilationUnit
+    fn: Function
     fnName: string
     paramTypes: seq[tuple[name: string, typ: HirType]]
     returnType: HirType
+    ns: Namespace
+    scopeTracker: ScopeTracker
 
     # Map variable index -> HIR type (from parameter annotations)
     varTypes: Table[int32, HirType]
@@ -43,6 +49,10 @@ type
     # Pending blocks to process (PC values)
     pendingBlocks: seq[int]
 
+    # Call descriptor table (deduplicated)
+    descriptors: seq[CallDescriptor]
+    descriptorMap: Table[string, int32]
+
 # ==================== Type Mapping ====================
 
 proc geneTypeToHir(typeName: string): HirType =
@@ -53,10 +63,106 @@ proc geneTypeToHir(typeName: string): HirType =
   of "bool", "boolean": HtBool
   else: HtValue  # Dynamic/unknown types use boxed Value
 
+proc typeNameToCallArg(typeName: string, outType: var CallArgType): bool =
+  case typeName.toLowerAscii()
+  of "int", "int64", "i64":
+    outType = CatInt64
+    return true
+  of "float", "float64", "f64":
+    outType = CatFloat64
+    return true
+  else:
+    return false
+
+proc typeNameToCallReturn(typeName: string, outType: var CallReturnType): bool =
+  case typeName.toLowerAscii()
+  of "int", "int64", "i64":
+    outType = CrtInt64
+    return true
+  of "float", "float64", "f64":
+    outType = CrtFloat64
+    return true
+  else:
+    return false
+
+proc signatureFromMatcher(matcher: RootMatcher, dropFirst: bool,
+                           argTypes: var seq[CallArgType],
+                           returnType: var CallReturnType): bool =
+  if matcher.is_nil or not matcher.has_type_annotations:
+    return false
+  if matcher.return_type_name.len == 0:
+    return false
+  let start = if dropFirst: 1 else: 0
+  if dropFirst and matcher.children.len == 0:
+    return false
+  for i in start..<matcher.children.len:
+    let param = matcher.children[i]
+    if param.type_name.len == 0:
+      return false
+    var argType: CallArgType
+    if not typeNameToCallArg(param.type_name, argType):
+      return false
+    argTypes.add(argType)
+  if not typeNameToCallReturn(matcher.return_type_name, returnType):
+    return false
+  true
+
+proc callableSignature(callable: Value,
+                       argTypes: var seq[CallArgType],
+                       returnType: var CallReturnType): bool =
+  case callable.kind
+  of VkFunction:
+    let f = callable.ref.fn
+    return signatureFromMatcher(f.matcher, false, argTypes, returnType)
+  of VkBoundMethod:
+    let bm = callable.ref.bound_method
+    let target = bm.method.callable
+    case target.kind
+    of VkFunction:
+      let f = target.ref.fn
+      return signatureFromMatcher(f.matcher, true, argTypes, returnType)
+    of VkNativeFn:
+      var sig: NativeFnSig
+      if not lookup_native_sig(target.ref.native_fn, sig):
+        return false
+      if sig.argTypes.len == 0:
+        return false
+      for i in 1..<sig.argTypes.len:
+        argTypes.add(sig.argTypes[i])
+      returnType = sig.returnType
+      return true
+    else:
+      return false
+  of VkNativeFn:
+    var sig: NativeFnSig
+    if not lookup_native_sig(callable.ref.native_fn, sig):
+      return false
+    argTypes = sig.argTypes
+    returnType = sig.returnType
+    return true
+  else:
+    return false
+
+proc descriptorKey(callable: Value, argTypes: seq[CallArgType], returnType: CallReturnType): string =
+  result = $(cast[uint64](callable)) & ":" & $returnType & ":"
+  for t in argTypes:
+    result &= $t & ","
+
+proc getDescriptorIndex(ctx: ConversionContext, callable: Value,
+                         argTypes: seq[CallArgType], returnType: CallReturnType): int32 =
+  let key = descriptorKey(callable, argTypes, returnType)
+  if key in ctx.descriptorMap:
+    return ctx.descriptorMap[key]
+  let idx = ctx.descriptors.len.int32
+  ctx.descriptors.add(CallDescriptor(callable: callable, argTypes: argTypes, returnType: returnType))
+  retain(callable)
+  ctx.descriptorMap[key] = idx
+  idx
+
 # ==================== Stack Operations ====================
 
-proc push(ctx: ConversionContext, reg: HirReg, typ: HirType, fnName: string = "") =
-  ctx.stack.add(StackSlot(reg: reg, typ: typ, fnName: fnName))
+proc push(ctx: ConversionContext, reg: HirReg, typ: HirType, fnName: string = "", callable: Value = NIL) =
+  ctx.stack.add(StackSlot(reg: reg, typ: typ, fnName: fnName, callable: callable))
 
 proc pop(ctx: ConversionContext): StackSlot =
   if ctx.stack.len == 0:
@@ -67,6 +173,16 @@ proc peek(ctx: ConversionContext): StackSlot =
   if ctx.stack.len == 0:
     raise newException(ValueError, "Stack empty during HIR conversion")
   result = ctx.stack[^1]
+
+proc resolveSymbol(ctx: ConversionContext, name: string): Value =
+  let key = name.to_key()
+  if ctx.scopeTracker != nil:
+    let found = ctx.scopeTracker.locate(key)
+    if found.local_index >= 0:
+      return NIL
+  if ctx.ns != nil and ctx.ns.members.hasKey(key):
+    return ctx.ns.members[key]
+  NIL
 
 # ==================== Block Management ====================
 
@@ -140,6 +256,42 @@ proc emitEq(ctx: ConversionContext, left, right: HirReg, typ: HirType): HirReg =
 proc emitNe(ctx: ConversionContext, left, right: HirReg, typ: HirType): HirReg =
   if typ == HtF64: ctx.builder.emitNeF64(left, right)
   else: ctx.builder.emitNeI64(left, right)
+
+proc emitCall(ctx: ConversionContext, fnSlot: StackSlot, args: seq[StackSlot]) =
+  if fnSlot.fnName.len > 0 and fnSlot.fnName == ctx.fnName:
+    let regs = args.mapIt(it.reg)
+    let resultReg = ctx.builder.emitCall(fnSlot.fnName, regs, ctx.returnType)
+    ctx.push(resultReg, ctx.returnType)
+    return
+
+  var callable = fnSlot.callable
+  if callable == NIL and fnSlot.fnName.len > 0:
+    callable = ctx.resolveSymbol(fnSlot.fnName)
+  if callable == NIL:
+    raise newException(ValueError, "Unresolvable call target: " & fnSlot.fnName)
+
+  var argTypes: seq[CallArgType] = @[]
+  var returnType: CallReturnType
+  if not callableSignature(callable, argTypes, returnType):
+    raise newException(ValueError, "Call target not eligible for native call: " & $callable.kind)
+  if argTypes.len != args.len:
+    raise newException(ValueError, "Argument count mismatch for native call")
+  for i in 0..<args.len:
+    case argTypes[i]
+    of CatInt64:
+      if args[i].typ != HtI64:
+        raise newException(ValueError, "Argument type mismatch for native call")
+    of CatFloat64:
+      if args[i].typ != HtF64:
+        raise newException(ValueError, "Argument type mismatch for native call")
+
+  let retType = case returnType
+    of CrtFloat64: HtF64
+    of CrtInt64: HtI64
+    of CrtValue: HtValue
+  let descIdx = ctx.getDescriptorIndex(callable, argTypes, returnType)
+  let resultReg = ctx.builder.emitCallVM(descIdx, args.mapIt(it.reg), retType)
+  ctx.push(resultReg, retType)
 
 # ==================== Instruction Conversion ====================
 
@@ -275,15 +427,26 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     return false
 
   of IkResolveSymbol:
-    ctx.push(newHirReg(-1), HtValue, inst.arg0.str)
+    let name = inst.arg0.str
+    let callable = ctx.resolveSymbol(name)
+    ctx.push(newHirReg(-1), HtValue, name, callable)
+
+  of IkUnifiedCall0:
+    let fnSlot = ctx.pop()
+    ctx.emitCall(fnSlot, @[])
 
   of IkUnifiedCall1:
     let arg = ctx.pop()
     let fnSlot = ctx.pop()
-    if fnSlot.fnName.len == 0 or fnSlot.fnName != ctx.fnName:
-      raise newException(ValueError, "Only self-recursive calls are supported in native codegen")
-    let resultReg = ctx.builder.emitCall(fnSlot.fnName, @[arg.reg], ctx.returnType)
-    ctx.push(resultReg, ctx.returnType)
+    ctx.emitCall(fnSlot, @[arg])
+
+  of IkUnifiedCall:
+    let count = inst.arg1.int
+    var args = newSeq[StackSlot](count)
+    for i in countdown(count - 1, 0):
+      args[i] = ctx.pop()
+    let fnSlot = ctx.pop()
+    ctx.emitCall(fnSlot, args)
 
   of IkAdd:
     let right = ctx.pop()
@@ -463,9 +626,9 @@ proc extractFunctionInfo(cu: CompilationUnit): tuple[name: string, params: seq[t
       if allFloat:
         result.retType = HtF64
 
-proc isNativeEligible*(cu: CompilationUnit, fnName: string = ""): bool
+proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool
 
-proc bytecodeToHir*(cu: CompilationUnit, fnName: string = "fn"): HirFunction =
+proc bytecodeToHir*(cu: CompilationUnit, fn: Function): HirFunction =
   ## Convert a CompilationUnit to HIR
   ##
   ## Parameters:
@@ -476,7 +639,7 @@ proc bytecodeToHir*(cu: CompilationUnit, fnName: string = "fn"): HirFunction =
   ##   HirFunction ready for native code generation
 
   let info = extractFunctionInfo(cu)
-  let actualName = if fnName != "fn": fnName else: info.name
+  let actualName = if fn != nil and fn.name.len > 0: fn.name else: info.name
 
   # Determine return type (default to Int for now)
   let returnType = info.retType
@@ -497,14 +660,19 @@ proc bytecodeToHir*(cu: CompilationUnit, fnName: string = "fn"): HirFunction =
   let ctx = ConversionContext(
     builder: builder,
     cu: cu,
+    fn: fn,
     fnName: actualName,
     paramTypes: info.params,
     returnType: returnType,
+    ns: if fn != nil: fn.ns else: nil,
+    scopeTracker: if fn != nil: fn.scope_tracker else: nil,
     varTypes: varTypes,
     stack: @[],
     pcToBlock: initTable[int, HirBlockId](),
     emittedBlocks: initTable[int, bool](),
-    pendingBlocks: @[]
+    pendingBlocks: @[],
+    descriptors: @[],
+    descriptorMap: initTable[string, int32]()
   )
 
   # Create entry block and start processing
@@ -518,11 +686,12 @@ proc bytecodeToHir*(cu: CompilationUnit, fnName: string = "fn"): HirFunction =
     ctx.processBlock(pc)
 
   result = builder.finalize()
-  result.isNativeEligible = isNativeEligible(cu, actualName)
+  result.isNativeEligible = true
+  result.callDescriptors = ctx.descriptors
 
 # ==================== Eligibility Check ====================
 
-proc isNativeEligible*(cu: CompilationUnit, fnName: string = ""): bool =
+proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool =
   ## Check if a CompilationUnit can be converted to native code
   ## Requires:
   ## - All parameters have type annotations
@@ -556,16 +725,32 @@ proc isNativeEligible*(cu: CompilationUnit, fnName: string = ""): bool =
     of IkData:
       if inst.arg0.kind notin {VkInt, VkFloat}:
         return false
-    of IkResolveSymbol:
-      if fnName.len > 0 and inst.arg0.kind in {VkSymbol, VkString}:
-        if inst.arg0.str != fnName:
-          return false
+    of IkResolveSymbol, IkUnifiedCall0, IkUnifiedCall1, IkUnifiedCall:
+      discard
     of IkStart, IkJumpIfFalse, IkJump, IkJumpIfMatchSuccess,
        IkAdd, IkSub, IkMul, IkDiv, IkNeg,
        IkLt, IkLe, IkGt, IkGe, IkEq, IkNe,
-       IkUnifiedCall1, IkPop, IkScopeEnd, IkEnd, IkReturn, IkThrow:
+       IkPop, IkScopeEnd, IkEnd, IkReturn, IkThrow:
       discard
     else:
       return false
 
+  # Ensure call targets are resolvable and typed
+  try:
+    let hir = bytecodeToHir(cu, fn)
+    release_descriptors(hir.callDescriptors)
+  except CatchableError:
+    return false
   return true
+
+proc isNativeEligible*(cu: CompilationUnit, fnName: string = ""): bool =
+  var stub: Function = nil
+  if cu.matcher != nil:
+    stub = Function(name: fnName, matcher: cu.matcher)
+  return isNativeEligible(cu, stub)
+
+proc bytecodeToHir*(cu: CompilationUnit, fnName: string = "fn"): HirFunction =
+  var stub: Function = nil
+  if cu.matcher != nil:
+    stub = Function(name: fnName, matcher: cu.matcher)
+  result = bytecodeToHir(cu, stub)
