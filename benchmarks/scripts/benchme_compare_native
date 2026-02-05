@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+N=30
+if [ "${1-}" != "" ]; then
+  N="$1"
+fi
+
+echo "=== Gene Benchmark (VM vs native) ==="
+echo "Date: $(date '+%Y-%m-%d %H:%M:%S %A')"
+echo "Git commit: $(git rev-parse HEAD)"
+echo "Nim version: $(nim --version 2>&1 | head -1)"
+echo ""
+
+echo "Compiling fibonacci (VM) benchmark..."
+rm -f bin/fibonacci 2>/dev/null || true
+CMD_VM="nim c --hints:off --mm:orc -d:release -d:danger -d:ssl --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
+$CMD_VM 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate libraries" || true
+
+echo "Compiling fibonacci_native benchmark..."
+rm -f bin/fibonacci_native 2>/dev/null || true
+CMD_NATIVE="nim c --hints:off --mm:orc -d:release -d:danger -d:ssl --out:bin/fibonacci_native benchmarks/computation/fibonacci_native.nim"
+$CMD_NATIVE 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate libraries" || true
+
+echo ""
+echo "Running fib(${N}) on VM..."
+VM_OUTPUT=$(./bin/fibonacci "$N")
+echo "$VM_OUTPUT"
+
+echo ""
+echo "Running fib(${N}) with native codegen..."
+NATIVE_OUTPUT=$(./bin/fibonacci_native "$N")
+echo "$NATIVE_OUTPUT"
+
+VM_TIME=$(echo "$VM_OUTPUT" | awk -F': ' '/^Time: / {print $2}')
+NATIVE_TIME=$(echo "$NATIVE_OUTPUT" | awk -F': ' '/^Time: / {print $2}')
+
+echo ""
+echo "Summary:"
+echo "VM fib(${N}): ${VM_TIME:-unknown}"
+echo "Native fib(${N}): ${NATIVE_TIME:-unknown}"

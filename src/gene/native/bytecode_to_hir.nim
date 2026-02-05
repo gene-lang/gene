@@ -184,6 +184,19 @@ proc resolveSymbol(ctx: ConversionContext, name: string): Value =
     return ctx.ns.members[key]
   NIL
 
+proc inheritedVarName(tracker: ScopeTracker, parentDepth: int32, index: int32): string =
+  var scope = tracker
+  var depth = parentDepth
+  while depth > 0 and scope != nil:
+    scope = scope.parent
+    depth.dec()
+  if scope == nil:
+    return ""
+  for key, idx in scope.mappings:
+    if idx == index.int16:
+      return get_symbol(key.symbol_index)
+  ""
+
 # ==================== Block Management ====================
 
 proc getOrCreateBlock(ctx: ConversionContext, pc: int, name: string): HirBlockId =
@@ -418,6 +431,17 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     let paramReg = newHirReg(varIdx.int32)
     let vt = ctx.varType(varIdx.int32)
     ctx.push(paramReg, vt)
+
+  of IkVarResolveInherited:
+    let varIdx = inst.arg0.int64.int32
+    let parentDepth = inst.arg1.int32
+    let name = inheritedVarName(ctx.scopeTracker, parentDepth, varIdx)
+    if name.len == 0:
+      raise newException(ValueError, "Unresolvable inherited variable")
+    if name == ctx.fnName:
+      ctx.push(newHirReg(-1), HtValue, name)
+    else:
+      raise newException(ValueError, "Unsupported inherited variable access: " & name)
 
   of IkJump:
     let target = inst.arg0.int64.int
@@ -713,8 +737,16 @@ proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool =
   for inst in cu.instructions:
     case inst.kind
     of IkVarResolve, IkVarAddValue, IkVarSubValue, IkVarMulValue, IkVarDivValue,
-       IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue:
+         IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue:
       if inst.arg1.int64 != 0:
+        return false
+    of IkVarResolveInherited:
+      if fn == nil or fn.scope_tracker == nil or fn.name.len == 0:
+        return false
+      let varIdx = inst.arg0.int64.int32
+      let parentDepth = inst.arg1.int32
+      let name = inheritedVarName(fn.scope_tracker, parentDepth, varIdx)
+      if name.len == 0 or name != fn.name:
         return false
     of IkAddValue, IkSubValue, IkLtValue:
       if inst.arg0.kind notin {VkInt, VkFloat}:
