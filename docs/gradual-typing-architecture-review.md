@@ -7,7 +7,7 @@
 
 ## Verdict
 
-**The foundation is strong for a gradual-first language. The priority should be optional type safety on top of dynamic semantics, not convergence to a strict static language.**
+**The foundation is strong for a gradual-first language. The next architectural step is a descriptor-centric type pipeline: type descriptor objects during compilation, persisted in GIR, and materialized to runtime type objects (with lazy implementation loading).**
 
 ## Product Direction (Gradual-First)
 
@@ -19,9 +19,25 @@
 
 ## Design Decisions to Preserve
 
-1. **Two-layer type model**: compile-time uses symbolic `TypeExpr` analysis; runtime uses value/class objects and NaN-tag checks. They are intentionally connected by metadata, not a single shared object graph.
+1. **Descriptor-centric type model**: compile-time should produce canonical type descriptors (`TypeDesc`) with stable IDs, not string-serialized types as canonical identity.
 2. **Predeclaration for forward references**: compiler predeclares local/module names so definitions can be referenced before textual declaration where supported.
 3. **Runtime type preservation is selective**: locals and function params carry enforceable expectations today; namespace/class-member storage is still mostly dynamic unless explicitly checked.
+4. **Dynamic semantics remain default**: descriptor-driven typing must preserve runtime fallback behavior for untyped code.
+
+## Target Architecture (Type Descriptor Pipeline)
+
+1. **Compilation phase**:
+   - Type checker produces canonical `TypeDesc` objects (named, applied, union, function, variables).
+   - Compiler stores `TypeId` references in scope/matcher metadata instead of strings.
+2. **GIR phase**:
+   - GIR persists a per-module type descriptor table (`TypeId -> TypeDesc`) plus references from bytecode metadata.
+   - Imported GIR modules expose descriptor metadata for boundary/type-resolution checks.
+3. **Runtime phase**:
+   - Loader interns descriptors into runtime type objects (`RtTypeObj` / class-backed wrappers).
+   - Validation (`validate_type`) operates on descriptor/runtime objects, not reparsed strings.
+4. **Implementation materialization**:
+   - Runtime type objects can carry implementation hooks.
+   - Constructor/method/init bodies can be compiled/linked on demand while preserving current module/class init semantics.
 
 ## What's Already Solid
 
@@ -44,6 +60,7 @@
 - `validate_type()` raises catchable Gene exceptions on mismatch
 - Union, ADT, and function type compatibility at runtime
 - Wired into VM variable and argument binding paths (`IkVar`, `IkVarAssign`, `IkVarAssignInherited`, and matcher-based arg processing) when type expectations exist
+- Current representation is string-backed; this is the migration target for descriptor-backed runtime types
 
 ### 3. NaN-Boxing Value Representation
 
@@ -59,7 +76,7 @@ The 8-byte NaN-boxed `Value` already encodes primitive type tags (INT, FLOAT, ST
 
 ### 5. GIR Serialization
 
-`src/gene/gir.nim` serializes `type_expectations` per scope into bytecode cache. Type information persists across compilation runs.
+`src/gene/gir.nim` serializes scope `type_expectations` and module type metadata. Type information already persists across compilation runs; the planned upgrade is descriptor-table serialization instead of string-only expectations.
 
 ### 6. Module Type Metadata Across Imports
 
@@ -77,17 +94,17 @@ Compiler goes AST → bytecode directly. No place for:
 
 The HIR exists but only for the native JIT path.
 
-### 2. Type Information is String-Based at Runtime
+### 2. No Canonical Descriptor Pipeline Across Compile/GIR/Runtime
 
-`type_expectations` stores type names as `string` in `ScopeTracker`. Runtime parsing is cached by type string, so repeated checks are mostly cache lookups. Also, common primitive checks are already fast via NaN tags. The remaining issue is string-heavy handling for annotated/non-primitive paths, where numeric type IDs would be cleaner and faster.
+Type information still crosses major boundaries as strings (`ScopeTracker.type_expectations`, matcher `type_name`, return type names). Caching hides some costs, but the bigger issue is identity/coherence: compile-time, GIR, and runtime do not share a canonical descriptor object graph with stable IDs.
 
 ### 3. Type Checker Only Partially Informs Bytecode Emission
 
 The checker feeds metadata into compilation (binding/param/return type props), and the compiler/VM already use that for gradual boundary validation. What is missing is optional opcode specialization/typed instruction selection for performance; this is a secondary optimization track, not a correctness blocker for gradual typing.
 
-### 4. No Type Narrowing / Flow Typing
+### 4. Flow Typing Is Partial
 
-After `(if (x .is Int) ...)`, the type checker doesn't narrow `x` to `Int` in the then-branch. This is expected in modern gradual type systems (TypeScript, mypy, Kotlin).
+Type narrowing exists in limited form, but it is not yet comprehensive across `if`/`case`/`match` patterns and richer guards. Gradual-first ergonomics still require broader and more consistent flow-sensitive narrowing.
 
 ### 5. No First-Class Generics for Functions/Classes
 
@@ -116,10 +133,12 @@ The architecture is better suited for gradual than full static typing:
 
 | Priority | Gap | Fix |
 |----------|-----|-----|
-| **P0** | No flow-based narrowing | Add control-flow narrowing in `if`/`case`/`match` after type tests |
-| **P0** | Gradual boundary UX | Improve runtime type error diagnostics (location, expected/actual, binding context) |
-| **P0** | Metadata continuity | Ensure type metadata survives compile/cache/import boundaries consistently |
-| **P1** | String-heavy runtime expectations | Add numeric `type_id` table while preserving string compatibility |
+| **P0** | No canonical descriptor pipeline | Introduce `TypeDesc` + stable `TypeId` across checker, compiler metadata, GIR, and VM |
+| **P0** | Runtime still string-backed | Materialize descriptor-backed runtime type objects and validate against them |
+| **P0** | Lazy implementation integration | Attach implementation hooks to runtime type objects; compile/load ctor/method/init bodies on demand |
+| **P0** | Flow typing is partial | Extend narrowing across `if`/`case`/`match` and richer guard forms |
+| **P1** | Gradual boundary UX | Improve runtime type error diagnostics (location, expected/actual, binding context) |
+| **P1** | Metadata continuity | Keep backward-compatible GIR migration path (string metadata -> descriptor table) |
 | **P1** | Type metadata not used for specialization | Add optional specialized instruction variants with dynamic fallback |
 | **P2** | No first-class generics for fn/class | Add polymorphic fn/class generics; choose monomorphization or erasure |
 | **P2** | No typed IR for bytecode path | Introduce lightweight typed IR only if needed for measurable wins |
@@ -127,6 +146,6 @@ The architecture is better suited for gradual than full static typing:
 
 ## Summary
 
-The type checker is real (unification, ADTs, class hierarchy). Runtime validation works. NaN-boxing provides fast primitive type checks. The native JIT pipeline demonstrates typed execution. The main work is **gradual-first integration**: better flow typing and boundary ergonomics first, then optional specialization where it pays off.
+The type checker is real (unification, ADTs, class hierarchy). Runtime validation works. NaN-boxing provides fast primitive type checks. The native JIT pipeline demonstrates typed execution. The main work now is **descriptor unification**: one canonical type representation flowing from compilation to GIR to runtime objects, with lazy implementation loading where appropriate.
 
-Full static mode can remain a future optional track. The near-term strategy should optimize the mixed typed/untyped experience so Gene can support diverse application styles without forcing strictness.
+Full static mode can remain a future optional track. The near-term strategy should optimize the mixed typed/untyped experience while replacing string-based type transport with descriptor-based identity.
