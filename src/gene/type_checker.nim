@@ -1,6 +1,7 @@
-import tables, strutils
+import tables, strutils, os
 
 import ./types
+import ./gir
 
 # Case expression keys (same as in compiler/case.nim)
 const CASE_TARGET_KEY = "case_target"
@@ -60,8 +61,13 @@ type
     params*: seq[string]
     variants*: Table[string, AdtVariant]
 
+  ImportTypeItem = object
+    path: seq[string]
+    alias: string
+
   TypeChecker* = ref object
     strict*: bool
+    module_filename*: string
     next_var_id*: int
     subs*: Table[int, TypeExpr]
     scopes*: seq[Table[string, TypeExpr]]
@@ -139,9 +145,10 @@ proc ensure_effects_allowed(self: TypeChecker, required: seq[string], context: s
 
 proc register_builtin_adts(self: TypeChecker)
 
-proc new_type_checker*(strict: bool = true): TypeChecker =
+proc new_type_checker*(strict: bool = true, module_filename: string = ""): TypeChecker =
   result = TypeChecker(
     strict: strict,
+    module_filename: module_filename,
     next_var_id: 0,
     subs: initTable[int, TypeExpr](),
     scopes: @[initTable[string, TypeExpr]()],
@@ -424,12 +431,12 @@ proc find_field(self: TypeChecker, cls: ClassInfo, field_name: string): TypeExpr
     current = self.get_class_info(current.parent)
   return nil
 
-proc register_imported_type(self: TypeChecker, name: string) =
+proc register_imported_type(self: TypeChecker, name: string, force: bool = false) =
   if name.len == 0:
     return
   if name.contains("/") or name.contains("."):
     return
-  if name[0].isUpperAscii:
+  if force or name[0].isUpperAscii:
     if not self.types.hasKey(name) and not self.classes.hasKey(name):
       self.types[name] = TypeExpr(kind: TkNamed, name: name)
 
@@ -452,7 +459,228 @@ proc collect_import_types(self: TypeChecker, v: Value) =
   else:
     discard
 
+proc normalize_import_path(parts: seq[string]): seq[string] =
+  for part in parts:
+    if part.len == 0 or part == "$ns":
+      continue
+    result.add(part)
+
+proc split_import_path(path: string): seq[string] =
+  if path == "*":
+    return @["*"]
+  if path.contains("/"):
+    return normalize_import_path(path.split("/"))
+  if path.len > 0 and path != "$ns":
+    return @[path]
+  return @[]
+
+proc add_import_type_item(items: var seq[ImportTypeItem], name: string, alias: string = "") =
+  if name.len == 0:
+    return
+  let path = split_import_path(name)
+  if path.len == 0:
+    return
+  items.add(ImportTypeItem(path: path, alias: alias))
+
+proc parse_import_symbol(items: var seq[ImportTypeItem], token: string, prefix: string = "") =
+  if token.len == 0:
+    return
+
+  var name = token
+  var alias = ""
+  let colon_pos = token.find(':')
+  if colon_pos > 0 and colon_pos < token.len - 1:
+    name = token[0..<colon_pos]
+    alias = token[colon_pos + 1..^1]
+
+  var full_name = name
+  if prefix.len > 0 and name != "*":
+    full_name = prefix & "/" & name
+  add_import_type_item(items, full_name, alias)
+
+proc parse_import_group_item(items: var seq[ImportTypeItem], prefix: string, item: Value) =
+  case item.kind
+  of VkSymbol:
+    parse_import_symbol(items, item.str, prefix)
+  of VkGene:
+    let sub = item.gene
+    if sub != nil and sub.`type`.kind == VkSymbol and sub.children.len == 1 and sub.children[0].kind == VkSymbol:
+      parse_import_symbol(items, sub.`type`.str & ":" & sub.children[0].str, prefix)
+  else:
+    discard
+
+proc collect_import_items(gene: ptr Gene): seq[ImportTypeItem] =
+  if gene == nil:
+    return @[]
+
+  var i = 0
+  while i < gene.children.len:
+    let child = gene.children[i]
+
+    if child.kind == VkSymbol and (child.str == "from" or child.str == "of"):
+      if i + 1 < gene.children.len:
+        i += 2
+      else:
+        i.inc()
+      continue
+
+    case child.kind
+    of VkSymbol:
+      parse_import_symbol(result, child.str)
+    of VkComplexSymbol:
+      let parts = child.ref.csymbol
+      if parts.len >= 2 and parts[^1] == "" and i + 1 < gene.children.len and gene.children[i + 1].kind == VkArray:
+        let prefix = normalize_import_path(parts[0..^2]).join("/")
+        i.inc()
+        for item in array_data(gene.children[i]):
+          parse_import_group_item(result, prefix, item)
+      else:
+        let full = normalize_import_path(parts).join("/")
+        parse_import_symbol(result, full)
+    of VkGene:
+      let g = child.gene
+      if g == nil:
+        discard
+      elif g.`type`.kind == VkComplexSymbol:
+        let parts = g.`type`.ref.csymbol
+        if parts.len >= 2 and parts[^1] == "":
+          let prefix = normalize_import_path(parts[0..^2]).join("/")
+          for item in g.children:
+            parse_import_group_item(result, prefix, item)
+        else:
+          let full = normalize_import_path(parts).join("/")
+          parse_import_symbol(result, full)
+      elif g.`type`.kind == VkSymbol and g.children.len == 1 and g.children[0].kind == VkSymbol:
+        parse_import_symbol(result, g.`type`.str & ":" & g.children[0].str)
+    else:
+      discard
+
+    i.inc()
+
+proc import_module_path(gene: ptr Gene): string =
+  if gene == nil:
+    return ""
+  var i = 0
+  while i + 1 < gene.children.len:
+    let child = gene.children[i]
+    if child.kind == VkSymbol and child.str == "from":
+      let next = gene.children[i + 1]
+      if next.kind == VkString:
+        return next.str
+    i.inc()
+  return ""
+
+proc import_base_dir(self: TypeChecker): string =
+  if self.module_filename.len > 0 and not self.module_filename.startsWith("<"):
+    return parentDir(absolutePath(self.module_filename))
+  return getCurrentDir()
+
+proc add_unique_path(paths: var seq[string], candidate: string) =
+  if candidate.len == 0:
+    return
+  let normalized = absolutePath(candidate)
+  for path in paths:
+    if path == normalized:
+      return
+  paths.add(normalized)
+
+proc resolve_import_gir_path(self: TypeChecker, module_path: string): string =
+  if module_path.len == 0:
+    return ""
+
+  var candidates: seq[string] = @[]
+  if module_path.isAbsolute:
+    add_unique_path(candidates, module_path)
+  else:
+    add_unique_path(candidates, joinPath(self.import_base_dir(), module_path))
+    add_unique_path(candidates, module_path)
+
+  for candidate in candidates:
+    if candidate.endsWith(".gir"):
+      if fileExists(candidate):
+        return candidate
+      continue
+
+    if fileExists(candidate):
+      if candidate.endsWith(".gene"):
+        let gir_path = get_gir_path(candidate, "build")
+        if fileExists(gir_path):
+          return gir_path
+      else:
+        let gir_direct = candidate & ".gir"
+        if fileExists(gir_direct):
+          return gir_direct
+        let source = candidate & ".gene"
+        if fileExists(source):
+          let gir_path = get_gir_path(source, "build")
+          if fileExists(gir_path):
+            return gir_path
+    else:
+      let gir_direct = candidate & ".gir"
+      if fileExists(gir_direct):
+        return gir_direct
+      let source = candidate & ".gene"
+      if fileExists(source):
+        let gir_path = get_gir_path(source, "build")
+        if fileExists(gir_path):
+          return gir_path
+  return ""
+
+proc is_importable_module_type(node: ModuleTypeNode): bool =
+  if node == nil:
+    return false
+  node.kind in {MtkClass, MtkEnum, MtkInterface, MtkAlias, MtkObject}
+
+proc find_module_type_node(nodes: seq[ModuleTypeNode], path: seq[string]): ModuleTypeNode =
+  if path.len == 0:
+    return nil
+
+  var current_nodes = nodes
+  var current: ModuleTypeNode = nil
+  for part in path:
+    current = nil
+    for node in current_nodes:
+      if node != nil and node.name == part:
+        current = node
+        break
+    if current == nil:
+      return nil
+    current_nodes = current.children
+  return current
+
+proc register_imported_types_from_module(self: TypeChecker, module_types: seq[ModuleTypeNode], items: seq[ImportTypeItem]) =
+  if module_types.len == 0 or items.len == 0:
+    return
+
+  for item in items:
+    if item.path.len == 1 and item.path[0] == "*":
+      for node in module_types:
+        if is_importable_module_type(node):
+          let imported_name = if item.alias.len > 0: item.alias else: node.name
+          self.register_imported_type(imported_name, force = true)
+      continue
+
+    let node = find_module_type_node(module_types, item.path)
+    if node != nil and is_importable_module_type(node):
+      let imported_name = if item.alias.len > 0: item.alias else: item.path[^1]
+      self.register_imported_type(imported_name, force = true)
+
 proc check_import(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  let module_path = import_module_path(gene)
+  if module_path.len > 0:
+    let items = collect_import_items(gene)
+    if items.len > 0:
+      let gir_path = self.resolve_import_gir_path(module_path)
+      if gir_path.len > 0:
+        try:
+          let imported = load_gir(gir_path)
+          if imported != nil and imported.module_types.len > 0:
+            self.register_imported_types_from_module(imported.module_types, items)
+        except CatchableError:
+          discard
+
+  # Keep the legacy heuristic fallback so type-checking still works when
+  # imported GIR metadata is not available yet.
   for child in gene.children:
     self.collect_import_types(child)
   return ANY_TYPE

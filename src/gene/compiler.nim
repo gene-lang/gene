@@ -4027,6 +4027,11 @@ proc compile_import(self: Compiler, gene: ptr Gene) =
   # (import a:alias b from "module")
   # (import n/f from "module")
   # (import n/[one two] from "module")
+
+  # Imports are compile-time constructs in module scope.
+  # Runtime/nested imports must go through (comptime ...) expansion.
+  if not self.preserve_root_scope:
+    not_allowed("import is compile-time only; place imports at module top level or emit them from (comptime ...)")
   
   # echo "DEBUG: compile_import called for ", gene
   # echo "DEBUG: gene.children = ", gene.children
@@ -4712,6 +4717,137 @@ proc predeclare_module_vars(self: Compiler, nodes: seq[Value]) =
   # Predeclare local defs (fn/class/ns/object) for module mode when enabled.
   self.predeclare_local_defs(nodes)
 
+proc normalize_module_type_path(parts: seq[string]): seq[string] =
+  for part in parts:
+    if part.len == 0 or part == "$ns":
+      continue
+    result.add(part)
+
+proc module_type_path_from_name(name: Value): seq[string] =
+  case name.kind
+  of VkSymbol, VkString:
+    if name.str.contains("/"):
+      return normalize_module_type_path(name.str.split("/"))
+    if name.str.len > 0 and name.str != "$ns":
+      return @[name.str]
+    return @[]
+  of VkComplexSymbol:
+    return normalize_module_type_path(name.ref.csymbol)
+  else:
+    return @[]
+
+proc ensure_module_type_child(nodes: var seq[ModuleTypeNode], name: string, default_kind: ModuleTypeKind): ModuleTypeNode =
+  for node in nodes:
+    if node != nil and node.name == name:
+      return node
+  let created = ModuleTypeNode(name: name, kind: default_kind, children: @[])
+  nodes.add(created)
+  return created
+
+proc merge_module_type_kind(current: ModuleTypeKind, incoming: ModuleTypeKind): ModuleTypeKind =
+  if incoming == MtkUnknown:
+    return current
+  if current == MtkUnknown:
+    return incoming
+  if current == MtkNamespace and incoming != MtkNamespace:
+    return incoming
+  return current
+
+proc add_module_type_path(tree: var seq[ModuleTypeNode], path: seq[string], leaf_kind: ModuleTypeKind) =
+  if path.len == 0:
+    return
+
+  var current = ensure_module_type_child(tree, path[0], if path.len == 1: leaf_kind else: MtkNamespace)
+  if path.len == 1:
+    current.kind = merge_module_type_kind(current.kind, leaf_kind)
+    return
+
+  for i in 1..<path.len:
+    let is_leaf = i == path.high
+    let desired_kind = if is_leaf: leaf_kind else: MtkNamespace
+    current = ensure_module_type_child(current.children, path[i], desired_kind)
+    if is_leaf:
+      current.kind = merge_module_type_kind(current.kind, leaf_kind)
+
+proc collect_module_type_nodes(node: Value, prefix: seq[string], tree: var seq[ModuleTypeNode])
+
+proc collect_module_ns_children(children: seq[Value], prefix: seq[string], tree: var seq[ModuleTypeNode], start_index: int) =
+  for i in start_index..<children.len:
+    collect_module_type_nodes(children[i], prefix, tree)
+
+proc collect_module_type_nodes(node: Value, prefix: seq[string], tree: var seq[ModuleTypeNode]) =
+  if node.kind != VkGene or node.gene == nil:
+    return
+
+  let gene = node.gene
+  let gt = gene.`type`
+  if gt.kind != VkSymbol:
+    return
+
+  case gt.str
+  of "ns":
+    if gene.children.len == 0:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    let full_path = prefix & path
+    add_module_type_path(tree, full_path, MtkNamespace)
+    collect_module_ns_children(gene.children, full_path, tree, 1)
+  of "class":
+    if gene.children.len == 0:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    let full_path = prefix & path
+    add_module_type_path(tree, full_path, MtkClass)
+    var body_start = 1
+    if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
+      body_start = 3
+    collect_module_ns_children(gene.children, full_path, tree, body_start)
+  of "object":
+    if gene.children.len == 0:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    let full_path = prefix & path
+    add_module_type_path(tree, full_path, MtkObject)
+    var body_start = 1
+    if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
+      body_start = 3
+    collect_module_ns_children(gene.children, full_path, tree, body_start)
+  of "enum":
+    if gene.children.len == 0:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    add_module_type_path(tree, prefix & path, MtkEnum)
+  of "interface":
+    if gene.children.len == 0:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    add_module_type_path(tree, prefix & path, MtkInterface)
+  of "type":
+    if gene.children.len < 2:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    add_module_type_path(tree, prefix & path, MtkAlias)
+  else:
+    discard
+
+proc collect_module_types(nodes: seq[Value]): seq[ModuleTypeNode] =
+  var tree: seq[ModuleTypeNode] = @[]
+  for node in nodes:
+    collect_module_type_nodes(node, @[], tree)
+  return tree
+
 proc normalize_module_nodes(nodes: seq[Value], run_init: bool): seq[Value] =
   var defs: seq[Value] = @[]
   var init_items: seq[Value] = @[]
@@ -4768,7 +4904,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   var is_first = true
   var prev_pushed = false
   # Gradual typing: non-strict mode allows unknown types (treated as Any)
-  let checker = if type_check: new_type_checker(strict = false) else: nil
+  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
 
   if module_mode:
     let self_key = "self".to_key()
@@ -4792,6 +4928,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
       self.scope_tracker.scope_started = true
       self.started_scope_depth.inc()
     let normalized = normalize_module_nodes(expanded, run_init)
+    self.output.module_types = collect_module_types(normalized)
     for node in normalized:
       if not is_first and prev_pushed:
         self.emit(Instruction(kind: IkPop))
@@ -4904,7 +5041,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   var is_first = true
   var prev_pushed = false
   # Gradual typing: non-strict mode allows unknown types (treated as Any)
-  let checker = if type_check: new_type_checker(strict = false) else: nil
+  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
 
   try:
     while true:
@@ -4974,7 +5111,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   var is_first = true
   var prev_pushed = false
   # Gradual typing: non-strict mode allows unknown types (treated as Any)
-  let checker = if type_check: new_type_checker(strict = false) else: nil
+  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
 
   if module_mode:
     let self_key = "self".to_key()
@@ -4998,6 +5135,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
       self.scope_tracker.scope_started = true
       self.started_scope_depth.inc()
     let normalized = normalize_module_nodes(expanded, run_init)
+    self.output.module_types = collect_module_types(normalized)
     for node in normalized:
       if not is_first and prev_pushed:
         self.output.instructions.add(Instruction(kind: IkPop))

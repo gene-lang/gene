@@ -4,8 +4,8 @@ import ./types
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 4'u32
-  COMPILER_VERSION = "0.1.0"
+  GIR_VERSION* = 8'u32
+  COMPILER_VERSION = "0.1.2"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   
 type
@@ -38,6 +38,7 @@ type
     skip_return*: bool
     module_exports*: seq[string]
     module_imports*: seq[string]
+    module_types*: seq[ModuleTypeNode]
 
 # Serialization helpers
 proc write_string(stream: Stream, s: string) =
@@ -96,6 +97,47 @@ proc readScopeTrackerSnapshot(stream: Stream): ScopeTrackerSnapshot =
 
   result.parent = readScopeTrackerSnapshot(stream)
 
+proc writeModuleTypeNode(stream: Stream, node: ModuleTypeNode) =
+  if node == nil:
+    stream.write(0'u8)
+    return
+
+  stream.write(1'u8)
+  stream.write_string(node.name)
+  stream.write(node.kind.uint8)
+  stream.write(node.children.len.uint32)
+  for child in node.children:
+    writeModuleTypeNode(stream, child)
+
+proc readModuleTypeNode(stream: Stream): ModuleTypeNode =
+  if stream.readUint8() == 0:
+    return nil
+
+  let name = stream.read_string()
+  let kind = cast[ModuleTypeKind](stream.readUint8())
+  let count = stream.readUint32()
+  var children: seq[ModuleTypeNode] = @[]
+  for _ in 0..<count:
+    let child = readModuleTypeNode(stream)
+    if child != nil:
+      children.add(child)
+  result = ModuleTypeNode(name: name, kind: kind, children: children)
+
+proc writeModuleTypeTree(stream: Stream, nodes: seq[ModuleTypeNode]) =
+  stream.write(nodes.len.uint32)
+  for node in nodes:
+    writeModuleTypeNode(stream, node)
+
+proc readModuleTypeTree(stream: Stream): seq[ModuleTypeNode] =
+  let count = stream.readUint32()
+  if count == 0:
+    return @[]
+  result = @[]
+  for _ in 0..<count:
+    let node = readModuleTypeNode(stream)
+    if node != nil:
+      result.add(node)
+
 proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit)
 
 proc readCompilationUnitBlock(stream: Stream): CompilationUnit
@@ -128,14 +170,9 @@ proc readFunctionDef(stream: Stream): FunctionDefInfo =
   )
 
 proc write_value(stream: Stream, v: Value) =
-  # Special handling for scope trackers - write NIL instead
-  if v.kind == VkScopeTracker:
-    stream.write(VkNil.uint16)
-    return
-  
   # Write value kind
   stream.write(v.kind.uint16)
-  
+
   case v.kind:
   of VkNil, VkVoid, VkPlaceholder:
     # No data
@@ -150,6 +187,36 @@ proc write_value(stream: Stream, v: Value) =
     stream.write_string(v.str)
   of VkSymbol:
     stream.write_string(v.str)
+  of VkComplexSymbol:
+    let parts = v.ref.csymbol
+    stream.write(parts.len.uint32)
+    for part in parts:
+      stream.write_string(part)
+  of VkArray:
+    let items = array_data(v)
+    stream.write(items.len.uint32)
+    for item in items:
+      write_value(stream, item)
+  of VkMap:
+    let entries = map_data(v)
+    stream.write(entries.len.uint32)
+    for pair in entries.pairs():
+      stream.write(cast[int64](pair[0]))
+      write_value(stream, pair[1])
+  of VkGene:
+    if v.gene == nil:
+      write_value(stream, NIL)
+      stream.write(0'u32)
+      stream.write(0'u32)
+    else:
+      write_value(stream, v.gene.`type`)
+      stream.write(v.gene.props.len.uint32)
+      for pair in v.gene.props.pairs():
+        stream.write(cast[int64](pair[0]))
+        write_value(stream, pair[1])
+      stream.write(v.gene.children.len.uint32)
+      for child in v.gene.children:
+        write_value(stream, child)
   of VkChar:
     # Extract char from NaN-boxed value
     stream.write((v.raw and 0xFF).uint32)
@@ -162,6 +229,8 @@ proc write_value(stream: Stream, v: Value) =
     writeFunctionDef(stream, v.ref.function_def)
   of VkCompiledUnit:
     writeCompilationUnitBlock(stream, v.ref.cu)
+  of VkScopeTracker:
+    writeScopeTrackerSnapshot(stream, snapshot_scope_tracker(v.ref.scope_tracker))
   else:
     not_allowed("GIR serialization not implemented for kind " & $v.kind)
 
@@ -185,6 +254,34 @@ proc read_value(stream: Stream): Value =
     result = stream.read_string().to_value()
   of VkSymbol:
     result = stream.read_string().to_symbol_value()
+  of VkComplexSymbol:
+    let count = stream.readUint32()
+    var parts: seq[string] = @[]
+    for _ in 0..<count:
+      parts.add(stream.read_string())
+    result = parts.to_complex_symbol()
+  of VkArray:
+    let count = stream.readUint32()
+    result = new_array_value()
+    for _ in 0..<count:
+      array_data(result).add(read_value(stream))
+  of VkMap:
+    let count = stream.readUint32()
+    result = new_map_value()
+    for _ in 0..<count:
+      let key = cast[Key](stream.readInt64())
+      map_data(result)[key] = read_value(stream)
+  of VkGene:
+    let gene_type = read_value(stream)
+    var g = new_gene(gene_type)
+    let prop_count = stream.readUint32()
+    for _ in 0..<prop_count:
+      let key = cast[Key](stream.readInt64())
+      g.props[key] = read_value(stream)
+    let child_count = stream.readUint32()
+    for _ in 0..<child_count:
+      g.children.add(read_value(stream))
+    result = g.to_gene_value()
   of VkChar:
     result = stream.readUint32().char.to_value()
   of VkRegex:
@@ -200,6 +297,12 @@ proc read_value(stream: Stream): Value =
     let compiled = readCompilationUnitBlock(stream)
     let ref_value = new_ref(VkCompiledUnit)
     ref_value.cu = compiled
+    result = ref_value.to_ref_value()
+  of VkScopeTracker:
+    let snapshot = readScopeTrackerSnapshot(stream)
+    let tracker = materialize_scope_tracker(snapshot)
+    let ref_value = new_ref(VkScopeTracker)
+    ref_value.scope_tracker = tracker
     result = ref_value.to_ref_value()
   else:
     not_allowed("GIR read not implemented for kind " & $kind)
@@ -244,6 +347,8 @@ proc writeCompilationUnitBlock(stream: Stream, cu: CompilationUnit) =
   stream.write(cu.module_imports.len.uint32)
   for name in cu.module_imports:
     stream.write_string(name)
+
+  writeModuleTypeTree(stream, cu.module_types)
 
 proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
   let kind = cast[CompilationUnitKind](stream.readInt8())
@@ -312,6 +417,8 @@ proc readCompilationUnitBlock(stream: Stream): CompilationUnit =
     result.module_imports = @[]
     for _ in 0..<import_count:
       result.module_imports.add(stream.read_string())
+
+  result.module_types = readModuleTypeTree(stream)
 
 proc write_instruction(stream: Stream, inst: Instruction) =
   stream.write(inst.kind.uint16)
@@ -432,6 +539,8 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   for name in cu.module_imports:
     stream.write_string(name)
 
+  writeModuleTypeTree(stream, cu.module_types)
+
 proc load_gir_file*(path: string): GirFile =
   ## Load a GIR file and return its structured contents
   if not fileExists(path):
@@ -517,6 +626,8 @@ proc load_gir_file*(path: string): GirFile =
     for _ in 0..<import_count:
       module_imports.add(stream.read_string())
 
+  let module_types = readModuleTypeTree(stream)
+
   result.header = header
   result.constants = constants
   result.symbols = symbols
@@ -533,6 +644,7 @@ proc load_gir_file*(path: string): GirFile =
   result.skip_return = skip_return
   result.module_exports = module_exports
   result.module_imports = module_imports
+  result.module_types = module_types
 
 proc load_gir*(path: string): CompilationUnit =
   ## Load a compilation unit from a GIR file
@@ -547,6 +659,7 @@ proc load_gir*(path: string): CompilationUnit =
   result.skip_return = gir_file.skip_return
   result.module_exports = gir_file.module_exports
   result.module_imports = gir_file.module_imports
+  result.module_types = gir_file.module_types
 
   if gir_file.trace_nodes.len > 0:
     var node_refs: seq[SourceTrace] = @[]
@@ -592,6 +705,11 @@ proc is_gir_up_to_date*(gir_path: string, source_path: string): bool =
     return false
   let version = stream.readUint32()
   if version != GIR_VERSION:
+    return false
+
+  # Verify compiler version so semantic compiler changes invalidate cache.
+  let compiler_version = stream.read_string()
+  if compiler_version != COMPILER_VERSION:
     return false
   
   if not fileExists(source_path):

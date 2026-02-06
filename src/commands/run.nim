@@ -102,6 +102,32 @@ proc parse_options(args: seq[string]): Options =
     of cmdEnd:
       discard
 
+proc prepare_main_module_frame(module_name: string) =
+  let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
+  ns["__module_name__".to_key()] = module_name.to_value()
+  ns["__is_main__".to_key()] = TRUE
+  ns["gene".to_key()] = App.app.gene_ns
+  ns["genex".to_key()] = App.app.genex_ns
+  App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
+
+  let frame = new_frame(ns)
+  let args_gene = new_gene(NIL)
+  args_gene.children.add(ns.to_value())
+  frame.args = args_gene.to_gene_value()
+
+  if VM.frame == nil:
+    VM.frame = frame
+  else:
+    VM.frame.update(frame)
+
+proc execute_compiled_module(compiled: CompilationUnit, module_name: string): Value =
+  prepare_main_module_frame(module_name)
+  VM.cu = compiled
+  result = VM.exec()
+  let init_result = VM.maybe_run_module_init()
+  if init_result.ran:
+    result = init_result.value
+
 proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)
   setup_logger(options.debugging)
@@ -182,20 +208,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo "=== Loaded GIR: " & file & " ==="
       echo "Instructions: " & $compiled.instructions.len
 
-    if VM.frame == nil:
-      let ns = new_namespace(App.app.global_ns.ref.ns, file)
-      ns["__module_name__".to_key()] = file.to_value()
-      ns["__is_main__".to_key()] = TRUE
-      ns["gene".to_key()] = App.app.gene_ns
-      ns["genex".to_key()] = App.app.genex_ns
-      VM.frame = new_frame(ns)
-      let args_gene = new_gene(NIL)
-      args_gene.children.add(ns.to_value())
-      VM.frame.args = args_gene.to_gene_value()
-    VM.cu = compiled
     try:
-      discard VM.exec()
-      discard VM.maybe_run_module_init()
+      discard execute_compiled_module(compiled, file)
     except CatchableError as e:
       return handle_exec_error(e)
 
@@ -221,22 +235,12 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         compiled = load_gir(gir_path)
       except CatchableError:
         compiled = nil
+        if options.debugging:
+          echo "Cached GIR load failed (" & gir_path & "), recompiling source."
 
-        if not compiled.isNil:
-          if VM.frame == nil:
-            let ns = new_namespace(App.app.global_ns.ref.ns, file)
-            ns["__module_name__".to_key()] = file.to_value()
-            ns["__is_main__".to_key()] = TRUE
-            ns["gene".to_key()] = App.app.gene_ns
-            ns["genex".to_key()] = App.app.genex_ns
-            VM.frame = new_frame(ns)
-            let args_gene = new_gene(NIL)
-            args_gene.children.add(ns.to_value())
-            VM.frame.args = args_gene.to_gene_value()
-        VM.cu = compiled
+      if not compiled.isNil:
         try:
-          discard VM.exec()
-          discard VM.maybe_run_module_init()
+          discard execute_compiled_module(compiled, file)
         except CatchableError as e:
           return handle_exec_error(e)
 
@@ -264,34 +268,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo ""
       echo "=== Execution Trace ==="
       VM.trace = true
-      # Initialize frame if needed
-      if VM.frame == nil:
-        let ns = new_namespace(App.app.global_ns.ref.ns, file)
-        ns["__module_name__".to_key()] = file.to_value()
-        ns["__is_main__".to_key()] = TRUE
-        ns["gene".to_key()] = App.app.gene_ns
-        ns["genex".to_key()] = App.app.genex_ns
-        App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
-        VM.frame = new_frame(ns)
-        let args_gene = new_gene(NIL)
-        args_gene.children.add(ns.to_value())
-        VM.frame.args = args_gene.to_gene_value()
-      else:
-        let ns = new_namespace(App.app.global_ns.ref.ns, file)
-        ns["__module_name__".to_key()] = file.to_value()
-        ns["__is_main__".to_key()] = TRUE
-        ns["gene".to_key()] = App.app.gene_ns
-        ns["genex".to_key()] = App.app.genex_ns
-        App.app.gene_ns.ref.ns["main_module".to_key()] = file.to_value()
-        VM.frame.update(new_frame(ns))
-        let args_gene = new_gene(NIL)
-        args_gene.children.add(ns.to_value())
-        VM.frame.args = args_gene.to_gene_value()
-      VM.cu = compiled
-      value = VM.exec()
-      let init_result = VM.maybe_run_module_init()
-      if init_result.ran:
-        value = init_result.value
+      value = execute_compiled_module(compiled, file)
     elif options.compile or options.debugging:
       # For trace/debug modes, we need to read the file into memory
       let code = if code != "": code else: readFile(file)
@@ -302,30 +279,30 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         echo fmt"{i:03d}: {instr}"
       echo ""
 
-      if not options.trace:  # If not tracing, just show compilation
-        VM.cu = compiled
-        value = VM.exec()
-      else:
+      if options.trace:
         echo "=== Execution Trace ==="
-        VM.cu = compiled
-      value = VM.exec()
-      let init_result = VM.maybe_run_module_init()
-      if init_result.ran:
-        value = init_result.value
+      value = execute_compiled_module(compiled, file)
     else:
       # Normal execution
-      # Check if code was already read (from stdin or --eval)
+      # Compile and execute with module mode so run follows parse+compile+execute.
       if code != "":
-        # Code already in memory - use string-based execution
-        value = VM.exec(code, file)
+        let compiled = parse_and_compile(code, file, type_check = options.type_check, module_mode = true, run_init = false)
+        value = execute_compiled_module(compiled, file)
       else:
-        # Read from file using streaming for memory efficiency
         let stream = newFileStream(file, fmRead)
         if stream.isNil:
           stderr.writeLine("Error: Failed to open file: " & file)
           return failure("Failed to open file")
         defer: stream.close()
-        value = VM.exec(stream, file)
+        let compiled = parse_and_compile(stream, file, type_check = options.type_check, module_mode = true, run_init = false)
+        value = execute_compiled_module(compiled, file)
+        if not options.no_gir_cache:
+          let gir_path = get_gir_path(file, "build")
+          try:
+            save_gir(compiled, gir_path, file)
+          except CatchableError as save_err:
+            if options.debugging:
+              echo "Skipping GIR cache write (" & gir_path & "): " & save_err.msg
   except CatchableError as e:
     return handle_exec_error(e)
   

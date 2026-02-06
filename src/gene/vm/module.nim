@@ -1,4 +1,4 @@
-import tables, strutils, hashes, os
+import tables, strutils, hashes, os, streams
 
 import ../types
 import ../compiler
@@ -591,8 +591,25 @@ proc compile_module*(path: string): CompilationUnit =
     else:
       not_allowed("Failed to open module '" & path & "'")
 
-  let code = readFile(actual_path)
-  return parse_and_compile(code, actual_path, module_mode = true, run_init = false)
+  let gir_path = get_gir_path(actual_path, "build")
+  if fileExists(gir_path) and is_gir_up_to_date(gir_path, actual_path):
+    try:
+      return load_gir(gir_path)
+    except CatchableError:
+      discard
+
+  let stream = newFileStream(actual_path, fmRead)
+  if stream.isNil:
+    not_allowed("Failed to open module '" & actual_path & "'")
+  defer:
+    stream.close()
+
+  let compiled = parse_and_compile(stream, actual_path, module_mode = true, run_init = false)
+  try:
+    save_gir(compiled, gir_path, actual_path)
+  except CatchableError:
+    discard
+  return compiled
 
 proc load_module*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a module from file and return its namespace

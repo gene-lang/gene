@@ -1,4 +1,4 @@
-import os, unittest
+import os, unittest, strutils
 
 import gene/types except Exception
 import gene/vm
@@ -108,6 +108,21 @@ test "Compilation & VM: comptime import uses $env":
       putEnv("GENE_TARGET", previous)
     else:
       delEnv("GENE_TARGET")
+
+test "Compilation & VM: runtime import is rejected":
+  init_all()
+  let code = cleanup("""
+    (var loader (fn []
+      (import a from "tests/fixtures/mod1")
+      a
+    ))
+    (loader)
+  """)
+  try:
+    discard VM.exec(code, "test_code")
+    fail()
+  except CatchableError as e:
+    check e.msg.contains("compile-time only")
 
 # test_vm """
 #   (ns n

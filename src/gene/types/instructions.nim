@@ -24,6 +24,7 @@ proc new_compilation_unit*(): CompilationUnit =
     inline_caches: @[],
     module_exports: @[],
     module_imports: @[],
+    module_types: @[],
   )
 
 proc add_instruction*(self: CompilationUnit, instr: Instruction, trace: SourceTrace = nil) =

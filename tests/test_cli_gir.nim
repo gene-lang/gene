@@ -1,9 +1,11 @@
-import unittest, os
+import unittest, os, strutils
 
 import gene/parser
 import gene/compiler
 import gene/gir
-import gene/commands/gir as gir_command
+import gene/types except Exception
+import gene/type_checker
+import commands/gir as gir_command
 
 suite "GIR CLI":
   test "gir show renders instructions":
@@ -32,3 +34,78 @@ suite "GIR CLI":
     let result = gir_command.handle("gir", @["show", "build/does_not_exist.gir"])
     check not result.success
     check result.error.contains("not found")
+
+  test "gir preserves module type hierarchy":
+    let code = """
+      (ns api
+        (class Request)
+        (enum Status ok error)
+        (ns v1
+          (class User)
+        )
+      )
+      (class Root)
+    """
+
+    let compiled = compiler.parse_and_compile(code, "<module>", module_mode = true, run_init = false)
+    check compiled.module_types.len > 0
+
+    let gir_path = "build/tests/module_type_hierarchy.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path)
+    let loaded = gir.load_gir(gir_path)
+
+    proc find_node(nodes: seq[ModuleTypeNode], path: seq[string]): ModuleTypeNode =
+      if path.len == 0:
+        return nil
+      var current_nodes = nodes
+      var current: ModuleTypeNode = nil
+      for part in path:
+        current = nil
+        for node in current_nodes:
+          if node != nil and node.name == part:
+            current = node
+            break
+        if current == nil:
+          return nil
+        current_nodes = current.children
+      return current
+
+    let api = find_node(loaded.module_types, @["api"])
+    let request = find_node(loaded.module_types, @["api", "Request"])
+    let status = find_node(loaded.module_types, @["api", "Status"])
+    let user = find_node(loaded.module_types, @["api", "v1", "User"])
+    let root = find_node(loaded.module_types, @["Root"])
+
+    check api != nil
+    check api.kind == MtkNamespace
+    check request != nil
+    check request.kind == MtkClass
+    check status != nil
+    check status.kind == MtkEnum
+    check user != nil
+    check user.kind == MtkClass
+    check root != nil
+    check root.kind == MtkClass
+
+    removeFile(gir_path)
+
+  test "type imports use GIR module type metadata":
+    let module_source = absolutePath("tmp/type_import_module.gene")
+    createDir(parentDir(module_source))
+    writeFile(module_source, "(class User)")
+    let module_compiled = compiler.parse_and_compile(readFile(module_source), module_source, module_mode = true, run_init = false)
+    let module_gir = gir.get_gir_path(module_source, "build")
+    gir.save_gir(module_compiled, module_gir, module_source)
+
+    defer:
+      if fileExists(module_source):
+        removeFile(module_source)
+      if fileExists(module_gir):
+        removeFile(module_gir)
+
+    let code = "(import User:user_t from \"" & module_source & "\") (var x: user_t)"
+    let checker = type_checker.new_type_checker(strict = true, module_filename = absolutePath("tmp/type_import_main.gene"))
+    let nodes = parser.read_all(code)
+    for node in nodes:
+      checker.type_check_node(node)

@@ -752,6 +752,20 @@ type
     CkInit      # namespace / class / object initialization
     CkInline    # evaluation during execution
 
+  ModuleTypeKind* {.size: sizeof(int8).} = enum
+    MtkUnknown
+    MtkNamespace
+    MtkClass
+    MtkEnum
+    MtkInterface
+    MtkAlias
+    MtkObject
+
+  ModuleTypeNode* = ref object
+    name*: string
+    kind*: ModuleTypeKind
+    children*: seq[ModuleTypeNode]
+
   CompilationUnit* = ref object
     id*: Id
     kind*: CompilationUnitKind
@@ -764,6 +778,7 @@ type
     inline_caches*: seq[InlineCache]  # Inline caches indexed by PC
     module_exports*: seq[string]
     module_imports*: seq[string]
+    module_types*: seq[ModuleTypeNode]
 
   # Used by the compiler to keep track of scopes and variables
   #
