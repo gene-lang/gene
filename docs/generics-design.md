@@ -108,7 +108,7 @@ The type checker already has infrastructure for generics:
 ```gene
 # Parameterized class
 (class Stack:T
-  (var items: (Array T) [])
+  (prop items: (Array T))
 
   (method push [val: T]
     (items .push val))
@@ -155,7 +155,7 @@ The type checker already has infrastructure for generics:
 (var p (new Pair "age" 30))   # A=String, B=Int
 ```
 
-**Call-site rule:** Type parameters are always inferred at call sites, never explicitly specified. This is because the concrete type at the call site might be a namespaced type (`n/ClassX`) or something not imported, which can't be attached to a name syntactically.
+**Call-site rule (MVP):** Type parameters are inferred at call sites by default (e.g. `(new Stack 1 2 3)`). Applied type expressions are still valid (e.g. `(new (Stack Int))`). A separate explicit type-argument syntax at call sites (e.g. `(new Stack ^T Int)`) is deferred and may be added later.
 
 ## Scenario 5: Type Aliases with Parameters
 
@@ -267,8 +267,8 @@ This fits Gene's dynamic-first philosophy — you can always ask a value what it
   # Method that works with any mapper function
   (method map [f: Fn] -> Collection
     (var result (new Collection))
-    (for item items
-      (result/.items .push (f item)))
+    (for item in items
+      (result .push (f item)))
     result))
 ```
 
@@ -299,7 +299,7 @@ This is where generics pay for themselves in performance. The current native cod
 
 ### Phase 1: Applied Types (Mostly Done)
 - [x] `TkApplied` in type checker
-- [x] `(Array Int)`, `(Map String Int)` syntax parsed
+- [x] `(Array Int)`, `(Map Int)` syntax parsed
 - [x] ADTs with parameters: `(Result T E)`, `(Option T)`
 - [ ] Runtime enforcement at function boundaries for applied collection types
 
@@ -329,23 +329,12 @@ This is where generics pay for themselves in performance. The current native cod
 1. **Syntax for generic classes:** `(class (Stack T) ...)` — is this natural enough?
 A: `(class Stack:T ...)`
 2. **Instantiation syntax:** `(new (Stack Int))` vs `(new Stack ^T Int)` vs inference?
-A: `(new (Stack Int))` is the right way
-1. **Boundary vs full enforcement:** Check element types on every mutation, or only at function call boundaries?
+A: MVP supports inference and applied type expressions. Separate explicit type-argument syntax (like `^T`) is deferred.
+3. **Boundary vs full enforcement:** Check element types on every mutation, or only at function call boundaries?
 A: Boundary enforcement for MVP
-2. **Explicit type variables ever needed?** Or can inference + applied types cover all practical cases?
+4. **Explicit type variables ever needed?** Or can inference + applied types cover all practical cases?
 A: Inference is enough for MVP
-3. **Interaction with `.is`:** Should `((Array Int) .is Array)` return true? (subtype relationship)
+5. **Interaction with `.is`:** Should `((Array Int) .is Array)` return true? (subtype relationship)
 A: Yes, `(Array Int)` is a subtype of `Array`
-4. **Erasure vs reification:** Do type parameters exist at runtime (reified) or only at compile time (erased)? Reified is more powerful but more complex.
+6. **Erasure vs reification:** Do type parameters exist at runtime (reified) or only at compile time (erased)? Reified is more powerful but more complex.
 A: Gene values always carry type information at runtime. E.g. instances know their class and property types from class definition.
-
-## Decision Log
-
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-02-07 | Lightweight generics (option 2) | Full generics too heavy for Gene's dynamic-first design |
-| 2026-02-07 | Inference over annotation | Users shouldn't write type variables in most code |
-| 2026-02-07 | Boundary enforcement for MVP | Simpler, fits gradual philosophy |
-| 2026-02-07 | Colon syntax for type params | `fn first:A`, `class Stack:T` — colon means "type" in Gene, chains naturally for multiple params |
-| 2026-02-07 | Inference-only at call sites | Type params never explicit at call site — concrete types may be namespaced (`n/ClassX`) or not imported; cast args if needed (deferred) |
-| 2026-02-07 | Reified generics (no erasure) | Gene values always carry type information — type params exist at runtime, `.is` works with parameterized types |
