@@ -125,21 +125,32 @@ The type checker already has infrastructure for generics:
 (var top (s .pop))  # (Option Int)
 ```
 
-**Question:** Should generic classes follow the same colon syntax as functions?
+**Decision (2026-02-07):** Generic classes use the same colon syntax as functions.
 
 ```gene
-# Option A: Colon syntax (matches functions)
+# Generic class definition
 (class Stack:T
-  ...)
+  (var items: (Array T) [])
+  
+  (method push [val: T]
+    (items .push val))
+  
+  (method pop [] -> (Option T)
+    (if (items .empty?)
+      None
+      (Some (items .pop)))))
 
-# Option B: Applied type syntax (matches type definitions)
-(class (Stack T)
-  ...)
+# Multiple type params
+(class Pair:A:B
+  (var first: A)
+  (var second: B))
+
+# Instantiation — type params inferred from arguments
+(var s (new Stack 1 2 3))     # T inferred as Int
+(var p (new Pair "age" 30))   # A=String, B=Int
 ```
 
-**Open:** Colon syntax (`Stack:T`) is consistent with `fn first:A`. Applied syntax (`(Stack T)`) is consistent with `(type (Result T E) ...)`. Need to decide which consistency matters more.
-
-**Instantiation:** `(new Stack [1 2 3])` with T inferred, or `(new (Stack Int))` when explicit.
+**Call-site rule:** Type parameters are always inferred at call sites, never explicitly specified. This is because the concrete type at the call site might be a namespaced type (`n/ClassX`) or something not imported, which can't be attached to a name syntactically.
 
 ## Scenario 5: Type Aliases with Parameters
 
@@ -307,6 +318,6 @@ This is where generics pay for themselves in performance. The current native cod
 | 2026-02-07 | Lightweight generics (option 2) | Full generics too heavy for Gene's dynamic-first design |
 | 2026-02-07 | Inference over annotation | Users shouldn't write type variables in most code |
 | 2026-02-07 | Boundary enforcement for MVP | Simpler, fits gradual philosophy |
-| 2026-02-07 | Colon syntax for fn type params | `fn first:A` — colon already means "type" in Gene, chains naturally for multiple params |
-| | Syntax for generic classes | TBD — `class Stack:T` vs `class (Stack T)` |
+| 2026-02-07 | Colon syntax for type params | `fn first:A`, `class Stack:T` — colon means "type" in Gene, chains naturally for multiple params |
+| 2026-02-07 | Inference-only at call sites | Type params never explicit at call site — concrete types may be namespaced (`n/ClassX`) or not imported |
 | | Erasure vs reification | TBD |
