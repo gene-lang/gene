@@ -198,7 +198,14 @@ proc object_to_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
   var warning = ""
   var converted_ok = false
   {.cast(gcsafe).}:
-    converted_ok = coerce_value_to_type(value_arg, target_type, "value", converted, warning)
+    let tid = lookup_builtin_type(target_type)
+    if tid != NO_TYPE_ID:
+      let descs = builtin_type_descs()
+      converted_ok = coerce_value_to_type(value_arg, tid, descs, "value", converted, warning)
+    else:
+      # Non-builtin type name — attempt named type desc coercion
+      let descs = @[TypeDesc(kind: TdkNamed, name: target_type)]
+      converted_ok = coerce_value_to_type(value_arg, 0.TypeId, descs, "value", converted, warning)
   if converted_ok:
     {.cast(gcsafe).}:
       emit_type_warning(warning)

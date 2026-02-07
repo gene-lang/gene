@@ -55,31 +55,31 @@ type
 
 # ==================== Type Mapping ====================
 
-proc geneTypeToHir(typeName: string): HirType =
-  ## Convert Gene type annotation to HIR type
-  case typeName.toLowerAscii()
-  of "int", "int64", "i64": HtI64
-  of "float", "float64", "f64": HtF64
-  of "bool", "boolean": HtBool
-  else: HtValue  # Dynamic/unknown types use boxed Value
+proc typeIdToHir(tid: TypeId): HirType =
+  ## Convert TypeId to HIR type
+  case tid
+  of BUILTIN_TYPE_INT_ID: HtI64
+  of BUILTIN_TYPE_FLOAT_ID: HtF64
+  of BUILTIN_TYPE_BOOL_ID: HtBool
+  else: HtValue
 
-proc typeNameToCallArg(typeName: string, outType: var CallArgType): bool =
-  case typeName.toLowerAscii()
-  of "int", "int64", "i64":
+proc typeIdToCallArg(tid: TypeId, outType: var CallArgType): bool =
+  case tid
+  of BUILTIN_TYPE_INT_ID:
     outType = CatInt64
     return true
-  of "float", "float64", "f64":
+  of BUILTIN_TYPE_FLOAT_ID:
     outType = CatFloat64
     return true
   else:
     return false
 
-proc typeNameToCallReturn(typeName: string, outType: var CallReturnType): bool =
-  case typeName.toLowerAscii()
-  of "int", "int64", "i64":
+proc typeIdToCallReturn(tid: TypeId, outType: var CallReturnType): bool =
+  case tid
+  of BUILTIN_TYPE_INT_ID:
     outType = CrtInt64
     return true
-  of "float", "float64", "f64":
+  of BUILTIN_TYPE_FLOAT_ID:
     outType = CrtFloat64
     return true
   else:
@@ -90,20 +90,20 @@ proc signatureFromMatcher(matcher: RootMatcher, dropFirst: bool,
                            returnType: var CallReturnType): bool =
   if matcher.is_nil or not matcher.has_type_annotations:
     return false
-  if matcher.return_type_name.len == 0:
+  if matcher.return_type_id == NO_TYPE_ID:
     return false
   let start = if dropFirst: 1 else: 0
   if dropFirst and matcher.children.len == 0:
     return false
   for i in start..<matcher.children.len:
     let param = matcher.children[i]
-    if param.type_name.len == 0:
+    if param.type_id == NO_TYPE_ID:
       return false
     var argType: CallArgType
-    if not typeNameToCallArg(param.type_name, argType):
+    if not typeIdToCallArg(param.type_id, argType):
       return false
     argTypes.add(argType)
-  if not typeNameToCallReturn(matcher.return_type_name, returnType):
+  if not typeIdToCallReturn(matcher.return_type_id, returnType):
     return false
   true
 
@@ -628,20 +628,20 @@ proc extractFunctionInfo(cu: CompilationUnit): tuple[name: string, params: seq[t
 
   if cu.matcher != nil:
     # Use explicit return type annotation if available
-    if cu.matcher.return_type_name.len > 0:
-      result.retType = geneTypeToHir(cu.matcher.return_type_name)
+    if cu.matcher.return_type_id != NO_TYPE_ID:
+      result.retType = typeIdToHir(cu.matcher.return_type_id)
 
     for child in cu.matcher.children:
       let paramName = cast[Value](child.name_key).str()
-      let paramType = if child.type_name.len > 0:
-        geneTypeToHir(child.type_name)
+      let paramType = if child.type_id != NO_TYPE_ID:
+        typeIdToHir(child.type_id)
       else:
         HtValue
       result.params.add((name: paramName, typ: paramType))
 
     # If no explicit return type, infer from parameter types
     # (all-float params → float return; otherwise int)
-    if cu.matcher.return_type_name.len == 0 and result.params.len > 0:
+    if cu.matcher.return_type_id == NO_TYPE_ID and result.params.len > 0:
       var allFloat = true
       for p in result.params:
         if p.typ != HtF64:
@@ -728,9 +728,9 @@ proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool =
     return false
 
   for child in cu.matcher.children:
-    if child.type_name.len == 0:
+    if child.type_id == NO_TYPE_ID:
       return false
-    let hirType = geneTypeToHir(child.type_name)
+    let hirType = typeIdToHir(child.type_id)
     if hirType notin {HtI64, HtF64}:
       return false  # Non-primitive type
 

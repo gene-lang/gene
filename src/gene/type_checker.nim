@@ -161,8 +161,17 @@ proc new_type_checker*(strict: bool = true, module_filename: string = ""): TypeC
     current_class: "",
     init_self_stack: @[],
     effect_stack: @[],
-    type_descs: @[],
-    type_desc_index: initTable[string, TypeId]()
+    type_descs: builtin_type_descs(),
+    type_desc_index: {"any": BUILTIN_TYPE_ANY_ID,
+                      "named:Int": BUILTIN_TYPE_INT_ID,
+                      "named:Float": BUILTIN_TYPE_FLOAT_ID,
+                      "named:String": BUILTIN_TYPE_STRING_ID,
+                      "named:Bool": BUILTIN_TYPE_BOOL_ID,
+                      "named:Nil": BUILTIN_TYPE_NIL_ID,
+                      "named:Symbol": BUILTIN_TYPE_SYMBOL_ID,
+                      "named:Char": BUILTIN_TYPE_CHAR_ID,
+                      "named:Array": BUILTIN_TYPE_ARRAY_ID,
+                      "named:Map": BUILTIN_TYPE_MAP_ID}.toTable
   )
   result.register_builtin_adts()
 
@@ -1908,6 +1917,8 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if name_val.kind != VkSymbol:
     return ANY_TYPE
   let class_name = name_val.str
+  # Ensure every class declaration gets a stable descriptor entry.
+  discard self.intern_type_desc(TypeExpr(kind: TkNamed, name: class_name))
   var body_start = 1
   var parent_name = ""
   if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():

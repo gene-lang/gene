@@ -34,7 +34,7 @@ proc printBytecode(cu: CompilationUnit, name: string) =
     echo fmt"Has type annotations: {cu.matcher.has_type_annotations}"
     for child in cu.matcher.children:
       let paramName = cast[Value](child.name_key).str()
-      echo fmt"  Param: {paramName}, type: {child.type_name}"
+      echo fmt"  Param: {paramName}, type_id: {child.type_id}"
   echo ""
   echo "Labels: "
   for label, pc in cu.labels.pairs:

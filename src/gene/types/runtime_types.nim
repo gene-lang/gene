@@ -31,13 +31,7 @@ type
       ret: RtType
       effects: seq[string]
 
-var rt_type_cache_initialized {.threadvar.}: bool
-var rt_type_cache {.threadvar.}: Table[string, RtType]
-
-proc ensure_rt_type_cache() =
-  if not rt_type_cache_initialized:
-    rt_type_cache = initTable[string, RtType]()
-    rt_type_cache_initialized = true
+discard # Type cache removed — types resolved at compile time via TypeDesc
 
 proc new_runtime_type_object*(type_id: TypeId, descriptor: TypeDesc): RtTypeObj =
   RtTypeObj(
@@ -89,149 +83,7 @@ proc resolve_method*(rt: RtTypeObj, method_key: Key): Value =
     return resolved
   NIL
 
-proc is_delim(c: char): bool {.inline.} =
-  c.isSpaceAscii or c in {'(', ')', '[', ']', '|'}
-
-proc skip_ws(s: string, i: var int) {.inline.} =
-  while i < s.len and s[i].isSpaceAscii:
-    i.inc
-
-proc parse_symbol(s: string, i: var int): string =
-  skip_ws(s, i)
-  let start = i
-  while i < s.len and not is_delim(s[i]):
-    i.inc
-  if i > start:
-    return s[start..<i]
-  return ""
-
-proc parse_type_expr(s: string, i: var int): RtType
-
-proc parse_type_atom(s: string, i: var int): RtType =
-  skip_ws(s, i)
-  if i >= s.len:
-    return RtType(kind: RtAny)
-  if s[i] == '(':
-    i.inc
-    skip_ws(s, i)
-    if i < s.len and s[i] != '(':
-      let sym = parse_symbol(s, i)
-      if sym == "Fn":
-        skip_ws(s, i)
-        if i < s.len and s[i] == '[':
-          i.inc
-        var params: seq[RtType] = @[]
-        while i < s.len:
-          skip_ws(s, i)
-          if i < s.len and s[i] == ']':
-            i.inc
-            break
-          if i < s.len and s[i] == '^':
-            i.inc
-            discard parse_symbol(s, i)
-            params.add(parse_type_expr(s, i))
-          else:
-            params.add(parse_type_expr(s, i))
-        let ret_type = parse_type_expr(s, i)
-        var effects: seq[string] = @[]
-        skip_ws(s, i)
-        if i < s.len and s[i] == '!':
-          i.inc
-          skip_ws(s, i)
-          if i < s.len and s[i] == '[':
-            i.inc
-            while i < s.len:
-              skip_ws(s, i)
-              if i < s.len and s[i] == ']':
-                i.inc
-                break
-              let eff = parse_symbol(s, i)
-              if eff.len > 0:
-                effects.add(eff)
-              else:
-                break
-          else:
-            # Invalid effect list; treat as Any
-            effects = @[]
-        skip_ws(s, i)
-        if i < s.len and s[i] == ')':
-          i.inc
-        return RtType(kind: RtFn, params: params, ret: ret_type, effects: effects)
-      elif sym.len > 0:
-        var parts: seq[RtType] = @[RtType(kind: RtNamed, name: sym)]
-        var union_mode = false
-        while i < s.len:
-          skip_ws(s, i)
-          if i >= s.len:
-            break
-          if s[i] == ')':
-            i.inc
-            break
-          if s[i] == '|':
-            union_mode = true
-            i.inc
-            continue
-          parts.add(parse_type_expr(s, i))
-        if union_mode:
-          return RtType(kind: RtUnion, members: parts)
-        if parts.len == 1:
-          return parts[0]
-        return RtType(kind: RtApplied, ctor: parts[0].name, args: parts[1..^1])
-    var parts: seq[RtType] = @[parse_type_expr(s, i)]
-    var union_mode = false
-    while i < s.len:
-      skip_ws(s, i)
-      if i >= s.len:
-        break
-      if s[i] == ')':
-        i.inc
-        break
-      if s[i] == '|':
-        union_mode = true
-        i.inc
-        continue
-      parts.add(parse_type_expr(s, i))
-    if union_mode:
-      return RtType(kind: RtUnion, members: parts)
-    if parts.len == 1:
-      return parts[0]
-    if parts[0].kind == RtNamed:
-      return RtType(kind: RtApplied, ctor: parts[0].name, args: parts[1..^1])
-    return parts[0]
-  if s[i] == '[':
-    i.inc
-    skip_ws(s, i)
-    var parts: seq[RtType] = @[]
-    while i < s.len and s[i] != ']':
-      parts.add(parse_type_expr(s, i))
-      skip_ws(s, i)
-    if i < s.len and s[i] == ']':
-      i.inc
-    if parts.len == 1:
-      return parts[0]
-    return RtType(kind: RtAny)
-  let name = parse_symbol(s, i)
-  if name.len == 0:
-    return RtType(kind: RtAny)
-  if name == "Any":
-    return RtType(kind: RtAny)
-  return RtType(kind: RtNamed, name: name)
-
-proc parse_type_expr(s: string, i: var int): RtType =
-  return parse_type_atom(s, i)
-
-proc parse_expected_type(expected_type: string): RtType =
-  if expected_type.len == 0:
-    return RtType(kind: RtAny)
-  ensure_rt_type_cache()
-  if rt_type_cache.hasKey(expected_type):
-    return rt_type_cache[expected_type]
-  var idx = 0
-  var parsed = parse_type_expr(expected_type, idx)
-  if parsed == nil:
-    parsed = RtType(kind: RtNamed, name: expected_type)
-  rt_type_cache[expected_type] = parsed
-  return parsed
+discard # String-based type parsing removed — types resolved via TypeDesc at compile time
 
 proc type_desc_to_rt(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): RtType =
   if type_id == NO_TYPE_ID:
@@ -508,8 +360,6 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
     let actual_param =
       if param.type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
         type_desc_to_rt(matcher.type_descriptors, param.type_id)
-      elif param.type_name.len > 0:
-        parse_expected_type(param.type_name)
       else:
         RtType(kind: RtAny)
     if not type_expr_compatible(actual_param, expected.params[i]):
@@ -517,8 +367,6 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
   let actual_return =
     if matcher.return_type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
       type_desc_to_rt(matcher.type_descriptors, matcher.return_type_id)
-    elif matcher.return_type_name.len > 0:
-      parse_expected_type(matcher.return_type_name)
     else:
       RtType(kind: RtAny)
   return type_expr_compatible(actual_return, expected.ret)
@@ -538,13 +386,6 @@ proc is_compatible_rt(value: Value, expected: RtType): bool =
     return false
   of RtFn:
     return function_value_compatible(value, expected)
-
-# Type compatibility checking for gradual typing
-proc is_compatible*(value: Value, expected_type: string): bool =
-  if expected_type.len == 0:
-    return true
-  let parsed = parse_expected_type(expected_type)
-  return is_compatible_rt(value, parsed)
 
 proc is_compatible*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc]): bool =
   if expected_type_id == NO_TYPE_ID:
@@ -650,16 +491,6 @@ proc try_convert_to_rt(value: Value, expected: RtType, param_name: string,
   of RtFn:
     return false
 
-proc coerce_value_to_type*(value: Value, expected_type: string,
-                          param_name: string, converted: var Value,
-                          warning: var string): bool =
-  if expected_type.len == 0:
-    converted = value
-    warning = ""
-    return true
-  let parsed = parse_expected_type(expected_type)
-  return try_convert_to_rt(value, parsed, param_name, converted, warning)
-
 proc coerce_value_to_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
                           param_name: string, converted: var Value,
                           warning: var string): bool =
@@ -674,17 +505,6 @@ proc emit_type_warning*(warning: string) =
   if warning.len > 0:
     stderr.writeLine("Warning: " & warning)
 
-proc validate_or_coerce_type*(value: var Value, expected_type: string,
-                             param_name: string = "argument"): string =
-  var converted = value
-  var warning = ""
-  if coerce_value_to_type(value, expected_type, param_name, converted, warning):
-    value = converted
-    return warning
-  let actual = runtime_type_name(value)
-  raise new_exception(type_defs.Exception,
-    "Type error: expected " & expected_type & ", got " & actual & " in " & param_name)
-
 proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
                              type_descs: seq[TypeDesc],
                              param_name: string = "argument"): string =
@@ -697,14 +517,6 @@ proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
   let expected = type_desc_to_string(expected_type_id, type_descs)
   raise new_exception(type_defs.Exception,
     "Type error: expected " & expected & ", got " & actual & " in " & param_name)
-
-proc validate_type*(value: Value, expected_type: string, param_name: string = "argument") =
-  ## Validate that a value is compatible with an expected type
-  ## Raises a Gene exception if not compatible (catchable by Gene try/catch)
-  if not is_compatible(value, expected_type):
-    let actual = runtime_type_name(value)
-    raise new_exception(type_defs.Exception,
-      "Type error: expected " & expected_type & ", got " & actual & " in " & param_name)
 
 proc validate_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
                    param_name: string = "argument") =

@@ -25,7 +25,7 @@ proc new_compilation_unit*(): CompilationUnit =
     module_exports: @[],
     module_imports: @[],
     module_types: @[],
-    type_descriptors: @[],
+    type_descriptors: builtin_type_descs(),
   )
 
 proc add_instruction*(self: CompilationUnit, instr: Instruction, trace: SourceTrace = nil) =

@@ -14,17 +14,6 @@ proc container_key(): Key {.inline.} =
 proc local_def_key(): Key {.inline.} =
   "local_def".to_key()
 
-proc binding_type_from_props(gene: ptr Gene): string =
-  if gene == nil:
-    return ""
-  let key = TC_BINDING_TYPE_KEY.to_key()
-  if gene.props.has_key(key):
-    let val = gene.props[key]
-    if val.kind in {VkString, VkSymbol}:
-      return val.str
-    return type_expr_to_string(val)
-  return ""
-
 proc type_id_from_value(v: Value): TypeId {.inline.} =
   if v.kind != VkInt:
     return NO_TYPE_ID
@@ -40,18 +29,23 @@ proc binding_type_id_from_props(gene: ptr Gene): TypeId =
     return type_id_from_value(gene.props[key])
   NO_TYPE_ID
 
-proc set_expected_type(tracker: ScopeTracker, index: int16, expected_type: string,
-                      expected_type_id: TypeId = NO_TYPE_ID) {.inline.} =
-  if tracker == nil:
-    return
-  if expected_type.len == 0 and expected_type_id == NO_TYPE_ID:
-    return
-  while tracker.type_expectations.len <= index.int:
-    tracker.type_expectations.add("")
-  while tracker.type_expectation_ids.len <= index.int:
-    tracker.type_expectation_ids.add(NO_TYPE_ID)
-  tracker.type_expectations[index.int] = expected_type
-  tracker.type_expectation_ids[index.int] = expected_type_id
+proc resolve_inline_type_annotation(gene: ptr Gene, type_descs: var seq[TypeDesc]): TypeId =
+  ## Resolve a type annotation from inline `: Type` syntax to a TypeId.
+  ## Falls back to TC_BINDING_TYPE_KEY string prop if no TypeId prop exists.
+  if gene == nil:
+    return NO_TYPE_ID
+  # First try the TypeId prop from type checker
+  let id_key = TC_BINDING_TYPE_ID_KEY.to_key()
+  if gene.props.has_key(id_key):
+    let tid = type_id_from_value(gene.props[id_key])
+    if tid != NO_TYPE_ID:
+      return tid
+  # Fall back to string prop, resolve to TypeId via registry
+  let str_key = TC_BINDING_TYPE_KEY.to_key()
+  if gene.props.has_key(str_key):
+    let val = gene.props[str_key]
+    return resolve_type_value_to_id(val, type_descs)
+  return NO_TYPE_ID
 
 proc build_container_value(parts: seq[string]): Value =
   if parts.len == 0:
@@ -784,14 +778,14 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     not_allowed("var requires a name")
   apply_container_to_child(gene, 0)
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
-  var explicit_type = ""
+  var explicit_type_id: TypeId = NO_TYPE_ID
   # Strip optional type annotation: (var x: Type value)
   if gene.children.len >= 2:
     let name_val = gene.children[0]
     if name_val.kind == VkSymbol and name_val.str.ends_with(":"):
       let base_name = name_val.str[0..^2].to_symbol_value()
       if gene.children.len > 1:
-        explicit_type = type_expr_to_string(gene.children[1])
+        explicit_type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors)
       gene.children[0] = base_name
       gene.children.delete(1) # Remove the type expression
 
@@ -904,10 +898,11 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     index = old_next_index
     new_binding = true
 
-  var binding_type = binding_type_from_props(gene)
-  let binding_type_id = binding_type_id_from_props(gene)
-  if binding_type.len == 0:
-    binding_type = explicit_type
+  var binding_type_id = binding_type_id_from_props(gene)
+  if binding_type_id == NO_TYPE_ID:
+    binding_type_id = resolve_inline_type_annotation(gene, self.output.type_descriptors)
+  if binding_type_id == NO_TYPE_ID:
+    binding_type_id = explicit_type_id
 
   # Avoid resolving the new binding (and any new scope) inside its own initializer.
   if gene.children.len > 1:
@@ -945,14 +940,14 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
         self.scope_tracker.mappings[key] = index
         self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
-    set_expected_type(self.scope_tracker, index, binding_type, binding_type_id)
-    self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
+    set_expected_type_id(self.scope_tracker, index, binding_type_id)
+    self.emit(Instruction(kind: IkVar, arg0: index.to_value(), arg1: binding_type_id))
   else:
     if new_binding:
       self.scope_tracker.mappings[key] = index
       self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
-    set_expected_type(self.scope_tracker, index, binding_type, binding_type_id)
+    set_expected_type_id(self.scope_tracker, index, binding_type_id)
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
 
   if not new_binding:
@@ -1667,8 +1662,9 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
     mark_local_fn(input)
 
   let tracker_copy = copy_scope_tracker(self.scope_tracker)
-  let binding_type = if input.kind == VkGene and input.gene != nil: binding_type_from_props(input.gene) else: ""
-  let binding_type_id = if input.kind == VkGene and input.gene != nil: binding_type_id_from_props(input.gene) else: NO_TYPE_ID
+  var binding_type_id = if input.kind == VkGene and input.gene != nil: binding_type_id_from_props(input.gene) else: NO_TYPE_ID
+  if binding_type_id == NO_TYPE_ID and input.kind == VkGene and input.gene != nil:
+    binding_type_id = resolve_inline_type_annotation(input.gene, self.output.type_descriptors)
 
   var compiled_body: CompilationUnit = nil
   if self.eager_functions:
@@ -1682,8 +1678,8 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
 
   if local_binding:
     self.add_scope_start()
-    set_expected_type(self.scope_tracker, local_index, binding_type, binding_type_id)
-    self.emit(Instruction(kind: IkVar, arg0: local_index.to_value()))
+    set_expected_type_id(self.scope_tracker, local_index, binding_type_id)
+    self.emit(Instruction(kind: IkVar, arg0: local_index.to_value(), arg1: binding_type_id))
     if not local_new_binding:
       self.scope_tracker.next_index = local_old_next
     if self.declared_names.len > 0:
@@ -1901,6 +1897,10 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
   # If we have a container, compile it first to push it onto the stack
   if has_container:
     self.compile(container_expr)
+
+  # Register user class as a TypeDesc in the module's type registry
+  if class_name.kind == VkSymbol:
+    discard intern_type_desc(self.output.type_descriptors, TypeDesc(kind: TdkNamed, name: class_name.str))
 
   # Emit class or subclass instruction
   let flags = container_flag or (if local_def: 2.int32 else: 0.int32)

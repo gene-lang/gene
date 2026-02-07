@@ -35,13 +35,6 @@ template is_function_like(kind: FrameKind): bool =
 template same_value_identity(a: Value, b: Value): bool =
   cast[uint64](a) == cast[uint64](b)
 
-proc expected_type_for(tracker: ScopeTracker, index: int): string {.inline.} =
-  if tracker == nil:
-    return ""
-  if index < 0 or index >= tracker.type_expectations.len:
-    return ""
-  tracker.type_expectations[index]
-
 proc expected_type_id_for(tracker: ScopeTracker, index: int): TypeId {.inline.} =
   if tracker == nil:
     return NO_TYPE_ID
@@ -83,11 +76,11 @@ proc native_args_supported(f: Function, args: seq[Value]): bool =
   if args.len > nativeArgLimit:
     return false
   for i, param in f.matcher.children:
-    let type_name = param.type_name.toLowerAscii()
-    if type_name in ["int", "int64", "i64"]:
+    let tid = param.type_id
+    if tid == BUILTIN_TYPE_INT_ID:
       if args[i].kind != VkInt:
         return false
-    elif type_name in ["float", "float64", "f64"]:
+    elif tid == BUILTIN_TYPE_FLOAT_ID:
       if args[i].kind != VkFloat:
         return false
     else:
@@ -1920,13 +1913,13 @@ proc exec*(self: ptr VirtualMachine): Value =
         let value = self.frame.pop()  # Pop the value from the stack
         if self.frame.scope.isNil:
           not_allowed("IkVar: scope is nil")
-        let expected = expected_type_for(self.frame.scope.tracker, index)
-        let expected_id = expected_type_id_for(self.frame.scope.tracker, index)
-        if value != NIL:
-          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+        # Type check: first from instruction arg1, then from scope tracker
+        let expected_id =
+          if inst.arg1 != NO_TYPE_ID: inst.arg1.TypeId
+          else: expected_type_id_for(self.frame.scope.tracker, index)
+        if value != NIL and expected_id != NO_TYPE_ID:
+          if self.cu != nil and self.cu.type_descriptors.len > 0:
             validate_type(value, expected_id, self.cu.type_descriptors, "variable")
-          elif expected.len > 0:
-            validate_type(value, expected, "variable")
         # Ensure the scope has enough space for the index
         while self.frame.scope.members.len <= index:
           self.frame.scope.members.add(NIL)
@@ -1943,13 +1936,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.push checks: off}
         let index = inst.arg1.int
         let value = inst.arg0
-        let expected = expected_type_for(self.frame.scope.tracker, index)
         let expected_id = expected_type_id_for(self.frame.scope.tracker, index)
-        if value != NIL:
-          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+        if value != NIL and expected_id != NO_TYPE_ID:
+          if self.cu != nil and self.cu.type_descriptors.len > 0:
             validate_type(value, expected_id, self.cu.type_descriptors, "variable")
-          elif expected.len > 0:
-            validate_type(value, expected, "variable")
         # Ensure the scope has enough space for the index
         while self.frame.scope.members.len <= index:
           self.frame.scope.members.add(NIL)
@@ -2000,13 +1990,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         let index = inst.arg0.int64.int
         if index >= self.frame.scope.members.len:
           raise new_exception(types.Exception, fmt"IkVarAssign: index {index} >= scope.members.len {self.frame.scope.members.len}")
-        let expected = expected_type_for(self.frame.scope.tracker, index)
         let expected_id = expected_type_id_for(self.frame.scope.tracker, index)
-        if value != NIL:
-          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+        if value != NIL and expected_id != NO_TYPE_ID:
+          if self.cu != nil and self.cu.type_descriptors.len > 0:
             validate_type(value, expected_id, self.cu.type_descriptors, "variable")
-          elif expected.len > 0:
-            validate_type(value, expected, "variable")
         self.frame.scope.members[index] = value
         {.pop.}
 
@@ -2022,13 +2009,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         if scope == nil:
           raise new_exception(types.Exception, "IkVarAssignInherited: scope is nil")
         let index = inst.arg0.int64.int
-        let expected = expected_type_for(scope.tracker, index)
         let expected_id = expected_type_id_for(scope.tracker, index)
-        if value != NIL:
-          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+        if value != NIL and expected_id != NO_TYPE_ID:
+          if self.cu != nil and self.cu.type_descriptors.len > 0:
             validate_type(value, expected_id, self.cu.type_descriptors, "variable")
-          elif expected.len > 0:
-            validate_type(value, expected, "variable")
         while scope.members.len <= index:
           scope.members.add(NIL)
         {.push checks: off}
