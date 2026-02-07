@@ -125,10 +125,15 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
   # Runtime type validation for annotated parameters
   if matcher.has_type_annotations:
     for i, param in matcher.children:
-      if param.type_name.len > 0 and i < scope.members.len:
+      let has_descriptor_type = param.type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0
+      if (has_descriptor_type or param.type_name.len > 0) and i < scope.members.len:
         var value = scope.members[i]
         if value != NIL:  # Don't validate nil/missing args (handled by required check)
-          let warning = validate_or_coerce_type(value, param.type_name, key_to_name(param.name_key))
+          let warning =
+            if has_descriptor_type:
+              validate_or_coerce_type(value, param.type_id, matcher.type_descriptors, key_to_name(param.name_key))
+            else:
+              validate_or_coerce_type(value, param.type_name, key_to_name(param.name_key))
           scope.members[i] = value
           emit_type_warning(warning)
 
@@ -138,10 +143,15 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
 template validate_fast_path_types(matcher: RootMatcher, scope: Scope) =
   if matcher.has_type_annotations:
     for i, param in matcher.children:
-      if param.type_name.len > 0 and i < scope.members.len:
+      let has_descriptor_type = param.type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0
+      if (has_descriptor_type or param.type_name.len > 0) and i < scope.members.len:
         var value = scope.members[i]
         if value != NIL:
-          let warning = validate_or_coerce_type(value, param.type_name, key_to_name(param.name_key))
+          let warning =
+            if has_descriptor_type:
+              validate_or_coerce_type(value, param.type_id, matcher.type_descriptors, key_to_name(param.name_key))
+            else:
+              validate_or_coerce_type(value, param.type_name, key_to_name(param.name_key))
           scope.members[i] = value
           emit_type_warning(warning)
 

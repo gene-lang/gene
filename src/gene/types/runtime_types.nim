@@ -183,6 +183,79 @@ proc parse_expected_type(expected_type: string): RtType =
   rt_type_cache[expected_type] = parsed
   return parsed
 
+proc type_desc_to_rt(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): RtType =
+  if type_id == NO_TYPE_ID:
+    return RtType(kind: RtAny)
+  if type_id < 0 or type_id.int >= type_descs.len:
+    return RtType(kind: RtAny)
+  if depth > 64:
+    return RtType(kind: RtAny)
+
+  let desc = type_descs[type_id.int]
+  case desc.kind
+  of TdkAny:
+    RtType(kind: RtAny)
+  of TdkNamed:
+    RtType(kind: RtNamed, name: desc.name)
+  of TdkApplied:
+    var args: seq[RtType] = @[]
+    for arg in desc.args:
+      args.add(type_desc_to_rt(type_descs, arg, depth + 1))
+    RtType(kind: RtApplied, ctor: desc.ctor, args: args)
+  of TdkUnion:
+    var members: seq[RtType] = @[]
+    for member in desc.members:
+      members.add(type_desc_to_rt(type_descs, member, depth + 1))
+    RtType(kind: RtUnion, members: members)
+  of TdkFn:
+    var params: seq[RtType] = @[]
+    for param in desc.params:
+      params.add(type_desc_to_rt(type_descs, param, depth + 1))
+    RtType(
+      kind: RtFn,
+      params: params,
+      ret: type_desc_to_rt(type_descs, desc.ret, depth + 1),
+      effects: desc.effects
+    )
+  of TdkVar:
+    RtType(kind: RtAny)
+
+proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0): string =
+  if type_id == NO_TYPE_ID:
+    return "Any"
+  if type_id < 0 or type_id.int >= type_descs.len:
+    return "Any"
+  if depth > 64:
+    return "Any"
+
+  let desc = type_descs[type_id.int]
+  case desc.kind
+  of TdkAny:
+    "Any"
+  of TdkNamed:
+    desc.name
+  of TdkApplied:
+    var parts: seq[string] = @[desc.ctor]
+    for arg in desc.args:
+      parts.add(type_desc_to_string(arg, type_descs, depth + 1))
+    "(" & parts.join(" ") & ")"
+  of TdkUnion:
+    var parts: seq[string] = @[]
+    for member in desc.members:
+      parts.add(type_desc_to_string(member, type_descs, depth + 1))
+    "(" & parts.join(" | ") & ")"
+  of TdkFn:
+    var params: seq[string] = @[]
+    for param in desc.params:
+      params.add(type_desc_to_string(param, type_descs, depth + 1))
+    let ret = type_desc_to_string(desc.ret, type_descs, depth + 1)
+    let effects =
+      if desc.effects.len > 0: " ! [" & desc.effects.join(" ") & "]"
+      else: ""
+    "(Fn [" & params.join(" ") & "] " & ret & effects & ")"
+  of TdkVar:
+    "T" & $desc.var_id
+
 # Runtime type checking using NaN tags
 proc is_int*(v: Value): bool {.inline.} =
   ## Check if value is an integer at runtime
@@ -383,11 +456,21 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
     return false
   for i, param in matcher.children:
     let actual_param =
-      if param.type_name.len > 0: parse_expected_type(param.type_name) else: RtType(kind: RtAny)
+      if param.type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
+        type_desc_to_rt(matcher.type_descriptors, param.type_id)
+      elif param.type_name.len > 0:
+        parse_expected_type(param.type_name)
+      else:
+        RtType(kind: RtAny)
     if not type_expr_compatible(actual_param, expected.params[i]):
       return false
   let actual_return =
-    if matcher.return_type_name.len > 0: parse_expected_type(matcher.return_type_name) else: RtType(kind: RtAny)
+    if matcher.return_type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
+      type_desc_to_rt(matcher.type_descriptors, matcher.return_type_id)
+    elif matcher.return_type_name.len > 0:
+      parse_expected_type(matcher.return_type_name)
+    else:
+      RtType(kind: RtAny)
   return type_expr_compatible(actual_return, expected.ret)
 
 proc is_compatible_rt(value: Value, expected: RtType): bool =
@@ -411,6 +494,14 @@ proc is_compatible*(value: Value, expected_type: string): bool =
   if expected_type.len == 0:
     return true
   let parsed = parse_expected_type(expected_type)
+  return is_compatible_rt(value, parsed)
+
+proc is_compatible*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc]): bool =
+  if expected_type_id == NO_TYPE_ID:
+    return true
+  if type_descs.len == 0:
+    return true
+  let parsed = type_desc_to_rt(type_descs, expected_type_id)
   return is_compatible_rt(value, parsed)
 
 proc normalize_numeric_type_name(expected_type: string): string =
@@ -519,6 +610,16 @@ proc coerce_value_to_type*(value: Value, expected_type: string,
   let parsed = parse_expected_type(expected_type)
   return try_convert_to_rt(value, parsed, param_name, converted, warning)
 
+proc coerce_value_to_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
+                          param_name: string, converted: var Value,
+                          warning: var string): bool =
+  if expected_type_id == NO_TYPE_ID or type_descs.len == 0:
+    converted = value
+    warning = ""
+    return true
+  let parsed = type_desc_to_rt(type_descs, expected_type_id)
+  return try_convert_to_rt(value, parsed, param_name, converted, warning)
+
 proc emit_type_warning*(warning: string) =
   if warning.len > 0:
     stderr.writeLine("Warning: " & warning)
@@ -534,6 +635,19 @@ proc validate_or_coerce_type*(value: var Value, expected_type: string,
   raise new_exception(type_defs.Exception,
     "Type error: expected " & expected_type & ", got " & actual & " in " & param_name)
 
+proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
+                             type_descs: seq[TypeDesc],
+                             param_name: string = "argument"): string =
+  var converted = value
+  var warning = ""
+  if coerce_value_to_type(value, expected_type_id, type_descs, param_name, converted, warning):
+    value = converted
+    return warning
+  let actual = runtime_type_name(value)
+  let expected = type_desc_to_string(expected_type_id, type_descs)
+  raise new_exception(type_defs.Exception,
+    "Type error: expected " & expected & ", got " & actual & " in " & param_name)
+
 proc validate_type*(value: Value, expected_type: string, param_name: string = "argument") =
   ## Validate that a value is compatible with an expected type
   ## Raises a Gene exception if not compatible (catchable by Gene try/catch)
@@ -541,3 +655,11 @@ proc validate_type*(value: Value, expected_type: string, param_name: string = "a
     let actual = runtime_type_name(value)
     raise new_exception(type_defs.Exception,
       "Type error: expected " & expected_type & ", got " & actual & " in " & param_name)
+
+proc validate_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
+                   param_name: string = "argument") =
+  if not is_compatible(value, expected_type_id, type_descs):
+    let actual = runtime_type_name(value)
+    let expected = type_desc_to_string(expected_type_id, type_descs)
+    raise new_exception(type_defs.Exception,
+      "Type error: expected " & expected & ", got " & actual & " in " & param_name)

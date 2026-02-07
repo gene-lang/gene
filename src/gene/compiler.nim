@@ -3616,6 +3616,8 @@ proc compile*(f: Function, eager_functions: bool) =
   self.output.peephole_optimize()  # Apply peephole optimizations
   self.output.update_jumps()
   self.output.kind = CkFunction
+  if f.matcher != nil and f.matcher.type_descriptors.len > 0:
+    self.output.type_descriptors = f.matcher.type_descriptors
   f.body_compiled = self.output
   f.body_compiled.matcher = f.matcher
 
@@ -3667,6 +3669,8 @@ proc compile*(b: Block, eager_functions: bool) =
   self.emit(Instruction(kind: IkEnd))
   self.output.optimize_noops()  # Optimize BEFORE resolving jumps
   self.output.update_jumps()
+  if b.matcher != nil and b.matcher.type_descriptors.len > 0:
+    self.output.type_descriptors = b.matcher.type_descriptors
   b.body_compiled = self.output
   b.body_compiled.matcher = b.matcher
 

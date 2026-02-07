@@ -4,7 +4,9 @@ import gene/parser
 import gene/compiler
 import gene/gir
 import gene/types except Exception
+import gene/types/runtime_types
 import gene/type_checker
+import gene/vm/args
 import commands/gir as gir_command
 
 suite "GIR CLI":
@@ -170,3 +172,44 @@ suite "GIR CLI":
 
     check saw_var_type_id
     check saw_fn_type_ids
+
+  test "runtime validation accepts descriptor-backed type ids":
+    let type_descs = @[TypeDesc(kind: TdkNamed, name: "Int")]
+
+    check is_compatible(1.to_value(), 0'i32, type_descs)
+    check not is_compatible("oops".to_value(), 0'i32, type_descs)
+
+    var converted = NIL
+    var warning = ""
+    check coerce_value_to_type(1.5.to_value(), 0'i32, type_descs, "value", converted, warning)
+    check converted.kind == VkInt
+    check warning.len > 0
+
+    var bad = "oops".to_value()
+    var raised = false
+    try:
+      discard validate_or_coerce_type(bad, 0'i32, type_descs, "value")
+    except CatchableError:
+      raised = true
+    check raised
+
+  test "matcher argument checks use descriptor ids when names are absent":
+    let matcher = new_arg_matcher()
+    let param = new_matcher(matcher, MatchData)
+    param.name_key = "arg".to_key()
+    param.type_id = 0'i32
+    matcher.children.add(param)
+    matcher.has_type_annotations = true
+    matcher.type_descriptors = @[TypeDesc(kind: TdkNamed, name: "Int")]
+    matcher.check_hint()
+
+    let scope = new_scope(new_scope_tracker(), nil)
+    var args = new_gene(NIL)
+    args.children.add("oops".to_value())
+
+    var raised = false
+    try:
+      process_args(matcher, args.to_gene_value(), scope)
+    except CatchableError:
+      raised = true
+    check raised

@@ -484,6 +484,7 @@ type
     has_type_annotations*: bool  # True if any child has a type annotation
     return_type_name*: string  # Return type annotation from -> (e.g. "Int", "Float")
     return_type_id*: TypeId
+    type_descriptors*: seq[TypeDesc]
 
   MatchingHintMode* {.size: sizeof(int16) .} = enum
     MhDefault

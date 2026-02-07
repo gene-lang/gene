@@ -37,6 +37,13 @@ proc expected_type_for(tracker: ScopeTracker, index: int): string {.inline.} =
     return ""
   tracker.type_expectations[index]
 
+proc expected_type_id_for(tracker: ScopeTracker, index: int): TypeId {.inline.} =
+  if tracker == nil:
+    return NO_TYPE_ID
+  if index < 0 or index >= tracker.type_expectation_ids.len:
+    return NO_TYPE_ID
+  tracker.type_expectation_ids[index]
+
 proc native_args_supported(f: Function, args: seq[Value]): bool =
   const nativeArgLimit =
     when defined(arm64) or defined(aarch64):
@@ -1884,8 +1891,12 @@ proc exec*(self: ptr VirtualMachine): Value =
         if self.frame.scope.isNil:
           not_allowed("IkVar: scope is nil")
         let expected = expected_type_for(self.frame.scope.tracker, index)
-        if expected.len > 0 and value != NIL:
-          validate_type(value, expected, "variable")
+        let expected_id = expected_type_id_for(self.frame.scope.tracker, index)
+        if value != NIL:
+          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+            validate_type(value, expected_id, self.cu.type_descriptors, "variable")
+          elif expected.len > 0:
+            validate_type(value, expected, "variable")
         # Ensure the scope has enough space for the index
         while self.frame.scope.members.len <= index:
           self.frame.scope.members.add(NIL)
@@ -1903,8 +1914,12 @@ proc exec*(self: ptr VirtualMachine): Value =
         let index = inst.arg1.int
         let value = inst.arg0
         let expected = expected_type_for(self.frame.scope.tracker, index)
-        if expected.len > 0 and value != NIL:
-          validate_type(value, expected, "variable")
+        let expected_id = expected_type_id_for(self.frame.scope.tracker, index)
+        if value != NIL:
+          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+            validate_type(value, expected_id, self.cu.type_descriptors, "variable")
+          elif expected.len > 0:
+            validate_type(value, expected, "variable")
         # Ensure the scope has enough space for the index
         while self.frame.scope.members.len <= index:
           self.frame.scope.members.add(NIL)
@@ -1956,8 +1971,12 @@ proc exec*(self: ptr VirtualMachine): Value =
         if index >= self.frame.scope.members.len:
           raise new_exception(types.Exception, fmt"IkVarAssign: index {index} >= scope.members.len {self.frame.scope.members.len}")
         let expected = expected_type_for(self.frame.scope.tracker, index)
-        if expected.len > 0 and value != NIL:
-          validate_type(value, expected, "variable")
+        let expected_id = expected_type_id_for(self.frame.scope.tracker, index)
+        if value != NIL:
+          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+            validate_type(value, expected_id, self.cu.type_descriptors, "variable")
+          elif expected.len > 0:
+            validate_type(value, expected, "variable")
         self.frame.scope.members[index] = value
         {.pop.}
 
@@ -1974,8 +1993,12 @@ proc exec*(self: ptr VirtualMachine): Value =
           raise new_exception(types.Exception, "IkVarAssignInherited: scope is nil")
         let index = inst.arg0.int64.int
         let expected = expected_type_for(scope.tracker, index)
-        if expected.len > 0 and value != NIL:
-          validate_type(value, expected, "variable")
+        let expected_id = expected_type_id_for(scope.tracker, index)
+        if value != NIL:
+          if expected_id != NO_TYPE_ID and self.cu != nil and self.cu.type_descriptors.len > 0:
+            validate_type(value, expected_id, self.cu.type_descriptors, "variable")
+          elif expected.len > 0:
+            validate_type(value, expected, "variable")
         while scope.members.len <= index:
           scope.members.add(NIL)
         {.push checks: off}
@@ -4577,6 +4600,11 @@ proc exec*(self: ptr VirtualMachine): Value =
           scope_tracker_obj = ScopeTracker()
 
         f.scope_tracker = scope_tracker_obj
+        if f.matcher != nil:
+          if f.body_compiled != nil and f.body_compiled.type_descriptors.len > 0:
+            f.matcher.type_descriptors = f.body_compiled.type_descriptors
+          elif self.cu != nil and self.cu.type_descriptors.len > 0:
+            f.matcher.type_descriptors = self.cu.type_descriptors
         if not f.matcher.is_empty():
           for child in f.matcher.children:
             if not f.scope_tracker.mappings.hasKey(child.name_key):
@@ -4636,6 +4664,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         b.ns = self.frame.ns
         b.frame.update(self.frame)
         b.scope_tracker = new_scope_tracker(info.scope_tracker)
+        if b.matcher != nil and self.cu != nil and self.cu.type_descriptors.len > 0:
+          b.matcher.type_descriptors = self.cu.type_descriptors
 
         if not b.matcher.is_empty():
           for child in b.matcher.children:
