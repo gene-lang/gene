@@ -1,0 +1,78 @@
+# sample_typed.gene — demonstrates Gene's gradual type system
+#
+# Run:     ./bin/gene run examples/sample_typed.gene
+# Trace:   ./bin/gene run examples/sample_typed.gene --trace
+# Compile: ./bin/gene compile --format pretty examples/sample_typed.gene
+
+# --- 1. Type aliases ---
+(type UserId Int)
+
+# --- 2. Typed function with return type ---
+(fn add [x: Int y: Int] -> Int
+  (x + y))
+
+# --- 3. Gradual: mix typed and untyped ---
+(fn greet [name: String prefix]
+  (println prefix " " name))
+
+# --- 4. Class with typed constructor and method ---
+(class Counter
+  (ctor [start: Int]
+    (/value = start)
+  )
+  (method inc [n: Int] -> Int
+    (/value = (/value + n))
+    /value
+  )
+  (method get [] -> Int
+    /value
+  )
+)
+
+# --- 5. Higher-order function with function type ---
+(fn apply [f: (Fn [Int] Int) x: Int] -> Int
+  (f x))
+
+(fn double [n: Int] -> Int
+  (n * 2))
+
+# --- 6. Result type (built-in ADT) ---
+(fn safe_div [a: Int b: Int] -> (Result Int String)
+  (if (b == 0)
+    (Err "division by zero")
+  else
+    (Ok (a / b))
+  )
+)
+
+# --- 7. Exercise everything ---
+(println "=== Typed Functions ===")
+(println "add(3, 4) =" (add 3 4))
+
+(println "")
+(println "=== Gradual Typing ===")
+(greet "World" "Hello")
+
+(println "")
+(println "=== Classes ===")
+(var c (new Counter 0))
+(c .inc 5)
+(c .inc 3)
+(println "counter =" c/.get)
+
+(println "")
+(println "=== Runtime Type Checks ===")
+(println "42 is Int:" (42 .is Int))
+(println "\"hi\" is String:" ("hi" .is String))
+(println "c is Counter:" (c .is Counter))
+
+(println "")
+(println "=== Higher-Order Functions ===")
+(println "apply(double, 7) =" (apply double 7))
+
+(println "")
+(println "=== Result Type ===")
+(var r1 (safe_div 10 3))
+(var r2 (safe_div 10 0))
+(println "10/3 =" r1)
+(println "10/0 =" r2)
