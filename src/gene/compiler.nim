@@ -145,46 +145,39 @@ proc emit(self: Compiler, instr: Instruction) =
     return
   self.output.add_instruction(instr, self.current_trace())
 
-#################### Definitions #################
+#################### Forward Declarations #################
 proc compile*(self: Compiler, input: Value)
+proc compile*(f: Function, eager_functions: bool)
+proc compile*(b: Block, eager_functions: bool)
+proc compile_init*(input: Value, local_defs = false): CompilationUnit
+proc predeclare_local_defs(self: Compiler, nodes: seq[Value])
+# Forward declarations for procs in included submodules (misc, async, modules)
+# needed by compile_gene which is defined before the include points
+proc compile_vmstmt(self: Compiler, gene: ptr Gene)
+proc compile_vm(self: Compiler, gene: ptr Gene)
 proc compile_with(self: Compiler, gene: ptr Gene)
 proc compile_tap(self: Compiler, gene: ptr Gene)
 proc compile_if_main(self: Compiler, gene: ptr Gene)
 proc compile_parse(self: Compiler, gene: ptr Gene)
 proc compile_render(self: Compiler, gene: ptr Gene)
 proc compile_emit(self: Compiler, gene: ptr Gene)
-proc compile*(f: Function, eager_functions: bool)
-proc compile*(b: Block, eager_functions: bool)
-proc compile_caller_eval(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_async(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_await(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_spawn(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_yield(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_at_selector(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_set(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_import(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_export(self: Compiler, gene: ptr Gene)  # Forward declaration
-proc compile_init*(input: Value, local_defs = false): CompilationUnit  # Forward declaration
-proc predeclare_local_defs(self: Compiler, nodes: seq[Value])  # Forward declaration
+proc compile_caller_eval(self: Compiler, gene: ptr Gene)
+proc compile_selector(self: Compiler, gene: ptr Gene)
+proc compile_at_selector(self: Compiler, gene: ptr Gene)
+proc compile_set(self: Compiler, gene: ptr Gene)
+proc compile_async(self: Compiler, gene: ptr Gene)
+proc compile_await(self: Compiler, gene: ptr Gene)
+proc compile_spawn(self: Compiler, gene: ptr Gene)
+proc compile_yield(self: Compiler, gene: ptr Gene)
+proc compile_import(self: Compiler, gene: ptr Gene)
+proc compile_export(self: Compiler, gene: ptr Gene)
 
 proc is_vmstmt_form(input: Value): bool =
   input.kind == VkGene and
     input.gene.`type`.kind == VkSymbol and
     input.gene.`type`.str == "$vmstmt"
 
-proc compile_vmstmt(self: Compiler, gene: ptr Gene) =
-  if gene.props.len > 0:
-    not_allowed("$vmstmt does not accept properties")
-  if gene.children.len != 1:
-    not_allowed("$vmstmt expects exactly 1 argument")
-  let name_val = gene.children[0]
-  if name_val.kind != VkSymbol:
-    not_allowed("$vmstmt builtin name must be a symbol")
-  if name_val.str != "duration_start":
-    not_allowed("Unknown $vmstmt builtin: " & name_val.str)
-  self.emit(Instruction(kind: IkVmDurationStart))
-
+## compile_vmstmt moved to compiler/misc.nim
 proc compile(self: Compiler, input: seq[Value], allow_vmstmt_last = false) =
   for i, v in input:
     # Set tail position for the last expression
@@ -435,86 +428,8 @@ proc compile_symbol(self: Compiler, input: Value) =
     elif input.kind == VkComplexSymbol:
       self.compile_complex_symbol(input)
 
-proc compile_array(self: Compiler, input: Value) =
-  # Use call base approach: push base, compile elements onto stack, collect at end
-  self.emit(Instruction(kind: IkArrayStart))
-
-  var i = 0
-  let arr = array_data(input)
-  while i < arr.len:
-    let child = arr[i]
-
-    # Check for standalone postfix spread: expr ...
-    if i + 1 < arr.len and arr[i + 1].kind == VkSymbol and arr[i + 1].str == "...":
-      # Compile the expression and spread its elements
-      self.compile(child)
-      self.emit(Instruction(kind: IkArrayAddSpread))
-      i += 2  # Skip both the expr and the ... symbol
-      continue
-
-    # Check for suffix spread: a...
-    if child.kind == VkSymbol and child.str.endsWith("...") and child.str.len > 3:
-      # Compile the base symbol and spread its elements
-      let base_symbol = child.str[0..^4].to_symbol_value()  # Remove "..."
-      self.compile(base_symbol)
-      self.emit(Instruction(kind: IkArrayAddSpread))
-      i += 1
-      continue
-
-    # Normal element - just compile it (pushes to stack)
-    self.compile(child)
-    i += 1
-
-  # Collect all elements from call base into array
-  self.emit(Instruction(kind: IkArrayEnd))
-
-proc compile_stream(self: Compiler, input: Value, allow_vmstmt_last = false) =
-  # For simple streams (used by if/elif/else branches), just compile the children directly
-  # Don't emit StreamStart/StreamEnd as they're not needed for control flow
-  let stream_values = input.ref.stream
-
-  if stream_values.len == 0:
-    self.emit(Instruction(kind: IkPushValue, arg0: NIL))
-    return
-
-  var i = 0
-  while i < stream_values.len:
-    let child = stream_values[i]
-    let old_tail = self.tail_position
-    let is_last = i == stream_values.len - 1
-    if is_last:
-      # Last expression preserves tail position
-      discard
-    else:
-      self.tail_position = false
-
-    if is_vmstmt_form(child):
-      if is_last and not allow_vmstmt_last:
-        not_allowed("$vmstmt is statement-only")
-      self.compile_vmstmt(child.gene)
-    else:
-      self.compile(child)
-
-    self.tail_position = old_tail
-    if i < stream_values.len - 1 and not is_vmstmt_form(child):
-      self.emit(Instruction(kind: IkPop))
-
-    i += 1
-
-proc compile_map(self: Compiler, input: Value) =
-  self.emit(Instruction(kind: IkMapStart))
-  for k, v in map_data(input):
-    let key_str = $k
-    # Check for spread key: ^..., ^...1, ^...2, etc.
-    if key_str.startsWith("..."):
-      # Spread map into current map
-      self.compile(v)
-      self.emit(Instruction(kind: IkMapSpread))
-    else:
-      # Normal key-value pair
-      self.compile(v)
-      self.emit(Instruction(kind: IkMapSetProp, arg0: k))
-  self.emit(Instruction(kind: IkMapEnd))
+## compile_array, compile_stream, compile_map moved to compiler/collections.nim
+include "./compiler/collections"
 
 # Forward declarations for scope helpers used below
 proc start_scope(self: Compiler)
@@ -2159,31 +2074,7 @@ proc compile_match(self: Compiler, gene: ptr Gene) =
   else:
     not_allowed("Unsupported pattern type: " & $pattern.kind)
 
-proc compile_range(self: Compiler, gene: ptr Gene) =
-  # (range start end) or (range start end step)
-  if gene.children.len < 2:
-    not_allowed("range requires at least 2 arguments")
-  
-  self.compile(gene.children[0])  # start
-  self.compile(gene.children[1])  # end
-  
-  if gene.children.len >= 3:
-    self.compile(gene.children[2])  # step
-  else:
-    self.emit(Instruction(kind: IkPushValue, arg0: NIL))  # default step
-  
-  self.emit(Instruction(kind: IkCreateRange))
-
-proc compile_range_operator(self: Compiler, gene: ptr Gene) =
-  # (a .. b) -> (range a b)
-  if gene.children.len != 2:
-    not_allowed(".. operator requires exactly 2 arguments")
-  
-  self.compile(gene.children[0])  # start
-  self.compile(gene.children[1])  # end
-  self.emit(Instruction(kind: IkPushValue, arg0: NIL))  # default step
-  self.emit(Instruction(kind: IkCreateRange))
-
+## compile_range, compile_range_operator moved to compiler/collections.nim
 proc compile_gene_default(self: Compiler, gene: ptr Gene) {.inline.} =
   self.emit(Instruction(kind: IkGeneStart))
   self.compile(gene.type)
@@ -2760,17 +2651,7 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   self.emit(Instruction(kind: IkUnifiedMethodCallKw, arg0: method_value, arg1: packed))
   return
 
-proc compile_vm(self: Compiler, gene: ptr Gene) =
-  if gene.props.len > 0:
-    not_allowed("$vm does not accept properties")
-  if gene.children.len != 1:
-    not_allowed("$vm expects exactly 1 argument")
-  let name_val = gene.children[0]
-  if name_val.kind != VkSymbol:
-    not_allowed("$vm builtin name must be a symbol")
-  if name_val.str != "duration":
-    not_allowed("Unknown $vm builtin: " & name_val.str)
-  self.emit(Instruction(kind: IkVmDuration))
+## compile_vm moved to compiler/misc.nim
 
 proc compile_gene(self: Compiler, input: Value) =
   let gene = input.gene
@@ -3517,498 +3398,12 @@ proc compile*(b: Block, eager_functions: bool) =
 proc compile*(b: Block) =
   compile(b, false)
 
-proc compile_with(self: Compiler, gene: ptr Gene) =
-  # ($with value body...)
-  if gene.children.len < 1:
-    not_allowed("$with expects at least 1 argument")
-  
-  # Compile the value that will become the new self
-  self.compile(gene.children[0])
-  
-  # Duplicate it and save current self
-  self.emit(Instruction(kind: IkDup))
-  self.emit(Instruction(kind: IkSelf))
-  self.emit(Instruction(kind: IkSwap))
-  
-  # Set as new self
-  self.emit(Instruction(kind: IkSetSelf))
-  
-  # Compile body - return last value
-  if gene.children.len > 1:
-    for i in 1..<gene.children.len:
-      self.compile(gene.children[i])
-      if i < gene.children.len - 1:
-        self.emit(Instruction(kind: IkPop))
-  else:
-    self.emit(Instruction(kind: IkPushNil))
-  
-  # Restore original self (which is on stack under the result)
-  self.emit(Instruction(kind: IkSwap))
-  self.emit(Instruction(kind: IkSetSelf))
+## Included submodules: misc (with/tap/if_main/parse/render/emit/caller_eval/selector/set/vm/vmstmt),
+## async (async/await/spawn/yield), modules (import/export)
+include "./compiler/misc"
+include "./compiler/async"
+include "./compiler/modules"
 
-proc compile_tap(self: Compiler, gene: ptr Gene) =
-  # ($tap value body...) or ($tap value :name body...)
-  if gene.children.len < 1:
-    not_allowed("$tap expects at least 1 argument")
-
-  # Compile the value
-  self.compile(gene.children[0])
-  
-  # Duplicate it (one to return, one to use)
-  self.emit(Instruction(kind: IkDup))
-  
-  # Check if there's a binding name
-  var start_idx = 1
-  var has_binding = false
-  var binding_name: string
-  
-  if gene.children.len > 1 and gene.children[1].kind == VkSymbol and gene.children[1].str.starts_with(":"):
-    has_binding = true
-    binding_name = gene.children[1].str[1..^1]
-    start_idx = 2
-  
-  # Save current self
-  self.emit(Instruction(kind: IkSelf))
-  
-  # Set as new self
-  self.emit(Instruction(kind: IkRotate))  # Rotate: original_self, dup_value, value -> value, original_self, dup_value
-  self.emit(Instruction(kind: IkSetSelf))
-  
-  # If has binding, create a new scope and bind the value
-  if has_binding:
-    self.start_scope()
-    let var_index = self.scope_tracker.next_index
-    self.scope_tracker.mappings[binding_name.to_key()] = var_index
-    self.add_scope_start()
-    self.scope_tracker.next_index.inc()
-    
-    # Duplicate the value again for binding
-    self.emit(Instruction(kind: IkSelf))
-    self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-  
-  # Compile body
-  if gene.children.len > start_idx:
-    for i in start_idx..<gene.children.len:
-      self.compile(gene.children[i])
-      # Pop all but last result
-      self.emit(Instruction(kind: IkPop))
-  
-  # End scope if we created one
-  if has_binding:
-    self.end_scope()
-  
-  # Restore original self
-  self.emit(Instruction(kind: IkSwap))  # dup_value, original_self -> original_self, dup_value
-  self.emit(Instruction(kind: IkSetSelf))
-  # The dup_value remains on stack as the return value
-
-proc compile_if_main(self: Compiler, gene: ptr Gene) =
-  let cond_symbol = @["$ns", "__is_main__"].to_complex_symbol()
-
-  # Compile the condition
-  self.start_scope()
-  self.compile(cond_symbol)
-  let else_label = new_label()
-  let end_label = new_label()
-  self.emit(Instruction(kind: IkJumpIfFalse, arg0: else_label.to_value()))
-
-  # Compile then branch (the children of $if_main)
-  self.start_scope()
-  if gene.children.len > 0:
-    for i, child in gene.children:
-      let old_tail = self.tail_position
-      if i == gene.children.len - 1:
-        # Last expression preserves tail position
-        discard
-      else:
-        self.tail_position = false
-      self.compile(child)
-      self.tail_position = old_tail
-      if i < gene.children.len - 1:
-        self.emit(Instruction(kind: IkPop))
-  else:
-    self.emit(Instruction(kind: IkPushValue, arg0: NIL))
-  self.end_scope()
-  self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
-
-  # Compile else branch (nil)
-  self.emit(Instruction(kind: IkNoop, label: else_label))
-  self.start_scope()
-  self.emit(Instruction(kind: IkPushValue, arg0: NIL))
-  self.end_scope()
-
-  self.emit(Instruction(kind: IkNoop, label: end_label))
-  self.end_scope()
-
-proc compile_parse(self: Compiler, gene: ptr Gene) =
-  # ($parse string)
-  if gene.children.len != 1:
-    not_allowed("$parse expects exactly 1 argument")
-  
-  # Compile the string argument
-  self.compile(gene.children[0])
-  
-  # Parse it
-  self.emit(Instruction(kind: IkParse))
-
-proc compile_render(self: Compiler, gene: ptr Gene) =
-  # ($render template)
-  if gene.children.len != 1:
-    not_allowed("$render expects exactly 1 argument")
-  
-  # Compile the template argument
-  self.compile(gene.children[0])
-  
-  # Render it
-  self.emit(Instruction(kind: IkRender))
-
-proc compile_emit(self: Compiler, gene: ptr Gene) =
-  # ($emit value) - used within templates to emit values
-  if gene.children.len < 1:
-    not_allowed("$emit expects at least 1 argument")
-  
-  # For now, $emit just evaluates to its argument
-  # The actual emission logic is handled by the template renderer
-  if gene.children.len == 1:
-    self.compile(gene.children[0])
-  else:
-    # Multiple arguments - create an array
-    let arr_gene = new_gene("Array".to_symbol_value())
-    for child in gene.children:
-      arr_gene.children.add(child)
-    self.compile(arr_gene.to_gene_value())
-
-proc compile_caller_eval(self: Compiler, gene: ptr Gene) =
-  # ($caller_eval expr)
-  if gene.children.len != 1:
-    not_allowed("$caller_eval expects exactly 1 argument")
-  
-  # Compile the expression argument (will be evaluated in macro context first)
-  self.compile(gene.children[0])
-  
-  # Then evaluate the result in caller's context
-  self.emit(Instruction(kind: IkCallerEval))
-
-proc compile_async(self: Compiler, gene: ptr Gene) =
-  # (async expr)
-  if gene.children.len != 1:
-    not_allowed("async expects exactly 1 argument")
-  
-  # We need to wrap the expression evaluation in exception handling
-  # Generate: try expr catch e -> future.fail(e)
-  
-  # Push a marker for the async block
-  self.emit(Instruction(kind: IkAsyncStart))
-  
-  # Compile the expression
-  self.compile(gene.children[0])
-  
-  # End async block - this will handle exceptions and wrap in future
-  self.emit(Instruction(kind: IkAsyncEnd))
-
-proc compile_await(self: Compiler, gene: ptr Gene) =
-  # (await future) or (await future1 future2 ...)
-  if gene.children.len == 0:
-    not_allowed("await expects at least 1 argument")
-  
-  if gene.children.len == 1:
-    # Single future
-    self.compile(gene.children[0])
-    self.emit(Instruction(kind: IkAwait))
-  else:
-    # Multiple futures - await each and collect results
-    self.emit(Instruction(kind: IkArrayStart))
-    for child in gene.children:
-      self.compile(child)
-      self.emit(Instruction(kind: IkAwait))
-      # Awaited value is on stack, will be collected by IkArrayEnd
-    self.emit(Instruction(kind: IkArrayEnd))
-
-proc compile_spawn(self: Compiler, gene: ptr Gene) =
-  # (spawn expr) - spawn thread to execute expression
-  # (spawn ^return true expr) or (spawn ^^return expr) - spawn and return future
-  if gene.children.len == 0:
-    not_allowed("spawn expects at least 1 argument")
-
-  var return_value = false
-  # Use ^return / ^^return on props
-  let return_key = "return".to_key()
-  if gene.props.has_key(return_key):
-    let v = gene.props[return_key]
-    # Treat presence with NIL/placeholder as true, otherwise use bool value
-    return_value = (v == NIL or v == PLACEHOLDER) or v.to_bool()
-
-  let expr = gene.children[0]
-
-  # Pass the Gene AST as-is to the thread (it will compile locally)
-  # This avoids sharing CompilationUnit refs across threads
-  self.emit(Instruction(kind: IkPushValue, arg0: cast[Value](expr)))
-
-  # Push return_value flag
-  self.emit(Instruction(kind: IkPushValue, arg0: if return_value: TRUE else: FALSE))
-
-  # Emit spawn instruction
-  self.emit(Instruction(kind: IkSpawnThread))
-
-proc compile_yield(self: Compiler, gene: ptr Gene) =
-  # (yield value) - suspend generator and return value
-  if gene.children.len == 0:
-    # Yield without argument yields nil
-    self.emit(Instruction(kind: IkPushNil))
-  elif gene.children.len == 1:
-    # Yield single value
-    self.compile(gene.children[0])
-  else:
-    not_allowed("yield expects 0 or 1 argument")
-  
-  self.emit(Instruction(kind: IkYield))
-
-proc compile_selector(self: Compiler, gene: ptr Gene) =
-  # (./ target property [default])
-  # ({^a "A"} ./ "a") -> "A"
-  # ({} ./ "a" 1) -> 1 (default value)
-  if gene.children.len < 2 or gene.children.len > 3:
-    not_allowed("./ expects 2 or 3 arguments")
-  
-  # Compile the target
-  self.compile(gene.children[0])
-  
-  # Compile the property/index
-  self.compile(gene.children[1])
-  
-  # If there's a default value, compile it
-  if gene.children.len == 3:
-    self.compile(gene.children[2])
-    self.emit(Instruction(kind: IkGetMemberDefault))
-  else:
-    self.emit(Instruction(kind: IkGetMemberOrNil))
-
-proc compile_at_selector(self: Compiler, gene: ptr Gene) =
-  # (@ "property") creates a selector
-  # For now, we'll implement a simplified version
-  # The full implementation would create a selector object
-  
-  # Since @ is used in contexts like ((@ "test") {^test 1}),
-  # and this gets compiled as a function call where (@ "test") is the function
-  # and {^test 1} is the argument, we need to handle this specially
-  
-  if gene.children.len == 0:
-    not_allowed("@ expects at least 1 argument for selector creation")
-
-  var segments: seq[Value] = @[]
-  var all_literal = true
-  for child in gene.children:
-    case child.kind
-    of VkString, VkSymbol, VkInt:
-      segments.add(child)
-    else:
-      all_literal = false
-
-  if all_literal:
-    let selector_value = new_selector_value(segments)
-    self.emit(Instruction(kind: IkPushValue, arg0: selector_value))
-    return
-
-  # Dynamic selector: evaluate non-literal segments at runtime, but treat
-  # string/symbol/int children as literal selector segments (not variable lookups).
-  for child in gene.children:
-    case child.kind
-    of VkString, VkSymbol, VkInt:
-      self.emit(Instruction(kind: IkPushValue, arg0: child))
-    else:
-      self.compile(child)
-
-  self.emit(Instruction(kind: IkCreateSelector, arg1: gene.children.len.int32))
-
-proc compile_set(self: Compiler, gene: ptr Gene) =
-  # ($set target @property value)
-  # ($set a @test 1)
-  if gene.children.len != 3:
-    not_allowed("$set expects exactly 3 arguments")
-  
-  # Compile the target
-  self.compile(gene.children[0])
-  
-  let selector_arg = gene.children[1]
-  var segments: seq[Value] = @[]
-  var dynamic_selector = false
-  var dynamic_expr: Value = NIL
-
-  if selector_arg.kind == VkSymbol and selector_arg.str.startsWith("@") and selector_arg.str.len > 1:
-    let prop_name = selector_arg.str[1..^1]
-    for part in prop_name.split("/"):
-      if part.len == 0:
-        not_allowed("$set selector segment cannot be empty")
-      if part == "!":
-        not_allowed("$set selector cannot contain !")
-      try:
-        let index = parseInt(part)
-        segments.add(index.to_value())
-      except ValueError:
-        segments.add(part.to_value())
-  elif selector_arg.kind == VkGene and selector_arg.gene.type == "@".to_symbol_value():
-    if selector_arg.gene.children.len == 0:
-      not_allowed("$set selector requires at least one segment")
-    if selector_arg.gene.children.len == 1:
-      let child = selector_arg.gene.children[0]
-      case child.kind
-      of VkString, VkSymbol, VkInt:
-        segments.add(child)
-      else:
-        dynamic_selector = true
-        dynamic_expr = child
-    else:
-      for child in selector_arg.gene.children:
-        case child.kind
-        of VkString, VkSymbol, VkInt:
-          segments.add(child)
-        else:
-          not_allowed("Unsupported selector segment type: " & $child.kind)
-  else:
-    not_allowed("$set expects a selector (@property) as second argument")
-
-  if dynamic_selector:
-    if selector_arg.gene.children.len != 1:
-      not_allowed("$set selector must have exactly one dynamic segment")
-  else:
-    if segments.len != 1:
-      not_allowed("$set selector must have exactly one property")
-
-  if dynamic_selector:
-    # Compile dynamic selector key and value
-    self.compile(dynamic_expr)
-    self.compile(gene.children[2])
-    self.emit(Instruction(kind: IkSetMemberDynamic))
-    return
-
-  let prop = segments[0]
-
-  # Compile the value
-  self.compile(gene.children[2])
-
-  # Check if property is an integer (for array/gene child access)
-  if prop.kind == VkInt:
-    # Use SetChild for integer indices
-    self.emit(Instruction(kind: IkSetChild, arg0: prop))
-  else:
-    # Use SetMember for string/symbol properties
-    let prop_key = case prop.kind:
-      of VkString: prop.str.to_key()
-      of VkSymbol: prop.str.to_key()
-      else: 
-        not_allowed("Invalid property type for $set")
-        "".to_key()  # Never reached, but satisfies type checker
-    self.emit(Instruction(kind: IkSetMember, arg0: prop_key.to_value()))
-
-proc compile_import(self: Compiler, gene: ptr Gene) =
-  # (import a b from "module")
-  # (import from "module" a b)
-  # (import a:alias b from "module")
-  # (import n/f from "module")
-  # (import n/[one two] from "module")
-
-  # Imports are compile-time constructs in module scope.
-  # Runtime/nested imports must go through (comptime ...) expansion.
-  if not self.preserve_root_scope:
-    not_allowed("import is compile-time only; place imports at module top level or emit them from (comptime ...)")
-  
-  # echo "DEBUG: compile_import called for ", gene
-  # echo "DEBUG: gene.children = ", gene.children
-  # echo "DEBUG: gene.props = ", gene.props
-  
-  # Record module import metadata when compiling a module
-  if self.preserve_root_scope:
-    var module_path = ""
-    var i = 0
-    while i + 1 < gene.children.len:
-      let child = gene.children[i]
-      if child.kind == VkSymbol and child.str == "from":
-        let next = gene.children[i + 1]
-        if next.kind == VkString:
-          module_path = next.str
-        break
-      i.inc()
-    if module_path.len > 0:
-      var exists = false
-      for item in self.output.module_imports:
-        if item == module_path:
-          exists = true
-          break
-      if not exists:
-        self.output.module_imports.add(module_path)
-
-  # Compile a gene value for the import, but with "import" as a symbol type
-  self.emit(Instruction(kind: IkGeneStart))
-  self.emit(Instruction(kind: IkPushValue, arg0: "import".to_symbol_value()))
-  self.emit(Instruction(kind: IkGeneSetType))
-  
-  # Compile the props
-  for k, v in gene.props:
-    self.emit(Instruction(kind: IkPushValue, arg0: v))
-    self.emit(Instruction(kind: IkGeneSetProp, arg0: k))
-  
-  # Compile the children - they should be treated as quoted values
-  for child in gene.children:
-    # Import arguments are data, not code to execute
-    # So compile them as literal values
-    case child.kind:
-    of VkSymbol, VkString:
-      self.emit(Instruction(kind: IkPushValue, arg0: child))
-    of VkComplexSymbol:
-      # Handle n/f syntax
-      self.emit(Instruction(kind: IkPushValue, arg0: child))
-    of VkArray:
-      # Handle [one two] part of n/[one two]
-      self.emit(Instruction(kind: IkPushValue, arg0: child))
-    of VkGene:
-      # Handle complex forms like a:alias or n/[a b]
-      self.compile_gene_default(child.gene)
-    else:
-      self.compile(child)
-    self.emit(Instruction(kind: IkGeneAddChild))
-  
-  self.emit(Instruction(kind: IkGeneEnd))
-  self.emit(Instruction(kind: IkImport))
-
-proc compile_export(self: Compiler, gene: ptr Gene) =
-  # (export [a b]) or (export a b)
-  proc record_export(name: string) =
-    if not self.preserve_root_scope or name.len == 0:
-      return
-    var exists = false
-    for item in self.output.module_exports:
-      if item == name:
-        exists = true
-        break
-    if not exists:
-      self.output.module_exports.add(name)
-
-  var items: seq[Value] = @[]
-  if gene.children.len == 1 and gene.children[0].kind == VkArray:
-    items = array_data(gene.children[0])
-  else:
-    items = gene.children
-
-  if items.len == 0:
-    not_allowed("export expects at least one name")
-
-  let export_list = new_array_value()
-  for item in items:
-    case item.kind
-    of VkSymbol:
-      if item.str.contains("/"):
-        not_allowed("export names must be simple symbols")
-      array_data(export_list).add(item)
-      record_export(item.str)
-    of VkString:
-      if item.str.contains("/"):
-        not_allowed("export names must be simple strings")
-      array_data(export_list).add(item)
-      record_export(item.str)
-    else:
-      not_allowed("export names must be symbols or strings")
-
-  self.emit(Instruction(kind: IkExport, arg0: export_list))
 
 proc compile_init*(input: Value, local_defs = false): CompilationUnit =
   let self = Compiler(
