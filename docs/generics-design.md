@@ -130,7 +130,7 @@ The type checker already has infrastructure for generics:
 ```gene
 # Generic class definition
 (class Stack:T
-  (var items: (Array T) [])
+  (prop items: (Array T) [])
   
   (method push [val: T]
     (items .push val))
@@ -142,8 +142,8 @@ The type checker already has infrastructure for generics:
 
 # Multiple type params
 (class Pair:A:B
-  (var first: A)
-  (var second: B))
+  (prop first: A)
+  (prop second: B))
 
 # Instantiation — type params inferred from arguments
 (var s (new Stack 1 2 3))     # T inferred as Int
@@ -257,7 +257,7 @@ This fits Gene's dynamic-first philosophy — you can always ask a value what it
 
 ```gene
 (class Collection
-  (var items [])
+  (prop items [])
   
   # Method that works with any mapper function
   (method map [f: Fn] -> Collection
