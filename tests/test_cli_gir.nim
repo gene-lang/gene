@@ -136,3 +136,37 @@ suite "GIR CLI":
     check loaded.type_descriptors[3].effects == @["io/read"]
 
     removeFile(gir_path)
+
+  test "type checker propagates descriptor ids into compiler metadata":
+    let code = """
+      (var x: Int 1)
+      (fn id [a: Int] -> Int
+        a
+      )
+      (id x)
+    """
+
+    let compiled = compiler.parse_and_compile(code, "<typed-descriptor-test>")
+    check compiled.type_descriptors.len > 0
+
+    var saw_var_type_id = false
+    var saw_fn_type_ids = false
+
+    for inst in compiled.instructions:
+      if inst.kind == IkScopeStart and inst.arg0.kind == VkScopeTracker and not saw_var_type_id:
+        let tracker = inst.arg0.ref.scope_tracker
+        if tracker != nil:
+          for type_id in tracker.type_expectation_ids:
+            if type_id != NO_TYPE_ID:
+              saw_var_type_id = true
+              break
+      if inst.kind == IkFunction and inst.arg0.kind == VkFunctionDef and not saw_fn_type_ids:
+        let info = to_function_def_info(inst.arg0)
+        let f = to_function(info.input)
+        check f.matcher.children.len == 1
+        check f.matcher.children[0].type_id != NO_TYPE_ID
+        check f.matcher.return_type_id != NO_TYPE_ID
+        saw_fn_type_ids = true
+
+    check saw_var_type_id
+    check saw_fn_type_ids

@@ -1,4 +1,4 @@
-import tables, strutils, os
+import tables, strutils, os, algorithm
 
 import ./types
 import ./gir
@@ -78,6 +78,8 @@ type
     current_class*: string
     init_self_stack*: seq[TypeExpr]
     effect_stack*: seq[seq[string]]
+    type_descs*: seq[TypeDesc]
+    type_desc_index*: Table[string, TypeId]
 
 let ANY_TYPE = TypeExpr(kind: TkAny)
 
@@ -158,9 +160,16 @@ proc new_type_checker*(strict: bool = true, module_filename: string = ""): TypeC
     current_return: ANY_TYPE,
     current_class: "",
     init_self_stack: @[],
-    effect_stack: @[]
+    effect_stack: @[],
+    type_descs: @[],
+    type_desc_index: initTable[string, TypeId]()
   )
   result.register_builtin_adts()
+
+proc type_descriptors*(self: TypeChecker): seq[TypeDesc] =
+  if self == nil:
+    return @[]
+  result = self.type_descs
 
 proc add_adt(self: TypeChecker, name: string, params: seq[string], variants: seq[AdtVariant]) =
   var def = AdtDef(
@@ -197,6 +206,8 @@ proc resolve(self: TypeChecker, t: TypeExpr): TypeExpr =
   result = t
 
 proc type_to_string(t: TypeExpr): string
+
+proc resolve_self(self: TypeChecker, t: TypeExpr): TypeExpr
 
 proc occurs(self: TypeChecker, id: int, t: TypeExpr): bool =
   let rt = self.resolve(t)
@@ -340,30 +351,131 @@ proc type_to_string(t: TypeExpr): string =
   of TkVar:
     return "T" & $rt.id
 
+proc sorted_unique_strings(values: seq[string]): seq[string] =
+  if values.len == 0:
+    return @[]
+  result = values
+  result.sort(system.cmp[string])
+  var write = 0
+  for item in result:
+    if write == 0 or result[write - 1] != item:
+      result[write] = item
+      write.inc()
+  result.setLen(write)
+
+proc canonical_type_key(self: TypeChecker, t: TypeExpr): string
+
+proc canonical_type_key(self: TypeChecker, t: TypeExpr): string =
+  if t == nil:
+    return "any"
+  let rt = self.resolve_self(self.resolve(t))
+  case rt.kind
+  of TkAny:
+    return "any"
+  of TkNamed:
+    return "named:" & rt.name
+  of TkApplied:
+    var parts: seq[string] = @[]
+    for arg in rt.args:
+      parts.add(self.canonical_type_key(arg))
+    return "applied:" & rt.ctor & "[" & parts.join(",") & "]"
+  of TkUnion:
+    var parts: seq[string] = @[]
+    for member in rt.members:
+      parts.add(self.canonical_type_key(member))
+    let normalized = sorted_unique_strings(parts)
+    return "union:" & normalized.join("|")
+  of TkFn:
+    var params: seq[string] = @[]
+    for param in rt.params:
+      params.add(self.canonical_type_key(param.typ))
+    let effects = sorted_unique_strings(rt.effects)
+    return "fn:[" & params.join(",") & "]->" & self.canonical_type_key(rt.ret) &
+      "!" & effects.join(",")
+  of TkVar:
+    return "var:" & $rt.id
+
+proc intern_type_desc(self: TypeChecker, t: TypeExpr): TypeId =
+  if t == nil:
+    return NO_TYPE_ID
+  let rt = self.resolve_self(self.resolve(t))
+  let key = self.canonical_type_key(rt)
+  if self.type_desc_index.hasKey(key):
+    return self.type_desc_index[key]
+
+  var desc: TypeDesc
+  case rt.kind
+  of TkAny:
+    desc = TypeDesc(kind: TdkAny)
+  of TkNamed:
+    desc = TypeDesc(kind: TdkNamed, name: rt.name)
+  of TkApplied:
+    var args: seq[TypeId] = @[]
+    for arg in rt.args:
+      args.add(self.intern_type_desc(arg))
+    desc = TypeDesc(kind: TdkApplied, ctor: rt.ctor, args: args)
+  of TkUnion:
+    var entries: seq[tuple[key: string, id: TypeId]] = @[]
+    for member in rt.members:
+      let member_key = self.canonical_type_key(member)
+      entries.add((key: member_key, id: self.intern_type_desc(member)))
+    entries.sort(proc (a, b: tuple[key: string, id: TypeId]): int = system.cmp(a.key, b.key))
+    var members: seq[TypeId] = @[]
+    var last_key = ""
+    for entry in entries:
+      if members.len == 0 or entry.key != last_key:
+        members.add(entry.id)
+        last_key = entry.key
+    desc = TypeDesc(kind: TdkUnion, members: members)
+  of TkFn:
+    var params: seq[TypeId] = @[]
+    for param in rt.params:
+      params.add(self.intern_type_desc(param.typ))
+    let effects = sorted_unique_strings(rt.effects)
+    desc = TypeDesc(
+      kind: TdkFn,
+      params: params,
+      ret: self.intern_type_desc(rt.ret),
+      effects: effects
+    )
+  of TkVar:
+    desc = TypeDesc(kind: TdkVar, var_id: rt.id.int32)
+
+  let id = self.type_descs.len.int32
+  self.type_descs.add(desc)
+  self.type_desc_index[key] = id
+  id
+
 proc record_binding_type(self: TypeChecker, gene: ptr Gene, t: TypeExpr) =
   if gene == nil:
     return
-  let resolved = self.resolve(t)
+  let resolved = self.resolve_self(self.resolve(t))
   if resolved == nil or resolved.kind in {TkAny, TkVar}:
     return
   gene.props[TC_BINDING_TYPE_KEY.to_key()] = type_to_string(resolved).to_value()
+  gene.props[TC_BINDING_TYPE_ID_KEY.to_key()] = self.intern_type_desc(resolved).int64.to_value()
 
 proc record_param_types(self: TypeChecker, gene: ptr Gene, params: seq[(string, string, TypeExpr)], return_type: TypeExpr) =
   if gene == nil:
     return
   var param_map = new_map_value()
+  var param_id_map = new_map_value()
   for (var_name, _, typ) in params:
     if var_name.len == 0 or var_name == "_" or typ == nil:
       continue
-    let resolved = self.resolve(typ)
+    let resolved = self.resolve_self(self.resolve(typ))
     if resolved == nil or resolved.kind in {TkAny, TkVar}:
       continue
     map_data(param_map)[var_name.to_key()] = type_to_string(resolved).to_value()
+    map_data(param_id_map)[var_name.to_key()] = self.intern_type_desc(resolved).int64.to_value()
   if map_data(param_map).len > 0:
     gene.props[TC_PARAM_TYPES_KEY.to_key()] = param_map
-  let resolved_return = self.resolve(return_type)
+  if map_data(param_id_map).len > 0:
+    gene.props[TC_PARAM_TYPE_IDS_KEY.to_key()] = param_id_map
+  let resolved_return = self.resolve_self(self.resolve(return_type))
   if resolved_return != nil and resolved_return.kind notin {TkAny, TkVar}:
     gene.props[TC_RETURN_TYPE_KEY.to_key()] = type_to_string(resolved_return).to_value()
+    gene.props[TC_RETURN_TYPE_ID_KEY.to_key()] = self.intern_type_desc(resolved_return).int64.to_value()
 
 proc record_effects(self: TypeChecker, gene: ptr Gene, effects: seq[string]) =
   if gene == nil:

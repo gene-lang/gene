@@ -25,12 +25,33 @@ proc binding_type_from_props(gene: ptr Gene): string =
     return type_expr_to_string(val)
   return ""
 
-proc set_expected_type(tracker: ScopeTracker, index: int16, expected_type: string) {.inline.} =
-  if tracker == nil or expected_type.len == 0:
+proc type_id_from_value(v: Value): TypeId {.inline.} =
+  if v.kind != VkInt:
+    return NO_TYPE_ID
+  if v.int64 < low(int32).int64 or v.int64 > high(int32).int64:
+    return NO_TYPE_ID
+  v.int64.int32
+
+proc binding_type_id_from_props(gene: ptr Gene): TypeId =
+  if gene == nil:
+    return NO_TYPE_ID
+  let key = TC_BINDING_TYPE_ID_KEY.to_key()
+  if gene.props.has_key(key):
+    return type_id_from_value(gene.props[key])
+  NO_TYPE_ID
+
+proc set_expected_type(tracker: ScopeTracker, index: int16, expected_type: string,
+                      expected_type_id: TypeId = NO_TYPE_ID) {.inline.} =
+  if tracker == nil:
+    return
+  if expected_type.len == 0 and expected_type_id == NO_TYPE_ID:
     return
   while tracker.type_expectations.len <= index.int:
     tracker.type_expectations.add("")
+  while tracker.type_expectation_ids.len <= index.int:
+    tracker.type_expectation_ids.add(NO_TYPE_ID)
   tracker.type_expectations[index.int] = expected_type
+  tracker.type_expectation_ids[index.int] = expected_type_id
 
 proc build_container_value(parts: seq[string]): Value =
   if parts.len == 0:
@@ -884,6 +905,7 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     new_binding = true
 
   var binding_type = binding_type_from_props(gene)
+  let binding_type_id = binding_type_id_from_props(gene)
   if binding_type.len == 0:
     binding_type = explicit_type
 
@@ -923,14 +945,14 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
         self.scope_tracker.mappings[key] = index
         self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
-    set_expected_type(self.scope_tracker, index, binding_type)
+    set_expected_type(self.scope_tracker, index, binding_type, binding_type_id)
     self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
   else:
     if new_binding:
       self.scope_tracker.mappings[key] = index
       self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
-    set_expected_type(self.scope_tracker, index, binding_type)
+    set_expected_type(self.scope_tracker, index, binding_type, binding_type_id)
     self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
 
   if not new_binding:
@@ -1646,6 +1668,7 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
 
   let tracker_copy = copy_scope_tracker(self.scope_tracker)
   let binding_type = if input.kind == VkGene and input.gene != nil: binding_type_from_props(input.gene) else: ""
+  let binding_type_id = if input.kind == VkGene and input.gene != nil: binding_type_id_from_props(input.gene) else: NO_TYPE_ID
 
   var compiled_body: CompilationUnit = nil
   if self.eager_functions:
@@ -1659,7 +1682,7 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
 
   if local_binding:
     self.add_scope_start()
-    set_expected_type(self.scope_tracker, local_index, binding_type)
+    set_expected_type(self.scope_tracker, local_index, binding_type, binding_type_id)
     self.emit(Instruction(kind: IkVar, arg0: local_index.to_value()))
     if not local_new_binding:
       self.scope_tracker.next_index = local_old_next
@@ -1737,12 +1760,18 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
   let param_key = TC_PARAM_TYPES_KEY.to_key()
+  let param_id_key = TC_PARAM_TYPE_IDS_KEY.to_key()
   let return_key = TC_RETURN_TYPE_KEY.to_key()
+  let return_id_key = TC_RETURN_TYPE_ID_KEY.to_key()
   let effects_key = TC_EFFECTS_KEY.to_key()
   if gene.props.has_key(param_key):
     fn_value.gene.props[param_key] = gene.props[param_key]
+  if gene.props.has_key(param_id_key):
+    fn_value.gene.props[param_id_key] = gene.props[param_id_key]
   if gene.props.has_key(return_key):
     fn_value.gene.props[return_key] = gene.props[return_key]
+  if gene.props.has_key(return_id_key):
+    fn_value.gene.props[return_id_key] = gene.props[return_id_key]
   if gene.props.has_key(effects_key):
     fn_value.gene.props[effects_key] = gene.props[effects_key]
   
@@ -1805,12 +1834,18 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
   let param_key = TC_PARAM_TYPES_KEY.to_key()
+  let param_id_key = TC_PARAM_TYPE_IDS_KEY.to_key()
   let return_key = TC_RETURN_TYPE_KEY.to_key()
+  let return_id_key = TC_RETURN_TYPE_ID_KEY.to_key()
   let effects_key = TC_EFFECTS_KEY.to_key()
   if gene.props.has_key(param_key):
     fn_value.gene.props[param_key] = gene.props[param_key]
+  if gene.props.has_key(param_id_key):
+    fn_value.gene.props[param_id_key] = gene.props[param_id_key]
   if gene.props.has_key(return_key):
     fn_value.gene.props[return_key] = gene.props[return_key]
+  if gene.props.has_key(return_id_key):
+    fn_value.gene.props[return_id_key] = gene.props[return_id_key]
   if gene.props.has_key(effects_key):
     fn_value.gene.props[effects_key] = gene.props[effects_key]
   fn_value.gene.children.add(gene.type.str.to_symbol_value())
@@ -5007,6 +5042,8 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
+  if checker != nil:
+    self.output.type_descriptors = checker.type_descriptors()
   if module_mode:
     self.output.kind = CkModule
   
@@ -5084,6 +5121,8 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
+  if checker != nil:
+    self.output.type_descriptors = checker.type_descriptors()
 
   return self.output
 
@@ -5215,6 +5254,8 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   self.output.update_jumps()
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
+  if checker != nil:
+    self.output.type_descriptors = checker.type_descriptors()
   if module_mode:
     self.output.kind = CkModule
 

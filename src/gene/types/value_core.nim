@@ -1863,6 +1863,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     raise new_exception(type_defs.Exception, "Gene pointer is nil")
 
   var return_type_override = ""
+  var return_type_override_id: TypeId = NO_TYPE_ID
 
   # Extract type annotations as name -> type_name mapping, and strip them from args
   proc strip_type_annotations(args: Value, type_map: var Table[string, string]): Value =
@@ -1891,14 +1892,18 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     return out_args
 
   # Apply collected type annotations to matcher children
-  proc apply_type_annotations(matcher: RootMatcher, type_map: Table[string, string]) =
-    if type_map.len == 0:
+  proc apply_type_annotations(matcher: RootMatcher, type_map: Table[string, string],
+                              type_id_map: Table[string, TypeId]) =
+    if type_map.len == 0 and type_id_map.len == 0:
       return
     for child in matcher.children:
       try:
         let name = cast[Value](child.name_key).str
         if type_map.hasKey(name):
           child.type_name = type_map[name]
+        if type_id_map.hasKey(name):
+          child.type_id = type_id_map[name]
+        if child.type_name.len > 0 or child.type_id != NO_TYPE_ID:
           matcher.has_type_annotations = true
       except CatchableError:
         discard
@@ -1907,7 +1912,16 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     if matcher.has_type_annotations:
       matcher.hint_mode = MhDefault
 
-  proc load_type_annotations_from_props(node: ptr Gene, type_map: var Table[string, string], return_type: var string) =
+  proc value_to_type_id(v: Value): TypeId {.inline.} =
+    if v.kind != VkInt:
+      return NO_TYPE_ID
+    if v.int64 < low(int32).int64 or v.int64 > high(int32).int64:
+      return NO_TYPE_ID
+    v.int64.int32
+
+  proc load_type_annotations_from_props(node: ptr Gene, type_map: var Table[string, string],
+                                       type_id_map: var Table[string, TypeId],
+                                       return_type: var string, return_type_id: var TypeId) =
     if node == nil:
       return
     let param_key = TC_PARAM_TYPES_KEY.to_key()
@@ -1923,6 +1937,18 @@ proc to_function*(node: Value): Function {.gcsafe.} =
               type_map[name] = type_expr_to_string(v)
           except CatchableError:
             discard
+    let param_id_key = TC_PARAM_TYPE_IDS_KEY.to_key()
+    if node.props.has_key(param_id_key):
+      let map_val = node.props[param_id_key]
+      if map_val.kind == VkMap:
+        for k, v in map_data(map_val):
+          try:
+            let name = cast[Value](k).str
+            let tid = value_to_type_id(v)
+            if tid != NO_TYPE_ID:
+              type_id_map[name] = tid
+          except CatchableError:
+            discard
     let return_key = TC_RETURN_TYPE_KEY.to_key()
     if node.props.has_key(return_key):
       let val = node.props[return_key]
@@ -1930,6 +1956,9 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         return_type = val.str
       else:
         return_type = type_expr_to_string(val)
+    let return_id_key = TC_RETURN_TYPE_ID_KEY.to_key()
+    if node.props.has_key(return_id_key):
+      return_type_id = value_to_type_id(node.props[return_id_key])
 
   var name: string
   let matcher = new_arg_matcher()
@@ -1937,7 +1966,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   var is_generator = false
   var is_macro_like = false
   var type_map = initTable[string, string]()
-  load_type_annotations_from_props(node.gene, type_map, return_type_override)
+  var type_id_map = initTable[string, TypeId]()
+  load_type_annotations_from_props(node.gene, type_map, type_id_map, return_type_override, return_type_override_id)
 
   if node.gene.children.len == 0:
     raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
@@ -1946,7 +1976,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     of VkArray:
       name = "<unnamed>"
       matcher.parse(strip_type_annotations(first, type_map))
-      apply_type_annotations(matcher, type_map)
+      apply_type_annotations(matcher, type_map, type_id_map)
       body_start = 1
     of VkSymbol, VkString:
       name = first.str
@@ -1962,7 +1992,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
-      apply_type_annotations(matcher, type_map)
+      apply_type_annotations(matcher, type_map, type_id_map)
       body_start = 2
     of VkComplexSymbol:
       name = first.ref.csymbol[^1]
@@ -1978,7 +2008,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
-      apply_type_annotations(matcher, type_map)
+      apply_type_annotations(matcher, type_map, type_id_map)
       body_start = 2
     else:
       raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
@@ -1995,6 +2025,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
       body_start += 2
   if return_type_override.len > 0:
     matcher.return_type_name = return_type_override
+  if return_type_override_id != NO_TYPE_ID:
+    matcher.return_type_id = return_type_override_id
 
   var body: seq[Value] = @[]
   for i in body_start..<node.gene.children.len:
