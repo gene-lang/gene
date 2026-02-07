@@ -3,7 +3,7 @@
 ## This module provides runtime type checking utilities that work with
 ## Gene's NaN-boxed values and the gradual type system.
 
-import tables, strutils
+import tables, strutils, math
 import ./type_defs
 import ./value_core
 
@@ -412,6 +412,127 @@ proc is_compatible*(value: Value, expected_type: string): bool =
     return true
   let parsed = parse_expected_type(expected_type)
   return is_compatible_rt(value, parsed)
+
+proc normalize_numeric_type_name(expected_type: string): string =
+  case expected_type.toLowerAscii()
+  of "int", "int64", "i64":
+    return "Int"
+  of "float", "float64", "f64":
+    return "Float"
+  else:
+    return expected_type
+
+proc try_convert_named(value: Value, expected_type: string, param_name: string,
+                      converted: var Value, warning: var string): bool =
+  let normalized = normalize_numeric_type_name(expected_type)
+  case normalized
+  of "Float":
+    if value.kind == VkInt:
+      converted = system.float64(value.to_int()).to_value()
+      warning = ""
+      return true
+  of "Int":
+    if value.kind == VkFloat:
+      let float_value = value.to_float()
+      let cls = classify(float_value)
+      if cls in {fcNan, fcInf, fcNegInf}:
+        return false
+      if float_value < system.float64(SMALL_INT_MIN) or float_value > system.float64(SMALL_INT_MAX):
+        return false
+      let int_value = system.int64(float_value)
+      converted = int_value.to_value()
+      if system.float64(int_value) != float_value:
+        warning = "Lossy conversion Float -> Int for " & param_name &
+          ": " & $float_value & " -> " & $int_value
+      else:
+        warning = ""
+      return true
+  else:
+    discard
+  return false
+
+proc try_convert_to_rt(value: Value, expected: RtType, param_name: string,
+                      converted: var Value, warning: var string): bool
+
+proc try_convert_union(value: Value, members: seq[RtType], param_name: string,
+                      converted: var Value, warning: var string): bool =
+  for member in members:
+    if is_compatible_rt(value, member):
+      converted = value
+      warning = ""
+      return true
+
+  var has_lossy = false
+  var lossy_value = value
+  var lossy_warning = ""
+  for member in members:
+    var candidate = value
+    var candidate_warning = ""
+    if try_convert_to_rt(value, member, param_name, candidate, candidate_warning):
+      if candidate_warning.len == 0:
+        converted = candidate
+        warning = ""
+        return true
+      if not has_lossy:
+        has_lossy = true
+        lossy_value = candidate
+        lossy_warning = candidate_warning
+
+  if has_lossy:
+    converted = lossy_value
+    warning = lossy_warning
+    return true
+  return false
+
+proc try_convert_to_rt(value: Value, expected: RtType, param_name: string,
+                      converted: var Value, warning: var string): bool =
+  if expected == nil:
+    converted = value
+    warning = ""
+    return true
+  if is_compatible_rt(value, expected):
+    converted = value
+    warning = ""
+    return true
+
+  case expected.kind
+  of RtAny:
+    converted = value
+    warning = ""
+    return true
+  of RtNamed:
+    return try_convert_named(value, expected.name, param_name, converted, warning)
+  of RtApplied:
+    return try_convert_named(value, expected.ctor, param_name, converted, warning)
+  of RtUnion:
+    return try_convert_union(value, expected.members, param_name, converted, warning)
+  of RtFn:
+    return false
+
+proc coerce_value_to_type*(value: Value, expected_type: string,
+                          param_name: string, converted: var Value,
+                          warning: var string): bool =
+  if expected_type.len == 0:
+    converted = value
+    warning = ""
+    return true
+  let parsed = parse_expected_type(expected_type)
+  return try_convert_to_rt(value, parsed, param_name, converted, warning)
+
+proc emit_type_warning*(warning: string) =
+  if warning.len > 0:
+    stderr.writeLine("Warning: " & warning)
+
+proc validate_or_coerce_type*(value: var Value, expected_type: string,
+                             param_name: string = "argument"): string =
+  var converted = value
+  var warning = ""
+  if coerce_value_to_type(value, expected_type, param_name, converted, warning):
+    value = converted
+    return warning
+  let actual = runtime_type_name(value)
+  raise new_exception(type_defs.Exception,
+    "Type error: expected " & expected_type & ", got " & actual & " in " & param_name)
 
 proc validate_type*(value: Value, expected_type: string, param_name: string = "argument") =
   ## Validate that a value is compatible with an expected type

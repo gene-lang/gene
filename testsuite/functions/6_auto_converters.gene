@@ -1,0 +1,28 @@
+# Auto-converter tests
+
+(fn safe_float [x: Float y: Float]
+  (x + y))
+
+(println "safe_float(2, 0.5) = " (safe_float 2 0.5))
+# Expected: safe_float(2, 0.5) = 2.5
+
+(fn lossy_int [n: Int]
+  n)
+
+(println "lossy_int(3.9) = " (lossy_int 3.9))
+# Expected: Warning: Lossy conversion Float -> Int for n: 3.9 -> 3
+# Expected: lossy_int(3.9) = 3
+
+(println "explicit_to_float = " (2 .to Float))
+# Expected: explicit_to_float = 2.0
+
+(println "explicit_to_int = " (8.8 .to Int))
+# Expected: Warning: Lossy conversion Float -> Int for value: 8.8 -> 8
+# Expected: explicit_to_int = 8
+
+(try
+  ("abc" .to Int)
+catch *
+  (println "conversion_error_caught")
+)
+# Expected: conversion_error_caught

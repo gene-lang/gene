@@ -28,6 +28,10 @@ PASSED=0
 FAILED=0
 TOTAL=0
 
+run_gene() {
+    "$GENE" run --no-gir-cache "$@"
+}
+
 echo "================================"
 echo "    Gene Test Suite Runner"
 echo "================================"
@@ -49,7 +53,7 @@ run_test() {
 
         if [ -z "$expected_output" ]; then
             # Empty expected output - just check if it runs
-            if (cd "$test_dir" && $GENE run "$test_basename") > /dev/null 2>&1; then
+            if (cd "$test_dir" && run_gene "$test_basename") > /dev/null 2>&1; then
                 printf "  %-40s ${GREEN}✓ PASS${NC}\n" "$test_name"
                 PASSED=$((PASSED + 1))
             else
@@ -58,7 +62,7 @@ run_test() {
             fi
         else
             # Run test and capture output
-            if actual_output=$(cd "$test_dir" && $GENE run "$test_basename" 2>&1); then
+            if actual_output=$(cd "$test_dir" && run_gene "$test_basename" 2>&1); then
                 # Filter out empty lines from actual output for comparison
                 actual_output=$(echo "$actual_output" | grep -v '^$' || true)
                 
@@ -90,12 +94,12 @@ run_test() {
         fi
     else
         # No expected output - just check if it runs without error
-        if (cd "$test_dir" && $GENE run "$test_basename") > /dev/null 2>&1; then
+        if (cd "$test_dir" && run_gene "$test_basename") > /dev/null 2>&1; then
             printf "  %-40s ${GREEN}✓ PASS${NC}\n" "$test_name"
             PASSED=$((PASSED + 1))
         else
             printf "  %-40s ${RED}✗ FAIL${NC}\n" "$test_name"
-            error_output=$(cd "$test_dir" && $GENE run "$test_basename" 2>&1 || true)
+            error_output=$(cd "$test_dir" && run_gene "$test_basename" 2>&1 || true)
             echo "    Error output:"
             echo "$error_output" | head -5 | sed 's/^/      /'
             FAILED=$((FAILED + 1))

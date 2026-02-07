@@ -6715,7 +6715,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               else:
                 # SLOW PATH: Create new scope and bind arguments
                 scope = new_scope(f.scope_tracker, f.parent_scope)
-                if f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 1:
+                if (not f.matcher.has_type_annotations) and
+                   f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 1:
                   # Manual argument matching: set self in scope without Gene objects
                   if f.scope_tracker.mappings.len > 0 and f.scope_tracker.mappings.hasKey("self".to_key()):
                     let self_idx = f.scope_tracker.mappings["self".to_key()]
@@ -6862,7 +6863,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               else:
                 # SLOW PATH: Create new scope and bind arguments
                 scope = new_scope(f.scope_tracker, f.parent_scope)
-                if f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 2:
+                if (not f.matcher.has_type_annotations) and
+                   f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 2:
                   # Manual argument matching: set self and arg in scope without Gene objects
                   if f.scope_tracker.mappings.hasKey("self".to_key()):
                     let self_idx = f.scope_tracker.mappings["self".to_key()]
@@ -7019,7 +7021,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               else:
                 # SLOW PATH: Create new scope and bind arguments
                 scope = new_scope(f.scope_tracker, f.parent_scope)
-                if f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 3:
+                if (not f.matcher.has_type_annotations) and
+                   f.matcher.hint_mode == MhSimpleData and f.matcher.children.len == 3:
                   # Manual argument matching: set self and 2 args in scope without Gene objects
                   if f.scope_tracker.mappings.hasKey("self".to_key()):
                     let self_idx = f.scope_tracker.mappings["self".to_key()]
@@ -7389,23 +7392,12 @@ proc exec*(self: ptr VirtualMachine): Value =
                 f.compile()
               
               var scope = new_scope(f.scope_tracker, f.parent_scope)
-              
-              # Set self in scope
-              if f.scope_tracker.mappings.hasKey("self".to_key()):
-                let self_idx = f.scope_tracker.mappings["self".to_key()]
-                while scope.members.len <= self_idx:
-                  scope.members.add(NIL)
-                scope.members[self_idx] = obj
-              
-              # Set arguments in scope
-              for i, arg in args:
-                if f.matcher.children.len > i + 1:  # +1 for self
-                  let param = f.matcher.children[i + 1]
-                  if param.kind == MatchData and f.scope_tracker.mappings.hasKey(param.name_key):
-                    let arg_idx = f.scope_tracker.mappings[param.name_key]
-                    while scope.members.len <= arg_idx:
-                      scope.members.add(NIL)
-                    scope.members[arg_idx] = arg
+              if not f.matcher.is_empty():
+                var all_args = newSeq[Value](args.len + 1)
+                all_args[0] = obj
+                for i, arg in args:
+                  all_args[i + 1] = arg
+                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
               
               var new_frame = new_frame()
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
@@ -7605,12 +7597,11 @@ proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args
       scope.ref_count.inc()
   else:
     scope = new_scope(f.scope_tracker, f.parent_scope)
-    # Explicitly set self in scope (critical for property access like /mappings, m/action)
-    if f.scope_tracker.mappings.hasKey("self".to_key()):
-      let self_idx = f.scope_tracker.mappings["self".to_key()]
-      while scope.members.len <= self_idx:
-        scope.members.add(NIL)
-      scope.members[self_idx] = instance
+    var all_args = newSeq[Value](args.len + 1)
+    all_args[0] = instance
+    for i, arg in args:
+      all_args[i + 1] = arg
+    process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
   
   # Create a new frame for the method
   let new_frame = new_frame()
@@ -7627,19 +7618,6 @@ proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args
   new_frame.caller_frame = saved_frame
   new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
   new_frame.from_exec_function = true
-  
-  # Process additional arguments (excluding self)
-  if not f.matcher.is_empty() and args.len > 0:
-    # The matcher expects [self, arg1, arg2, ...], self is already set above
-    # Process remaining arguments starting from index 1 of matcher
-    for i, arg in args:
-      if f.matcher.children.len > i + 1:  # +1 because index 0 is self
-        let param = f.matcher.children[i + 1]
-        if param.kind == MatchData and f.scope_tracker.mappings.hasKey(param.name_key):
-          let arg_idx = f.scope_tracker.mappings[param.name_key]
-          while scope.members.len <= arg_idx:
-            scope.members.add(NIL)
-          scope.members[arg_idx] = arg
   
   # Set frame.args so IkSelf can access arguments (especially self in methods)
   let args_gene = new_gene_value()

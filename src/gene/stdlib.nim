@@ -1,6 +1,7 @@
 {.push warning[ResultShadowed]: off.}
 import base64, re, json, osproc, os, strutils, times, asyncdispatch, asyncfile, tables
 import ./types
+from ./types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name
 import ./parser
 import ./compiler
 import ./repl_session
@@ -172,6 +173,43 @@ proc object_is_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
     current = current.parent
   return FALSE
 
+proc object_to_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional < 2:
+    not_allowed("Object.to expects a target type argument")
+
+  let value_arg = get_positional_arg(args, 0, has_keyword_args)
+  let target_arg = get_positional_arg(args, 1, has_keyword_args)
+
+  var target_type = ""
+  case target_arg.kind
+  of VkClass:
+    if target_arg.ref != nil and target_arg.ref.class != nil:
+      target_type = target_arg.ref.class.name
+  of VkSymbol, VkString:
+    target_type = target_arg.str
+  else:
+    discard
+
+  if target_type.len == 0:
+    not_allowed("Object.to expects a class or type name")
+
+  var converted = value_arg
+  var warning = ""
+  var converted_ok = false
+  {.cast(gcsafe).}:
+    converted_ok = coerce_value_to_type(value_arg, target_type, "value", converted, warning)
+  if converted_ok:
+    {.cast(gcsafe).}:
+      emit_type_warning(warning)
+    return converted
+
+  var actual_type = ""
+  {.cast(gcsafe).}:
+    actual_type = runtime_type_name(value_arg)
+  raise new_exception(types.Exception,
+    "Type error: cannot convert " & actual_type & " to " & target_type)
+
 proc init_basic_classes(): Class =
   # Initialize Object, Nil, Bool, Int, Float classes
   var r: ptr Reference
@@ -184,6 +222,7 @@ proc init_basic_classes(): Class =
   object_class.def_native_method("class", object_class_method)
   object_class.def_native_method("to_s", object_to_s_method)
   object_class.def_native_method("is", object_is_method)
+  object_class.def_native_method("to", object_to_method)
   App.app.gene_ns.ns["Object".to_key()] = App.app.object_class
   App.app.global_ns.ns["Object".to_key()] = App.app.object_class
 
