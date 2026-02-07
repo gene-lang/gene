@@ -18,39 +18,6 @@ proc container_key(): Key {.inline.} =
 proc local_def_key(): Key {.inline.} =
   "local_def".to_key()
 
-proc type_id_from_value(v: Value): TypeId {.inline.} =
-  if v.kind != VkInt:
-    return NO_TYPE_ID
-  if v.int64 < low(int32).int64 or v.int64 > high(int32).int64:
-    return NO_TYPE_ID
-  v.int64.int32
-
-proc binding_type_id_from_props(gene: ptr Gene): TypeId =
-  if gene == nil:
-    return NO_TYPE_ID
-  let key = TC_BINDING_TYPE_ID_KEY.to_key()
-  if gene.props.has_key(key):
-    return type_id_from_value(gene.props[key])
-  NO_TYPE_ID
-
-proc resolve_inline_type_annotation(gene: ptr Gene, type_descs: var seq[TypeDesc]): TypeId =
-  ## Resolve a type annotation from inline `: Type` syntax to a TypeId.
-  ## Falls back to TC_BINDING_TYPE_KEY string prop if no TypeId prop exists.
-  if gene == nil:
-    return NO_TYPE_ID
-  # First try the TypeId prop from type checker
-  let id_key = TC_BINDING_TYPE_ID_KEY.to_key()
-  if gene.props.has_key(id_key):
-    let tid = type_id_from_value(gene.props[id_key])
-    if tid != NO_TYPE_ID:
-      return tid
-  # Fall back to string prop, resolve to TypeId via registry
-  let str_key = TC_BINDING_TYPE_KEY.to_key()
-  if gene.props.has_key(str_key):
-    let val = gene.props[str_key]
-    return resolve_type_value_to_id(val, type_descs)
-  return NO_TYPE_ID
-
 proc build_container_value(parts: seq[string]): Value =
   if parts.len == 0:
     return NIL

@@ -2811,7 +2811,10 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkFunction:
         {.push checks: off}
         let info = to_function_def_info(inst.arg0)
-        let f = to_function(info.input)
+        let f = if self.cu != nil:
+            to_function(info.input, self.cu.type_descriptors, self.cu.type_aliases)
+          else:
+            to_function(info.input)
 
         # Determine the target namespace for the function
         var target_ns = self.frame.ns

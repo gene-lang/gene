@@ -455,47 +455,6 @@ proc intern_type_desc(self: TypeChecker, t: TypeExpr): TypeId =
   self.type_desc_index[key] = id
   id
 
-proc record_binding_type(self: TypeChecker, gene: ptr Gene, t: TypeExpr) =
-  if gene == nil:
-    return
-  let resolved = self.resolve_self(self.resolve(t))
-  if resolved == nil or resolved.kind in {TkAny, TkVar}:
-    return
-  gene.props[TC_BINDING_TYPE_KEY.to_key()] = type_to_string(resolved).to_value()
-  gene.props[TC_BINDING_TYPE_ID_KEY.to_key()] = self.intern_type_desc(resolved).int64.to_value()
-
-proc record_param_types(self: TypeChecker, gene: ptr Gene, params: seq[(string, string, TypeExpr)], return_type: TypeExpr) =
-  if gene == nil:
-    return
-  var param_map = new_map_value()
-  var param_id_map = new_map_value()
-  for (var_name, _, typ) in params:
-    if var_name.len == 0 or var_name == "_" or typ == nil:
-      continue
-    let resolved = self.resolve_self(self.resolve(typ))
-    if resolved == nil or resolved.kind in {TkAny, TkVar}:
-      continue
-    map_data(param_map)[var_name.to_key()] = type_to_string(resolved).to_value()
-    map_data(param_id_map)[var_name.to_key()] = self.intern_type_desc(resolved).int64.to_value()
-  if map_data(param_map).len > 0:
-    gene.props[TC_PARAM_TYPES_KEY.to_key()] = param_map
-  if map_data(param_id_map).len > 0:
-    gene.props[TC_PARAM_TYPE_IDS_KEY.to_key()] = param_id_map
-  let resolved_return = self.resolve_self(self.resolve(return_type))
-  if resolved_return != nil and resolved_return.kind notin {TkAny, TkVar}:
-    gene.props[TC_RETURN_TYPE_KEY.to_key()] = type_to_string(resolved_return).to_value()
-    gene.props[TC_RETURN_TYPE_ID_KEY.to_key()] = self.intern_type_desc(resolved_return).int64.to_value()
-
-proc record_effects(self: TypeChecker, gene: ptr Gene, effects: seq[string]) =
-  if gene == nil:
-    return
-  if effects.len == 0:
-    return
-  var arr = new_array_value()
-  for eff in effects:
-    array_data(arr).add(eff.to_symbol_value())
-  gene.props[TC_EFFECTS_KEY.to_key()] = arr
-
 proc push_scope(self: TypeChecker) =
   self.scopes.add(initTable[string, TypeExpr]())
 
@@ -1227,15 +1186,12 @@ proc check_var(self: TypeChecker, gene: ptr Gene): TypeExpr =
     if annotated != nil:
       self.unify(annotated, value_type, "var " & name)
       self.define(name, annotated)
-      self.record_binding_type(gene, annotated)
       return annotated
     else:
       self.define(name, value_type)
-      self.record_binding_type(gene, value_type)
       return value_type
   if annotated != nil:
     self.define(name, annotated)
-    self.record_binding_type(gene, annotated)
     return annotated
   self.define(name, ANY_TYPE)
   return ANY_TYPE
@@ -1718,11 +1674,8 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   # Build function type and define in OUTER scope first
   let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic, kw_splat: prop_splats.len > 0, effects: effects)
-  self.record_param_types(gene, params, return_type)
-  self.record_effects(gene, effects)
   if name.len > 0 and name != "<unnamed>":
     self.define(name, fn_type)
-    self.record_binding_type(gene, fn_type)
 
   # Now push scope for function body and define parameters
   self.push_scope()
@@ -1827,8 +1780,6 @@ proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Clas
     fn_params.add(ParamType(label: label, typ: t))
     if var_name.len > 0 and var_name != "_":
       self.define(var_name, t)
-  self.record_param_types(gene, params, return_type)
-  self.record_effects(gene, effects)
   for prop_name in prop_splats:
     self.define(prop_name, TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE]))
 
@@ -1888,8 +1839,6 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
     fn_params.add(ParamType(label: label, typ: t))
     if var_name.len > 0 and var_name != "_":
       self.define(var_name, t)
-  self.record_param_types(gene, params, return_type)
-  self.record_effects(gene, effects)
   for prop_name in prop_splats:
     self.define(prop_name, TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE]))
 

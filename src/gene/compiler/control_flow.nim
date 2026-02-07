@@ -272,7 +272,7 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     if name_val.kind == VkSymbol and name_val.str.ends_with(":"):
       let base_name = name_val.str[0..^2].to_symbol_value()
       if gene.children.len > 1:
-        explicit_type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors)
+        explicit_type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases)
       gene.children[0] = base_name
       gene.children.delete(1) # Remove the type expression
 
@@ -385,11 +385,7 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     index = old_next_index
     new_binding = true
 
-  var binding_type_id = binding_type_id_from_props(gene)
-  if binding_type_id == NO_TYPE_ID:
-    binding_type_id = resolve_inline_type_annotation(gene, self.output.type_descriptors)
-  if binding_type_id == NO_TYPE_ID:
-    binding_type_id = explicit_type_id
+  var binding_type_id = explicit_type_id
 
   # Avoid resolving the new binding (and any new scope) inside its own initializer.
   if gene.children.len > 1:

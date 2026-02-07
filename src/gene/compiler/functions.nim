@@ -58,13 +58,11 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
     mark_local_fn(input)
 
   let tracker_copy = copy_scope_tracker(self.scope_tracker)
-  var binding_type_id = if input.kind == VkGene and input.gene != nil: binding_type_id_from_props(input.gene) else: NO_TYPE_ID
-  if binding_type_id == NO_TYPE_ID and input.kind == VkGene and input.gene != nil:
-    binding_type_id = resolve_inline_type_annotation(input.gene, self.output.type_descriptors)
+  var binding_type_id: TypeId = NO_TYPE_ID
 
   var compiled_body: CompilationUnit = nil
   if self.eager_functions:
-    var fn_obj = to_function(input)
+    var fn_obj = to_function(input, self.output.type_descriptors, self.output.type_aliases)
     fn_obj.scope_tracker = tracker_copy
     compile(fn_obj, true)
     compiled_body = fn_obj.body_compiled
@@ -151,22 +149,7 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   # The method is similar to (fn name [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
-  let param_key = TC_PARAM_TYPES_KEY.to_key()
-  let param_id_key = TC_PARAM_TYPE_IDS_KEY.to_key()
-  let return_key = TC_RETURN_TYPE_KEY.to_key()
-  let return_id_key = TC_RETURN_TYPE_ID_KEY.to_key()
-  let effects_key = TC_EFFECTS_KEY.to_key()
-  if gene.props.has_key(param_key):
-    fn_value.gene.props[param_key] = gene.props[param_key]
-  if gene.props.has_key(param_id_key):
-    fn_value.gene.props[param_id_key] = gene.props[param_id_key]
-  if gene.props.has_key(return_key):
-    fn_value.gene.props[return_key] = gene.props[return_key]
-  if gene.props.has_key(return_id_key):
-    fn_value.gene.props[return_id_key] = gene.props[return_id_key]
-  if gene.props.has_key(effects_key):
-    fn_value.gene.props[effects_key] = gene.props[effects_key]
-  
+
   # Add the method name
   fn_value.gene.children.add(gene.children[0])
   
@@ -225,21 +208,6 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   # The constructor is similar to (fn new [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
-  let param_key = TC_PARAM_TYPES_KEY.to_key()
-  let param_id_key = TC_PARAM_TYPE_IDS_KEY.to_key()
-  let return_key = TC_RETURN_TYPE_KEY.to_key()
-  let return_id_key = TC_RETURN_TYPE_ID_KEY.to_key()
-  let effects_key = TC_EFFECTS_KEY.to_key()
-  if gene.props.has_key(param_key):
-    fn_value.gene.props[param_key] = gene.props[param_key]
-  if gene.props.has_key(param_id_key):
-    fn_value.gene.props[param_id_key] = gene.props[param_id_key]
-  if gene.props.has_key(return_key):
-    fn_value.gene.props[return_key] = gene.props[return_key]
-  if gene.props.has_key(return_id_key):
-    fn_value.gene.props[return_id_key] = gene.props[return_id_key]
-  if gene.props.has_key(effects_key):
-    fn_value.gene.props[effects_key] = gene.props[effects_key]
   fn_value.gene.children.add(gene.type.str.to_symbol_value())
   
   # Handle args - always normalize to an array

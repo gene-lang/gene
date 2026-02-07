@@ -2,13 +2,6 @@
 import tables, sets, asyncdispatch, dynlib
 
 const
-  TC_BINDING_TYPE_KEY* = "__tc_binding_type"
-  TC_BINDING_TYPE_ID_KEY* = "__tc_binding_type_id"
-  TC_PARAM_TYPES_KEY* = "__tc_param_types"
-  TC_PARAM_TYPE_IDS_KEY* = "__tc_param_type_ids"
-  TC_RETURN_TYPE_KEY* = "__tc_return_type"
-  TC_RETURN_TYPE_ID_KEY* = "__tc_return_type_id"
-  TC_EFFECTS_KEY* = "__tc_effects"
   NO_TYPE_ID* = -1'i32
 
 type
@@ -826,6 +819,7 @@ type
     module_imports*: seq[string]
     module_types*: seq[ModuleTypeNode]
     type_descriptors*: seq[TypeDesc]
+    type_aliases*: Table[string, TypeId]
 
   # Used by the compiler to keep track of scopes and variables
   #

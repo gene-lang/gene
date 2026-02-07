@@ -1858,20 +1858,27 @@ proc intern_type_desc*(type_descs: var seq[TypeDesc], desc: TypeDesc): TypeId =
   type_descs.add(desc)
   return id
 
-proc resolve_type_value_to_id*(v: Value, type_descs: var seq[TypeDesc]): TypeId =
+proc resolve_type_value_to_id*(v: Value, type_descs: var seq[TypeDesc],
+                              type_aliases: Table[string, TypeId] = initTable[string, TypeId]()): TypeId =
   ## Resolve a Gene AST type expression to a TypeId, interning into type_descs.
   ## Handles: symbols (Int), applied types (Array Int), unions (Int | String), Fn types.
+  ## Checks type_aliases for user-defined type aliases (e.g., UserId → Int | String).
   case v.kind
   of VkSymbol:
     let builtin_id = lookup_builtin_type(v.str)
     if builtin_id != NO_TYPE_ID:
       return builtin_id
+    # Check type aliases
+    if type_aliases.hasKey(v.str):
+      return type_aliases[v.str]
     # Unknown named type (user class etc) - intern it
     return intern_type_desc(type_descs, TypeDesc(kind: TdkNamed, name: v.str))
   of VkString:
     let builtin_id = lookup_builtin_type(v.str)
     if builtin_id != NO_TYPE_ID:
       return builtin_id
+    if type_aliases.hasKey(v.str):
+      return type_aliases[v.str]
     return intern_type_desc(type_descs, TypeDesc(kind: TdkNamed, name: v.str))
   of VkGene:
     let gene = v.gene
@@ -1936,20 +1943,30 @@ proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Functio
     body: body,
   )
 
+proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
+                  type_aliases: Table[string, TypeId] = initTable[string, TypeId]()): Function {.gcsafe.}
+
 proc to_function*(node: Value): Function {.gcsafe.} =
+  ## Create a Function from a Gene node, using a local type descriptor table.
+  var local_descs = builtin_type_descs()
+  return to_function(node, local_descs)
+
+proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
+                  type_aliases: Table[string, TypeId] = initTable[string, TypeId]()): Function {.gcsafe.} =
   if node.kind != VkGene:
     raise new_exception(type_defs.Exception, "Expected Gene for function definition, got " & $node.kind)
 
   if node.gene == nil:
     raise new_exception(type_defs.Exception, "Gene pointer is nil")
 
-  var return_type_override_id: TypeId = NO_TYPE_ID
-  # Shared type_descs table for interning types. Starts with builtins.
-  var type_descs = builtin_type_descs()
+  # Intern types into the provided table (CU's or local).
+  template type_descs: var seq[TypeDesc] = cu_type_descs
+  let aliases = type_aliases
 
   # Extract type annotations as name -> TypeId mapping, and strip them from args
   proc strip_type_annotations(args: Value, type_id_map: var Table[string, TypeId],
-                              type_descs: var seq[TypeDesc]): Value =
+                              type_descs: var seq[TypeDesc],
+                              aliases: Table[string, TypeId]): Value =
     if args.kind != VkArray:
       return args
     let src = array_data(args)
@@ -1964,11 +1981,11 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         if i < src.len:
           let type_val = src[i]
           if not type_id_map.hasKey(base):
-            type_id_map[base] = resolve_type_value_to_id(type_val, type_descs)
+            type_id_map[base] = resolve_type_value_to_id(type_val, type_descs, aliases)
           i.inc # Skip type expression
         continue
       elif item.kind == VkArray:
-        array_data(out_args).add(strip_type_annotations(item, type_id_map, type_descs))
+        array_data(out_args).add(strip_type_annotations(item, type_id_map, type_descs, aliases))
       else:
         array_data(out_args).add(item)
       i.inc
@@ -1992,60 +2009,12 @@ proc to_function*(node: Value): Function {.gcsafe.} =
     if matcher.has_type_annotations:
       matcher.hint_mode = MhDefault
 
-  proc value_to_type_id(v: Value): TypeId {.inline.} =
-    if v.kind != VkInt:
-      return NO_TYPE_ID
-    if v.int64 < low(int32).int64 or v.int64 > high(int32).int64:
-      return NO_TYPE_ID
-    v.int64.int32
-
-  proc load_type_annotations_from_props(node: ptr Gene, type_id_map: var Table[string, TypeId],
-                                       return_type_id: var TypeId,
-                                       type_descs: var seq[TypeDesc]) =
-    if node == nil:
-      return
-    # Primary path: TypeId props from type checker
-    let param_id_key = TC_PARAM_TYPE_IDS_KEY.to_key()
-    if node.props.has_key(param_id_key):
-      let map_val = node.props[param_id_key]
-      if map_val.kind == VkMap:
-        for k, v in map_data(map_val):
-          try:
-            let name = cast[Value](k).str
-            let tid = value_to_type_id(v)
-            if tid != NO_TYPE_ID:
-              type_id_map[name] = tid
-          except CatchableError:
-            discard
-    # Fallback: string props from type checker, resolve to TypeId via registry
-    let param_key = TC_PARAM_TYPES_KEY.to_key()
-    if node.props.has_key(param_key):
-      let map_val = node.props[param_key]
-      if map_val.kind == VkMap:
-        for k, v in map_data(map_val):
-          try:
-            let name = cast[Value](k).str
-            if not type_id_map.hasKey(name):
-              type_id_map[name] = resolve_type_value_to_id(v, type_descs)
-          except CatchableError:
-            discard
-    # Return type: TypeId first
-    let return_id_key = TC_RETURN_TYPE_ID_KEY.to_key()
-    if node.props.has_key(return_id_key):
-      return_type_id = value_to_type_id(node.props[return_id_key])
-    # Return type: string fallback
-    if return_type_id == NO_TYPE_ID:
-      let return_key = TC_RETURN_TYPE_KEY.to_key()
-      if node.props.has_key(return_key):
-        return_type_id = resolve_type_value_to_id(node.props[return_key], type_descs)
-
   var name: string
   let matcher = new_arg_matcher()
   var body_start: int
   var is_generator = false
   var is_macro_like = false
   var type_id_map = initTable[string, TypeId]()
-  load_type_annotations_from_props(node.gene, type_id_map, return_type_override_id, type_descs)
 
   if node.gene.children.len == 0:
     raise new_exception(type_defs.Exception, "Invalid function definition: expected name or argument list")
@@ -2053,7 +2022,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   case first.kind:
     of VkArray:
       name = "<unnamed>"
-      matcher.parse(strip_type_annotations(first, type_id_map, type_descs))
+      matcher.parse(strip_type_annotations(first, type_id_map, type_descs, aliases))
       apply_type_annotations(matcher, type_id_map)
       body_start = 1
     of VkSymbol, VkString:
@@ -2066,7 +2035,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         is_generator = true
       if node.gene.children.len < 2:
         raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
-      let args = strip_type_annotations(node.gene.children[1], type_id_map, type_descs)
+      let args = strip_type_annotations(node.gene.children[1], type_id_map, type_descs, aliases)
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
@@ -2082,7 +2051,7 @@ proc to_function*(node: Value): Function {.gcsafe.} =
         is_generator = true
       if node.gene.children.len < 2:
         raise new_exception(type_defs.Exception, "Invalid function definition: expected argument list array")
-      let args = strip_type_annotations(node.gene.children[1], type_id_map, type_descs)
+      let args = strip_type_annotations(node.gene.children[1], type_id_map, type_descs, aliases)
       if args.kind != VkArray:
         raise new_exception(type_defs.Exception, "Invalid function definition: arguments must be an array")
       matcher.parse(args)
@@ -2099,10 +2068,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
       if body_start + 1 >= node.gene.children.len:
         raise new_exception(type_defs.Exception, "Invalid function definition: missing return type after ->")
       let ret_type = node.gene.children[body_start + 1]
-      matcher.return_type_id = resolve_type_value_to_id(ret_type, type_descs)
+      matcher.return_type_id = resolve_type_value_to_id(ret_type, type_descs, aliases)
       body_start += 2
-  if return_type_override_id != NO_TYPE_ID:
-    matcher.return_type_id = return_type_override_id
   # Attach the type_descs to the matcher for runtime validation
   matcher.type_descriptors = type_descs
 
