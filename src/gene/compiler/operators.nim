@@ -678,7 +678,7 @@ proc compile_gene(self: Compiler, input: Value) =
   if gene.children.len >= 1:
     let first_child = gene.children[0]
     if first_child.kind == VkSymbol:
-      if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!="]:
+      if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "is"]:
         # Don't convert if the type is already an operator or special form
         if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "$", "$vm", "$vmstmt", ".", "->", "@"]:
           # Convert infix to prefix notation and compile
@@ -856,6 +856,16 @@ proc compile_gene(self: Compiler, input: Value) =
         self.compile(gene.children[0])
         self.compile(gene.children[1])
         self.emit(Instruction(kind: IkNe))
+        return
+      of "is":
+        # Type check: (x is Int)
+        if gene.children.len != 2:
+          not_allowed("is requires exactly 2 arguments: (value is Type)")
+        self.compile(gene.children[0])
+        # children[1] is the type name — compile it as an expression so it
+        # resolves to the class value at runtime (supports user classes)
+        self.compile(gene.children[1])
+        self.emit(Instruction(kind: IkIsType))
         return
       else:
         discard  # Not an arithmetic operator, continue with normal processing

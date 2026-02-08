@@ -2657,6 +2657,43 @@ proc exec*(self: ptr VirtualMachine): Value =
         let value = self.frame.pop()
         self.frame.push(runtime_type_name(value).to_value())
 
+      of IkIsType:
+        # (x is Type) — check if value is an instance of type
+        let type_arg = self.frame.pop()
+        let value = self.frame.pop()
+        if type_arg.kind != VkClass:
+          not_allowed("is requires a class type on the right side")
+        let target_class = type_arg.ref.class
+        if target_class.is_nil:
+          self.frame.push(FALSE)
+        else:
+          # Get the class of the value
+          var actual_class: Class = nil
+          case value.kind
+          of VkInt: actual_class = App.app.int_class.ref.class
+          of VkFloat: actual_class = App.app.float_class.ref.class
+          of VkBool: actual_class = App.app.bool_class.ref.class
+          of VkString: actual_class = App.app.string_class.ref.class
+          of VkNil: actual_class = App.app.nil_class.ref.class
+          of VkSymbol: actual_class = App.app.symbol_class.ref.class
+          of VkArray: actual_class = App.app.array_class.ref.class
+          of VkMap: actual_class = App.app.map_class.ref.class
+          of VkInstance: actual_class = value.instance_class
+          of VkCustom:
+            if value.ref.custom_class != nil:
+              actual_class = value.ref.custom_class
+          of VkFunction, VkNativeFn: actual_class = App.app.function_class.ref.class
+          else: discard
+          # Walk the inheritance chain
+          var matched = false
+          var current = actual_class
+          while current != nil:
+            if current == target_class:
+              matched = true
+              break
+            current = current.parent
+          self.frame.push(if matched: TRUE else: FALSE)
+
       of IkCreateRange:
         let step = self.frame.pop()
         let `end` = self.frame.pop()

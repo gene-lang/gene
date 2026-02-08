@@ -1,0 +1,64 @@
+# is operator — (x is Type) syntax
+
+# Builtin types
+(println (42 is Int))
+# Expected: true
+
+(println ("hi" is String))
+# Expected: true
+
+(println (1.5 is Float))
+# Expected: true
+
+(println (true is Bool))
+# Expected: true
+
+(println (nil is Nil))
+# Expected: true
+
+(println ([1 2] is Array))
+# Expected: true
+
+(println ({^a 1} is Map))
+# Expected: true
+
+# Negative checks
+(println (42 is String))
+# Expected: false
+
+(println ("hi" is Int))
+# Expected: false
+
+# Class instances
+(class Foo)
+(var f (new Foo))
+(println (f is Foo))
+# Expected: true
+
+(println (f is Int))
+# Expected: false
+
+# Inheritance
+(class Animal)
+(class Dog < Animal)
+(var d (new Dog))
+(println (d is Dog))
+# Expected: true
+
+(println (d is Animal))
+# Expected: true
+
+(println ((new Animal) is Dog))
+# Expected: false
+
+# Functions
+(fn add [a b] (a + b))
+(println (add is Function))
+# Expected: true
+
+# Old .is syntax still works
+(println (42 .is Int))
+# Expected: true
+
+(println ("hi" .is String))
+# Expected: true

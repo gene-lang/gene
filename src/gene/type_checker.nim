@@ -1680,6 +1680,9 @@ proc check_infix(self: TypeChecker, gene: ptr Gene): TypeExpr =
       elif rt.ctor == "Option" and rt.args.len >= 1:
         return rt.args[0]
     return ANY_TYPE
+  of "is":
+    # (x is Type) returns Bool
+    return TypeExpr(kind: TkNamed, name: "Bool")
   else:
     return ANY_TYPE
 
@@ -2112,7 +2115,7 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
     # Infix operators
     if gene.children.len > 0 and gene.children[0].kind == VkSymbol:
       let op = gene.children[0].str
-      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "+=", "-=", "*=", "/=", "?"]:
+      if op in ["=", "+", "-", "*", "/", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "+=", "-=", "*=", "/=", "?", "is"]:
         return self.check_infix(gene)
       if gene.children[0].str.startsWith("."):
         let method_name = gene.children[0].str[1..^1]
