@@ -1,0 +1,45 @@
+# typeof operator
+
+(println (typeof 42))
+# Expected: Int
+
+(println (typeof "hello"))
+# Expected: String
+
+(println (typeof 1.5))
+# Expected: Float
+
+(println (typeof true))
+# Expected: Bool
+
+(println (typeof nil))
+# Expected: Nil
+
+(println (typeof [1 2]))
+# Expected: Array
+
+(println (typeof {^a 1}))
+# Expected: Map
+
+# Class instances return the class name
+(class Foo)
+(println (typeof (new Foo)))
+# Expected: Foo
+
+# Functions return "Function"
+(fn add [a b] (a + b))
+(println (typeof add))
+# Expected: Function
+
+# typeof works with variables
+(var x 42)
+(println (typeof x))
+# Expected: Int
+
+(var s "hello")
+(println (typeof s))
+# Expected: String
+
+# typeof with expressions
+(println (typeof (+ 1 2)))
+# Expected: Int

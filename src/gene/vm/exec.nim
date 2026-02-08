@@ -2653,6 +2653,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         else:
           self.frame.push(TRUE)
 
+      of IkTypeOf:
+        let value = self.frame.pop()
+        self.frame.push(runtime_type_name(value).to_value())
 
       of IkCreateRange:
         let step = self.frame.pop()

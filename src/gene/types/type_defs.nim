@@ -624,6 +624,7 @@ type
     IkAnd
     IkOr
     IkNot
+    IkTypeOf
 
     IkCreateRange
     IkCreateEnum

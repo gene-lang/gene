@@ -936,6 +936,12 @@ proc compile_gene(self: Compiler, input: Value) =
           not_allowed("not expects exactly 1 argument")
         self.compile_unary_not(gene.children[0])
         return
+      of "typeof":
+        if gene.children.len != 1:
+          not_allowed("typeof expects exactly 1 argument")
+        self.compile(gene.children[0])
+        self.emit(Instruction(kind: IkTypeOf))
+        return
       of "break":
         self.compile_break(gene)
         return

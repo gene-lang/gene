@@ -2185,6 +2185,10 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return ANY_TYPE
       of "continue":
         return ANY_TYPE
+      of "typeof":
+        if gene.children.len > 0:
+          discard self.check_expr(gene.children[0])
+        return TypeExpr(kind: TkNamed, name: "String")
       of "try":
         return self.check_try(gene)
       of "Ok", "Err", "Some", "None":
