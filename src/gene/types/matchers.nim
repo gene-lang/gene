@@ -1,0 +1,394 @@
+## Pattern Matching: Matcher, RootMatcher, parse, type resolution
+## (intern_type_desc, resolve_type_value_to_id).
+## Included from value_core.nim — shares its scope.
+
+#################### Pattern Matching ############
+
+proc new_match_matcher*(): RootMatcher =
+  result = RootMatcher(
+    mode: MatchExpression,
+    return_type_id: NO_TYPE_ID,
+  )
+
+proc new_arg_matcher*(): RootMatcher =
+  result = RootMatcher(
+    mode: MatchArguments,
+    return_type_id: NO_TYPE_ID,
+  )
+
+proc new_matcher*(root: RootMatcher, kind: MatcherKind): Matcher =
+  result = Matcher(
+    root: root,
+    kind: kind,
+    default_value: PLACEHOLDER, # PLACEHOLDER marks "no default" (distinct from explicit nil)
+    type_id: NO_TYPE_ID,
+  )
+
+proc is_empty*(self: RootMatcher): bool =
+  self.children.len == 0
+
+proc has_default*(self: Matcher): bool {.inline.} =
+  self.default_value.kind != VkPlaceholder
+
+proc required*(self: Matcher): bool =
+  # A parameter is required if it has no default and is not a splat parameter.
+  # Properties without defaults are required too.
+  return (not self.is_splat) and (not self.has_default())
+
+proc check_hint*(self: RootMatcher) =
+  if self.children.len == 0:
+    self.hint_mode = MhNone
+  else:
+    self.hint_mode = MhSimpleData
+    for item in self.children:
+      if item.kind != MatchData or not item.required:
+        self.hint_mode = MhDefault
+        return
+
+# proc hint*(self: RootMatcher): MatchingHint =
+#   if self.children.len == 0:
+#     result.mode = MhNone
+#   else:
+#     result.mode = MhSimpleData
+#     for item in self.children:
+#       if item.kind != MatchData or not item.required:
+#         result.mode = MhDefault
+#         return
+
+# proc new_matched_field*(name: string, value: Value): MatchedField =
+#   result = MatchedField(
+#     name: name,
+#     value: value,
+#   )
+
+proc props*(self: seq[Matcher]): HashSet[Key] =
+  for m in self:
+    if m.kind == MatchProp and not m.is_splat:
+      result.incl(m.name_key)
+
+proc prop_splat*(self: seq[Matcher]): Key =
+  for m in self:
+    if m.kind == MatchProp and m.is_splat:
+      return m.name_key
+
+proc parse*(self: RootMatcher, v: Value)
+
+proc calc_next*(self: Matcher) =
+  var last: Matcher = nil
+  for m in self.children.mitems:
+    m.calc_next()
+    if m.kind in @[MatchData, MatchLiteral]:
+      if last != nil:
+        last.next = m
+      last = m
+
+proc calc_next*(self: RootMatcher) =
+  var last: Matcher = nil
+  for m in self.children.mitems:
+    m.calc_next()
+    if m.kind in @[MatchData, MatchLiteral]:
+      if last != nil:
+        last.next = m
+      last = m
+
+proc calc_min_left*(self: Matcher) =
+  {.push checks: off}
+  var min_left = 0
+  var i = self.children.len
+  while i > 0:
+    i -= 1
+    let m = self.children[i]
+    m.calc_min_left()
+    m.min_left = min_left
+    if m.required:
+      min_left += 1
+  {.pop.}
+
+proc calc_min_left*(self: RootMatcher) =
+  {.push checks: off}
+  var min_left = 0
+  var i = self.children.len
+  while i > 0:
+    i -= 1
+    let m = self.children[i]
+    m.calc_min_left()
+    m.min_left = min_left
+    if m.required:
+      min_left += 1
+  {.pop.}
+
+proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
+  {.push checks: off}
+  case v.kind:
+    of VkSymbol:
+      if v.str[0] == '^':
+        let m = new_matcher(self, MatchProp)
+        if v.str.ends_with("..."):
+          m.is_splat = true
+          if v.str[1] == '^':
+            m.name_key = v.str[2..^4].to_key()
+            m.is_prop = true
+            m.default_value = TRUE  # ^^param => default true
+          elif v.str[1] == '!':
+            m.name_key = v.str[2..^4].to_key()
+            m.is_prop = true
+            m.default_value = NIL  # ^!param => default false
+          else:
+            m.name_key = v.str[1..^4].to_key()
+            m.is_prop = true  # Named parameters always have is_prop = true
+        else:
+          if v.str[1] == '^':
+            m.name_key = v.str[2..^1].to_key()
+            m.is_prop = true
+            m.default_value = TRUE   # ^^param => default true
+          elif v.str[1] == '!':
+            m.name_key = v.str[2..^1].to_key()
+            m.is_prop = true
+            m.default_value = NIL  # ^!param => default false
+          else:
+            m.name_key = v.str[1..^1].to_key()
+            m.is_prop = true  # Named parameters always have is_prop = true
+        group.add(m)
+      else:
+        let m = new_matcher(self, MatchData)
+        group.add(m)
+        if v.str != "_":
+          if v.str.ends_with("..."):
+            m.is_splat = true
+            if v.str[0] == '^':
+              m.name_key = v.str[1..^4].to_key()
+              m.is_prop = true
+            else:
+              m.name_key = v.str[0..^4].to_key()
+          else:
+            if v.str[0] == '^':
+              m.name_key = v.str[1..^1].to_key()
+              m.is_prop = true
+            else:
+              m.name_key = v.str.to_key()
+    of VkComplexSymbol:
+      if v.ref.csymbol[0] == "^":
+        todo("parse " & $v)
+      else:
+        var m = new_matcher(self, MatchData)
+        group.add(m)
+        m.is_prop = true
+        let name = v.ref.csymbol[1]
+        if name.ends_with("..."):
+          m.is_splat = true
+          m.name_key = name[0..^4].to_key()
+        else:
+          m.name_key = name.to_key()
+    of VkArray:
+      var i = 0
+      let arr = array_data(v)
+      while i < arr.len:
+        let item = arr[i]
+        i += 1
+        if item.kind == VkArray:
+          let m = new_matcher(self, MatchData)
+          group.add(m)
+          self.parse(m.children, item)
+        else:
+          self.parse(group, item)
+          if i < arr.len and arr[i] == "=".to_symbol_value():
+            i += 1
+            let last_matcher = group[^1]
+            let value = arr[i]
+            i += 1
+            last_matcher.default_value = value
+    of VkQuote:
+      todo($VkQuote)
+      # var m = new_matcher(self, MatchLiteral)
+      # m.literal = v.quote
+      # m.name = "<literal>"
+      # group.add(m)
+    else:
+      todo("parse " & $v.kind)
+  {.pop.}
+
+proc parse*(self: RootMatcher, v: Value) =
+  if v == nil or v == to_symbol_value("_"):
+    return
+  self.parse(self.children, v)
+  self.calc_min_left()
+  self.calc_next()
+
+proc new_arg_matcher*(value: Value): RootMatcher =
+  result = new_arg_matcher()
+  result.parse(value)
+  result.check_hint()
+
+proc is_union_gene(gene: ptr Gene): bool =
+  if gene == nil:
+    return false
+  if gene.`type`.kind == VkSymbol and gene.`type`.str == "|":
+    return true
+  for child in gene.children:
+    if child.kind == VkSymbol and child.str == "|":
+      return true
+  return false
+
+proc union_members(v: Value): seq[Value] =
+  if v.kind == VkGene and v.gene != nil and is_union_gene(v.gene):
+    let gene = v.gene
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "|":
+      return gene.children
+    result.add(gene.`type`)
+    var i = 0
+    while i < gene.children.len:
+      let child = gene.children[i]
+      if child.kind == VkSymbol and child.str == "|":
+        if i + 1 < gene.children.len:
+          result.add(gene.children[i + 1])
+        i += 2
+      else:
+        i += 1
+    return result
+  result = @[v]
+
+proc type_expr_to_string*(v: Value): string =
+  case v.kind
+  of VkSymbol:
+    return v.str
+  of VkString:
+    return v.str
+  of VkGene:
+    let gene = v.gene
+    if gene == nil:
+      return "Any"
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
+      var params: seq[string] = @[]
+      if gene.children.len > 0 and gene.children[0].kind == VkArray:
+        let items = array_data(gene.children[0])
+        var i = 0
+        while i < items.len:
+          let item = items[i]
+          if item.kind == VkSymbol and item.str.startsWith("^"):
+            let label = item.str[1..^1]
+            if i + 1 < items.len:
+              params.add("^" & label & " " & type_expr_to_string(items[i + 1]))
+              i += 2
+            else:
+              params.add("^" & label & " Any")
+              i += 1
+          else:
+            params.add(type_expr_to_string(item))
+            i += 1
+      let ret =
+        if gene.children.len > 1: type_expr_to_string(gene.children[1]) else: "Any"
+      var effects: seq[string] = @[]
+      if gene.children.len > 2:
+        let maybe_bang = gene.children[2]
+        if maybe_bang.kind == VkSymbol and maybe_bang.str == "!" and gene.children.len > 3:
+          let effect_list = gene.children[3]
+          if effect_list.kind == VkArray:
+            for eff in array_data(effect_list):
+              effects.add(type_expr_to_string(eff))
+      let effect_suffix =
+        if effects.len > 0: " ! [" & effects.join(" ") & "]" else: ""
+      return "(Fn [" & params.join(" ") & "] " & ret & effect_suffix & ")"
+    if is_union_gene(gene):
+      var parts: seq[string] = @[]
+      for member in union_members(v):
+        parts.add(type_expr_to_string(member))
+      return "(" & parts.join(" | ") & ")"
+    if gene.`type`.kind == VkSymbol:
+      var parts: seq[string] = @[gene.`type`.str]
+      for child in gene.children:
+        parts.add(type_expr_to_string(child))
+      return "(" & parts.join(" ") & ")"
+    return "Any"
+  else:
+    return "Any"
+
+proc intern_type_desc*(type_descs: var seq[TypeDesc], desc: TypeDesc): TypeId =
+  ## Intern a TypeDesc into the type_descs table, returning its TypeId.
+  ## Reuses existing entries for named types to avoid duplicates.
+  case desc.kind
+  of TdkNamed:
+    for i, existing in type_descs:
+      if existing.kind == TdkNamed and existing.name == desc.name:
+        return i.TypeId
+  of TdkAny:
+    return BUILTIN_TYPE_ANY_ID
+  else:
+    discard
+  let id = type_descs.len.TypeId
+  type_descs.add(desc)
+  return id
+
+proc resolve_type_value_to_id*(v: Value, type_descs: var seq[TypeDesc],
+                              type_aliases: Table[string, TypeId] = initTable[string, TypeId]()): TypeId =
+  ## Resolve a Gene AST type expression to a TypeId, interning into type_descs.
+  ## Handles: symbols (Int), applied types (Array Int), unions (Int | String), Fn types.
+  ## Checks type_aliases for user-defined type aliases (e.g., UserId → Int | String).
+  case v.kind
+  of VkSymbol:
+    let builtin_id = lookup_builtin_type(v.str)
+    if builtin_id != NO_TYPE_ID:
+      return builtin_id
+    # Check type aliases
+    if type_aliases.hasKey(v.str):
+      return type_aliases[v.str]
+    # Unknown named type (user class etc) - intern it
+    return intern_type_desc(type_descs, TypeDesc(kind: TdkNamed, name: v.str))
+  of VkString:
+    let builtin_id = lookup_builtin_type(v.str)
+    if builtin_id != NO_TYPE_ID:
+      return builtin_id
+    if type_aliases.hasKey(v.str):
+      return type_aliases[v.str]
+    return intern_type_desc(type_descs, TypeDesc(kind: TdkNamed, name: v.str))
+  of VkGene:
+    let gene = v.gene
+    if gene == nil:
+      return BUILTIN_TYPE_ANY_ID
+    # Handle Fn type: (Fn [Int String] Float)
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
+      var params: seq[TypeId] = @[]
+      if gene.children.len > 0 and gene.children[0].kind == VkArray:
+        let items = array_data(gene.children[0])
+        var i = 0
+        while i < items.len:
+          let item = items[i]
+          if item.kind == VkSymbol and item.str.startsWith("^"):
+            # Keyword param - skip label, use type
+            if i + 1 < items.len:
+              params.add(resolve_type_value_to_id(items[i + 1], type_descs))
+              i += 2
+            else:
+              params.add(BUILTIN_TYPE_ANY_ID)
+              i += 1
+          else:
+            params.add(resolve_type_value_to_id(item, type_descs))
+            i += 1
+      let ret =
+        if gene.children.len > 1: resolve_type_value_to_id(gene.children[1], type_descs)
+        else: BUILTIN_TYPE_ANY_ID
+      var effects: seq[string] = @[]
+      if gene.children.len > 2:
+        let maybe_bang = gene.children[2]
+        if maybe_bang.kind == VkSymbol and maybe_bang.str == "!" and gene.children.len > 3:
+          let effect_list = gene.children[3]
+          if effect_list.kind == VkArray:
+            for eff in array_data(effect_list):
+              if eff.kind == VkSymbol:
+                effects.add(eff.str)
+      return intern_type_desc(type_descs, TypeDesc(kind: TdkFn, params: params, ret: ret, effects: effects))
+    # Handle union type: (Int | String)
+    if is_union_gene(gene):
+      var members: seq[TypeId] = @[]
+      for member in union_members(v):
+        members.add(resolve_type_value_to_id(member, type_descs))
+      return intern_type_desc(type_descs, TypeDesc(kind: TdkUnion, members: members))
+    # Handle applied type: (Array Int)
+    if gene.`type`.kind == VkSymbol:
+      let ctor = gene.`type`.str
+      var args: seq[TypeId] = @[]
+      for child in gene.children:
+        args.add(resolve_type_value_to_id(child, type_descs))
+      return intern_type_desc(type_descs, TypeDesc(kind: TdkApplied, ctor: ctor, args: args))
+    return BUILTIN_TYPE_ANY_ID
+  else:
+    return BUILTIN_TYPE_ANY_ID
