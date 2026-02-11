@@ -815,6 +815,7 @@ type
   CompilationUnit* = ref object
     id*: Id
     kind*: CompilationUnitKind
+    module_path*: string
     skip_return*: bool
     type_check*: bool  # Whether runtime type validation is enabled
     matcher*: RootMatcher

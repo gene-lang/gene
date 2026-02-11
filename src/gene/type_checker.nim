@@ -68,6 +68,7 @@ type
   TypeChecker* = ref object
     strict*: bool
     module_filename*: string
+    module_path*: string
     next_var_id*: int
     subs*: Table[int, TypeExpr]
     scopes*: seq[Table[string, TypeExpr]]
@@ -152,6 +153,7 @@ proc new_type_checker*(strict: bool = true, module_filename: string = ""): TypeC
   result = TypeChecker(
     strict: strict,
     module_filename: module_filename,
+    module_path: module_path_from_source(module_filename),
     next_var_id: 0,
     subs: initTable[int, TypeExpr](),
     scopes: @[initTable[string, TypeExpr]()],
@@ -371,31 +373,39 @@ proc intern_type_desc(self: TypeChecker, t: TypeExpr): TypeId =
   let rt = self.resolve_self(self.resolve(t))
   case rt.kind
   of TkAny:
-    return intern_type_desc(self.type_descs, TypeDesc(kind: TdkAny), self.type_desc_index)
+    return BUILTIN_TYPE_ANY_ID
   of TkNamed:
-    return intern_type_desc(self.type_descs, TypeDesc(kind: TdkNamed, name: rt.name), self.type_desc_index)
+    let builtin_id = lookup_builtin_type(rt.name)
+    if builtin_id != NO_TYPE_ID:
+      return builtin_id
+    return intern_type_desc(self.type_descs,
+      TypeDesc(module_path: self.module_path, kind: TdkNamed, name: rt.name), self.type_desc_index)
   of TkApplied:
     var args: seq[TypeId] = @[]
     for arg in rt.args:
       args.add(self.intern_type_desc(arg))
-    return intern_type_desc(self.type_descs, TypeDesc(kind: TdkApplied, ctor: rt.ctor, args: args), self.type_desc_index)
+    return intern_type_desc(self.type_descs,
+      TypeDesc(module_path: self.module_path, kind: TdkApplied, ctor: rt.ctor, args: args), self.type_desc_index)
   of TkUnion:
     var members: seq[TypeId] = @[]
     for member in rt.members:
       members.add(self.intern_type_desc(member))
-    return intern_type_desc(self.type_descs, TypeDesc(kind: TdkUnion, members: members), self.type_desc_index)
+    return intern_type_desc(self.type_descs,
+      TypeDesc(module_path: self.module_path, kind: TdkUnion, members: members), self.type_desc_index)
   of TkFn:
     var params: seq[TypeId] = @[]
     for param in rt.params:
       params.add(self.intern_type_desc(param.typ))
     return intern_type_desc(self.type_descs, TypeDesc(
+      module_path: self.module_path,
       kind: TdkFn,
       params: params,
       ret: self.intern_type_desc(rt.ret),
       effects: rt.effects
     ), self.type_desc_index)
   of TkVar:
-    return intern_type_desc(self.type_descs, TypeDesc(kind: TdkVar, var_id: rt.id.int32), self.type_desc_index)
+    return intern_type_desc(self.type_descs,
+      TypeDesc(module_path: self.module_path, kind: TdkVar, var_id: rt.id.int32), self.type_desc_index)
 
 proc push_scope(self: TypeChecker) =
   self.scopes.add(initTable[string, TypeExpr]())

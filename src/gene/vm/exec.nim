@@ -2895,7 +2895,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.push checks: off}
         let info = to_function_def_info(inst.arg0)
         let f = if self.cu != nil:
-            to_function(info.input, self.cu.type_descriptors, self.cu.type_aliases)
+            to_function(info.input, self.cu.type_descriptors, self.cu.type_aliases, self.cu.module_path)
           else:
             to_function(info.input)
 

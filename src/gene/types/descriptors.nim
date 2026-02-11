@@ -50,6 +50,15 @@ proc lookup_builtin_type*(name: string): TypeId =
   of "Map": BUILTIN_TYPE_MAP_ID
   else: NO_TYPE_ID
 
+proc module_path_from_source*(source_name: string): string {.inline.} =
+  ## Map parser/compiler source names to a module path for descriptor ownership.
+  ## Pseudo-inputs like <input> / <repl> are local and keep an empty module path.
+  if source_name.len == 0:
+    return ""
+  if source_name[0] == '<':
+    return ""
+  source_name
+
 const TYPE_DESC_MAX_DEPTH = 64
 
 proc sorted_unique_strings(values: seq[string]): seq[string] {.gcsafe.} =

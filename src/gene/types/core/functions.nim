@@ -12,7 +12,8 @@ proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Functio
   )
 
 proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
-                  type_aliases: Table[string, TypeId] = initTable[string, TypeId]()): Function {.gcsafe.}
+                  type_aliases: Table[string, TypeId] = initTable[string, TypeId](),
+                  module_path = ""): Function {.gcsafe.}
 
 proc to_function*(node: Value): Function {.gcsafe.} =
   ## Create a Function from a Gene node, using a local type descriptor table.
@@ -20,7 +21,8 @@ proc to_function*(node: Value): Function {.gcsafe.} =
   return to_function(node, local_descs)
 
 proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
-                  type_aliases: Table[string, TypeId] = initTable[string, TypeId]()): Function {.gcsafe.} =
+                  type_aliases: Table[string, TypeId] = initTable[string, TypeId](),
+                  module_path = ""): Function {.gcsafe.} =
   if node.kind != VkGene:
     raise new_exception(type_defs.Exception, "Expected Gene for function definition, got " & $node.kind)
 
@@ -49,7 +51,7 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
         if i < src.len:
           let type_val = src[i]
           if not type_id_map.hasKey(base):
-            type_id_map[base] = resolve_type_value_to_id(type_val, type_descs, aliases)
+            type_id_map[base] = resolve_type_value_to_id(type_val, type_descs, aliases, module_path)
           i.inc # Skip type expression
         continue
       elif item.kind == VkArray:
@@ -136,7 +138,7 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
       if body_start + 1 >= node.gene.children.len:
         raise new_exception(type_defs.Exception, "Invalid function definition: missing return type after ->")
       let ret_type = node.gene.children[body_start + 1]
-      matcher.return_type_id = resolve_type_value_to_id(ret_type, type_descs, aliases)
+      matcher.return_type_id = resolve_type_value_to_id(ret_type, type_descs, aliases, module_path)
       body_start += 2
   # Attach the type_descs to the matcher for runtime validation
   matcher.type_descriptors = type_descs

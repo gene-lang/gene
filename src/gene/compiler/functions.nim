@@ -62,7 +62,7 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
 
   var compiled_body: CompilationUnit = nil
   if self.eager_functions:
-    var fn_obj = to_function(input, self.output.type_descriptors, self.output.type_aliases)
+    var fn_obj = to_function(input, self.output.type_descriptors, self.output.type_aliases, self.output.module_path)
     fn_obj.scope_tracker = tracker_copy
     compile(fn_obj, true)
     compiled_body = fn_obj.body_compiled
@@ -130,7 +130,7 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
   # Handle namespace body if present
   if gene.children.len > 1:
     let body = new_stream_value(gene.children[1..^1])
-    let compiled = compile_init(body, local_defs = true)
+    let compiled = compile_init(body, local_defs = true, module_path = self.output.module_path)
     let r = new_ref(VkCompiledUnit)
     r.cu = compiled
     self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
@@ -247,7 +247,7 @@ proc compile_prop_definition(self: Compiler, gene: ptr Gene) =
     # (prop x: Int) — name_val is "x:", children[1] is "Int"
     let base_name = name_val.str[0..^2]
     if gene.children.len > 1:
-      type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases)
+      type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases, self.output.module_path)
     self.emit(Instruction(kind: IkDefineProp, arg0: base_name.to_key().to_value(), arg1: type_id))
   else:
     # (prop x) — untyped property declaration
@@ -282,7 +282,8 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
 
   # Register user class as a TypeDesc in the module's type registry
   if class_name.kind == VkSymbol:
-    discard intern_type_desc(self.output.type_descriptors, TypeDesc(kind: TdkNamed, name: class_name.str))
+    discard intern_type_desc(self.output.type_descriptors,
+      TypeDesc(module_path: self.output.module_path, kind: TdkNamed, name: class_name.str))
 
   # Emit class or subclass instruction
   let flags = container_flag or (if local_def: 2.int32 else: 0.int32)
@@ -303,7 +304,7 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
   # Compile class body if present
   if gene.children.len > body_start:
     let body = new_stream_value(gene.children[body_start..^1])
-    let compiled = compile_init(body, local_defs = true)
+    let compiled = compile_init(body, local_defs = true, module_path = self.output.module_path)
     let r = new_ref(VkCompiledUnit)
     r.cu = compiled
     self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
@@ -536,4 +537,3 @@ proc compile_match(self: Compiler, gene: ptr Gene) =
 
   else:
     not_allowed("Unsupported pattern type: " & $pattern.kind)
-

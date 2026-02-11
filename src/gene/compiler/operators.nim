@@ -996,7 +996,7 @@ proc compile_gene(self: Compiler, input: Value) =
         # Register type alias: (type Name TypeExpr)
         if gene.children.len >= 2 and gene.children[0].kind == VkSymbol:
           let alias_name = gene.children[0].str
-          let type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases)
+          let type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases, self.output.module_path)
           self.output.type_aliases[alias_name] = type_id
         self.emit(Instruction(kind: IkPushNil))
         return
@@ -1131,4 +1131,3 @@ proc compile_gene(self: Compiler, input: Value) =
               return
 
   self.compile_gene_unknown(gene)
-

@@ -272,7 +272,7 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     if name_val.kind == VkSymbol and name_val.str.ends_with(":"):
       let base_name = name_val.str[0..^2].to_symbol_value()
       if gene.children.len > 1:
-        explicit_type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases)
+        explicit_type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases, self.output.module_path)
       gene.children[0] = base_name
       gene.children.delete(1) # Remove the type expression
 
@@ -1091,4 +1091,3 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkFinallyEnd))
   
   self.emit(Instruction(kind: IkNoop, label: end_label))
-

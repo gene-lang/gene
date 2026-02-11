@@ -4,13 +4,14 @@
 ## parse_and_compile (all overloads), parse_and_compile_repl.
 ## Included from compiler.nim — shares its scope.
 
-proc compile_init*(input: Value, local_defs = false): CompilationUnit =
+proc compile_init*(input: Value, local_defs = false, module_path = ""): CompilationUnit =
   let self = Compiler(
     output: new_compilation_unit(),
     tail_position: false,
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.output.module_path = module_path
   self.local_definitions = local_defs
   self.output.skip_return = true
   self.emit(Instruction(kind: IkStart))
@@ -430,6 +431,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.output.module_path = module_path_from_source(filename)
   self.preserve_root_scope = module_mode
   self.local_definitions = module_mode
   self.output.type_check = type_check
@@ -595,6 +597,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
     declared_names: @[initTable[Key, bool]()],
     skip_root_scope_start: true
   )
+  self.output.module_path = module_path_from_source(filename)
   self.output.type_check = type_check
   self.emit(Instruction(kind: IkStart))
 
@@ -677,6 +680,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.output.module_path = module_path_from_source(filename)
   self.preserve_root_scope = module_mode
   self.output.type_check = type_check
   self.output.instructions.add(Instruction(kind: IkStart))

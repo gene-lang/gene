@@ -12,12 +12,15 @@ proc expected_type_id_for(tracker: ScopeTracker, index: int): TypeId {.inline.} 
   tracker.type_expectation_ids[index]
 
 proc find_named_type_descriptor(cu: CompilationUnit, name: string): tuple[type_id: TypeId, desc: TypeDesc, found: bool] =
+  let builtin_id = lookup_builtin_type(name)
+  if builtin_id != NO_TYPE_ID:
+    return (builtin_id, builtin_type_descs()[builtin_id.int], true)
   if cu == nil:
-    return (NO_TYPE_ID, TypeDesc(kind: TdkNamed, name: name), false)
+    return (NO_TYPE_ID, TypeDesc(module_path: "", kind: TdkNamed, name: name), false)
   for i, desc in cu.type_descriptors:
     if desc.kind == TdkNamed and desc.name == name:
       return (i.int32, desc, true)
-  (NO_TYPE_ID, TypeDesc(kind: TdkNamed, name: name), false)
+  (NO_TYPE_ID, TypeDesc(module_path: cu.module_path, kind: TdkNamed, name: name), false)
 
 proc ensure_class_runtime_type(self: ptr VirtualMachine, class: Class): RtTypeObj =
   if class == nil:
