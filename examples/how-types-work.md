@@ -1,12 +1,12 @@
 # How Types Work in Gene Today
 
-This document explains the current pipeline for typed Gene code:
+This document explains the current typing pipeline:
 
-`Source -> Parse -> Type Check -> Compile -> GIR -> Execute`
+`Source -> Parse -> Type Check (gradual) -> Compile -> GIR -> Execute`
 
 It uses `examples/sample_typed.gene` as the running example.
 
-## Quick Run Commands
+## Quick run commands
 
 ```bash
 ./bin/gene run examples/sample_typed.gene
@@ -15,224 +15,134 @@ It uses `examples/sample_typed.gene` as the running example.
 ./bin/gene run --trace-instruction examples/sample_typed.gene
 ```
 
-## 1. Parse Phase
+## 1. Parse phase
 
 Parser entry points are in `src/gene/parser.nim`.
 
-The parser does not interpret types. It builds `Value` trees (`VkGene`, `VkArray`, `VkSymbol`, ...).
+The parser builds `Value` trees (`VkGene`, `VkArray`, `VkSymbol`, ...). It does not perform type validation. Type annotations stay as normal syntax nodes (for example `x:` followed by `Int`).
 
-Typed params are parsed as symbols ending with `:` followed by a type expression.
+## 2. Type check phase (gradual mode)
 
-Example source:
+Type checker lives in `src/gene/type_checker.nim`.
 
-```gene
-(fn add [x: Int y: Int] -> Int
-  (x + y))
-```
-
-Example parse shape (`gene parse` pretty output):
-
-```text
-(fn
-  add
-  [
-    x:
-    Int
-    y:
-    Int
-  ]
-  ->
-  Int
-  (x
-    +
-    y
-  )
-)
-```
-
-Important detail: there is no separate `":"` token node in the AST for params. The symbol itself is `x:`.
-
-## 2. Type Check Phase
-
-Type checker is in `src/gene/type_checker.nim`.
-
-`parse_and_compile*` currently constructs the checker as:
+Compilation creates it as non-strict:
 
 - `new_type_checker(strict = false, ...)`
 
-So unknown type names do not fail immediately at compile time in default mode.
+in `src/gene/compiler/pipeline.nim`.
 
-### Internal type representation
+Implications:
 
-Compile-time types use `TypeExpr` variants, including:
+- It still infers and unifies types (`TypeExpr`: `TkAny`, `TkNamed`, `TkApplied`, `TkUnion`, `TkFn`, `TkVar`).
+- In most mismatch cases it emits warnings instead of compile-time hard errors.
+- Unknown type names are allowed during compile-time in gradual mode.
 
-- `TkAny`
-- `TkNamed`
-- `TkApplied`
-- `TkFn`
-- `TkVar`
+Warnings are flushed per top-level node in the compiler pipeline and printed with source location when available.
 
-For example:
+## 3. Descriptor-first compile pipeline
 
-- `Int` -> `TkNamed("Int")`
-- `(Result Int String)` -> `TkApplied("Result", [Int, String])`
-- `(Fn [Int] Int)` -> `TkFn(params=[Int], ret=Int)`
+The refactor uses descriptor IDs directly instead of old string metadata props.
 
-### Metadata attached to AST nodes
+Core runtime metadata types are in `src/gene/types/type_defs.nim`:
 
-The checker stores type metadata into Gene node props using keys from `src/gene/types/type_defs.nim`:
+- `TypeId` (`int32`)
+- `TypeDesc` (`TdkAny`, `TdkNamed`, `TdkApplied`, `TdkUnion`, `TdkFn`, `TdkVar`)
 
-- `__tc_param_types`
-- `__tc_return_type`
+Built-in type IDs come from `src/gene/types/descriptors.nim` (`Any=0`, `Int=1`, ...).
 
-`__tc_param_types` is a map by parameter name, not an array.
+### Where type IDs are attached
 
-Example conceptual shape:
+1. Function and method signatures
 
-```text
-__tc_param_types = { x: "Int", y: "Int" }
-__tc_return_type = "Int"
-```
+- `to_function` parses annotations and sets `matcher.children[i].type_id`.
+- Return annotation sets `matcher.return_type_id`.
+- Matcher carries the descriptor table via `matcher.type_descriptors`.
 
-This is recorded by `record_param_types`.
+2. Typed local variables
 
-## 3. Compile Phase
+- Compiler resolves `(var x: T ...)` to a `TypeId`.
+- It stores expected type IDs in `ScopeTracker.type_expectation_ids`.
+- It also emits `IkVar`/`IkVarValue` with type metadata.
 
-Compiler is in `src/gene/compiler.nim`.
+3. Typed class properties
 
-### Module-mode normalization
+- `(prop x: T)` compiles to `IkDefineProp` with the resolved `TypeId`.
+- Class stores `prop_types` and descriptor table for runtime checks.
 
-`gene run` compiles with `module_mode = true`.
+4. Type aliases
 
-`normalize_module_nodes` separates module definitions and top-level executable statements, synthesizing/appending `__init__` as needed.
+- `(type Alias Expr)` is resolved to a `TypeId` and stored in `CompilationUnit.type_aliases`.
 
-### How typed info reaches runtime
+## 4. Runtime enforcement
 
-There are two important paths:
+Runtime checks are in `src/gene/vm/args.nim` and `src/gene/vm/exec.nim`, implemented by helpers in `src/gene/types/runtime_types.nim`.
 
-1. Function/method parameter annotations
+### Function arguments
 
-- At runtime, functions are materialized from AST by `to_function` in `src/gene/types/value_core.nim`.
-- It reads `__tc_param_types` / `__tc_return_type` from node props.
-- It populates matcher fields like `param.type_name` and `matcher.return_type_name`.
-- VM argument binding then validates these through `process_args*` in `src/gene/vm/args.nim`.
+- `process_args_core` validates annotated params via `validate_or_coerce_type`.
+- This can coerce some numeric cases (for example `Int -> Float`, `Float -> Int` with warning).
 
-2. Local variable annotations
+### Return values
 
-- Compiler writes expected types into `ScopeTracker.type_expectations`.
-- VM validates on variable store/assign instructions (`IkVar`, `IkVarValue`, `IkVarAssign`, `IkVarAssignInherited`).
+- Explicit `return` and implicit end-of-function returns are validated for annotated functions/methods.
 
-## 4. GIR Serialization
+### Variables
 
-GIR serializer is in `src/gene/gir.nim`.
+- `IkVar`, `IkVarValue`, `IkVarAssign`, `IkVarAssignInherited` enforce expected slot types via `validate_type`.
 
-Current version:
+### Typed instance properties
 
-- `GIR_VERSION = 9`
+- `IkSetMember` checks `class.prop_types` and validates/coerces before assignment.
 
-Saved data includes:
+### Nil behavior
 
-- Header (`GENE`, version, ABI, hash/timestamp)
-- Instructions
-- Source trace tree + instruction trace indices
-- Unit metadata (`kind`, `id`, `skip_return`)
-- Module metadata (`module_exports`, `module_imports`, `module_types`)
-- Type descriptor table (`type_descriptors`)
+- Most runtime checks skip validation when the value is `NIL`.
+- So `nil` is effectively allowed through many typed boundaries in gradual mode.
 
-Notes:
+### Generic/applied type behavior
 
-- Scope tracker snapshots are serialized for nested values like function defs and scope-tracker values.
-- Top-level `save_gir` currently writes empty constants/symbol tables in this path.
+- Applied checks like `(Array Int)` are currently shallow at runtime: outer constructor is checked, element-level enforcement is limited.
 
-## 5. Runtime Execution Phase
+## 5. GIR serialization
 
-Main VM loop is in `src/gene/vm.nim`.
+GIR serializer is `src/gene/gir.nim`.
 
-### Runtime type checks for parameters
+Current version is:
 
-For typed params, runtime checks happen in argument processing (`src/gene/vm/args.nim`):
+- `GIR_VERSION = 13`
 
-- `process_args_core` binds args to scope slots.
-- If `matcher.has_type_annotations`, it calls `validate_type(value, param.type_name, ...)`.
+Typing-relevant data persisted in GIR:
 
-So function-call validation does not rely only on `IkVar`.
+- `module_types` tree (`ModuleTypeNode`)
+- `type_descriptors` table (`seq[TypeDesc]`)
+- Scope tracker snapshots include `type_expectation_ids`
 
-### Runtime type checks for local vars
+Note: `type_aliases` are currently not serialized in GIR. This can cause behavior differences between fresh source compile and cached GIR in alias-heavy code.
 
-VM instruction handlers validate expected local types using `scope.tracker.type_expectations`:
+## 6. Module boundary typing
 
-- `IkVar`
-- `IkVarValue`
-- `IkVarAssign`
-- `IkVarAssignInherited`
+During type checking, `import` can load imported GIR and use `module_types` metadata to register imported type names. This improves gradual checking across modules even without loading full source.
 
-They call `validate_type` from `src/gene/types/runtime_types.nim`.
+## 7. What `--no-type-check` does now
 
-### `.is` checks
+`--no-type-check` disables both:
 
-`.is` is implemented as native `Object.is` in `src/gene/stdlib.nim`.
+- compile-time checker pass (no warnings/errors from `TypeChecker`)
+- runtime typed validation paths (because VM runs with `type_check = false`)
 
-It compares runtime class identity/inheritance against a class (or instance) argument.
+So typed annotations remain in syntax but are not enforced when this flag is set.
 
-### ADT runtime representation
+## 8. Practical notes
 
-`Ok/Err/Some/None` values are represented as `VkGene` values with tagged symbol types (`Ok`, `Err`, ...).
-
-## Runtime Type Engine Today
-
-`validate_type` currently receives expected types as strings and parses/caches them in `runtime_types.nim`.
-
-Common primitive checks are fast due tag-based `ValueKind` detection (`Int`, `Float`, `String`, etc.).
-
-Complex types (`Fn`, unions, applied forms) are parsed into runtime `RtType` structures and cached by string.
-
-## What `--no-type-check` Actually Disables
-
-`--no-type-check` disables the compile-time checker pass.
-
-It does **not** disable runtime validator paths.
-
-Examples:
-
-```gene
-(fn f [x: Int] x)
-(f "oops")
-```
-
-- with type check on: compile-time error
-- with `--no-type-check`: runtime error still occurs during arg binding
-
-```gene
-(fn g []
-  (var x: Int 42)
-  (x = "bad"))
-(g)
-```
-
-- with `--no-type-check`: runtime error occurs via `IkVarAssign`
-
-## Known Caveat (Current Behavior)
-
-Top-level typed vars that are lowered into module `__init__` have a known mismatch risk between parameter slot shifting and `type_expectations` indexing.
-
-Practical effect today: some top-level `(var x: T ...)` assignment checks may not fire at runtime when compile-time checking is disabled.
-
-So this may pass with `--no-type-check`:
-
-```gene
-(var x: Int 42)
-(x = "bad")
-```
-
-while equivalent logic inside an ordinary function does fail at runtime.
-
-Treat this as a current implementation gap, not intended long-term semantics.
+- `gene run` may use cached GIR. Use `--no-gir-cache` or `--force-compile` when validating typing changes from source.
+- If behavior looks inconsistent between source and cache, confirm whether the GIR was built before recent typing changes.
 
 ## Summary
 
-Current system is already gradual and two-layered:
+The current system is descriptor-based and gradual-first:
 
-1. Compile-time checker (`TypeExpr`, non-strict by default).
-2. Runtime validator (`validate_type`) on typed boundaries.
+1. Compile-time inference and warnings (`strict=false`).
+2. Runtime boundary enforcement using `TypeId` + `TypeDesc`.
+3. GIR persistence for descriptor and module type metadata.
 
-Type metadata already survives into runtime and GIR, and module type trees + descriptor tables are now present in compilation units. Runtime validation still primarily consumes string type names today; descriptor-driven runtime checks are the next architectural step.
+This is the active implementation model for mixed typed/untyped Gene code.
