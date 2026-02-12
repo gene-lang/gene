@@ -13,7 +13,7 @@ type
     help: bool
     files: seq[string]
     code: string
-    format: string  # "pretty" (default), "compact", "bytecode", "gir"
+    format: string  # "pretty", "compact", "bytecode", "gir", "ai-metadata"
     show_addresses: bool
     out_dir: string  # Output directory for GIR files
     force: bool      # Force rebuild even if cache is up-to-date
@@ -42,7 +42,7 @@ Compile Gene code to bytecode or Gene IR (.gir) format.
 Options:
   -h, --help              Show this help message
   -e, --eval <code>       Compile the given code string
-  -f, --format <format>   Output format: pretty (default), compact, bytecode, gir
+  -f, --format <format>   Output format: pretty (default), compact, bytecode, gir, ai-metadata
   -o, --out-dir <dir>     Output directory for GIR files (default: build/)
   -a, --addresses         Show instruction addresses
   --force                 Rebuild even if cache is up-to-date
@@ -83,10 +83,10 @@ proc parseArgs(args: seq[string]): CompileOptions =
         if value == "":
           stderr.writeLine("Error: Format option requires a value")
           quit(1)
-        elif value in ["pretty", "compact", "bytecode", "gir"]:
+        elif value in ["pretty", "compact", "bytecode", "gir", "ai-metadata"]:
           result.format = value
         else:
-          stderr.writeLine("Error: Invalid format '" & value & "'. Must be: pretty, compact, bytecode, or gir")
+          stderr.writeLine("Error: Invalid format '" & value & "'. Must be: pretty, compact, bytecode, gir, or ai-metadata")
           quit(1)
       of "o", "out-dir":
         result.out_dir = value
