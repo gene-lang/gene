@@ -520,23 +520,43 @@ proc emit_type_warning*(warning: string) =
   if warning.len > 0:
     stderr.writeLine("Warning: " & warning)
 
+const
+  TYPE_DIAG_MISMATCH_CODE* = "GENE_TYPE_MISMATCH"
+  TYPE_DIAG_COERCION_CODE* = "GENE_TYPE_COERCION"
+
+proc format_type_mismatch(expected: string, actual: string, context: string, location: string): string =
+  result = "Type error [" & TYPE_DIAG_MISMATCH_CODE & "]: expected " & expected &
+    ", got " & actual & " in " & context
+  if location.len > 0:
+    result &= " @ " & location
+
+proc format_type_warning(warning: string, location: string): string =
+  if warning.len == 0:
+    return ""
+  # Preserve legacy warning wording for compatibility with existing tests/tools.
+  if warning.startsWith("Type warning: "):
+    result = warning[14..^1]
+  else:
+    result = warning
+  if location.len > 0:
+    result &= " @ " & location
+
 proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
                              type_descs: seq[TypeDesc],
-                             param_name: string = "argument"): string =
+                             param_name: string = "argument",
+                             location: string = ""): string =
   var converted = value
   var warning = ""
   if coerce_value_to_type(value, expected_type_id, type_descs, param_name, converted, warning):
     value = converted
-    return warning
+    return format_type_warning(warning, location)
   let actual = runtime_type_name(value)
   let expected = type_desc_to_string(expected_type_id, type_descs)
-  raise new_exception(type_defs.Exception,
-    "Type error: expected " & expected & ", got " & actual & " in " & param_name)
+  raise new_exception(type_defs.Exception, format_type_mismatch(expected, actual, param_name, location))
 
 proc validate_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
-                   param_name: string = "argument") =
+                   param_name: string = "argument", location: string = "") =
   if not is_compatible(value, expected_type_id, type_descs):
     let actual = runtime_type_name(value)
     let expected = type_desc_to_string(expected_type_id, type_descs)
-    raise new_exception(type_defs.Exception,
-      "Type error: expected " & expected & ", got " & actual & " in " & param_name)
+    raise new_exception(type_defs.Exception, format_type_mismatch(expected, actual, param_name, location))

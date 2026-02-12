@@ -368,8 +368,10 @@ suite "GIR CLI":
     var raised = false
     try:
       discard validate_or_coerce_type(bad, 0'i32, type_descs, "value")
-    except CatchableError:
+    except CatchableError as e:
       raised = true
+      check e.msg.contains("GENE_TYPE_MISMATCH")
+      check e.msg.contains("in value")
     check raised
 
   test "try-unwrap early return enforces descriptor return types":
@@ -379,7 +381,9 @@ suite "GIR CLI":
       discard VM.exec("(fn bad [] -> Int (var v ((Err \"boom\") ?)) v) (bad)", "typed_try_unwrap_return_validation.gene")
     except CatchableError as e:
       raised = true
+      check e.msg.contains("GENE_TYPE_MISMATCH")
       check e.msg.contains("return value of bad")
+      check e.msg.contains("typed_try_unwrap_return_validation.gene")
     check raised
 
   test "runtime function compatibility compares applied args structurally":

@@ -11,6 +11,16 @@ proc expected_type_id_for(tracker: ScopeTracker, index: int): TypeId {.inline.} 
     return NO_TYPE_ID
   tracker.type_expectation_ids[index]
 
+proc runtime_type_error_location(self: ptr VirtualMachine): string {.inline.} =
+  if self == nil or self.cu == nil:
+    return ""
+  var trace: SourceTrace = nil
+  if self.pc >= 0 and self.pc < self.cu.instruction_traces.len:
+    trace = self.cu.instruction_traces[self.pc]
+  if trace == nil and self.cu.trace_root != nil:
+    trace = self.cu.trace_root
+  trace_location(trace)
+
 proc validate_local_type_constraint(self: ptr VirtualMachine, tracker: ScopeTracker, index: int,
                                     value: Value, context = "variable") {.inline.} =
   if self == nil or tracker == nil or not self.type_check:
@@ -20,7 +30,7 @@ proc validate_local_type_constraint(self: ptr VirtualMachine, tracker: ScopeTrac
   let expected_id = expected_type_id_for(tracker, index)
   if expected_id == NO_TYPE_ID:
     return
-  validate_type(value, expected_id, self.cu.type_descriptors, context)
+  validate_type(value, expected_id, self.cu.type_descriptors, context, self.runtime_type_error_location())
 
 proc validate_return_type_constraint(self: ptr VirtualMachine, value: var Value) {.inline.} =
   if self == nil or not self.type_check:
@@ -33,7 +43,7 @@ proc validate_return_type_constraint(self: ptr VirtualMachine, value: var Value)
   if value == NIL or f.matcher.return_type_id == NO_TYPE_ID or f.matcher.type_descriptors.len == 0:
     return
   let warning = validate_or_coerce_type(value, f.matcher.return_type_id, f.matcher.type_descriptors,
-    "return value of " & f.name)
+    "return value of " & f.name, self.runtime_type_error_location())
   emit_type_warning(warning)
 
 proc find_named_type_descriptor(cu: CompilationUnit, name: string): tuple[type_id: TypeId, desc: TypeDesc, found: bool] =
