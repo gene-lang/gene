@@ -4,7 +4,7 @@ import ./types
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 15'u32
+  GIR_VERSION* = 16'u32
   COMPILER_VERSION = "0.1.2"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   
@@ -55,6 +55,14 @@ proc read_string(stream: Stream): string =
     result = newString(len)
     discard stream.readData(result[0].addr, len.int)
 
+proc write_key(stream: Stream, key: Key) =
+  # Key is a packed symbol value and symbol indices are process-local.
+  # Persist key names, then re-intern on load for stable cross-process GIR.
+  stream.write_string(get_symbol(symbol_index(key)))
+
+proc read_key(stream: Stream): Key =
+  stream.read_string().to_key()
+
 proc writeScopeTrackerSnapshot(stream: Stream, snapshot: ScopeTrackerSnapshot) =
   if snapshot == nil:
     stream.write(0'u8)
@@ -66,7 +74,7 @@ proc writeScopeTrackerSnapshot(stream: Stream, snapshot: ScopeTrackerSnapshot) =
   stream.write(if snapshot.scope_started: 1'u8 else: 0'u8)
   stream.write(snapshot.mappings.len.uint32)
   for pair in snapshot.mappings:
-    stream.write(cast[int64](pair[0]))
+    stream.write_key(pair[0])
     stream.write(pair[1])
 
   stream.write(snapshot.type_expectation_ids.len.uint32)
@@ -88,7 +96,7 @@ proc readScopeTrackerSnapshot(stream: Stream): ScopeTrackerSnapshot =
 
   let map_len = stream.readUint32()
   for _ in 0..<map_len:
-    let key = cast[Key](stream.readInt64())
+    let key = stream.read_key()
     let value = stream.readInt16()
     result.mappings.add((key, value))
 
@@ -319,7 +327,7 @@ proc write_value(stream: Stream, v: Value) =
     let entries = map_data(v)
     stream.write(entries.len.uint32)
     for pair in entries.pairs():
-      stream.write(cast[int64](pair[0]))
+      stream.write_key(pair[0])
       write_value(stream, pair[1])
   of VkGene:
     if v.gene == nil:
@@ -330,7 +338,7 @@ proc write_value(stream: Stream, v: Value) =
       write_value(stream, v.gene.`type`)
       stream.write(v.gene.props.len.uint32)
       for pair in v.gene.props.pairs():
-        stream.write(cast[int64](pair[0]))
+        stream.write_key(pair[0])
         write_value(stream, pair[1])
       stream.write(v.gene.children.len.uint32)
       for child in v.gene.children:
@@ -387,14 +395,14 @@ proc read_value(stream: Stream): Value =
     let count = stream.readUint32()
     result = new_map_value()
     for _ in 0..<count:
-      let key = cast[Key](stream.readInt64())
+      let key = stream.read_key()
       map_data(result)[key] = read_value(stream)
   of VkGene:
     let gene_type = read_value(stream)
     var g = new_gene(gene_type)
     let prop_count = stream.readUint32()
     for _ in 0..<prop_count:
-      let key = cast[Key](stream.readInt64())
+      let key = stream.read_key()
       g.props[key] = read_value(stream)
     let child_count = stream.readUint32()
     for _ in 0..<child_count:
