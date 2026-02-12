@@ -1,4 +1,4 @@
-import unittest, os, strutils, tables
+import unittest, os, strutils, tables, osproc
 
 import gene/parser
 import gene/compiler
@@ -113,6 +113,35 @@ suite "GIR CLI":
     let nodes = parser.read_all(code)
     for node in nodes:
       checker.type_check_node(node)
+
+  test "cached GIR keeps symbol-key maps valid across process runs":
+    let source_path = absolutePath("tmp/gir_symbol_key_regression.gene")
+    createDir(parentDir(source_path))
+
+    var lines: seq[string] = @["(var m {"]
+    for i in 0..520:
+      lines.add("  ^sym_" & $i & " " & $i)
+    lines.add("})")
+    writeFile(source_path, lines.join("\n"))
+
+    let gir_path = gir.get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let gene_bin = absolutePath("bin/gene")
+    let first = execCmdEx(gene_bin & " run " & source_path)
+    check first.exitCode == 0
+    check fileExists(gir_path)
+
+    let second = execCmdEx(gene_bin & " run " & source_path)
+    check second.exitCode == 0
+    check not second.output.contains("IndexDefect")
 
   test "gir preserves type descriptor table":
     let code = "(var x 1) x"
