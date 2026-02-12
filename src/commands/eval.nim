@@ -20,6 +20,7 @@ type
     compile: bool
     repl_on_error: bool
     type_check: bool
+    native_tier: NativeCompileTier
     native_code: bool
     code: string
 
@@ -31,7 +32,8 @@ proc init*(manager: CommandManager) =
   manager.add_help("  -d, --debug: enable debug output")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
-  manager.add_help("  --native-code: enable native code execution when available")
+  manager.add_help("  --native-code: enable native code execution (alias for --native-tier guarded)")
+  manager.add_help("  --native-tier <never|guarded|fully-typed>: set native compilation policy")
   manager.add_help("  --csv: print result as CSV")
   manager.add_help("  --gene: print result as gene expression")
   manager.add_help("  --line: evaluate as a single line")
@@ -50,8 +52,19 @@ let long_no_val = @[
   "native-code",
 ]
 
+proc parse_native_tier(value: string): NativeCompileTier =
+  case value.toLowerAscii()
+  of "never":
+    NctNever
+  of "guarded":
+    NctGuarded
+  of "fully-typed", "fully_typed", "fullytyped":
+    NctFullyTyped
+  else:
+    raise newException(ValueError, "Unknown native tier: " & value)
+
 proc parse_options(args: seq[string]): Options =
-  result = Options(type_check: true)
+  result = Options(type_check: true, native_tier: NctNever)
   var code_parts: seq[string] = @[]
   
   # Workaround: get_opt reads from command line when given empty args
@@ -84,6 +97,14 @@ proc parse_options(args: seq[string]): Options =
         result.type_check = false
       of "native-code":
         result.native_code = true
+        if result.native_tier == NctNever:
+          result.native_tier = NctGuarded
+      of "native-tier":
+        try:
+          result.native_tier = parse_native_tier(value)
+          result.native_code = result.native_tier != NctNever
+        except ValueError as e:
+          echo e.msg
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -140,7 +161,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return failure("No code provided to evaluate")
   
   init_app_and_vm()
-  VM.native_code = options.native_code
+  VM.native_tier = options.native_tier
+  VM.native_code = options.native_tier != NctNever
   VM.type_check = options.type_check
   init_stdlib()
   set_program_args("<eval>", @[])

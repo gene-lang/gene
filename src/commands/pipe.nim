@@ -17,6 +17,7 @@ type
     quote_str: bool
     filter: bool
     type_check: bool
+    native_tier: NativeCompileTier
     native_code: bool
     code: string
 
@@ -32,7 +33,8 @@ proc init*(manager: CommandManager) =
   manager.add_help("  --quote-str: output strings with quotes")
   manager.add_help("  --filter: treat code as predicate, output $line when true")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
-  manager.add_help("  --native-code: enable native code execution when available")
+  manager.add_help("  --native-code: enable native code execution (alias for --native-tier guarded)")
+  manager.add_help("  --native-tier <never|guarded|fully-typed>: set native compilation policy")
 
 let short_no_val = {'d', 'h'}
 let long_no_val = @[
@@ -47,8 +49,19 @@ let long_no_val = @[
   "native-code",
 ]
 
+proc parse_native_tier(value: string): NativeCompileTier =
+  case value.toLowerAscii()
+  of "never":
+    NctNever
+  of "guarded":
+    NctGuarded
+  of "fully-typed", "fully_typed", "fullytyped":
+    NctFullyTyped
+  else:
+    raise newException(ValueError, "Unknown native tier: " & value)
+
 proc parse_options(args: seq[string]): PipeOptions =
-  result = PipeOptions(type_check: true)
+  result = PipeOptions(type_check: true, native_tier: NctNever)
   var code_parts: seq[string] = @[]
 
   if args.len == 0:
@@ -78,6 +91,14 @@ proc parse_options(args: seq[string]): PipeOptions =
         result.type_check = false
       of "native-code":
         result.native_code = true
+        if result.native_tier == NctNever:
+          result.native_tier = NctGuarded
+      of "native-tier":
+        try:
+          result.native_tier = parse_native_tier(value)
+          result.native_code = result.native_tier != NctNever
+        except ValueError as e:
+          echo e.msg
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -117,7 +138,8 @@ Options:
   --quote-str             Output strings with quotes (for Gene-parseable output)
   --filter                Treat code as predicate; output $line when true
   --no-type-check         Disable static type checking (alias: --no-typecheck)
-  --native-code           Enable native code execution when available
+  --native-code           Enable native code execution (alias for --native-tier guarded)
+  --native-tier <tier>    Native tier: never | guarded | fully-typed
 
 Examples:
   # Output lines as-is
@@ -193,7 +215,8 @@ Notes:
 
   # Initialize VM
   init_app_and_vm()
-  VM.native_code = options.native_code
+  VM.native_tier = options.native_tier
+  VM.native_code = options.native_tier != NctNever
   VM.type_check = options.type_check
   init_stdlib()
   set_program_args("<pipe>", @[])
