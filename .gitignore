@@ -53,3 +53,6 @@ lua/
 wren/
 nimble.develop
 nimble.paths
+
+.cache/
+.nimble_sandbox/

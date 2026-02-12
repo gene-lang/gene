@@ -21,7 +21,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("lsp: Start Language Server Protocol server")
 
 let short_no_val = {'t', 's', 'h'}
-let long_no_val = @["trace", "stdio", "help"]
+let long_no_val = @["trace", "stdio", "tcp", "help"]
 
 proc parse_options(args: seq[string]): LspOptions =
   result = LspOptions(
@@ -29,7 +29,7 @@ proc parse_options(args: seq[string]): LspOptions =
     host: "localhost",
     workspace: "",
     trace: false,
-    stdio: false,
+    stdio: true,
     help: false
   )
 
@@ -53,6 +53,8 @@ proc parse_options(args: seq[string]): LspOptions =
         result.trace = true
       of "s", "stdio":
         result.stdio = true
+      of "tcp":
+        result.stdio = false
       of "h", "help":
         result.help = true
       else:
@@ -88,7 +90,7 @@ proc run_lsp_server(options: LspOptions): CommandResult =
       echo ""
       waitFor start_lsp_server(config)
 
-    return success("LSP server terminated normally")
+    return success("")
 
   except CatchableError as e:
     return failure("Failed to start LSP server: " & e.msg)
@@ -102,7 +104,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
 Usage: gene lsp [options]
 
 Options:
-  -s, --stdio           Use stdio for LSP communication (for VS Code)
+  -s, --stdio           Use stdio for LSP communication (default)
+  --tcp                 Use TCP server mode instead of stdio
   -p, --port <port>     Server port for TCP mode (default: 8080)
   --host <host>         Server host for TCP mode (default: localhost)
   -w, --workspace <dir> Workspace directory
@@ -117,8 +120,7 @@ The LSP server provides language services for Gene code including:
 - Hover information
 - Symbol search
 
-For VS Code, the extension automatically uses --stdio mode.
-For other editors, connect to localhost:8080 (or specified host:port).
+Most editors expect stdio mode. Use --tcp only for manual debugging.
 """)
 
   case cmd:

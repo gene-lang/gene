@@ -11,13 +11,19 @@ type
     location*: Location
     isDefinition*: bool  # True if this is the definition, false if usage
 
+  TypedVariableInfo* = object
+    name*: string
+    typeText*: string
+    location*: Location
+
   ParsedDocument* = ref object
     uri*: string
     version*: int
     content*: string
     ast*: seq[Value]  # Parsed AST nodes
     symbols*: seq[SymbolInfo]  # Extracted symbols (definitions)
-    references*: seq[SymbolReference]  # All symbol references (definitions + usages)
+    references*: seq[SymbolReference]  # Symbol definition references
+    typedVariables*: seq[TypedVariableInfo]  # Variables with explicit type annotations
     diagnostics*: seq[Diagnostic]  # Parse errors and warnings
     parseError*: bool  # Whether parsing failed
 
@@ -61,11 +67,370 @@ proc toJson*(diag: Diagnostic): JsonNode =
   if diag.code.len > 0:
     result["code"] = %diag.code
 
-# Position tracking removed - LSP features will work without exact positions
-# Symbols will be tracked by name only, not by exact line/column
+proc contentLines(content: string): seq[string] =
+  result = content.splitLines()
+  if result.len == 0:
+    result = @[""]
 
-# Forward declaration
-proc extractSymbols*(doc: ParsedDocument)
+proc rangeContains(rng: Range, line: int, character: int): bool =
+  if line < rng.start.line or line > rng.finish.line:
+    return false
+
+  if rng.start.line == rng.finish.line:
+    return line == rng.start.line and character >= rng.start.character and character < rng.finish.character
+
+  if line == rng.start.line:
+    return character >= rng.start.character
+  if line == rng.finish.line:
+    return character < rng.finish.character
+  return true
+
+proc isDigitAscii(ch: char): bool {.inline.} =
+  ch >= '0' and ch <= '9'
+
+proc readNumber(message: string, index: var int): int =
+  let start = index
+  while index < message.len and isDigitAscii(message[index]):
+    index.inc()
+
+  if index == start:
+    return -1
+
+  try:
+    result = parseInt(message[start ..< index])
+  except ValueError:
+    result = -1
+
+proc extractLineCol(message: string): tuple[found: bool, line: int, col: int] =
+  # Pattern 1: "(line, col)"
+  for i in 0 ..< message.len:
+    if message[i] != '(':
+      continue
+
+    var j = i + 1
+    while j < message.len and message[j].isSpaceAscii():
+      j.inc()
+
+    let line = readNumber(message, j)
+    if line < 0:
+      continue
+
+    while j < message.len and message[j].isSpaceAscii():
+      j.inc()
+    if j >= message.len or message[j] != ',':
+      continue
+    j.inc()
+    while j < message.len and message[j].isSpaceAscii():
+      j.inc()
+
+    let col = readNumber(message, j)
+    if col < 0:
+      continue
+
+    return (true, line, col)
+
+  # Pattern 2: "...line:col..." (take right-most pair)
+  var foundColon = false
+  var bestLine = 0
+  var bestCol = 0
+  var i = 0
+  while i < message.len:
+    if not isDigitAscii(message[i]):
+      i.inc()
+      continue
+
+    var j = i
+    let line = readNumber(message, j)
+    if line >= 0 and j < message.len and message[j] == ':':
+      j.inc()
+      let col = readNumber(message, j)
+      if col >= 0:
+        foundColon = true
+        bestLine = line
+        bestCol = col
+        i = j
+        continue
+
+    i.inc()
+
+  if foundColon:
+    return (true, bestLine, bestCol)
+
+  # Pattern 3: trailing line number only, e.g. "... <input> 12"
+  var endPos = message.len - 1
+  while endPos >= 0 and message[endPos].isSpaceAscii():
+    endPos.dec()
+
+  if endPos >= 0:
+    var startPos = endPos
+    while startPos >= 0 and isDigitAscii(message[startPos]):
+      startPos.dec()
+
+    if startPos < endPos:
+      try:
+        let line = parseInt(message[startPos + 1 .. endPos])
+        return (true, line, 1)
+      except ValueError:
+        discard
+
+  (false, 0, 0)
+
+proc rangeFromLineCol(lines: seq[string], lineOneBased: int, colOneBased: int): Range =
+  if lines.len == 0:
+    return newRange(0, 0, 0, 0)
+
+  var line = max(1, lineOneBased) - 1
+  if line >= lines.len:
+    line = lines.len - 1
+
+  let lineText = lines[line]
+  if lineText.len == 0:
+    return newRange(line, 0, line, 0)
+
+  var col = max(1, colOneBased) - 1
+  if col >= lineText.len:
+    col = lineText.len - 1
+
+  newRange(line, col, line, min(lineText.len, col + 1))
+
+proc fallbackErrorRange(lines: seq[string]): Range =
+  if lines.len == 0:
+    return newRange(0, 0, 0, 0)
+
+  let line = lines.len - 1
+  let lineLen = lines[line].len
+  if lineLen == 0:
+    return newRange(line, 0, line, 0)
+
+  newRange(line, lineLen - 1, line, lineLen)
+
+proc parseErrorRange(content: string, message: string): Range =
+  let lines = contentLines(content)
+  let (found, line, col) = extractLineCol(message)
+  if found:
+    return rangeFromLineCol(lines, line, col)
+  fallbackErrorRange(lines)
+
+proc isSymbolChar(ch: char): bool {.inline.} =
+  ch notin {' ', '\t', '\r', '\n', '(', ')', '[', ']', '{', '}', '"', '\'', ',', ';'}
+
+proc trimVarName(raw: string): string =
+  if raw.endsWith(":") and raw.len > 1:
+    return raw[0 .. ^2]
+  raw
+
+proc tokenAtPosition(doc: ParsedDocument, line: int, character: int): string =
+  let lines = contentLines(doc.content)
+  if line < 0 or line >= lines.len:
+    return ""
+
+  let lineText = lines[line]
+  if lineText.len == 0:
+    return ""
+
+  var idx = character
+  if idx >= lineText.len:
+    idx = lineText.len - 1
+  if idx < 0:
+    idx = 0
+
+  if not isSymbolChar(lineText[idx]):
+    if idx > 0 and isSymbolChar(lineText[idx - 1]):
+      idx.dec()
+    else:
+      return ""
+
+  var left = idx
+  var right = idx
+  while left > 0 and isSymbolChar(lineText[left - 1]):
+    left.dec()
+  while right + 1 < lineText.len and isSymbolChar(lineText[right + 1]):
+    right.inc()
+
+  result = lineText[left .. right]
+  if result.startsWith("^") and result.len > 1:
+    result = result[1 .. ^1]
+  result = trimVarName(result)
+
+proc makeLocation(uri: string, rng: Range): Location =
+  Location(uri: uri, range: rng)
+
+proc findTokenRange(lines: seq[string], token: string, preferredLineOneBased: int, preferredColOneBased: int,
+                   highlightLen: int): Range =
+  if lines.len == 0:
+    return newRange(0, 0, 0, 0)
+
+  if token.len == 0:
+    return rangeFromLineCol(lines, preferredLineOneBased, preferredColOneBased)
+
+  let highlightLength = max(1, highlightLen)
+  let preferredLine = max(0, min(lines.len - 1, preferredLineOneBased - 1))
+  let preferredCol = max(0, preferredColOneBased - 1)
+  let offsets = @[0, 1, -1, 2, -2, 3, -3]
+
+  for offset in offsets:
+    let lineIdx = preferredLine + offset
+    if lineIdx < 0 or lineIdx >= lines.len:
+      continue
+
+    let lineText = lines[lineIdx]
+    if lineText.len == 0:
+      continue
+
+    var idx = lineText.find(token)
+    if lineIdx == preferredLine and preferredCol < lineText.len:
+      let preferredIdx = lineText.find(token, preferredCol)
+      if preferredIdx >= 0:
+        idx = preferredIdx
+    if idx < 0:
+      continue
+
+    let endChar = min(lineText.len, idx + highlightLength)
+    return newRange(lineIdx, idx, lineIdx, endChar)
+
+  for lineIdx, lineText in lines:
+    let idx = lineText.find(token)
+    if idx >= 0:
+      let endChar = min(lineText.len, idx + highlightLength)
+      return newRange(lineIdx, idx, lineIdx, endChar)
+
+  rangeFromLineCol(lines, preferredLineOneBased, preferredColOneBased)
+
+proc valueDisplay(v: Value): string =
+  $v
+
+proc symbolName(v: Value): string =
+  case v.kind:
+  of VkSymbol:
+    v.str
+  of VkComplexSymbol:
+    v.ref.csymbol.join("/")
+  else:
+    ""
+
+proc extractSymbolsFromValue(value: Value, doc: ParsedDocument, lines: seq[string], depth: int = 0)
+
+proc addDefinition(doc: ParsedDocument, name: string, kind: SymbolKind, details: string, rng: Range) =
+  doc.symbols.add(SymbolInfo(
+    name: name,
+    kind: kind,
+    location: makeLocation(doc.uri, rng),
+    details: details
+  ))
+  doc.references.add(SymbolReference(
+    name: name,
+    location: makeLocation(doc.uri, rng),
+    isDefinition: true
+  ))
+
+proc extractSymbolsFromValue(value: Value, doc: ParsedDocument, lines: seq[string], depth: int = 0) =
+  if value.is_nil or depth > 20:
+    return
+
+  case value.kind:
+  of VkGene:
+    let gene = value.gene
+    if gene == nil:
+      return
+
+    if gene.`type`.kind == VkSymbol:
+      let formName = gene.`type`.str
+
+      case formName:
+      of "var", "let", "const":
+        if gene.children.len >= 1:
+          let nameVal = gene.children[0]
+          if nameVal.kind == VkSymbol:
+            let rawName = nameVal.str
+            let name = trimVarName(rawName)
+            let hasAnnotation = rawName.endsWith(":") and gene.children.len >= 2
+            let typeText = if hasAnnotation: valueDisplay(gene.children[1]) else: ""
+            let searchToken = if hasAnnotation: name & ":" else: name
+            let rng = findTokenRange(
+              lines,
+              searchToken,
+              if gene.trace != nil: gene.trace.line else: 1,
+              if gene.trace != nil: gene.trace.column else: 1,
+              max(1, name.len)
+            )
+            let details = if typeText.len > 0: "type: " & typeText else: "variable"
+            addDefinition(doc, name, skVariable, details, rng)
+            if typeText.len > 0:
+              doc.typedVariables.add(TypedVariableInfo(
+                name: name,
+                typeText: typeText,
+                location: makeLocation(doc.uri, rng)
+              ))
+
+      of "fn":
+        if gene.children.len >= 2:
+          let name = symbolName(gene.children[0])
+          if name.len > 0:
+            var signature = name
+            if gene.children[1].kind == VkArray:
+              signature &= " ["
+              let args = array_data(gene.children[1])
+              for i, arg in args:
+                if i > 0:
+                  signature &= " "
+                signature &= valueDisplay(arg)
+              signature &= "]"
+            let rng = findTokenRange(
+              lines,
+              name,
+              if gene.trace != nil: gene.trace.line else: 1,
+              if gene.trace != nil: gene.trace.column else: 1,
+              max(1, name.len)
+            )
+            addDefinition(doc, name, skFunction, signature, rng)
+
+      of "class":
+        if gene.children.len >= 1:
+          let name = symbolName(gene.children[0])
+          if name.len > 0:
+            let rng = findTokenRange(
+              lines,
+              name,
+              if gene.trace != nil: gene.trace.line else: 1,
+              if gene.trace != nil: gene.trace.column else: 1,
+              max(1, name.len)
+            )
+            addDefinition(doc, name, skClass, "class", rng)
+
+      of "module", "ns", "namespace":
+        if gene.children.len >= 1:
+          let name = symbolName(gene.children[0])
+          if name.len > 0:
+            let rng = findTokenRange(
+              lines,
+              name,
+              if gene.trace != nil: gene.trace.line else: 1,
+              if gene.trace != nil: gene.trace.column else: 1,
+              max(1, name.len)
+            )
+            addDefinition(doc, name, skModule, "module", rng)
+      else:
+        discard
+
+    for child in gene.children:
+      extractSymbolsFromValue(child, doc, lines, depth + 1)
+
+  of VkArray:
+    for elem in array_data(value):
+      extractSymbolsFromValue(elem, doc, lines, depth + 1)
+
+  else:
+    discard
+
+proc extractSymbols*(doc: ParsedDocument) =
+  ## Extract symbols and typed variables from parsed AST
+  doc.symbols = @[]
+  doc.references = @[]
+  doc.typedVariables = @[]
+
+  let lines = contentLines(doc.content)
+  for node in doc.ast:
+    extractSymbolsFromValue(node, doc, lines)
 
 proc parseDocument*(uri: string, content: string, version: int): ParsedDocument =
   ## Parse a Gene document and extract symbols
@@ -76,235 +441,45 @@ proc parseDocument*(uri: string, content: string, version: int): ParsedDocument 
     ast: @[],
     symbols: @[],
     references: @[],
+    typedVariables: @[],
     diagnostics: @[],
     parseError: false
   )
 
-  # Try to parse the document
   try:
     var parser = new_parser()
     result.ast = parser.read_all(content)
-
-    # If parsing succeeded, extract symbols
     extractSymbols(result)
-    
-  except ParseError as e:
-    # Parse error - create diagnostic
-    result.parseError = true
-    let diag = newDiagnostic(
-      newRange(0, 0, 0, 0),  # TODO: Get actual position from error
-      dsError,
-      "Parse error: " & e.msg
-    )
-    result.diagnostics.add(diag)
 
   except ParseEofError as e:
-    # EOF error - might be incomplete document
     result.parseError = true
-    let diag = newDiagnostic(
-      newRange(0, 0, 0, 0),
+    result.diagnostics.add(newDiagnostic(
+      parseErrorRange(content, e.msg),
       dsError,
       "Unexpected end of file: " & e.msg
-    )
-    result.diagnostics.add(diag)
-
-  except CatchableError as e:
-    # Other errors
-    result.parseError = true
-    let diag = newDiagnostic(
-      newRange(0, 0, 0, 0),
-      dsError,
-      "Error parsing document: " & e.msg
-    )
-    result.diagnostics.add(diag)
-
-proc extractSymbolsFromValue(value: Value, uri: string, symbols: var seq[SymbolInfo], depth: int = 0) =
-  ## Recursively extract symbols from a Value
-  if value.is_nil or depth > 10:  # Prevent infinite recursion
-    return
-
-  case value.kind:
-  of VkGene:
-    let gene = value.gene
-
-    if gene.type.kind == VkSymbol:
-      let type_name = gene.type.str
-
-      case type_name:
-      of "var", "let", "const":
-        # Variable declaration: (var name value)
-        if gene.children.len >= 1:
-          let name_val = gene.children[0]
-          if name_val.kind == VkSymbol:
-            symbols.add(SymbolInfo(
-              name: name_val.str,
-              kind: skVariable,
-              location: Location(
-                uri: uri,
-                range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
-                )
-              ),
-              details: "variable"
-            ))
-
-      of "fn":
-        # Function declaration: (fn name [args] body...)
-        if gene.children.len >= 2:
-          let name_val = gene.children[0]
-          if name_val.kind == VkSymbol:
-            var signature = name_val.str & " "
-            # Try to get argument list
-            if gene.children.len >= 2 and gene.children[1].kind == VkArray:
-              signature &= "["
-              let args = array_data(gene.children[1])
-              for i, arg in args:
-                if i > 0:
-                  signature &= " "
-                signature &= $arg
-              signature &= "]"
-
-            symbols.add(SymbolInfo(
-              name: name_val.str,
-              kind: skFunction,
-              location: Location(
-                uri: uri,
-                range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
-                )
-              ),
-              details: signature
-            ))
-
-      of "class":
-        # Class declaration: (class Name ...)
-        if gene.children.len >= 1:
-          let name_val = gene.children[0]
-          if name_val.kind == VkSymbol:
-            symbols.add(SymbolInfo(
-              name: name_val.str,
-              kind: skClass,
-              location: Location(
-                uri: uri,
-                range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
-                )
-              ),
-              details: "class"
-            ))
-
-            # Extract methods from class body
-            for i in 1..<gene.children.len:
-              extractSymbolsFromValue(gene.children[i], uri, symbols, depth + 1)
-
-      of "module", "ns", "namespace":
-        # Module/namespace declaration
-        if gene.children.len >= 1:
-          let name_val = gene.children[0]
-          if name_val.kind == VkSymbol:
-            symbols.add(SymbolInfo(
-              name: name_val.str,
-              kind: skModule,
-              location: Location(
-                uri: uri,
-                range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
-                )
-              ),
-              details: "module"
-            ))
-      else:
-        # Recursively process children for other gene types
-        for child in gene.children:
-          extractSymbolsFromValue(child, uri, symbols, depth + 1)
-
-  of VkArray:
-    # Process array elements
-    for elem in array_data(value):
-      extractSymbolsFromValue(elem, uri, symbols, depth + 1)
-
-  else:
-    # Other value types don't contain symbols
-    discard
-
-proc extractReferencesFromValue(value: Value, uri: string, references: var seq[SymbolReference], depth: int = 0) =
-  ## Recursively extract all symbol references (definitions and usages)
-  if value.is_nil or depth > 10:
-    return
-
-  case value.kind:
-  of VkSymbol:
-    # This is a symbol reference (could be usage or definition)
-    # Without position tracking, we just track by name
-    references.add(SymbolReference(
-      name: value.str,
-      location: Location(
-        uri: uri,
-        range: Range(
-          start: Position(line: 0, character: 0),
-          finish: Position(line: 0, character: 0)
-        )
-      ),
-      isDefinition: false  # Will be marked as definition later if it is one
     ))
 
-  of VkGene:
-    let gene = value.gene
-    if gene.type.kind == VkSymbol:
-      let type_name = gene.type.str
+  except ParseError as e:
+    result.parseError = true
+    result.diagnostics.add(newDiagnostic(
+      parseErrorRange(content, e.msg),
+      dsError,
+      "Parse error: " & e.msg
+    ))
 
-      # Mark definition references
-      case type_name:
-      of "var", "let", "const", "fn", "class", "module", "ns", "namespace":
-        if gene.children.len >= 1:
-          let name_val = gene.children[0]
-          if name_val.kind == VkSymbol:
-            # This is a definition
-            references.add(SymbolReference(
-              name: name_val.str,
-              location: Location(
-                uri: uri,
-                range: Range(
-                  start: Position(line: 0, character: 0),
-                  finish: Position(line: 0, character: 0)
-                )
-              ),
-              isDefinition: true
-            ))
-      else:
-        discard
-
-    # Recursively process children
-    for child in gene.children:
-      extractReferencesFromValue(child, uri, references, depth + 1)
-
-  of VkArray:
-    for elem in array_data(value):
-      extractReferencesFromValue(elem, uri, references, depth + 1)
-
-  else:
-    discard
-
-proc extractSymbols*(doc: ParsedDocument) =
-  ## Extract symbols from parsed AST
-  doc.symbols = @[]
-  for node in doc.ast:
-    extractSymbolsFromValue(node, doc.uri, doc.symbols)
-
-  # Also extract all references
-  doc.references = @[]
-  for node in doc.ast:
-    extractReferencesFromValue(node, doc.uri, doc.references)
+  except CatchableError as e:
+    result.parseError = true
+    result.diagnostics.add(newDiagnostic(
+      fallbackErrorRange(contentLines(content)),
+      dsError,
+      "Error parsing document: " & e.msg
+    ))
 
 proc getDocument*(uri: string): ParsedDocument =
   ## Get a document from cache
   if document_cache.hasKey(uri):
     return document_cache[uri]
-  return nil
+  nil
 
 proc updateDocument*(uri: string, content: string, version: int): ParsedDocument =
   ## Update or create a document in the cache
@@ -321,24 +496,23 @@ proc getSymbolsInDocument*(uri: string): seq[SymbolInfo] =
   let doc = getDocument(uri)
   if doc != nil:
     return doc.symbols
-  return @[]
+  @[]
 
 proc getAllSymbols*(): seq[SymbolInfo] =
   ## Get all symbols from all cached documents
   result = @[]
-  for uri, doc in document_cache:
+  for _, doc in document_cache:
     for symbol in doc.symbols:
       result.add(symbol)
 
 proc searchSymbols*(query: string): seq[SymbolInfo] =
   ## Search for symbols matching the query across all documents
   result = @[]
-  let query_lower = query.toLowerAscii()
+  let queryLower = query.toLowerAscii()
 
-  for uri, doc in document_cache:
+  for _, doc in document_cache:
     for symbol in doc.symbols:
-      # Simple substring match (case-insensitive)
-      if query_lower.len == 0 or symbol.name.toLowerAscii().contains(query_lower):
+      if queryLower.len == 0 or symbol.name.toLowerAscii().contains(queryLower):
         result.add(symbol)
 
 proc getDiagnostics*(uri: string): seq[Diagnostic] =
@@ -346,7 +520,7 @@ proc getDiagnostics*(uri: string): seq[Diagnostic] =
   let doc = getDocument(uri)
   if doc != nil:
     return doc.diagnostics
-  return @[]
+  @[]
 
 proc findSymbolAtPosition*(uri: string, line: int, character: int): SymbolInfo =
   ## Find symbol at a specific position
@@ -354,55 +528,86 @@ proc findSymbolAtPosition*(uri: string, line: int, character: int): SymbolInfo =
   if doc == nil:
     return nil
 
-  # Search through symbols to find one at this position
   for symbol in doc.symbols:
-    let rng = symbol.location.range
-    # Check if position is within symbol range
-    if line == rng.start.line:
-      if character >= rng.start.character and character <= rng.finish.character:
-        return symbol
-    elif line > rng.start.line and line < rng.finish.line:
-      # Multi-line symbol (rare but possible)
+    if rangeContains(symbol.location.range, line, character):
       return symbol
 
-  return nil
+  let token = tokenAtPosition(doc, line, character)
+  if token.len == 0:
+    return nil
+  for symbol in doc.symbols:
+    if symbol.name == token:
+      return symbol
+
+  nil
+
+proc isIdentifierChar(ch: char): bool {.inline.} =
+  ch.isAlphaNumeric() or ch in {'_', '$', '?', '!', ':'}
+
+proc sameRange(a: Range, b: Range): bool =
+  a.start.line == b.start.line and
+  a.start.character == b.start.character and
+  a.finish.line == b.finish.line and
+  a.finish.character == b.finish.character
 
 proc findReferencesAtPosition*(uri: string, line: int, character: int, includeDeclaration: bool = true): seq[Location] =
-  ## Find all references to the symbol at the given position
+  ## Find all references to the symbol at the given position (text-based fallback)
   result = @[]
 
   let doc = getDocument(uri)
   if doc == nil:
     return
 
-  # First, find what symbol is at this position
-  var target_name = ""
-  for reference in doc.references:
-    let rng = reference.location.range
-    if line == rng.start.line:
-      if character >= rng.start.character and character <= rng.finish.character:
-        target_name = reference.name
-        break
+  var targetName = ""
+  let symbol = findSymbolAtPosition(uri, line, character)
+  if symbol != nil:
+    targetName = symbol.name
+  else:
+    targetName = tokenAtPosition(doc, line, character)
 
-  if target_name.len == 0:
+  if targetName.len == 0:
     return
 
-  # Now find all references to this symbol
-  for reference in doc.references:
-    if reference.name == target_name:
-      # Include or exclude declaration based on parameter
-      if includeDeclaration or not reference.isDefinition:
-        result.add(reference.location)
+  let lines = contentLines(doc.content)
+  for lineIdx, lineText in lines:
+    var startPos = 0
+    while startPos < lineText.len:
+      let idx = lineText.find(targetName, startPos)
+      if idx < 0:
+        break
+
+      let leftOk = idx == 0 or not isIdentifierChar(lineText[idx - 1])
+      let rightPos = idx + targetName.len
+      let rightOk = rightPos >= lineText.len or not isIdentifierChar(lineText[rightPos])
+
+      if leftOk and rightOk:
+        let rng = newRange(lineIdx, idx, lineIdx, rightPos)
+
+        var isDecl = false
+        for defRef in doc.references:
+          if defRef.name == targetName and sameRange(defRef.location.range, rng):
+            isDecl = true
+            break
+
+        if includeDeclaration or not isDecl:
+          result.add(makeLocation(uri, rng))
+
+      startPos = idx + max(1, targetName.len)
 
 proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[CompletionItem] =
   ## Get completion items at a specific position
   result = @[]
 
-  # Add Gene keywords
-  let keywords = @["var", "fn", "if", "do", "class", "new", "import", "export",
-                   "try", "catch", "throw", "async", "await", "for", "while",
-                   "return", "break", "continue", "let", "const", "module",
-                   "ns", "namespace", "comptime"]
+  # Keep parameters for future context-sensitive completion.
+  discard line
+  discard character
+
+  let keywords = @[
+    "var", "fn", "if", "do", "class", "new", "import", "export",
+    "try", "catch", "throw", "async", "await", "for", "while",
+    "return", "break", "continue", "let", "const", "module",
+    "ns", "namespace", "comptime"
+  ]
 
   for keyword in keywords:
     result.add(CompletionItem(
@@ -412,10 +617,9 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
       documentation: "",
       insertText: "",
       insertTextFormat: "",
-      sortText: "0_" & keyword  # Sort keywords first
+      sortText: "0_" & keyword
     ))
 
-  # Add symbols from the current document
   let doc = getDocument(uri)
   if doc != nil:
     for symbol in doc.symbols:
@@ -430,7 +634,7 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
       of skModule:
         kind = ckModule
       of skConstant:
-        kind = ckVariable  # Use variable kind for constants
+        kind = ckVariable
       of skProperty:
         kind = ckProperty
 
@@ -441,72 +645,55 @@ proc getCompletionsAtPosition*(uri: string, line: int, character: int): seq[Comp
         documentation: "",
         insertText: "",
         insertTextFormat: "",
-        sortText: "1_" & symbol.name  # Sort symbols after keywords
+        sortText: "1_" & symbol.name
       ))
 
 proc getHoverInfo*(uri: string, line: int, character: int): tuple[found: bool, content: string, kind: string] =
   ## Get hover information at a specific position
   result = (found: false, content: "", kind: "markdown")
 
-  # Try to find symbol at cursor position
+  let doc = getDocument(uri)
+  if doc == nil:
+    return
+
+  for tv in doc.typedVariables:
+    if rangeContains(tv.location.range, line, character):
+      let content = "### Variable: `" & tv.name & "`\n\n**Type:** `" & tv.typeText & "`"
+      return (true, content, "markdown")
+
+  let token = tokenAtPosition(doc, line, character)
+  if token.len > 0:
+    for tv in doc.typedVariables:
+      if tv.name == token:
+        let content = "### Variable: `" & tv.name & "`\n\n**Type:** `" & tv.typeText & "`"
+        return (true, content, "markdown")
+
   let symbol = findSymbolAtPosition(uri, line, character)
   if symbol != nil:
     var content = ""
     case symbol.kind:
     of skFunction:
-      content = "### Function: `" & symbol.name & "`\n\n"
+      content = "### Function: `" & symbol.name & "`"
       if symbol.details.len > 0:
-        content &= "**Signature:** `" & symbol.details & "`\n\n"
-      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+        content &= "\n\n**Signature:** `" & symbol.details & "`"
     of skVariable:
-      content = "### Variable: `" & symbol.name & "`\n\n"
-      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+      content = "### Variable: `" & symbol.name & "`"
+      if symbol.details.startsWith("type: "):
+        content &= "\n\n**Type:** `" & symbol.details[6 .. ^1] & "`"
     of skClass:
-      content = "### Class: `" & symbol.name & "`\n\n"
-      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+      content = "### Class: `" & symbol.name & "`"
     of skModule:
-      content = "### Module: `" & symbol.name & "`\n\n"
-      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+      content = "### Module: `" & symbol.name & "`"
     of skConstant:
-      content = "### Constant: `" & symbol.name & "`\n\n"
-      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+      content = "### Constant: `" & symbol.name & "`"
     of skProperty:
-      content = "### Property: `" & symbol.name & "`\n\n"
-      content &= "Defined at line " & $(symbol.location.range.start.line + 1)
+      content = "### Property: `" & symbol.name & "`"
+    return (true, content, "markdown")
 
-    result = (found: true, content: content, kind: "markdown")
-    return
-
-  # If no symbol found at position, show all symbols in document as fallback
-  let doc = getDocument(uri)
-  if doc != nil and doc.symbols.len > 0:
-    var content = "## Symbols in document\n\n"
-    for sym in doc.symbols:
-      case sym.kind:
-      of skFunction:
-        content &= "- **function** `" & sym.name & "`"
-        if sym.details.len > 0:
-          content &= " - " & sym.details
-        content &= "\n"
-      of skVariable:
-        content &= "- **variable** `" & sym.name & "`\n"
-      of skClass:
-        content &= "- **class** `" & sym.name & "`\n"
-      of skModule:
-        content &= "- **module** `" & sym.name & "`\n"
-      of skConstant:
-        content &= "- **constant** `" & sym.name & "`\n"
-      of skProperty:
-        content &= "- **property** `" & sym.name & "`\n"
-
-    result = (found: true, content: content, kind: "markdown")
-
-# Helper to convert URI to file path
 proc uriToPath*(uri: string): string =
   ## Convert file:// URI to file path
   if uri.startsWith("file://"):
     result = uri[7..^1]
-    # Handle Windows paths
     when defined(windows):
       if result.len > 2 and result[0] == '/' and result[2] == ':':
         result = result[1..^1]

@@ -4,7 +4,6 @@ import asyncdispatch, json, strutils, net, asyncnet, tables, os
 import ../types
 import ./types, ./document
 
-# LSP Server Configuration
 type
   LspConfig* = ref object
     port*: int
@@ -17,56 +16,48 @@ type
     socket*: AsyncSocket
     config*: LspConfig
     state*: LspState
-    clients*: seq[AsyncSocket]  # Connected clients
+    clients*: seq[AsyncSocket]
 
 var lsp_config*: LspConfig
 var lsp_server*: LspServer
-var stdio_mode*: bool = false  # Track if we're in stdio mode
+var stdio_mode*: bool = false
+var shutdown_requested = false
+var exit_requested = false
 
-# Helper functions for LSP responses
+proc trace_log(msg: string) =
+  if lsp_config == nil or not lsp_config.trace:
+    return
+
+  if stdio_mode:
+    stderr.writeLine(msg)
+    stderr.flushFile()
+  else:
+    echo msg
+
+proc sync_capabilities(): JsonNode =
+  %*{
+    "openClose": true,
+    "change": %*1,
+    "save": %*{
+      "includeText": true
+    }
+  }
+
 proc newNotification*(methodName: string, params: JsonNode): string =
   let notification = %*{
     "jsonrpc": "2.0",
     "method": methodName,
     "params": params
   }
-  return $notification
+  $notification
 
-# Helper to send notification to all clients
-proc sendNotificationToClients*(notification: string) {.async.} =
-  if stdio_mode:
-    # In stdio mode, write to stdout with Content-Length header
-    let content = $notification
-    let header = "Content-Length: " & $content.len & "\r\n\r\n"
-    stdout.write(header & content)
-    stdout.flushFile()
-  elif lsp_server != nil and lsp_server.clients.len > 0:
-    for client in lsp_server.clients:
-      try:
-        await client.send(notification & "\r\n")
-      except:
-        discard  # Client disconnected
-
-# Helper to send diagnostics for a document
-proc sendDiagnostics*(uri: string, diagnostics: seq[Diagnostic]) {.async.} =
-  var diagArray = newJArray()
-  for diag in diagnostics:
-    diagArray.add(toJson(diag))
-
-  let params = %*{
-    "uri": uri,
-    "diagnostics": diagArray
-  }
-
-  let notification = newNotification("textDocument/publishDiagnostics", params)
-  await sendNotificationToClients(notification)
 proc newResponse*(id: JsonNode, resultData: JsonNode): string =
   let response = %*{
     "jsonrpc": "2.0",
     "id": id,
     "result": resultData
   }
-  return $response
+  $response
 
 proc newErrorResponse*(id: JsonNode, code: int, message: string): string =
   let response = %*{
@@ -77,27 +68,64 @@ proc newErrorResponse*(id: JsonNode, code: int, message: string): string =
       "message": message
     }
   }
-  return $response
+  $response
 
-# Basic LSP Request Handlers
+proc sendNotificationToClients*(notification: string) {.async.} =
+  if stdio_mode:
+    let header = "Content-Length: " & $notification.len & "\r\n\r\n"
+    stdout.write(header & notification)
+    stdout.flushFile()
+  elif lsp_server != nil and lsp_server.clients.len > 0:
+    for client in lsp_server.clients:
+      try:
+        await client.send(notification & "\r\n")
+      except CatchableError:
+        discard
+
+proc sendDiagnostics*(uri: string, diagnostics: seq[Diagnostic]) {.async.} =
+  var diagArray = newJArray()
+  for diag in diagnostics:
+    diagArray.add(toJson(diag))
+
+  let params = %*{
+    "uri": uri,
+    "diagnostics": diagArray
+  }
+  await sendNotificationToClients(newNotification("textDocument/publishDiagnostics", params))
+
+proc parse_and_publish(uri: string, content: string, version: int) {.async.} =
+  let doc = updateDocument(uri, content, version)
+  trace_log("LSP Parsed " & $doc.ast.len & " forms for " & uri)
+  if doc.diagnostics.len > 0:
+    trace_log("LSP Diagnostics: " & $doc.diagnostics.len & " for " & uri)
+  await sendDiagnostics(uri, doc.diagnostics)
+
 proc handle_initialize*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
-    # Extract client capabilities
-    let client_info = params.getOrDefault("clientInfo")
-    let client_name = if client_info != nil: client_info.getOrDefault("name").getStr("Unknown") else: "Unknown"
+    shutdown_requested = false
+    exit_requested = false
 
-    # Define server capabilities
+    if params != nil:
+      if params.hasKey("rootUri") and params["rootUri"].kind == JString:
+        lsp_config.workspace = uriToPath(params["rootUri"].getStr())
+      elif params.hasKey("rootPath") and params["rootPath"].kind == JString:
+        lsp_config.workspace = params["rootPath"].getStr()
+
+    var clientName = "Unknown"
+    if params != nil and params.hasKey("clientInfo"):
+      let clientInfo = params["clientInfo"]
+      if clientInfo != nil and clientInfo.hasKey("name"):
+        clientName = clientInfo["name"].getStr("Unknown")
+
     let capabilities = %*{
-      "textDocumentSync": %*{
-        "openClose": true,
-        "change": %*1  # Full document sync
-      },
+      "textDocumentSync": sync_capabilities(),
       "completionProvider": %*{
-        "resolveProvider": true,
+        "resolveProvider": false,
         "triggerCharacters": @[":", "(", "["]
       },
       "definitionProvider": true,
       "hoverProvider": true,
+      "referencesProvider": true,
       "workspaceSymbolProvider": true
     }
 
@@ -105,114 +133,104 @@ proc handle_initialize*(id: JsonNode, params: JsonNode): Future[string] {.async.
       "capabilities": capabilities,
       "serverInfo": %*{
         "name": "gene-lsp",
-        "version": "0.1.0",
-        "geneVersion": "1.0.0"  # TODO: Get from gene version
+        "version": "0.2.0"
       }
     }
 
-    if lsp_config.trace:
-      echo "LSP Initialized with client: ", client_name
-
-    return newResponse(id, resultData)
+    trace_log("LSP initialized with client: " & clientName)
+    newResponse(id, resultData)
 
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Initialization failed: " & e.msg)
+    newErrorResponse(id, -32603, "Initialization failed: " & e.msg)
 
 proc handle_shutdown*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
-  if lsp_config.trace:
-    echo "LSP Shutdown requested"
+  discard params
+  shutdown_requested = true
+  trace_log("LSP shutdown requested")
+  newResponse(id, newJNull())
 
-  return newResponse(id, newJNull())
+proc handle_initialized_notification(params: JsonNode): Future[void] {.async.} =
+  discard params
+  trace_log("LSP initialized notification received")
 
-proc handle_text_document_did_open*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
+proc handle_exit_notification(): Future[void] {.async.} =
+  exit_requested = true
+  trace_log("LSP exit notification received")
+
+proc handle_text_document_did_open*(params: JsonNode): Future[void] {.async.} =
   try:
-    let text_doc = params["textDocument"]
-    let uri = text_doc["uri"].getStr()
-    let content = text_doc["text"].getStr()
-    let version = text_doc.getOrDefault("version").getInt(0)
+    let textDoc = params["textDocument"]
+    let uri = textDoc["uri"].getStr()
+    let content = textDoc["text"].getStr()
+    let version = textDoc.getOrDefault("version").getInt(0)
 
-    if lsp_config.trace:
-      echo "LSP Document opened: ", uri, " (version ", version, ")"
-
-    # Parse the document and cache it
-    let doc = updateDocument(uri, content, version)
-
-    if lsp_config.trace:
-      echo "  Parsed ", doc.ast.len, " top-level forms"
-      if doc.diagnostics.len > 0:
-        echo "  Found ", doc.diagnostics.len, " diagnostics"
-
-    # Send diagnostics to client
-    await sendDiagnostics(uri, doc.diagnostics)
-
-    return newResponse(id, newJNull())
+    trace_log("LSP didOpen: " & uri & " (version " & $version & ")")
+    await parse_and_publish(uri, content, version)
 
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Document open failed: " & e.msg)
+    trace_log("LSP didOpen error: " & e.msg)
 
-proc handle_text_document_did_close*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
+proc handle_text_document_did_change*(params: JsonNode): Future[void] {.async.} =
   try:
-    let text_doc = params["textDocument"]
-    let uri = text_doc["uri"].getStr()
+    let textDoc = params["textDocument"]
+    let uri = textDoc["uri"].getStr()
+    let version = textDoc.getOrDefault("version").getInt(0)
+    let contentChanges = params["contentChanges"]
 
-    if lsp_config.trace:
-      echo "LSP Document closed: ", uri
+    trace_log("LSP didChange: " & uri & " (version " & $version & ")")
 
-    # Remove document from cache
-    removeDocument(uri)
-
-    return newResponse(id, newJNull())
-
-  except CatchableError as e:
-    return newErrorResponse(id, -32603, "Document close failed: " & e.msg)
-
-proc handle_text_document_did_change*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
-  try:
-    let text_doc = params["textDocument"]
-    let uri = text_doc["uri"].getStr()
-    let version = text_doc.getOrDefault("version").getInt(0)
-    let content_changes = params["contentChanges"]
-
-    if lsp_config.trace:
-      echo "LSP Document changed: ", uri, " (version ", version, "), changes: ", content_changes.len
-
-    # For full document sync (change = 1), we get the full text
-    if content_changes.len > 0:
-      let change = content_changes[0]
+    if contentChanges.len > 0:
+      let change = contentChanges[0]
       if change.hasKey("text"):
-        let new_content = change["text"].getStr()
-
-        # Reparse the document
-        let doc = updateDocument(uri, new_content, version)
-
-        if lsp_config.trace:
-          echo "  Reparsed ", doc.ast.len, " top-level forms"
-          if doc.diagnostics.len > 0:
-            echo "  Found ", doc.diagnostics.len, " diagnostics"
-
-        # Send updated diagnostics
-        await sendDiagnostics(uri, doc.diagnostics)
-
-    return newResponse(id, newJNull())
+        await parse_and_publish(uri, change["text"].getStr(), version)
 
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Document change failed: " & e.msg)
+    trace_log("LSP didChange error: " & e.msg)
+
+proc handle_text_document_did_save*(params: JsonNode): Future[void] {.async.} =
+  try:
+    let textDoc = params["textDocument"]
+    let uri = textDoc["uri"].getStr()
+    let cached = getDocument(uri)
+    let version = if cached != nil: cached.version + 1 else: 0
+
+    var content = ""
+    if params.hasKey("text"):
+      content = params["text"].getStr()
+    else:
+      let path = uriToPath(uri)
+      if fileExists(path):
+        content = readFile(path)
+      elif cached != nil:
+        content = cached.content
+
+    trace_log("LSP didSave: " & uri)
+    await parse_and_publish(uri, content, version)
+
+  except CatchableError as e:
+    trace_log("LSP didSave error: " & e.msg)
+
+proc handle_text_document_did_close*(params: JsonNode): Future[void] {.async.} =
+  try:
+    let textDoc = params["textDocument"]
+    let uri = textDoc["uri"].getStr()
+    trace_log("LSP didClose: " & uri)
+    removeDocument(uri)
+    await sendDiagnostics(uri, @[])
+  except CatchableError as e:
+    trace_log("LSP didClose error: " & e.msg)
 
 proc handle_text_document_completion*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
-    let text_doc = params["textDocument"]
+    let textDoc = params["textDocument"]
     let position = params["position"]
-    let uri = text_doc["uri"].getStr()
+    let uri = textDoc["uri"].getStr()
     let line = position["line"].getInt()
     let character = position["character"].getInt()
 
-    if lsp_config.trace:
-      echo "LSP Completion requested for: ", uri, " at ", line, ":", character
-
-    # Get completions from document parser
+    trace_log("LSP completion: " & uri & ":" & $line & ":" & $character)
     let completions = getCompletionsAtPosition(uri, line, character)
 
-    # Convert to LSP completion items
     var items = newJArray()
     for comp in completions:
       items.add(%*{
@@ -222,33 +240,26 @@ proc handle_text_document_completion*(id: JsonNode, params: JsonNode): Future[st
         "documentation": comp.documentation
       })
 
-    let resultData = %*{
+    newResponse(id, %*{
       "isIncomplete": false,
       "items": items
-    }
-
-    return newResponse(id, resultData)
-
+    })
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Completion failed: " & e.msg)
+    newErrorResponse(id, -32603, "Completion failed: " & e.msg)
 
 proc handle_text_document_definition*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
-    let text_doc = params["textDocument"]
+    let textDoc = params["textDocument"]
     let position = params["position"]
-    let uri = text_doc["uri"].getStr()
+    let uri = textDoc["uri"].getStr()
     let line = position["line"].getInt()
     let character = position["character"].getInt()
 
-    if lsp_config.trace:
-      echo "LSP Definition requested for: ", uri, " at ", line, ":", character
+    trace_log("LSP definition: " & uri & ":" & $line & ":" & $character)
 
-    # Find symbol at cursor position
     let symbol = findSymbolAtPosition(uri, line, character)
-
     var resultData: JsonNode
     if symbol != nil:
-      # Return the location of the symbol definition
       resultData = %*{
         "uri": symbol.location.uri,
         "range": %*{
@@ -265,62 +276,49 @@ proc handle_text_document_definition*(id: JsonNode, params: JsonNode): Future[st
     else:
       resultData = newJNull()
 
-    return newResponse(id, resultData)
-
+    newResponse(id, resultData)
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Definition failed: " & e.msg)
+    newErrorResponse(id, -32603, "Definition failed: " & e.msg)
 
 proc handle_text_document_hover*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
-    let text_doc = params["textDocument"]
+    let textDoc = params["textDocument"]
     let position = params["position"]
-    let uri = text_doc["uri"].getStr()
+    let uri = textDoc["uri"].getStr()
     let line = position["line"].getInt()
     let character = position["character"].getInt()
 
-    if lsp_config.trace:
-      echo "LSP Hover requested for: ", uri, " at ", line, ":", character
+    trace_log("LSP hover: " & uri & ":" & $line & ":" & $character)
 
-    # Get hover information
     let (found, content, kind) = getHoverInfo(uri, line, character)
-
-    var resultData: JsonNode
     if found:
-      resultData = %*{
+      return newResponse(id, %*{
         "contents": %*{
           "kind": kind,
           "value": content
         }
-      }
-    else:
-      resultData = newJNull()
+      })
 
-    return newResponse(id, resultData)
-
+    newResponse(id, newJNull())
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Hover failed: " & e.msg)
+    newErrorResponse(id, -32603, "Hover failed: " & e.msg)
 
 proc handle_text_document_references*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
-    let text_doc = params["textDocument"]
+    let textDoc = params["textDocument"]
     let position = params["position"]
     let context = params.getOrDefault("context")
-    let uri = text_doc["uri"].getStr()
+    let uri = textDoc["uri"].getStr()
     let line = position["line"].getInt()
     let character = position["character"].getInt()
 
-    # Check if we should include declaration
     var includeDeclaration = true
     if context != nil and context.hasKey("includeDeclaration"):
       includeDeclaration = context["includeDeclaration"].getBool()
 
-    if lsp_config.trace:
-      echo "LSP References requested for: ", uri, " at ", line, ":", character
-
-    # Find all references to the symbol at cursor
+    trace_log("LSP references: " & uri & ":" & $line & ":" & $character)
     let references = findReferencesAtPosition(uri, line, character, includeDeclaration)
 
-    # Convert to LSP Location array
     var resultArray = newJArray()
     for loc in references:
       resultArray.add(%*{
@@ -337,45 +335,39 @@ proc handle_text_document_references*(id: JsonNode, params: JsonNode): Future[st
         }
       })
 
-    return newResponse(id, resultArray)
-
+    newResponse(id, resultArray)
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "References failed: " & e.msg)
+    newErrorResponse(id, -32603, "References failed: " & e.msg)
 
 proc handle_workspace_symbol*(id: JsonNode, params: JsonNode): Future[string] {.async.} =
   try:
-    # Get search query (optional)
     var query = ""
     if params != nil and params.hasKey("query"):
       query = params["query"].getStr()
 
-    if lsp_config.trace:
-      echo "LSP Workspace symbols requested with query: '", query, "'"
-
-    # Search for symbols matching the query
+    trace_log("LSP workspace/symbol query: '" & query & "'")
     let symbols = searchSymbols(query)
 
-    # Convert to LSP SymbolInformation array
     var resultArray = newJArray()
     for symbol in symbols:
-      var kind_int = 0
+      var kindInt = 0
       case symbol.kind:
       of skFunction:
-        kind_int = 12  # LSP SymbolKind.Function
+        kindInt = 12
       of skVariable:
-        kind_int = 13  # LSP SymbolKind.Variable
+        kindInt = 13
       of skClass:
-        kind_int = 5   # LSP SymbolKind.Class
+        kindInt = 5
       of skModule:
-        kind_int = 2   # LSP SymbolKind.Module
+        kindInt = 2
       of skConstant:
-        kind_int = 14  # LSP SymbolKind.Constant
+        kindInt = 14
       of skProperty:
-        kind_int = 7   # LSP SymbolKind.Property
+        kindInt = 7
 
       resultArray.add(%*{
         "name": symbol.name,
-        "kind": kind_int,
+        "kind": kindInt,
         "location": %*{
           "uri": symbol.location.uri,
           "range": %*{
@@ -392,58 +384,91 @@ proc handle_workspace_symbol*(id: JsonNode, params: JsonNode): Future[string] {.
         "containerName": ""
       })
 
-    return newResponse(id, resultArray)
-
+    newResponse(id, resultArray)
   except CatchableError as e:
-    return newErrorResponse(id, -32603, "Workspace symbol failed: " & e.msg)
+    newErrorResponse(id, -32603, "Workspace symbol failed: " & e.msg)
 
-# LSP JSON-RPC Message Handling
 proc handle_lsp_request*(request_text: string): Future[string] {.async.} =
   if request_text.len == 0:
-    return newErrorResponse(newJNull(), -32700, "Empty request body")
+    return ""
 
   try:
-    let json_data = parseJson(request_text)
-    let method_name = json_data["method"].getStr()
-    let id = json_data.getOrDefault("id")
-    let params = json_data.getOrDefault("params")
+    let jsonData = parseJson(request_text)
 
-    if lsp_config.trace:
-      echo "LSP Request: ", method_name, " ", $params
+    if not jsonData.hasKey("method"):
+      return ""
 
-    case method_name:
-      of "initialize":
+    let methodName = jsonData["method"].getStr()
+    let hasId = jsonData.hasKey("id") and jsonData["id"].kind != JNull
+    let id = if hasId: jsonData["id"] else: newJNull()
+    let params = jsonData.getOrDefault("params")
+
+    trace_log("LSP request: " & methodName)
+
+    case methodName:
+    of "initialize":
+      if hasId:
         return await handle_initialize(id, params)
-      of "shutdown":
+      return ""
+    of "initialized":
+      await handle_initialized_notification(params)
+      return ""
+    of "shutdown":
+      if hasId:
         return await handle_shutdown(id, params)
-      of "textDocument/didOpen":
-        return await handle_text_document_did_open(id, params)
-      of "textDocument/didClose":
-        return await handle_text_document_did_close(id, params)
-      of "textDocument/didChange":
-        return await handle_text_document_did_change(id, params)
-      of "textDocument/completion":
+      shutdown_requested = true
+      return ""
+    of "exit":
+      await handle_exit_notification()
+      return ""
+    of "textDocument/didOpen":
+      await handle_text_document_did_open(params)
+      return ""
+    of "textDocument/didClose":
+      await handle_text_document_did_close(params)
+      return ""
+    of "textDocument/didChange":
+      await handle_text_document_did_change(params)
+      return ""
+    of "textDocument/didSave":
+      await handle_text_document_did_save(params)
+      return ""
+    of "textDocument/completion":
+      if hasId:
         return await handle_text_document_completion(id, params)
-      of "textDocument/definition":
+      return ""
+    of "textDocument/definition":
+      if hasId:
         return await handle_text_document_definition(id, params)
-      of "textDocument/hover":
+      return ""
+    of "textDocument/hover":
+      if hasId:
         return await handle_text_document_hover(id, params)
-      of "textDocument/references":
+      return ""
+    of "textDocument/references":
+      if hasId:
         return await handle_text_document_references(id, params)
-      of "workspace/symbol":
+      return ""
+    of "workspace/symbol":
+      if hasId:
         return await handle_workspace_symbol(id, params)
-      else:
-        return newErrorResponse(id, -32601, "Method not found: " & method_name)
+      return ""
+    else:
+      if hasId:
+        return newErrorResponse(id, -32601, "Method not found: " & methodName)
+      return ""
 
   except JsonParsingError as e:
-    return newErrorResponse(newJNull(), -32700, "Parse error: " & e.msg)
+    newErrorResponse(newJNull(), -32700, "Parse error: " & e.msg)
   except CatchableError as e:
-    return newErrorResponse(newJNull(), -32603, "Internal error: " & e.msg)
+    newErrorResponse(newJNull(), -32603, "Internal error: " & e.msg)
 
-# Main LSP Server Loop
 proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
   lsp_config = config
-  
+  stdio_mode = false
+  shutdown_requested = false
+  exit_requested = false
+
   lsp_server = LspServer(
     socket: newAsyncSocket(),
     config: lsp_config,
@@ -453,12 +478,9 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
       documents: initTable[string, DocumentState](),
       symbols: initTable[string, seq[SymbolInfo]](),
       capabilities: ServerCapabilities(
-        textDocumentSync: %*{
-          "openClose": true,
-          "change": %*1
-        },
+        textDocumentSync: sync_capabilities(),
         completionProvider: %*{
-          "resolveProvider": true,
+          "resolveProvider": false,
           "triggerCharacters": @[":", "(", "["]
         },
         definitionProvider: %*true,
@@ -470,126 +492,106 @@ proc start_lsp_server*(config: LspConfig): Future[void] {.async.} =
   )
 
   if lsp_config.workspace.len > 0:
-    echo "LSP Server starting in workspace: ", lsp_config.workspace
+    trace_log("LSP workspace: " & lsp_config.workspace)
     setCurrentDir(lsp_config.workspace)
 
   echo "LSP Server listening on ", lsp_config.host, ":", lsp_config.port
-  
   lsp_server.socket.bindAddr(Port(lsp_config.port), lsp_config.host)
   lsp_server.socket.listen()
 
-  while true:
+  while not exit_requested:
     let client = await lsp_server.socket.accept()
-
-    # Add client to list
     lsp_server.clients.add(client)
 
-    # Handle client connection in background
     asyncCheck (proc() {.async.} =
       try:
-        while true:
+        while not exit_requested:
           let line = await client.recvLine()
           if line.len == 0:
             break
 
           let response = await handle_lsp_request(line)
-          await client.send(response & "\r\n")
-      except:
+          if response.len > 0:
+            await client.send(response & "\r\n")
+      except CatchableError:
         discard
       finally:
-        # Remove client from list
         let idx = lsp_server.clients.find(client)
         if idx >= 0:
           lsp_server.clients.delete(idx)
         client.close()
     )()
 
-# Stdio LSP Server (for VS Code and similar editors)
 proc read_stdio_message(): string =
-  ## Read a JSON-RPC message from stdin with Content-Length header
-  var content_length = 0
+  ## Read a JSON-RPC message from stdin with Content-Length header.
+  var contentLength = -1
 
-  # Read headers
   while true:
-    let line = stdin.readLine()
+    if endOfFile(stdin):
+      return ""
+
+    var rawLine = ""
+    try:
+      rawLine = stdin.readLine()
+    except IOError:
+      return ""
+
+    let line = rawLine.strip()
     if line.len == 0:
-      # Empty line marks end of headers
       break
 
-    if line.startsWith("Content-Length: "):
+    let sep = line.find(':')
+    if sep <= 0:
+      continue
+
+    let headerName = line[0 ..< sep].toLowerAscii()
+    let headerValue = line[sep + 1 .. ^1].strip()
+    if headerName == "content-length":
       try:
-        content_length = parseInt(line[16..^1].strip())
+        contentLength = parseInt(headerValue)
       except ValueError:
-        stderr.writeLine("Error: Invalid Content-Length header")
         return ""
 
-  # Read content
-  if content_length > 0:
-    result = newString(content_length)
-    let bytes_read = stdin.readBuffer(addr result[0], content_length)
-    if bytes_read != content_length:
-      stderr.writeLine("Error: Expected ", content_length, " bytes, got ", bytes_read)
-      result = ""
-  else:
+  if contentLength <= 0:
+    return ""
+
+  result = newString(contentLength)
+  let bytesRead = stdin.readBuffer(addr result[0], contentLength)
+  if bytesRead != contentLength:
     result = ""
 
 proc write_stdio_message(message: string) =
-  ## Write a JSON-RPC message to stdout with Content-Length header
-  let content = message
-  let header = "Content-Length: " & $content.len & "\r\n\r\n"
-  stdout.write(header & content)
+  let header = "Content-Length: " & $message.len & "\r\n\r\n"
+  stdout.write(header & message)
   stdout.flushFile()
 
 proc start_lsp_stdio_server*(config: LspConfig) =
-  ## Start LSP server using stdin/stdout for communication
   lsp_config = config
   stdio_mode = true
+  shutdown_requested = false
+  exit_requested = false
 
-  # Initialize document cache
   if lsp_config.workspace.len > 0:
-    if lsp_config.trace:
-      stderr.writeLine("LSP Server starting in workspace: ", lsp_config.workspace)
+    trace_log("LSP workspace: " & lsp_config.workspace)
     setCurrentDir(lsp_config.workspace)
 
-  if lsp_config.trace:
-    stderr.writeLine("LSP Server started in stdio mode")
-    stderr.flushFile()
+  trace_log("LSP server started in stdio mode")
 
-  # Main message loop
-  while true:
+  while not exit_requested:
     try:
-      # Read message from stdin
       let message = read_stdio_message()
-
       if message.len == 0:
-        # EOF or error - exit
-        if lsp_config.trace:
-          stderr.writeLine("LSP Server: EOF received, shutting down")
-          stderr.flushFile()
+        trace_log("LSP EOF received, shutting down")
         break
 
-      if lsp_config.trace:
-        stderr.writeLine("LSP Request: ", message)
-        stderr.flushFile()
-
-      # Handle the request synchronously (no async in stdio mode)
+      trace_log("LSP raw request: " & message)
       let response = waitFor handle_lsp_request(message)
-
-      if lsp_config.trace:
-        stderr.writeLine("LSP Response: ", response)
-        stderr.flushFile()
-
-      # Write response to stdout
-      write_stdio_message(response)
-
+      if response.len > 0:
+        trace_log("LSP raw response: " & response)
+        write_stdio_message(response)
     except IOError as e:
-      if lsp_config.trace:
-        stderr.writeLine("LSP Server IO Error: ", e.msg)
-        stderr.flushFile()
+      trace_log("LSP IO error: " & e.msg)
       break
     except CatchableError as e:
-      if lsp_config.trace:
-        stderr.writeLine("LSP Server Error: ", e.msg)
-        stderr.flushFile()
-      # Try to continue on errors
+      trace_log("LSP error: " & e.msg)
       continue
