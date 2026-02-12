@@ -1,5 +1,5 @@
 ## 0. Pre-Work Blocker
-- [ ] 0.1 Reproduce and root-cause the symbol-index overflow regression reported in descriptor/GIR paths.
+- [x] 0.1 Reproduce and root-cause the symbol-index overflow regression reported in descriptor/GIR paths.
 - [ ] 0.2 Fix the symbol-index regression before descriptor-pipeline rollout.
 - [ ] 0.3 Add a regression test that exercises cached GIR execution (not only `--no-gir-cache` paths).
 
