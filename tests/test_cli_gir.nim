@@ -266,6 +266,22 @@ suite "GIR CLI":
     check saw_union
     check saw_fn
 
+  test "gir preserves module registry module-path provenance":
+    let module_path = absolutePath("tmp/registry_module_path_only_builtins.gene")
+    let compiled = compiler.parse_and_compile("(var x: Int 1)", module_path)
+    compiled.type_registry = populate_registry(compiled.type_descriptors, module_path)
+
+    let gir_path = "build/tests/type_registry_module_path_roundtrip.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path, module_path)
+    let loaded = gir.load_gir(gir_path)
+
+    check loaded.type_registry != nil
+    check loaded.type_registry.module_path == module_path
+    check loaded.type_registry.builtin_types["Int"] == BUILTIN_TYPE_INT_ID
+
+    removeFile(gir_path)
+
   test "type checker propagates descriptor ids into compiler metadata":
     let code = """
       (var x: Int 1)
@@ -311,6 +327,30 @@ suite "GIR CLI":
 
     check saw_var_type_id
     check saw_fn_type_ids
+
+  test "gir preserves function type expectation metadata":
+    let code = """
+      (fn typed [a: Int] -> Int a)
+    """
+    let module_path = absolutePath("tmp/function_type_expectations_roundtrip.gene")
+    let compiled = compiler.parse_and_compile(code, module_path)
+    let gir_path = "build/tests/function_type_expectations_roundtrip.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path, module_path)
+    let loaded = gir.load_gir(gir_path)
+
+    var saw_fn_info = false
+    for inst in loaded.instructions:
+      if inst.kind == IkFunction and inst.arg0.kind == VkFunctionDef:
+        let info = to_function_def_info(inst.arg0)
+        check info.type_expectation_ids.len == 1
+        check info.type_expectation_ids[0] == BUILTIN_TYPE_INT_ID
+        check info.return_type_id == BUILTIN_TYPE_INT_ID
+        saw_fn_info = true
+        break
+
+    check saw_fn_info
+    removeFile(gir_path)
 
   test "runtime validation accepts descriptor-backed type ids":
     let type_descs = @[TypeDesc(kind: TdkNamed, name: "Int")]

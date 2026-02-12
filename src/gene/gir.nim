@@ -227,23 +227,26 @@ proc readTypeDescTable(stream: Stream): seq[TypeDesc] =
 
 proc writeModuleTypeRegistry(stream: Stream, registry: ModuleTypeRegistry) =
   if registry == nil:
-    stream.write(0'u32)
+    stream.write(0'u8)
     return
+  stream.write(1'u8)
+  stream.write_string(registry.module_path)
   stream.write(registry.descriptors.len.uint32)
   for type_id, desc in registry.descriptors:
     stream.write(type_id.int32)
     writeTypeDesc(stream, desc)
 
 proc readModuleTypeRegistry(stream: Stream): ModuleTypeRegistry =
-  let count = stream.readUint32()
-  if count == 0:
+  if stream.readUint8() == 0:
     return nil
 
-  result = new_module_type_registry("")
+  let module_path = stream.read_string()
+  let count = stream.readUint32()
+  result = new_module_type_registry(module_path)
   for _ in 0..<count:
     let type_id = stream.readInt32()
     let desc = readTypeDesc(stream)
-    register_type_desc(result, type_id, desc)
+    register_type_desc(result, type_id, desc, module_path)
   rebuild_module_registry_indexes(result)
 
 proc writeTypeAliases(stream: Stream, aliases: Table[string, TypeId]) =
@@ -270,6 +273,10 @@ proc read_value(stream: Stream): Value
 proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
   write_value(stream, info.input)
   writeScopeTrackerSnapshot(stream, snapshot_scope_tracker(info.scope_tracker))
+  stream.write(info.type_expectation_ids.len.uint32)
+  for type_id in info.type_expectation_ids:
+    stream.write(type_id.int32)
+  stream.write(info.return_type_id.int32)
   if info.compiled_body.kind == VkCompiledUnit:
     stream.write(1'u8)
     writeCompilationUnitBlock(stream, info.compiled_body.ref.cu)
@@ -279,6 +286,11 @@ proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
 proc readFunctionDef(stream: Stream): FunctionDefInfo =
   let input = read_value(stream)
   let snapshot = readScopeTrackerSnapshot(stream)
+  let type_expectation_count = stream.readUint32()
+  var type_expectation_ids: seq[TypeId] = @[]
+  for _ in 0..<type_expectation_count:
+    type_expectation_ids.add(stream.readInt32())
+  let return_type_id = stream.readInt32()
   var compiled_value = NIL
   if stream.readUint8() == 1:
     let compiled = readCompilationUnitBlock(stream)
@@ -288,7 +300,9 @@ proc readFunctionDef(stream: Stream): FunctionDefInfo =
   result = FunctionDefInfo(
     input: input,
     scope_tracker: materialize_scope_tracker(snapshot),
-    compiled_body: compiled_value
+    compiled_body: compiled_value,
+    type_expectation_ids: type_expectation_ids,
+    return_type_id: return_type_id
   )
 
 proc write_value(stream: Stream, v: Value) =
