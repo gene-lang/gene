@@ -15,7 +15,7 @@
 - [x] 2.3 Add flow-sensitive narrowing improvements for `if`/`case`/`match` guards in the type checker where required by descriptor adoption.
 
 ## 3. Quality Gates (Phase A)
-- [ ] 3.1 Add targeted tests for mixed typed/untyped modules and descriptor serialization parity.
+- [x] 3.1 Add targeted tests for mixed typed/untyped modules and descriptor serialization parity.
 - [ ] 3.2 Add GIR cache invalidation tests (old cache rejected/recompiled, new cache accepted).
 - [ ] 3.3 Publish migration notes for developers and extension authors.
 

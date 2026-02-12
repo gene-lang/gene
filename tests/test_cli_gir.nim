@@ -114,6 +114,47 @@ suite "GIR CLI":
     for node in nodes:
       checker.type_check_node(node)
 
+  test "mixed typed and untyped modules enforce typed boundaries":
+    init_all()
+    let untyped_source = absolutePath("tmp/mixed_untyped_module.gene")
+    let typed_source = absolutePath("tmp/mixed_typed_module.gene")
+    let untyped_import = "tmp/mixed_untyped_module"
+    let typed_import = "tmp/mixed_typed_module"
+    createDir(parentDir(untyped_source))
+    writeFile(untyped_source, "(fn emit_bad [] \"oops\")")
+    writeFile(typed_source, "(fn expects_int [x: Int] -> Int x)")
+    let untyped_gir = gir.get_gir_path(untyped_source, "build")
+    let typed_gir = gir.get_gir_path(typed_source, "build")
+
+    defer:
+      for path in [untyped_source, typed_source, untyped_gir, typed_gir]:
+        if fileExists(path):
+          removeFile(path)
+
+    var raised_typed_calls_untyped = false
+    try:
+      discard VM.exec(
+        "(import emit_bad from \"" & untyped_import & "\") (fn requires_int [x: Int] -> Int x) (requires_int (emit_bad))",
+        "mixed_typed_calls_untyped.gene"
+      )
+    except CatchableError as e:
+      raised_typed_calls_untyped = true
+      check e.msg.contains("expected Int")
+      check e.msg.contains("got String")
+    check raised_typed_calls_untyped
+
+    var raised_untyped_calls_typed = false
+    try:
+      discard VM.exec(
+        "(import expects_int from \"" & typed_import & "\") (expects_int \"oops\")",
+        "mixed_untyped_calls_typed.gene"
+      )
+    except CatchableError as e:
+      raised_untyped_calls_typed = true
+      check e.msg.contains("expected Int")
+      check e.msg.contains("got String")
+    check raised_untyped_calls_typed
+
   test "cached GIR keeps symbol-key maps valid across process runs":
     let source_path = absolutePath("tmp/gir_symbol_key_regression.gene")
     createDir(parentDir(source_path))
@@ -281,6 +322,66 @@ suite "GIR CLI":
     check loaded.type_registry.builtin_types["Int"] == BUILTIN_TYPE_INT_ID
 
     removeFile(gir_path)
+
+  test "descriptor serialization roundtrip keeps registry indexes in parity":
+    let module_path = absolutePath("tmp/descriptor_registry_parity.gene")
+    let code = """
+      (var x: (Int | String) 1)
+      (fn wrap [a: (Array Int)] -> (Result Int String)
+        (Ok 1)
+      )
+      (fn to_text [n: Int] -> String
+        (n .to_s)
+      )
+    """
+    let compiled = compiler.parse_and_compile(code, module_path)
+    let gir_path = "build/tests/descriptor_registry_parity_roundtrip.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path, module_path)
+    let loaded = gir.load_gir(gir_path)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    check loaded.type_registry != nil
+    check loaded.type_descriptors.len > 0
+    check loaded.type_registry.descriptors.len > 0
+
+    for type_id, desc in loaded.type_registry.descriptors:
+      check type_id >= 0'i32
+      check int(type_id) < loaded.type_descriptors.len
+      check descriptor_registry_key(desc) == descriptor_registry_key(loaded.type_descriptors[int(type_id)])
+
+    let builtins_before = loaded.type_registry.builtin_types
+    let named_before = loaded.type_registry.named_types
+    let applied_before = loaded.type_registry.applied_types
+    let unions_before = loaded.type_registry.union_types
+    let functions_before = loaded.type_registry.function_types
+
+    rebuild_module_registry_indexes(loaded.type_registry, module_path)
+
+    check loaded.type_registry.builtin_types.len == builtins_before.len
+    check loaded.type_registry.named_types.len == named_before.len
+    check loaded.type_registry.applied_types.len == applied_before.len
+    check loaded.type_registry.union_types.len == unions_before.len
+    check loaded.type_registry.function_types.len == functions_before.len
+
+    for key, type_id in builtins_before:
+      check loaded.type_registry.builtin_types.hasKey(key)
+      check loaded.type_registry.builtin_types[key] == type_id
+    for key, type_id in named_before:
+      check loaded.type_registry.named_types.hasKey(key)
+      check loaded.type_registry.named_types[key] == type_id
+    for key, type_id in applied_before:
+      check loaded.type_registry.applied_types.hasKey(key)
+      check loaded.type_registry.applied_types[key] == type_id
+    for key, type_id in unions_before:
+      check loaded.type_registry.union_types.hasKey(key)
+      check loaded.type_registry.union_types[key] == type_id
+    for key, type_id in functions_before:
+      check loaded.type_registry.function_types.hasKey(key)
+      check loaded.type_registry.function_types[key] == type_id
 
   test "type checker propagates descriptor ids into compiler metadata":
     let code = """
