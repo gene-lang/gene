@@ -904,6 +904,11 @@ type
     # Note: thread and channel fields will be added in vm/thread.nim module
     # which will properly import std/channels and std/locks with --threads:on
 
+  NativeCompileTier* {.size: sizeof(int8).} = enum
+    NctNever
+    NctGuarded
+    NctFullyTyped
+
   VirtualMachine* = object
     cu*: CompilationUnit
     pc*: int
@@ -940,6 +945,7 @@ type
     # Scheduler mode
     scheduler_running*: bool  # Set to true when run_forever is active, false to stop
     aop_contexts*: seq[AopContext]  # Stack of active around advice contexts
+    native_tier*: NativeCompileTier  # Native dispatch policy
     native_code*: bool  # Enable native code execution when available
     type_check*: bool  # Whether runtime type validation is enabled (set from --no-type-check)
 
