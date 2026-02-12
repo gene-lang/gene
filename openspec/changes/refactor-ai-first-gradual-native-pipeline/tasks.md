@@ -7,7 +7,7 @@
 - [x] 1.1 Define canonical `TypeDesc`/`TypeId` ownership and module-level registries (builtins, named types, applied types, unions, function types).
 - [x] 1.2 Remove string-first type transport from compiler metadata (`type_expectations`) and switch to descriptor references.
 - [x] 1.3 Persist descriptor tables in GIR with stable IDs and module-path provenance.
-- [ ] 1.4 Bump GIR type-metadata version and invalidate/recompile legacy caches (no transparent migration).
+- [x] 1.4 Bump GIR type-metadata version and invalidate/recompile legacy caches (no transparent migration).
 
 ## 2. Runtime Validation and Diagnostics (Phase A)
 - [ ] 2.1 Make VM validation paths descriptor-first (`IkVar`, assignment, matcher binding, returns).
