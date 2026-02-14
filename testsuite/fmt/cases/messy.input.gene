@@ -1,0 +1,8 @@
+(if (x > 5)
+(println "big")
+else
+(println "small")   # keep inline
+)
+
+(var x 10)    
+(println x)  

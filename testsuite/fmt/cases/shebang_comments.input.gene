@@ -1,0 +1,6 @@
+#!/usr/bin/env gene
+# top comment
+
+  # indented comment should stay as-is
+(var x 10)    
+(println x)  
