@@ -232,16 +232,20 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
   result.is_macro_like = is_macro_like
   if node.gene.props.has_key(pre_key):
     let pre_exprs = node.gene.props[pre_key]
-    if pre_exprs.kind != VkArray:
-      not_allowed("^pre must be an array of expressions")
-    for condition in array_data(pre_exprs):
-      result.pre_conditions.add(condition)
+    if pre_exprs.kind == VkArray:
+      for condition in array_data(pre_exprs):
+        result.pre_conditions.add(condition)
+    else:
+      # Single expression shortcut: ^pre (x > 0)
+      result.pre_conditions.add(pre_exprs)
   if node.gene.props.has_key(post_key):
     let post_exprs = node.gene.props[post_key]
-    if post_exprs.kind != VkArray:
-      not_allowed("^post must be an array of expressions")
-    for condition in array_data(post_exprs):
-      result.post_conditions.add(condition)
+    if post_exprs.kind == VkArray:
+      for condition in array_data(post_exprs):
+        result.post_conditions.add(condition)
+    else:
+      # Single expression shortcut: ^post (result > 0)
+      result.post_conditions.add(post_exprs)
 
 # compile method is defined in compiler.nim
 
