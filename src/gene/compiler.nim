@@ -557,8 +557,11 @@ proc compile*(f: Function, eager_functions: bool) =
     self.scope_tracker.scope_started = true
 
   self.contract_fn_name = f.name
-  self.contract_post_conditions = @[]
+  self.contract_post_conditions = f.post_conditions
   self.contract_result_slot = -1
+  if self.contract_post_conditions.len > 0:
+    self.contract_result_slot = self.scope_tracker.next_index
+    self.scope_tracker.next_index.inc()
 
   for i, condition in f.pre_conditions:
     self.compile_contract_check(condition, "pre", f.name, i + 1)
@@ -567,6 +570,9 @@ proc compile*(f: Function, eager_functions: bool) =
   self.tail_position = true
   self.compile(f.body)
   self.tail_position = false
+
+  # Implicit return path: apply postconditions to the final expression value.
+  self.emit_post_contract_checks()
 
   self.end_scope()
   self.emit(Instruction(kind: IkEnd))

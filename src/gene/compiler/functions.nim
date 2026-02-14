@@ -59,6 +59,33 @@ proc compile_contract_check(self: Compiler, condition: Value, phase: string,
   )
   self.emit(Instruction(kind: IkNoop, label: skip_label))
 
+proc emit_post_contract_checks(self: Compiler) =
+  if self.contract_post_conditions.len == 0:
+    return
+  if self.contract_result_slot < 0:
+    return
+
+  # Keep the original return value on stack while also binding it to `result`.
+  self.emit(Instruction(kind: IkDup))
+  self.add_scope_start()
+  self.emit(Instruction(kind: IkVar, arg0: self.contract_result_slot.to_value()))
+  self.emit(Instruction(kind: IkPop))
+
+  let result_key = "result".to_key()
+  let had_result_mapping = self.scope_tracker.mappings.has_key(result_key)
+  var old_result_index: int16 = 0
+  if had_result_mapping:
+    old_result_index = self.scope_tracker.mappings[result_key]
+  self.scope_tracker.mappings[result_key] = self.contract_result_slot
+
+  for i, condition in self.contract_post_conditions:
+    self.compile_contract_check(condition, "post", self.contract_fn_name, i + 1, include_result = true)
+
+  if had_result_mapping:
+    self.scope_tracker.mappings[result_key] = old_result_index
+  else:
+    self.scope_tracker.mappings.del(result_key)
+
 proc compile_fn(self: Compiler, input: Value, define_binding = true) =
   if input.kind == VkGene and input.gene != nil and input.gene.type == "fn".to_symbol_value():
     if input.gene.children.len == 0:
@@ -145,6 +172,7 @@ proc compile_return(self: Compiler, gene: ptr Gene) =
     self.compile(gene.children[0])
   else:
     self.emit(Instruction(kind: IkPushNil))
+  self.emit_post_contract_checks()
   self.emit(Instruction(kind: IkReturn))
 
 proc compile_block(self: Compiler, input: Value) =
