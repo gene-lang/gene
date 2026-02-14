@@ -238,6 +238,8 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   # The method is similar to (fn name [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
+  for k, v in gene.props:
+    fn_value.gene.props[k] = v
 
   # Add the method name
   fn_value.gene.children.add(gene.children[0])
@@ -297,6 +299,8 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   # The constructor is similar to (fn new [args] body...) but bound to the class
   var fn_value = new_gene_value()
   fn_value.gene.type = "fn".to_symbol_value()
+  for k, v in gene.props:
+    fn_value.gene.props[k] = v
   fn_value.gene.children.add(gene.type.str.to_symbol_value())
   
   # Handle args - always normalize to an array
