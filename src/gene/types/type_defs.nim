@@ -482,6 +482,8 @@ type
     native_failed*: bool
     native_return_float*: bool  # True if native return value should be interpreted as float64
     native_descriptors*: seq[CallDescriptor]
+    pre_conditions*: seq[Value]
+    post_conditions*: seq[Value]
     # ret*: Expr
 
   Block* = ref object

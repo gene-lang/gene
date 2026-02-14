@@ -9,6 +9,8 @@ proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Functio
     matcher: matcher,
     # matching_hint: matcher.hint,
     body: body,
+    pre_conditions: @[],
+    post_conditions: @[],
   )
 
 proc anchor_module_paths(type_descs: var seq[TypeDesc], module_path: string) =
@@ -68,6 +70,8 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
   template type_descs: var seq[TypeDesc] = cu_type_descs
   let aliases = type_aliases
   let use_precomputed_type_ids = type_expectation_ids.len > 0 or return_type_id != NO_TYPE_ID
+  let pre_key = "pre".to_key()
+  let post_key = "post".to_key()
 
   # Extract type annotations as name -> TypeId mapping, and strip them from args
   proc strip_type_annotations(args: Value, type_id_map: var Table[string, TypeId],
@@ -226,6 +230,18 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
   result.async = is_async
   result.is_generator = is_generator
   result.is_macro_like = is_macro_like
+  if node.gene.props.has_key(pre_key):
+    let pre_exprs = node.gene.props[pre_key]
+    if pre_exprs.kind != VkArray:
+      not_allowed("^pre must be an array of expressions")
+    for condition in array_data(pre_exprs):
+      result.pre_conditions.add(condition)
+  if node.gene.props.has_key(post_key):
+    let post_exprs = node.gene.props[post_key]
+    if post_exprs.kind != VkArray:
+      not_allowed("^post must be an array of expressions")
+    for condition in array_data(post_exprs):
+      result.post_conditions.add(condition)
 
 # compile method is defined in compiler.nim
 
