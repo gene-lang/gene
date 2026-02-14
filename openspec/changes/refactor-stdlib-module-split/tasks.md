@@ -12,9 +12,9 @@
 - [x] 2.7 Extract `selectors.nim` (`init_selector_class`).
 - [x] 2.8 Extract `gene_meta.nim` (`init_gene_and_meta_classes`).
 - [x] 2.9 Extract `aspects.nim` (AOP macro/application/interception setup).
-- [ ] 2.10 Extract `core.nim` (core builtins, VM utilities, env/base64/scheduler helpers, namespace wiring) and thin `src/gene/stdlib.nim` orchestrator.
+- [x] 2.10 Extract `core.nim` (core builtins, VM utilities, env/base64/scheduler helpers, namespace wiring) and thin `src/gene/stdlib.nim` orchestrator.
 
 ## 3. Validation
-- [ ] 3.1 After each extraction step: run `PATH=$HOME/.nimble/bin:$PATH nimble build`.
-- [ ] 3.2 After each extraction step: run `./testsuite/run_tests.sh`.
-- [ ] 3.3 Final pass: run `PATH=$HOME/.nimble/bin:$PATH nimble build` and `./testsuite/run_tests.sh` on thin-orchestrator layout.
+- [x] 3.1 After each extraction step: run `PATH=$HOME/.nimble/bin:$PATH nimble build`.
+- [x] 3.2 After each extraction step: run `./testsuite/run_tests.sh`.
+- [x] 3.3 Final pass: run `PATH=$HOME/.nimble/bin:$PATH nimble build` and `./testsuite/run_tests.sh` on thin-orchestrator layout.

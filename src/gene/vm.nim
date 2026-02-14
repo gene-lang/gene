@@ -78,6 +78,7 @@ include ./vm/entry
 include ./vm/runtime_helpers
 
 set_vm_exec_callable_hook(exec_callable)
+set_vm_poll_event_loop_hook(poll_event_loop)
 
 include "./stdlib"
 

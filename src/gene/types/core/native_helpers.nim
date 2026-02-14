@@ -82,13 +82,23 @@ proc call_native_fn*(fn: NativeFn, vm: ptr VirtualMachine, args: openArray[Value
     return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
 
 type VmExecCallableHook* = proc(vm: ptr VirtualMachine, callable: Value, args: seq[Value]): Value {.nimcall.}
+type VmPollEventLoopHook* = proc(vm: ptr VirtualMachine) {.nimcall.}
 
 var vm_exec_callable_hook*: VmExecCallableHook
+var vm_poll_event_loop_hook*: VmPollEventLoopHook
 
 proc set_vm_exec_callable_hook*(hook: VmExecCallableHook) {.inline.} =
   vm_exec_callable_hook = hook
+
+proc set_vm_poll_event_loop_hook*(hook: VmPollEventLoopHook) {.inline.} =
+  vm_poll_event_loop_hook = hook
 
 proc vm_exec_callable*(vm: ptr VirtualMachine, callable: Value, args: seq[Value]): Value {.inline.} =
   if vm_exec_callable_hook.isNil:
     not_allowed("VM callable hook is not initialized")
   vm_exec_callable_hook(vm, callable, args)
+
+proc vm_poll_event_loop*(vm: ptr VirtualMachine) {.inline.} =
+  if vm_poll_event_loop_hook.isNil:
+    not_allowed("VM poll hook is not initialized")
+  vm_poll_event_loop_hook(vm)
