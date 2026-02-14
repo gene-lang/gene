@@ -953,6 +953,7 @@ type
     native_tier*: NativeCompileTier  # Native dispatch policy
     native_code*: bool  # Enable native code execution when available
     type_check*: bool  # Whether runtime type validation is enabled (set from --no-type-check)
+    contracts_enabled*: bool  # Whether runtime pre/post contract checks are enabled
 
   NativeContext* = object
     vm*: ptr VirtualMachine

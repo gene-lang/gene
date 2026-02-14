@@ -1819,6 +1819,64 @@ proc core_assert*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
       raise new_exception(types.Exception, msg)
   return NIL
 
+proc contract_arg_snapshot(vm: ptr VirtualMachine): string =
+  if vm == nil or vm.frame == nil or vm.frame.target.kind != VkFunction:
+    return "[]"
+  let f = vm.frame.target.ref.fn
+  if f == nil or f.matcher == nil:
+    return "[]"
+
+  var parts: seq[string] = @[]
+  for i, param in f.matcher.children:
+    let arg_name = get_symbol_gcsafe(param.name_key.symbol_index)
+    var arg_value = NIL
+    var found = false
+    if vm.frame.scope != nil and i < vm.frame.scope.members.len:
+      arg_value = vm.frame.scope.members[i]
+      found = true
+    elif vm.frame.args.kind == VkGene and i < vm.frame.args.gene.children.len:
+      arg_value = vm.frame.args.gene.children[i]
+      found = true
+    let rendered = if found: display_value(arg_value, false) else: "<missing>"
+    parts.add(arg_name & "=" & rendered)
+  "[" & parts.join(", ") & "]"
+
+proc core_contracts_enabled(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                            arg_count: int, has_keyword_args: bool): Value =
+  if vm != nil and vm.contracts_enabled:
+    return TRUE
+  FALSE
+
+proc core_contract_violation(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                             arg_count: int, has_keyword_args: bool): Value =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional < 4:
+    raise new_exception(types.Exception, "ContractViolation: internal contract metadata is incomplete")
+
+  let phase_value = get_positional_arg(args, 0, has_keyword_args)
+  let fn_value = get_positional_arg(args, 1, has_keyword_args)
+  let index_value = get_positional_arg(args, 2, has_keyword_args)
+  let condition_value = get_positional_arg(args, 3, has_keyword_args)
+
+  let phase = display_value(phase_value, true)
+  let function_name = display_value(fn_value, true)
+  let condition_index =
+    if index_value.kind == VkInt: to_int(index_value)
+    else: 0'i64
+  let condition_text =
+    if condition_value.kind == VkString: condition_value.str
+    else: display_value(condition_value, false)
+
+  var message = "ContractViolation: " & function_name & " " & phase &
+    "condition #" & $condition_index & " failed: " & condition_text
+  message &= " | args=" & contract_arg_snapshot(vm)
+
+  if phase == "post" and positional > 4:
+    let result_value = get_positional_arg(args, 4, has_keyword_args)
+    message &= " | result=" & display_value(result_value, false)
+
+  raise new_exception(types.Exception, message)
+
 # Get length of collection
 proc core_len_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   let pos_count = get_positional_count(arg_count, has_keyword_args)
@@ -3506,6 +3564,8 @@ proc init_stdlib*() =
   global_ns["debug".to_key()] = core_debug.to_value()
   global_ns["trace_start".to_key()] = core_trace_start.to_value()
   global_ns["trace_end".to_key()] = core_trace_end.to_value()
+  global_ns["__contracts_enabled__".to_key()] = core_contracts_enabled.to_value()
+  global_ns["__contract_violation__".to_key()] = core_contract_violation.to_value()
 
   # Timing
   global_ns["sleep".to_key()] = core_sleep.to_value()
