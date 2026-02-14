@@ -3,7 +3,7 @@
 - [x] 1.2 Validate proposal with `openspec validate refactor-stdlib-module-split --strict`.
 
 ## 2. Implementation
-- [ ] 2.1 Extract `classes.nim` (Object/class hierarchy helpers, `init_basic_classes`, class setup utilities).
+- [x] 2.1 Extract `classes.nim` (Object/class hierarchy helpers, `init_basic_classes`, class setup utilities).
 - [ ] 2.2 Extract `regex.nim` (regex cache/helpers and `init_regex_class`).
 - [ ] 2.3 Extract `json.nim` (JSON parse/stringify helpers and namespace setup).
 - [ ] 2.4 Extract `strings.nim` (`init_string_class` and string methods).
