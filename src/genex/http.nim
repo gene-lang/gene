@@ -2,7 +2,8 @@
 import tables, strutils
 import httpclient, uri
 import std/json
-import asynchttpserver, asyncdispatch, asyncnet
+import ../asynchttpserver
+import asyncdispatch, asyncnet
 import asyncfutures  # Import asyncfutures explicitly
 import nativesockets, net
 import cgi

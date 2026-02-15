@@ -1980,7 +1980,11 @@ proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 proc call_scheduler_callbacks(vm: ptr VirtualMachine) {.gcsafe.} =
   {.cast(gcsafe).}:
     for callback in scheduler_callbacks:
-      callback(vm)
+      try:
+        callback(vm)
+      except CatchableError as e:
+        when not defined(release):
+          stderr.writeLine("Scheduler callback error: " & e.msg)
 
 # Helper to check scheduler_callbacks length
 proc scheduler_callbacks_len(): int {.gcsafe.} =
