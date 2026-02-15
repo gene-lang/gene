@@ -695,11 +695,10 @@
   (println "Port: " port)
 
   (println "Creating app...")
-  (var app ($tap (new App port)
-    (println "Setting handler...")
-    (/handler = (create_router))
-    (println "Handler set")
-  ))
+  (var app (new App port))
+  (println "Setting handler...")
+  (app/handler = (create_router))
+  (println "Handler set")
   (println "App created")
 
   (println "Starting server...")

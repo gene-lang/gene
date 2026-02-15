@@ -165,6 +165,15 @@ proc import_items(self: ptr VirtualMachine, source_ns: Namespace, items: seq[Imp
         parts[^1]
       self.frame.ns.members[import_name.to_key()] = value
 
+# Resolve an application class value safely.
+# Some runtime paths may observe NIL/uninitialized class slots; avoid
+# variant-field defects by checking the tag before dereferencing.
+template safe_class_value(val: Value): Class =
+  if val.kind == VkClass:
+    types.ref(val).class
+  else:
+    nil
+
 # Template to get the class of a value for unified method calls
 template get_value_class(val: Value): Class =
   case val.kind:
@@ -173,51 +182,51 @@ template get_value_class(val: Value): Class =
   of VkInstance:
     instance_class(val)
   of VkNil:
-    types.ref(App.app.nil_class).class
+    safe_class_value(App.app.nil_class)
   of VkBool:
-    types.ref(App.app.bool_class).class
+    safe_class_value(App.app.bool_class)
   of VkInt:
-    types.ref(App.app.int_class).class
+    safe_class_value(App.app.int_class)
   of VkFloat:
-    types.ref(App.app.float_class).class
+    safe_class_value(App.app.float_class)
   of VkChar:
-    types.ref(App.app.char_class).class
+    safe_class_value(App.app.char_class)
   of VkString:
-    types.ref(App.app.string_class).class
+    safe_class_value(App.app.string_class)
   of VkSymbol:
-    types.ref(App.app.symbol_class).class
+    safe_class_value(App.app.symbol_class)
   of VkComplexSymbol:
-    types.ref(App.app.complex_symbol_class).class
+    safe_class_value(App.app.complex_symbol_class)
   of VkArray:
-    types.ref(App.app.array_class).class
+    safe_class_value(App.app.array_class)
   of VkMap:
-    types.ref(App.app.map_class).class
+    safe_class_value(App.app.map_class)
   of VkGene:
-    types.ref(App.app.gene_class).class
+    safe_class_value(App.app.gene_class)
   of VkDate:
-    types.ref(App.app.date_class).class
+    safe_class_value(App.app.date_class)
   of VkDateTime:
-    types.ref(App.app.datetime_class).class
+    safe_class_value(App.app.datetime_class)
   of VkSet:
-    types.ref(App.app.set_class).class
+    safe_class_value(App.app.set_class)
   of VkSelector:
-    types.ref(App.app.selector_class).class
+    safe_class_value(App.app.selector_class)
   of VkRegex:
-    types.ref(App.app.regex_class).class
+    safe_class_value(App.app.regex_class)
   of VkFuture:
-    types.ref(App.app.future_class).class
+    safe_class_value(App.app.future_class)
   of VkGenerator:
-    types.ref(App.app.generator_class).class
+    safe_class_value(App.app.generator_class)
   of VkThread:
-    types.ref(THREAD_CLASS_VALUE).class
+    safe_class_value(THREAD_CLASS_VALUE)
   of VkThreadMessage:
-    types.ref(THREAD_MESSAGE_CLASS_VALUE).class
+    safe_class_value(THREAD_MESSAGE_CLASS_VALUE)
   of VkClass:
-    types.ref(App.app.class_class).class
+    safe_class_value(App.app.class_class)
   of VkAspect:
-    types.ref(App.app.aspect_class).class
+    safe_class_value(App.app.aspect_class)
   else:
-    types.ref(App.app.object_class).class
+    safe_class_value(App.app.object_class)
 
 proc enter_function(self: ptr VirtualMachine, name: string) {.inline.} =
   if self.profiling:

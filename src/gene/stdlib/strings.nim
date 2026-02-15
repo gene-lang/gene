@@ -62,7 +62,8 @@ proc init_string_class*(object_class: Class) =
 
   var append_fn = new_ref(VkNativeFn)
   append_fn.native_fn = string_append
-  string_class.def_native_method("append", append_fn.native_fn, @[("value", string_class_value)], string_class_value)
+  # append is variadic; keep metadata open until varargs typing is supported.
+  string_class.def_native_method("append", append_fn.native_fn)
 
   proc string_length(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if arg_count < 1:

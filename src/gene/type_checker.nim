@@ -896,9 +896,20 @@ proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
 
 proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, string, TypeExpr)], bool, seq[string]) =
   ## Returns (params, is_variadic, prop_splats) where params is (var_name, keyword_label, type) for each param.
-  if args.kind != VkArray:
+  var items: seq[Value] = @[]
+  case args.kind
+  of VkArray:
+    items = array_data(args)
+  of VkSymbol:
+    # Shorthand method form: (method to_s _ body...) means zero explicit params.
+    if args.str == "_":
+      return (@[], false, @[])
+    items = @[args]
+  of VkComplexSymbol:
+    items = @[args]
+  else:
     return (@[], false, @[])
-  let items = array_data(args)
+
   var params: seq[(string, string, TypeExpr)] = @[]
   var is_variadic = false
   var prop_splats: seq[string] = @[]
@@ -942,6 +953,20 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
           if typ == nil:
             typ = TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
         params.add((name, label, typ))
+      i += 1
+    elif item.kind == VkComplexSymbol:
+      if item.ref.csymbol.len < 2:
+        i += 1
+        continue
+      # Shorthand property parameter syntax, e.g. /x or /x...
+      if item.ref.csymbol[0] == "":
+        var name = item.ref.csymbol[1]
+        var typ: TypeExpr = nil
+        if name.endsWith("..."):
+          is_variadic = true
+          name = name[0..^4]
+          typ = TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
+        params.add((name, "", typ))
       i += 1
     elif item.kind == VkArray:
       # Destructuring not typed yet
@@ -1043,7 +1068,9 @@ proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], prop
   let pos_count = args.len
   # For variadic functions, only check we have enough for required params
   if not ct.variadic and pos_count > pos_params.len:
-    raise new_exception(types.Exception, "Type error: too many positional arguments in " & context)
+    raise new_exception(types.Exception,
+      "Type error: too many positional arguments in " & context &
+      " (expected " & $pos_params.len & ", got " & $pos_count & ")")
   # Check types for non-rest parameters
   let check_count = min(pos_count, required_params)
   for i in 0..<check_count:
@@ -2260,7 +2287,7 @@ proc check_complex_symbol(self: TypeChecker, sym: Value): TypeExpr =
   let base_type = self.lookup(base_name)
   if parts.len == 2 and parts[1].startsWith("."):
     let method_name = parts[1][1..^1]
-    return self.check_method_call(base_type, method_name, @[], initTable[Key, Value](), "method")
+    return self.check_method_call(base_type, method_name, @[], initTable[Key, Value](), "method " & method_name)
   if parts.len == 2 and not parts[1].startsWith("."):
     let field_name = parts[1]
     let rt = self.resolve(base_type)
@@ -2349,7 +2376,7 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
       if gene.children[0].str.startsWith("."):
         let method_name = gene.children[0].str[1..^1]
         let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
-        return self.check_method_call(self.check_expr(gene.`type`), method_name, args, gene.props, "method")
+        return self.check_method_call(self.check_expr(gene.`type`), method_name, args, gene.props, "method " & method_name)
 
     if gene.`type`.kind == VkSymbol:
       case gene.`type`.str
