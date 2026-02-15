@@ -95,9 +95,11 @@ type
     HokBoxI64       ## %r = box.i64 %val  (int64 -> Value)
     HokBoxF64       ## %r = box.f64 %val  (float64 -> Value)
     HokBoxBool      ## %r = box.bool %val (bool -> Value)
+    HokBoxString    ## %r = box.string %val (String* -> Value)
     HokUnboxI64     ## %r = unbox.i64 %val (Value -> int64)
     HokUnboxF64     ## %r = unbox.f64 %val (Value -> float64)
     HokUnboxBool    ## %r = unbox.bool %val (Value -> bool)
+    HokUnboxString  ## %r = unbox.string %val (Value -> String*)
 
     # Dynamic fallback (call VM for complex operations)
     HokVmCall       ## %r = vmcall <op>, %args...
@@ -113,8 +115,8 @@ type
       constF64*: float64
     of HokConstBool:
       constBool*: bool
-    of HokCopy, HokNegI64, HokNegF64, HokBoxI64, HokBoxF64, HokBoxBool,
-       HokUnboxI64, HokUnboxF64, HokUnboxBool:
+    of HokCopy, HokNegI64, HokNegF64, HokBoxI64, HokBoxF64, HokBoxBool, HokBoxString,
+       HokUnboxI64, HokUnboxF64, HokUnboxBool, HokUnboxString:
       unaryArg*: HirReg
     of HokAddI64, HokSubI64, HokMulI64, HokDivI64,
        HokAddF64, HokSubF64, HokMulF64, HokDivF64,
@@ -371,6 +373,14 @@ proc emitUnboxI64*(b: HirBuilder, value: HirReg): HirReg =
   result = b.allocReg()
   b.emit(HirOp(kind: HokUnboxI64, dest: result, destType: HtI64, unaryArg: value))
 
+proc emitBoxString*(b: HirBuilder, value: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokBoxString, dest: result, destType: HtValue, unaryArg: value))
+
+proc emitUnboxString*(b: HirBuilder, value: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokUnboxString, dest: result, destType: HtString, unaryArg: value))
+
 proc finalize*(b: HirBuilder): HirFunction =
   b.fn.regCount = b.nextReg
   # TODO: Compute predecessors/successors for each block
@@ -460,12 +470,16 @@ proc `$`*(op: HirOp): string =
     result = fmt"{op.dest} = box.f64 {op.unaryArg}"
   of HokBoxBool:
     result = fmt"{op.dest} = box.bool {op.unaryArg}"
+  of HokBoxString:
+    result = fmt"{op.dest} = box.string {op.unaryArg}"
   of HokUnboxI64:
     result = fmt"{op.dest} = unbox.i64 {op.unaryArg}"
   of HokUnboxF64:
     result = fmt"{op.dest} = unbox.f64 {op.unaryArg}"
   of HokUnboxBool:
     result = fmt"{op.dest} = unbox.bool {op.unaryArg}"
+  of HokUnboxString:
+    result = fmt"{op.dest} = unbox.string {op.unaryArg}"
   of HokVmCall:
     let args = op.vmCallArgs.mapIt($it).join(", ")
     result = fmt"{op.dest} = vmcall {op.vmCallOp}({args})"

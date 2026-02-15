@@ -19,6 +19,10 @@ import std/[tables, strformat]
 import ./hir
 import ./trampoline
 
+const
+  STRING_TAG_U64 = 0xFFFD_0000_0000_0000'u64
+  PAYLOAD_MASK_U64 = 0x0000_FFFF_FFFF_FFFF'u64
+
 type
   ## x86-64 physical registers
   X86Reg* = enum
@@ -206,6 +210,18 @@ proc emitSubRegReg*(buf: CodeBuffer, dst, src: X86Reg) =
   ## sub dst, src
   buf.emit(REX_W or rexForReg(src, dst))
   buf.emit(0x29)
+  buf.emit(modRM(0b11, src, dst))
+
+proc emitAndRegReg*(buf: CodeBuffer, dst, src: X86Reg) =
+  ## and dst, src
+  buf.emit(REX_W or rexForReg(src, dst))
+  buf.emit(0x21)
+  buf.emit(modRM(0b11, src, dst))
+
+proc emitOrRegReg*(buf: CodeBuffer, dst, src: X86Reg) =
+  ## or dst, src
+  buf.emit(REX_W or rexForReg(src, dst))
+  buf.emit(0x09)
   buf.emit(modRM(0b11, src, dst))
 
 proc emitCmpRegReg*(buf: CodeBuffer, left, right: X86Reg) =
@@ -722,6 +738,18 @@ proc genCallVM*(ctx: CodegenContext, op: HirOp) =
 
   ctx.storeReg(op.dest, RAX)
 
+proc genBoxString*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.unaryArg)
+  ctx.buf.emitMovRegImm64(RCX, cast[int64](STRING_TAG_U64))
+  ctx.buf.emitOrRegReg(RAX, RCX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genUnboxString*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.unaryArg)
+  ctx.buf.emitMovRegImm64(RCX, cast[int64](PAYLOAD_MASK_U64))
+  ctx.buf.emitAndRegReg(RAX, RCX)
+  ctx.storeReg(op.dest, RAX)
+
 proc genOp*(ctx: CodegenContext, op: HirOp) =
   case op.kind
   of HokConstI64: ctx.genConstI64(op)
@@ -753,6 +781,8 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokRet: ctx.genRet(op)
   of HokCall: ctx.genCall(op)
   of HokCallVM: ctx.genCallVM(op)
+  of HokBoxString: ctx.genBoxString(op)
+  of HokUnboxString: ctx.genUnboxString(op)
   else:
     raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
 

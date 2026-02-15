@@ -90,6 +90,9 @@ proc native_args_supported(f: Function, args: seq[Value]): bool =
     elif tid == BUILTIN_TYPE_FLOAT_ID:
       if args[i].kind != VkFloat:
         return false
+    elif tid == BUILTIN_TYPE_STRING_ID:
+      if args[i].kind != VkString:
+        return false
     else:
       return false
   true
@@ -107,7 +110,8 @@ proc native_has_fully_typed_boundary(f: Function): bool {.inline.} =
   if f.matcher.return_type_id == NO_TYPE_ID:
     return false
   f.matcher.return_type_id == BUILTIN_TYPE_INT_ID or
-    f.matcher.return_type_id == BUILTIN_TYPE_FLOAT_ID
+    f.matcher.return_type_id == BUILTIN_TYPE_FLOAT_ID or
+    f.matcher.return_type_id == BUILTIN_TYPE_STRING_ID
 
 proc native_call_supported(self: ptr VirtualMachine, f: Function, args: seq[Value]): bool =
   let tier = self.effective_native_tier()

@@ -483,6 +483,7 @@ type
     native_ready*: bool
     native_failed*: bool
     native_return_float*: bool  # True if native return value should be interpreted as float64
+    native_return_string*: bool # True if native return value is a String* payload
     native_descriptors*: seq[CallDescriptor]
     pre_conditions*: seq[Value]
     post_conditions*: seq[Value]

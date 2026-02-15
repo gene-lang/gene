@@ -20,6 +20,7 @@ type
     code*: seq[byte]
     message*: string
     returnFloat*: bool  # True if native function returns float64 (bitcast as int64)
+    returnString*: bool # True if native function returns String* payload
     descriptors*: seq[CallDescriptor]
 
 when defined(posix):
@@ -36,7 +37,7 @@ proc validate_hir(fn: HirFunction): bool =
          HokLeI64, HokLtI64, HokGeI64, HokGtI64, HokEqI64, HokNeI64,
          HokConstF64, HokAddF64, HokSubF64, HokMulF64, HokDivF64, HokNegF64,
          HokLeF64, HokLtF64, HokGeF64, HokGtF64, HokEqF64, HokNeF64,
-         HokBr, HokJump, HokRet, HokCall, HokCallVM:
+         HokBr, HokJump, HokRet, HokCall, HokCallVM, HokBoxString, HokUnboxString:
         if op.kind == HokCall and op.callTarget != fn.name:
           return false
       else:
@@ -105,6 +106,7 @@ proc compile_to_native*(f: Function): NativeCompileResult =
     result.entry = entry
     result.code = code
     result.returnFloat = hir.returnType == HtF64
+    result.returnString = hir.returnType == HtString
     result.descriptors = hir.callDescriptors
   except CatchableError as e:
     if has_hir:

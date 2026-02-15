@@ -54,6 +54,8 @@ const
   INSN_MOV_FP_SP = 0x910003FD'u32  # mov x29, sp
   INSN_LDP_FP_LR = 0xA8C17BFD'u32  # ldp x29, x30, [sp], #16
   INSN_RET       = 0xD65F03C0'u32  # ret
+  STRING_TAG_U64 = 0xFFFD_0000_0000_0000'u64
+  PAYLOAD_MASK_U64 = 0x0000_FFFF_FFFF_FFFF'u64
 
 proc newCodeBuffer*(): CodeBuffer =
   CodeBuffer(
@@ -164,6 +166,20 @@ proc emitMovRegReg*(buf: CodeBuffer, dst, src: Arm64Reg) =
 
 proc emitSubRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
   let instr = 0xCB00_0000'u32 or
+    (uint32(ord(src2) and 0x1F) shl 16) or
+    (uint32(ord(src1) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitAndRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
+  let instr = 0x8A00_0000'u32 or
+    (uint32(ord(src2) and 0x1F) shl 16) or
+    (uint32(ord(src1) and 0x1F) shl 5) or
+    uint32(ord(dst) and 0x1F)
+  buf.emitU32(instr)
+
+proc emitOrrRegReg*(buf: CodeBuffer, dst, src1, src2: Arm64Reg) =
+  let instr = 0xAA00_0000'u32 or
     (uint32(ord(src2) and 0x1F) shl 16) or
     (uint32(ord(src1) and 0x1F) shl 5) or
     uint32(ord(dst) and 0x1F)
@@ -611,6 +627,18 @@ proc genCallVM*(ctx: CodegenContext, op: HirOp) =
 
   ctx.storeReg(op.dest, X0)
 
+proc genBoxString*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.unaryArg)
+  ctx.buf.emitMovImm64(X1, cast[int64](STRING_TAG_U64))
+  ctx.buf.emitOrrRegReg(X0, X0, X1)
+  ctx.storeReg(op.dest, X0)
+
+proc genUnboxString*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(X0, op.unaryArg)
+  ctx.buf.emitMovImm64(X1, cast[int64](PAYLOAD_MASK_U64))
+  ctx.buf.emitAndRegReg(X0, X0, X1)
+  ctx.storeReg(op.dest, X0)
+
 proc genOp*(ctx: CodegenContext, op: HirOp) =
   case op.kind
   of HokConstI64: ctx.genConstI64(op)
@@ -642,6 +670,8 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokRet: ctx.genRet(op)
   of HokCall: ctx.genCall(op)
   of HokCallVM: ctx.genCallVM(op)
+  of HokBoxString: ctx.genBoxString(op)
+  of HokUnboxString: ctx.genUnboxString(op)
   else:
     raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
 
