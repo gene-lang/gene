@@ -30,6 +30,7 @@ type
     HtI64      ## 64-bit signed integer
     HtF64      ## 64-bit floating point
     HtPtr      ## Raw pointer (for objects, arrays, etc.)
+    HtString   ## Raw pointer to Gene String object payload
     HtValue    ## NaN-boxed Gene Value (for dynamic operations)
 
   ## Virtual register - SSA value reference

@@ -61,6 +61,7 @@ proc typeIdToHir(tid: TypeId): HirType =
   of BUILTIN_TYPE_INT_ID: HtI64
   of BUILTIN_TYPE_FLOAT_ID: HtF64
   of BUILTIN_TYPE_BOOL_ID: HtBool
+  of BUILTIN_TYPE_STRING_ID: HtString
   else: HtValue
 
 proc typeIdToCallArg(tid: TypeId, outType: var CallArgType): bool =
@@ -731,7 +732,7 @@ proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool =
     if child.type_id == NO_TYPE_ID:
       return false
     let hirType = typeIdToHir(child.type_id)
-    if hirType notin {HtI64, HtF64}:
+    if hirType notin {HtI64, HtF64, HtString}:
       return false  # Non-primitive type
 
   for inst in cu.instructions:
