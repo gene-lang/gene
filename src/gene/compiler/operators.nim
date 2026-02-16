@@ -582,6 +582,86 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
 
 ## compile_vm moved to compiler/misc.nim
 
+proc normalized_infix_operator(op_value: Value): string {.inline.} =
+  ## Normalize parser-specific infix operator values.
+  case op_value.kind
+  of VkSymbol:
+    let op = op_value.str
+    if op in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "is", "&&", "||"]:
+      return op
+  of VkComplexSymbol:
+    # Parser variant: "./" can be emitted as complex symbol @[".", ""]
+    if op_value.ref.csymbol.len >= 2 and op_value.ref.csymbol[0] == "." and op_value.ref.csymbol[1] == "":
+      return "./"
+  else:
+    discard
+  ""
+
+proc infix_precedence(op: string): int {.inline.} =
+  case op
+  of "./":
+    90
+  of "*", "/", "%", "**":
+    80
+  of "+", "-":
+    70
+  of "<", "<=", ">", ">=", "==", "!=", "is":
+    60
+  of "&&":
+    50
+  of "||":
+    40
+  else:
+    0
+
+proc is_infix_rewrite_eligible(expr_type: Value): bool {.inline.} =
+  ## Skip infix desugaring when the leading value is a special-form symbol.
+  if expr_type.kind != VkSymbol:
+    return true
+  expr_type.str notin [
+    "var", "if", "fn", "do", "loop", "while", "for", "ns", "class",
+    "try", "throw", "import", "export", "$", "$vm", "$vmstmt", ".", "->", "@"
+  ]
+
+proc rewrite_infix_expression(left_value: Value, tail: seq[Value]): Value =
+  ## Convert infix chains to nested prefix genes using precedence + left associativity.
+  ## Example: [1, +, 2, *, 3] => (+ 1 (* 2 3))
+  if tail.len mod 2 != 0:
+    not_allowed("Incomplete infix expression")
+
+  var value_stack: seq[Value] = @[left_value]
+  var op_stack: seq[string] = @[]
+
+  proc reduce_once() =
+    if op_stack.len == 0 or value_stack.len < 2:
+      not_allowed("Invalid infix expression")
+    let op = op_stack.pop()
+    let rhs = value_stack.pop()
+    let lhs = value_stack.pop()
+    let node = new_gene(op.to_symbol_value())
+    node.children = @[lhs, rhs]
+    value_stack.add(node.to_gene_value())
+
+  var i = 0
+  while i < tail.len:
+    let op = normalized_infix_operator(tail[i])
+    if op.len == 0:
+      not_allowed("Invalid infix expression")
+
+    while op_stack.len > 0 and infix_precedence(op_stack[^1]) >= infix_precedence(op):
+      reduce_once()
+
+    op_stack.add(op)
+    value_stack.add(tail[i + 1])
+    i += 2
+
+  while op_stack.len > 0:
+    reduce_once()
+
+  if value_stack.len != 1:
+    not_allowed("Invalid infix expression")
+  value_stack[0]
+
 proc compile_gene(self: Compiler, input: Value) =
   let gene = input.gene
   
@@ -677,35 +757,13 @@ proc compile_gene(self: Compiler, input: Value) =
   # This handles cases like (6 / 2) or (i + 1)
   if gene.children.len >= 1:
     let first_child = gene.children[0]
-    if first_child.kind == VkSymbol:
-      if first_child.str in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "is"]:
-        # Don't convert if the type is already an operator or special form
-        if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "$", "$vm", "$vmstmt", ".", "->", "@"]:
-          # Convert infix chain to nested prefix notation.
-          # (a + b + c) becomes (+ (+ a b) c)
-          # (a + b * c) becomes (* (+ a b) c) (left-associative)
-          let infix_ops = ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "is"]
-          var left_expr = `type`
-          var i = 0
-          while i < gene.children.len:
-            let op = gene.children[i]
-            var op_symbol: Value = NIL
-            if op.kind == VkSymbol and op.str in infix_ops:
-              op_symbol = op
-            elif op.kind == VkComplexSymbol and op.ref.csymbol.len >= 2 and op.ref.csymbol[0] == "." and op.ref.csymbol[1] == "":
-              op_symbol = "./".to_symbol_value()
-            else:
-              not_allowed("Invalid infix expression")
-            if i + 1 >= gene.children.len:
-              not_allowed("Incomplete infix expression")
-            let right_expr = gene.children[i + 1]
-            let nested = new_gene(op_symbol)
-            nested.children = @[left_expr, right_expr]
-            left_expr = nested.to_gene_value()
-            i += 2
-          self.compile(left_expr)
-          return
-      elif first_child.str == ".":
+    let infix_op = normalized_infix_operator(first_child)
+    if infix_op.len > 0:
+      if is_infix_rewrite_eligible(`type`):
+        self.compile(rewrite_infix_expression(`type`, gene.children))
+        return
+    elif first_child.kind == VkSymbol:
+      if first_child.str == ".":
         # Dynamic method call: (obj . method_expr args...)
         # Compile: obj on stack, evaluate method_expr to get method name, then call
         self.compile_dynamic_method_call(gene)
@@ -714,31 +772,6 @@ proc compile_gene(self: Compiler, input: Value) =
         # This is a method call: (obj .method args...)
         # Transform to method call format
         self.compile_method_call(gene)
-        return
-    elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len >= 2 and first_child.ref.csymbol[0] == "." and first_child.ref.csymbol[1] == "":
-      # Don't convert if the type is already an operator or special form
-      if `type`.kind != VkSymbol or `type`.str notin ["var", "if", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "$", "$vm", "$vmstmt", ".", "->"]:
-        # Handle parser variant where ./ is emitted as a complex symbol operator.
-        let infix_ops = ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "is"]
-        var left_expr = `type`
-        var i = 0
-        while i < gene.children.len:
-          let op = gene.children[i]
-          var op_symbol: Value = NIL
-          if op.kind == VkSymbol and op.str in infix_ops:
-            op_symbol = op
-          elif op.kind == VkComplexSymbol and op.ref.csymbol.len >= 2 and op.ref.csymbol[0] == "." and op.ref.csymbol[1] == "":
-            op_symbol = "./".to_symbol_value()
-          else:
-            not_allowed("Invalid infix expression")
-          if i + 1 >= gene.children.len:
-            not_allowed("Incomplete infix expression")
-          let right_expr = gene.children[i + 1]
-          let nested = new_gene(op_symbol)
-          nested.children = @[left_expr, right_expr]
-          left_expr = nested.to_gene_value()
-          i += 2
-        self.compile(left_expr)
         return
   
   # Check if type is an arithmetic operator
@@ -897,6 +930,22 @@ proc compile_gene(self: Compiler, input: Value) =
         self.compile(gene.children[1])
         self.emit(Instruction(kind: IkIsType))
         return
+      of "&&":
+        if gene.children.len == 0:
+          not_allowed("&& requires at least one argument")
+        self.compile(gene.children[0])
+        for i in 1..<gene.children.len:
+          self.compile(gene.children[i])
+          self.emit(Instruction(kind: IkAnd))
+        return
+      of "||":
+        if gene.children.len == 0:
+          not_allowed("|| requires at least one argument")
+        self.compile(gene.children[0])
+        for i in 1..<gene.children.len:
+          self.compile(gene.children[i])
+          self.emit(Instruction(kind: IkOr))
+        return
       else:
         discard  # Not an arithmetic operator, continue with normal processing
   
@@ -906,16 +955,6 @@ proc compile_gene(self: Compiler, input: Value) =
       case first.str:
         of "=", "+=", "-=":
           self.compile_assignment(gene)
-          return
-        of "&&":
-          self.compile(`type`)
-          self.compile(gene.children[1])
-          self.emit(Instruction(kind: IkAnd))
-          return
-        of "||":
-          self.compile(`type`)
-          self.compile(gene.children[1])
-          self.emit(Instruction(kind: IkOr))
           return
         of "?":
           # Postfix ? operator: (expr ?) - unwrap Ok/Some or return early

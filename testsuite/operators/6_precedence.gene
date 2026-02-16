@@ -1,0 +1,18 @@
+# Operator precedence regression tests
+# Arithmetic: * and / bind tighter than + and -
+# Logical: && binds tighter than ||
+
+# Expected: 0.5
+# Expected: 3
+# Expected: 7.0
+# Expected: false
+# Expected: true
+# Expected: true
+
+(println (1 - 2 / 4))
+(println (1 + 2 * 3 - 4))
+(println (10 - 8 / 2 + 1))
+
+(println (false || true && false))
+(println (true || false && false))
+(println (true && false || true && true))
