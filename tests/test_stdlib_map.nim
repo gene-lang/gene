@@ -1,6 +1,12 @@
 import unittest
+import std/tables
 import ./helpers
 import gene/types except Exception
+
+proc map_size(v: Value): int =
+  result = 0
+  for _, _ in map_data(v):
+    result.inc()
 
 test_vm """
   ({^a 1 ^b 2} .size)
@@ -10,29 +16,23 @@ test_vm """
   (fn toValue [k v] v)
   ({} .map toValue)
 """, proc(result: Value) =
-  check result.kind == VkArray
-  check array_data(result).len == 0
+  check result.kind == VkMap
+  check map_size(result) == 0
 
 test_vm """
   (fn toKey [k v] k)
   ({^a 1 ^b 2} .map toKey)
 """, proc(result: Value) =
-  check result.kind == VkArray
-  check array_data(result).len == 2
-  var keys: seq[string] = @[]
-  for item in array_data(result):
-    keys.add(item.str)
-  check "a" in keys
-  check "b" in keys
+  check result.kind == VkMap
+  check map_size(result) == 2
+  check map_data(result)["a".to_key()] == "a".to_value()
+  check map_data(result)["b".to_key()] == "b".to_value()
 
 test_vm """
   (fn toValue [k v] v)
   ({^a 1 ^b 2} .map toValue)
 """, proc(result: Value) =
-  check result.kind == VkArray
-  check array_data(result).len == 2
-  var values: seq[int64] = @[]
-  for item in array_data(result):
-    values.add(item.int64)
-  check 1 in values
-  check 2 in values
+  check result.kind == VkMap
+  check map_size(result) == 2
+  check map_data(result)["a".to_key()] == 1.to_value()
+  check map_data(result)["b".to_key()] == 2.to_value()
