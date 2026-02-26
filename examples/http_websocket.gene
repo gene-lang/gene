@@ -709,7 +709,7 @@
       todo/.save
       (ws .send {})
     when "update"
-      (match [^id ^status] payload/data)
+      (var [^id ^status] payload/data)
       (var todo (Todo . Todo/find id))
       (todo/status = status)
       todo/.save

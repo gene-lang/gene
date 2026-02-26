@@ -359,6 +359,70 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkSetMember, arg0: name))
     return
 
+  # Destructuring declarations: (var [a b] value), (var {^k ^v} value)
+  if name.kind == VkArray:
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+    else:
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+
+    for i, elem in array_data(name):
+      if elem.kind != VkSymbol:
+        not_allowed("Unsupported destructuring pattern element type: " & $elem.kind & " (only symbols supported)")
+
+      # Duplicate the source array, then extract one item.
+      self.emit(Instruction(kind: IkDup))
+      self.emit(Instruction(kind: IkGetChild, arg0: i.to_value()))
+
+      if elem.str == "_":
+        # Wildcard binding: discard extracted value.
+        self.emit(Instruction(kind: IkPop))
+        continue
+
+      let var_index = self.scope_tracker.next_index
+      self.scope_tracker.mappings[elem.str.to_key()] = var_index
+      self.add_scope_start()
+      self.scope_tracker.next_index.inc()
+      self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+      self.emit(Instruction(kind: IkPop))
+
+    # Drop the original destructuring source and return nil.
+    self.emit(Instruction(kind: IkPop))
+    self.emit(Instruction(kind: IkPushNil))
+    return
+
+  if name.kind == VkMap:
+    if gene.children.len > 1:
+      self.compile(gene.children[1])
+    else:
+      self.emit(Instruction(kind: IkPushValue, arg0: NIL))
+
+    # Keep one copy on stack while extracting each property.
+    self.emit(Instruction(kind: IkDup))
+    for key, value in map_data(name).pairs:
+      if value.kind != VkSymbol or not value.str.startsWith("^"):
+        not_allowed("Unsupported map destructuring pattern: expected ^name-style symbols")
+
+      let bind_name = value.str[1..^1]
+      self.emit(Instruction(kind: IkDup))
+      self.emit(Instruction(kind: IkPushValue, arg0: key.to_value()))
+      self.emit(Instruction(kind: IkGetMemberOrNil))
+
+      if bind_name == "_":
+        self.emit(Instruction(kind: IkPop))
+        continue
+
+      let var_index = self.scope_tracker.next_index
+      self.scope_tracker.mappings[bind_name.to_key()] = var_index
+      self.add_scope_start()
+      self.scope_tracker.next_index.inc()
+      self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+      self.emit(Instruction(kind: IkPop))
+
+    self.emit(Instruction(kind: IkPop))
+    self.emit(Instruction(kind: IkPushNil))
+    return
+
   # Regular variable handling
   if name.kind != VkSymbol:
     not_allowed("Variable name must be a symbol, got " & $name.kind)
@@ -498,6 +562,14 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
   let `type` = gene.type
   let operator = gene.children[0].str
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
+
+  if operator == "=" and `type`.kind in {VkArray, VkMap}:
+    let location = trace_location(gene.trace)
+    let message = "destructuring assignment has been removed; use (var pattern value) and then assign explicitly"
+    if location.len > 0:
+      not_allowed(location & ": " & message)
+    else:
+      not_allowed(message)
   
   if `type`.kind == VkSymbol:
     if `type`.str.starts_with("$") and `type`.str.len > 1 and `type`.str != "$ns":

@@ -21,6 +21,12 @@ suite "Static type checking":
     (fn f [x: NotAType] x)
   """
 
+  test_strict_type_error """
+    (var a 1)
+    (var b 2)
+    ([a b] = [3 4])
+  """
+
   test_vm_error """
     (fn f [^limit: Int] -> Int
       limit

@@ -4,11 +4,11 @@ import gene/types except Exception
 
 import ./helpers
 
-# Pattern Matching
+# Pattern Binding
 #
 # * Argument parsing
-# * (match pattern input)
-#   Match works similar to argument parsing
+# * (var pattern input)
+#   Binding works similar to argument parsing
 # * Custom matchers can be created, which takes something and
 #   returns a function that takes an input and a scope object and
 #   parses the input and stores as one or multiple variables
@@ -17,28 +17,28 @@ import ./helpers
 # * Support "|" for different branches
 #
 
-# Mode: argument, match, ...
+# Mode: argument, bind, ...
 # When matching arguments, root level name will match first item in the input
-# While (match name) will match the whole input
+# While (var name value) binds the whole value
 #
 # Root level
-# (match name input)
-# (match _ input)
+# (var name input)
+# (var _ input)
 #
 # Child level
-# (match [a? b] input) # "a" is optional, if input contains only one item, it'll be
+# (var [a? b] input) # "a" is optional, if input contains only one item, it'll be
 #                      # assigned to "b"
-# (match [a... b] input) # "a" will match 0 to many items, the last item is assigned to "b"
-# (match [a = 1 b] input) # "a" is optional and has default value of 1
+# (var [a... b] input) # "a" will match 0 to many items, the last item is assigned to "b"
+# (var [a = 1 b] input) # "a" is optional and has default value of 1
 #
 # Grandchild level
-# (match [a b [c]] input) # "c" will match a grandchild
+# (var [a b [c]] input) # "c" will match a grandchild
 #
 # Match properties
-# (match [^a] input)  # "a" will match input's property "a"
-# (match [^a!] input) # "a" will match input's property "a" and is required
-# (match [^a: var_a] input) # "var_a" will match input's property "a"
-# (match [^a: var_a = 1] input) # "var_a" will match input's property "a", and has default
+# (var [^a] input)  # "a" will match input's property "a"
+# (var [^a!] input) # "a" will match input's property "a" and is required
+# (var [^a: var_a] input) # "var_a" will match input's property "a"
+# (var [^a: var_a = 1] input) # "var_a" will match input's property "a", and has default
 #                               # value of 1
 #
 # Q: How do we match gene_type?
@@ -63,7 +63,7 @@ test_vm """
 """, 3
 
 test_vm """
-  (match a [1])
+  (var a [1])
   a
 """, proc(r: Value) =
   check r.kind == VkArray
@@ -72,13 +72,13 @@ test_vm """
 
 # Array pattern matching
 test_vm """
-  (match [a] [1])
+  (var [a] [1])
   a
 """, 1
 
 # Array pattern matching with multiple elements
 test_vm """
-  (match [a b] [1 2])
+  (var [a b] [1 2])
   (a + b)
 """, 3
 

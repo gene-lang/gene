@@ -21,9 +21,9 @@
 (println "5 * 3 = " (x * y))
 (println "5 / 3 = " (x / y))
 
-# Test pattern matching
-(match a [10])
-(println "Pattern match: a = " a)
+# Test pattern binding
+(var a [10])
+(println "Pattern binding: a = " a)
 
 # Test classes
 (class Point

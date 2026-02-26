@@ -1277,23 +1277,69 @@ proc check_super_call(self: TypeChecker, gene: ptr Gene): TypeExpr =
   let fake = TypeExpr(kind: TkFn, params: params, ret: fn_t.ret, variadic: fn_t.variadic, kw_splat: fn_t.kw_splat, effects: fn_t.effects)
   return self.check_call(fake, args, gene.props, "super " & member_name)
 
+proc define_pattern_bindings(self: TypeChecker, pattern: Value, value_type: TypeExpr) =
+  case pattern.kind
+  of VkSymbol:
+    let name = pattern.str
+    if name.len > 0 and name != "_":
+      self.define(name, value_type)
+  of VkArray:
+    var elem_type = ANY_TYPE
+    let resolved = self.resolve(value_type)
+    if resolved != nil and resolved.kind == TkApplied and resolved.ctor == "Array" and resolved.args.len > 0:
+      elem_type = resolved.args[0]
+    for item in array_data(pattern):
+      self.define_pattern_bindings(item, elem_type)
+  of VkMap:
+    var map_value_type = ANY_TYPE
+    let resolved = self.resolve(value_type)
+    if resolved != nil and resolved.kind == TkApplied and resolved.ctor == "Map" and resolved.args.len > 1:
+      map_value_type = resolved.args[1]
+    for _, item in map_data(pattern).pairs:
+      if item.kind != VkSymbol:
+        continue
+      var name = item.str
+      if name.startsWith("^"):
+        if name.len <= 1:
+          continue
+        name = name[1..^1]
+      if name.len > 0 and name != "_":
+        self.define(name, map_value_type)
+  else:
+    discard
+
 proc check_var(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if gene.children.len == 0:
     return ANY_TYPE
-  var name_val = gene.children[0]
+
+  var pattern = gene.children[0]
   var name = ""
   var annotated: TypeExpr = nil
   var value_index = 1
-  if name_val.kind == VkSymbol:
-    name = name_val.str
+
+  if pattern.kind == VkSymbol:
+    name = pattern.str
     if name.endsWith(":"):
       name = name[0..^2]
+      pattern = name.to_symbol_value()
       if gene.children.len > 1:
         annotated = self.parse_type_expr(gene.children[1])
         value_index = 2
+
+  var value_type = ANY_TYPE
   if gene.children.len > value_index:
-    let value_type = self.check_expr(gene.children[value_index])
-    if annotated != nil:
+    value_type = self.check_expr(gene.children[value_index])
+
+  # Destructuring var binds names from pattern and yields nil.
+  if pattern.kind in {VkArray, VkMap}:
+    self.define_pattern_bindings(pattern, value_type)
+    return TypeExpr(kind: TkNamed, name: "Nil")
+
+  if pattern.kind != VkSymbol:
+    return ANY_TYPE
+
+  if annotated != nil:
+    if gene.children.len > value_index:
       if self.strict:
         self.unify(annotated, value_type, "var " & name)
       else:
@@ -1301,14 +1347,13 @@ proc check_var(self: TypeChecker, gene: ptr Gene): TypeExpr =
           self.unify(annotated, value_type, "var " & name)
         except CatchableError as e:
           self.warn("Warning: " & e.msg)
-      self.define(name, annotated)
-      return annotated
-    else:
-      self.define(name, value_type)
-      return value_type
-  if annotated != nil:
     self.define(name, annotated)
     return annotated
+
+  if gene.children.len > value_index:
+    self.define(name, value_type)
+    return value_type
+
   self.define(name, ANY_TYPE)
   return ANY_TYPE
 
@@ -1538,65 +1583,13 @@ proc check_return(self: TypeChecker, gene: ptr Gene): TypeExpr =
   return ret_type
 
 proc check_match(self: TypeChecker, gene: ptr Gene): TypeExpr =
-  ## Type check match expression: (match expr (Pattern1) body1 (Pattern2) body2 ...)
-  if gene.children.len < 2:
-    return ANY_TYPE
-
-  let scrutinee = gene.children[0]
-  let scrutinee_type = self.check_expr(scrutinee)
-  let scrutinee_name =
-    if scrutinee.kind == VkSymbol and scrutinee.str != "_":
-      scrutinee.str
-    else:
-      ""
-  var result_type: TypeExpr = nil
-  var i = 1
-
-  while i < gene.children.len:
-    let pattern = gene.children[i]
-    i += 1
-    if i >= gene.children.len:
-      break
-    let body = gene.children[i]
-    i += 1
-
-    self.push_scope()
-    let (pattern_adt_name, _, has_adt_pattern) = self.extract_adt_pattern(pattern)
-    if has_adt_pattern and scrutinee_name.len > 0:
-      self.define(scrutinee_name, self.narrow_type_to_adt(scrutinee_type, pattern_adt_name))
-
-    # Extract bindings from pattern
-    if pattern.kind == VkGene and pattern.gene != nil:
-      let pat_gene = pattern.gene
-      if pat_gene.`type`.kind == VkSymbol:
-        let ctor = pat_gene.`type`.str
-        let (_, variant, found) = self.find_adt_variant(ctor)
-        if found and variant.field_count > 0:
-          if pat_gene.children.len > 0 and pat_gene.children[0].kind == VkSymbol:
-            let bound_name = pat_gene.children[0].str
-            if bound_name != "_":
-              let bound_type = self.adt_binding_type(scrutinee_type, ctor)
-              self.define(bound_name, bound_type)
-    elif pattern.kind == VkSymbol:
-      # Wildcard or variable binding
-      let name = pattern.str
-      if name != "_" and name != "None":
-        self.define(name, scrutinee_type)
-
-    let body_type = self.check_expr(body)
-    self.pop_scope()
-
-    if result_type == nil:
-      result_type = body_type
-    else:
-      try:
-        self.unify(result_type, body_type, "match")
-      except CatchableError:
-        result_type = TypeExpr(kind: TkUnion, members: @[result_type, body_type])
-
-  if result_type == nil:
-    return ANY_TYPE
-  return result_type
+  ## `match` has been removed as a language form.
+  ## In strict mode, fail during type-checking.
+  ## In non-strict mode, defer to compiler so users get source-traced diagnostics.
+  if self.strict:
+    raise new_exception(types.Exception,
+      "Type error: match has been removed; use (var pattern value) for binding or (case ...) for branching")
+  return ANY_TYPE
 
 proc check_case(self: TypeChecker, gene: ptr Gene): TypeExpr =
   ## Type check case expression: (case x when (Ok v) body1 when None body2)
@@ -1837,6 +1830,15 @@ proc check_infix(self: TypeChecker, gene: ptr Gene): TypeExpr =
   let op = gene.children[0]
   if op.kind != VkSymbol:
     return ANY_TYPE
+
+  if op.str == "=" and gene.`type`.kind in {VkArray, VkMap}:
+    let msg = "Type error: destructuring assignment has been removed; use (var pattern value)"
+    if self.strict:
+      raise new_exception(types.Exception, msg)
+    self.warn("Warning: " & msg)
+    discard self.check_expr(gene.children[1])
+    return ANY_TYPE
+
   let left_type = self.check_expr(gene.`type`)
   let right_type = self.check_expr(gene.children[1])
   case op.str

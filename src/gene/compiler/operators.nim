@@ -1094,8 +1094,12 @@ proc compile_gene(self: Compiler, input: Value) =
         self.compile_super(gene)
         return
       of "match":
-        self.compile_match(gene)
-        return
+        let location = trace_location(gene.trace)
+        let message = "match has been removed; use (var pattern value) for binding or (case ...) for branching"
+        if location.len > 0:
+          not_allowed(location & ": " & message)
+        else:
+          not_allowed(message)
       of "range":
         self.compile_range(gene)
         return

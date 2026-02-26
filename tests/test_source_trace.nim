@@ -16,7 +16,19 @@ suite "Source trace diagnostics":
       let msg = e.msg
       check "sample.gene" in msg
       check ":1:" in msg
-      check "match expects exactly 2 arguments" in msg
+      check "match has been removed" in msg
+
+  test "Destructuring assignment error includes source location":
+    init_all()
+    let code = "([a b] = [1 2])"
+    try:
+      discard VM.exec(code, "assign.gene")
+      check false
+    except types.Exception as e:
+      let msg = e.msg
+      check "assign.gene" in msg
+      check ":1:" in msg
+      check "destructuring assignment has been removed" in msg
 
   test "Runtime error includes source location":
     init_all()

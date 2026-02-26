@@ -2,7 +2,7 @@
 ## compile_fn, compile_return, compile_block, compile_ns,
 ## compile_method_definition, compile_constructor_definition,
 ## compile_class_with_container, compile_class, compile_object,
-## compile_new, compile_super, compile_match.
+## compile_new, compile_super.
 ## Included from compiler.nim — shares its scope.
 
 proc mark_local_fn(input: Value) =
@@ -534,99 +534,3 @@ proc compile_super(self: Compiler, gene: ptr Gene) =
   
   # Push the parent class
   self.emit(Instruction(kind: IkSuper))
-
-proc compile_match(self: Compiler, gene: ptr Gene) =
-  # Match statement: (match pattern value)
-  if gene.children.len != 2:
-    not_allowed("match expects exactly 2 arguments: pattern and value")
-
-  let pattern = gene.children[0]
-  let value = gene.children[1]
-
-  # Compile the value expression
-  self.compile(value)
-
-  # Ensure we have an active scope for pattern matching
-  if self.scope_trackers.len == 0:
-    not_allowed("match must be used within a scope")
-
-  # For now, handle simple variable binding: (match a [1])
-  if pattern.kind == VkSymbol:
-    # Simple variable binding
-    let var_name = pattern.str
-
-    let var_index = self.scope_tracker.next_index
-    self.scope_tracker.mappings[var_name.to_key()] = var_index
-    self.add_scope_start()
-    self.scope_tracker.next_index.inc()
-
-    # Store the value in the variable
-    self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-
-    # Push nil as the result of match
-    self.emit(Instruction(kind: IkPushNil))
-
-  elif pattern.kind == VkArray:
-    # Array pattern matching: (match [a b] [1 2])
-    # Stack has the array value on top
-
-    for i, elem in array_data(pattern):
-      if elem.kind == VkSymbol:
-        let var_name = elem.str
-
-        # Duplicate the array for extraction (keeps array on stack)
-        self.emit(Instruction(kind: IkDup))
-        # Get the i-th child - use i.to_value() to convert int to Value
-        self.emit(Instruction(kind: IkGetChild, arg0: i.to_value()))
-
-        # Store in variable
-        let var_index = self.scope_tracker.next_index
-        self.scope_tracker.mappings[var_name.to_key()] = var_index
-        self.add_scope_start()
-        self.scope_tracker.next_index.inc()
-        self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-        # Pop the result of Var (which is the extracted value) to keep array on top
-        self.emit(Instruction(kind: IkPop))
-      else:
-        not_allowed("Unsupported array pattern element type: " & $elem.kind & " (only symbols supported)")
-
-    # Pop the original array
-    self.emit(Instruction(kind: IkPop))
-
-    # Push nil as the result of match
-    self.emit(Instruction(kind: IkPushNil))
-
-  elif pattern.kind == VkMap:
-    # Map pattern matching: (match {^name ^age} person_data)
-
-    # Store the value temporarily for property extraction
-    self.emit(Instruction(kind: IkDup))
-
-    # Iterate over map pairs using the pattern's map field
-    for key, value in map_data(pattern).pairs:
-      if value.kind == VkSymbol and value.str.startsWith("^"):
-        # Property pattern: ^name -> binds to value of "name" key
-        let prop_name = value.str[1..high(value.str)]  # Remove ^ prefix
-
-        # Extract property using key from the target map
-        self.emit(Instruction(kind: IkDup))  # Duplicate the target map
-        self.emit(Instruction(kind: IkPushValue, arg0: key.to_value()))
-        self.emit(Instruction(kind: IkGetMemberOrNil))  # Safe property access
-
-        # Store in variable (use property name without ^)
-        let var_index = self.scope_tracker.next_index
-        self.scope_tracker.mappings[prop_name.to_key()] = var_index
-        self.add_scope_start()
-        self.scope_tracker.next_index.inc()
-        self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-      else:
-        not_allowed("Unsupported map pattern value: " & $value.kind & " (only ^property symbols supported)")
-
-    # Pop the original map
-    self.emit(Instruction(kind: IkPop))
-
-    # Push nil as the result of match
-    self.emit(Instruction(kind: IkPushNil))
-
-  else:
-    not_allowed("Unsupported pattern type: " & $pattern.kind)
