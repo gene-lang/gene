@@ -31,3 +31,12 @@ test_vm """
   )
   sum
 """, 11
+
+test_vm """
+  (var sum 0)
+  (for {^x x ^y y} in [{^x 1 ^y 2} {^x 3 ^y 4}]
+    (sum += x)
+    (sum += y)
+  )
+  sum
+""", 10

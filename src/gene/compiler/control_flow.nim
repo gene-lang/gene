@@ -400,10 +400,15 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
     # Keep one copy on stack while extracting each property.
     self.emit(Instruction(kind: IkDup))
     for key, value in map_data(name).pairs:
-      if value.kind != VkSymbol or not value.str.startsWith("^"):
-        not_allowed("Unsupported map destructuring pattern: expected ^name-style symbols")
+      if value.kind != VkSymbol:
+        not_allowed("Unsupported map destructuring pattern: expected symbol bindings")
 
-      let bind_name = value.str[1..^1]
+      var bind_name = value.str
+      if bind_name.startsWith("^"):
+        if bind_name.len <= 1:
+          not_allowed("Unsupported map destructuring binding: '^' requires a name")
+        bind_name = bind_name[1..^1]
+
       self.emit(Instruction(kind: IkDup))
       self.emit(Instruction(kind: IkPushValue, arg0: key.to_value()))
       self.emit(Instruction(kind: IkGetMemberOrNil))

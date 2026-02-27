@@ -190,6 +190,12 @@ test_vm """
   x/a/1
 """, 2
 
+test_vm """
+  (var m {^a 1 ^b 2})
+  (var {^a a ^b b} m)
+  (+ a b)
+""", 3
+
 # self in the module should return the module in current implementation
 # test_vm "self", <module>
 
