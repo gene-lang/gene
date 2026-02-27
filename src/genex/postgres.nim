@@ -1,5 +1,6 @@
 {.push warning[ResultShadowed]: off.}
 import db_connector/db_postgres
+import db_connector/postgres
 import strutils
 import ./db
 
@@ -22,39 +23,61 @@ type
 var connection_table {.threadvar.}: Table[system.int64, PostgresConnection]
 var next_conn_id {.threadvar.}: system.int64
 
-# Convert Gene Value to PostgreSQL parameter string (with proper quoting)
-proc gene_value_to_pg_string(value: Value): string =
+type
+  PgParamBindings = object
+    param_values: cstringArray
+    owned_values: seq[string]
+    param_count: int32
+
+proc gene_value_to_pg_param_text(value: Value): string =
   case value.kind
-  of VkNil:
-    result = "NULL"
   of VkBool:
-    result = if value.to_bool: "true" else: "false"
+    if value.to_bool: "true" else: "false"
   of VkInt:
-    result = $value.int64
+    $value.int64
   of VkFloat:
-    result = $value.float
+    $value.float
   of VkString:
-    # Escape single quotes by doubling them
-    let escaped = value.str.replace("'", "''")
-    result = "'" & escaped & "'"
+    value.str
   else:
-    # Convert other types to string and quote
-    let escaped = $value
-    let escaped2 = escaped.replace("'", "''")
-    result = "'" & escaped2 & "'"
+    $value
 
-# Convert seq[Value] to seq[string] for PostgreSQL
-proc gene_values_to_pg_strings(params: seq[Value]): seq[string] =
-  result = @[]
-  for param in params:
-    result.add(gene_value_to_pg_string(param))
+proc free_pg_param_bindings(bindings: var PgParamBindings) =
+  if bindings.param_values != nil:
+    dealloc(bindings.param_values)
+    bindings.param_values = nil
+  bindings.owned_values.setLen(0)
+  bindings.param_count = 0
 
-# Substitute $1, $2, etc. placeholders in SQL with parameter values
-proc substitute_params(sql_text: string, params: seq[string]): string =
-  result = sql_text
+proc build_pg_param_bindings(params: seq[Value]): PgParamBindings =
+  result.param_count = params.len.int32
+  if params.len == 0:
+    return
+
+  result.param_values = cast[cstringArray](alloc0(params.len * sizeof(cstring)))
+  result.owned_values = @[]
   for i, param in params:
-    let placeholder = "$" & intToStr(i + 1)
-    result = result.replace(placeholder, param)
+    if param.kind == VkNil:
+      # NULL parameters are passed as nil C pointers.
+      result.param_values[i] = nil
+      continue
+    let converted = gene_value_to_pg_param_text(param)
+    result.owned_values.add(converted)
+    result.param_values[i] = result.owned_values[^1].cstring
+
+proc pg_error_message(conn: DbConn, res: PPGresult): string =
+  if res != nil:
+    let result_msg = pqresultErrorMessage(res)
+    if result_msg != nil:
+      let msg = ($result_msg).strip()
+      if msg.len > 0:
+        return msg
+  let conn_msg = pqerrorMessage(conn)
+  if conn_msg != nil:
+    let msg = ($conn_msg).strip()
+    if msg.len > 0:
+      return msg
+  "unknown PostgreSQL error"
 
 # Open a PostgreSQL database connection
 proc vm_open(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -120,20 +143,40 @@ proc vm_query(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
 
   let stmt_text = sql_arg.str
   let params = collect_params(args, arg_count, has_keyword_args, 2)
-  let param_strings = gene_values_to_pg_strings(params)
-
+  var bindings = build_pg_param_bindings(params)
+  var raw_result: PPGresult = nil
   try:
+    raw_result = pqexecParams(
+      wrapper.conn,
+      stmt_text.cstring,
+      bindings.param_count,
+      nil,
+      bindings.param_values,
+      nil,
+      nil,
+      0
+    )
+
+    if raw_result == nil or pqresultStatus(raw_result) != PGRES_TUPLES_OK:
+      raise new_exception(types.Exception, "SQL execution failed: " & pg_error_message(wrapper.conn, raw_result))
+
     var result = new_array_value(@[])
-    # Substitute parameters into SQL
-    let final_sql = substitute_params(stmt_text, param_strings)
-    for row in wrapper.conn.getAllRows(sql(final_sql)):
+    let row_count = pqntuples(raw_result)
+    let col_count = pqnfields(raw_result)
+    for row_idx in 0..<row_count:
       var row_array = new_array_value(@[])
-      for col in row:
-        row_array.array_data.add(col.to_value())
+      for col_idx in 0..<col_count:
+        if pqgetisnull(raw_result, row_idx, col_idx) == 1:
+          # Keep compatibility with existing PostgreSQL bridge behavior.
+          row_array.array_data.add("".to_value())
+        else:
+          row_array.array_data.add(($pqgetvalue(raw_result, row_idx, col_idx)).to_value())
       result.array_data.add(row_array)
     return result
-  except DbError as e:
-    raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
+  finally:
+    if raw_result != nil:
+      pqclear(raw_result)
+    free_pg_param_bindings(bindings)
 
 # Execute a SQL statement without returning results (INSERT, UPDATE, DELETE)
 proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -162,14 +205,26 @@ proc vm_exec(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
 
   let stmt_text = sql_arg.str
   let params = collect_params(args, arg_count, has_keyword_args, 2)
-  let param_strings = gene_values_to_pg_strings(params)
-
+  var bindings = build_pg_param_bindings(params)
+  var raw_result: PPGresult = nil
   try:
-    # Substitute parameters into SQL and execute
-    let final_sql = substitute_params(stmt_text, param_strings)
-    wrapper.conn.exec(sql(final_sql))
-  except DbError as e:
-    raise new_exception(types.Exception, "SQL execution failed: " & e.msg)
+    raw_result = pqexecParams(
+      wrapper.conn,
+      stmt_text.cstring,
+      bindings.param_count,
+      nil,
+      bindings.param_values,
+      nil,
+      nil,
+      0
+    )
+
+    if raw_result == nil or pqresultStatus(raw_result) != PGRES_COMMAND_OK:
+      raise new_exception(types.Exception, "SQL execution failed: " & pg_error_message(wrapper.conn, raw_result))
+  finally:
+    if raw_result != nil:
+      pqclear(raw_result)
+    free_pg_param_bindings(bindings)
 
   return NIL
 
