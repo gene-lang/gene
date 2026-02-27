@@ -27,6 +27,29 @@ proc update_future_from_nim*(vm: ptr VirtualMachine, future_obj: FutureObj) {.gc
       future_obj.value = read(future_obj.nim_future)
 
 # Future methods
+proc run_callback_now(vm: ptr VirtualMachine, callback: Value, arg: Value): bool {.gcsafe.} =
+  {.cast(gcsafe).}:
+    try:
+      discard vm_exec_callable(vm, callback, @[arg])
+      return true
+    except CatchableError:
+      return false
+
+proc run_queued_callbacks_now(vm: ptr VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
+  if future_obj.state == FsSuccess:
+    for callback in future_obj.success_callbacks:
+      if not run_callback_now(vm, callback, future_obj.value):
+        future_obj.state = FsFailure
+        future_obj.value = vm.current_exception
+        break
+    future_obj.success_callbacks.setLen(0)
+  elif future_obj.state == FsFailure:
+    for callback in future_obj.failure_callbacks:
+      if not run_callback_now(vm, callback, future_obj.value):
+        future_obj.value = vm.current_exception
+        break
+    future_obj.failure_callbacks.setLen(0)
+
 proc future_on_success(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
   if arg_count < 2:
@@ -46,13 +69,9 @@ proc future_on_success(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
 
   # Add callback
   if future_obj.state == FsSuccess:
-    # Future already completed successfully - mark for immediate execution by adding to pending list
-    # The callback will be executed on next poll (callbacks are always executed in poll loop)
-    future_obj.success_callbacks.add(callback_arg)
-    # Re-add future to pending list so callbacks get executed
-    if vm.pending_futures.find(future_obj) < 0:
-      vm.pending_futures.add(future_obj)
-      vm.poll_enabled = true  # Ensure polling is enabled
+    if not run_callback_now(vm, callback_arg, future_obj.value):
+      future_obj.state = FsFailure
+      future_obj.value = vm.current_exception
   elif future_obj.state == FsPending:
     # Store callback for later execution when future completes
     future_obj.success_callbacks.add(callback_arg)
@@ -80,13 +99,8 @@ proc future_on_failure(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
 
   # Add callback
   if future_obj.state == FsFailure:
-    # Future already failed - mark for immediate execution by adding to pending list
-    # The callback will be executed on next poll (callbacks are always executed in poll loop)
-    future_obj.failure_callbacks.add(callback_arg)
-    # Re-add future to pending list so callbacks get executed
-    if vm.pending_futures.find(future_obj) < 0:
-      vm.pending_futures.add(future_obj)
-      vm.poll_enabled = true  # Ensure polling is enabled
+    if not run_callback_now(vm, callback_arg, future_obj.value):
+      future_obj.value = vm.current_exception
   elif future_obj.state == FsPending:
     # Store callback for later execution when future fails
     future_obj.failure_callbacks.add(callback_arg)
@@ -157,6 +171,7 @@ proc init_async*() =
 
       let future_obj = future_arg.ref.future
       future_obj.complete(value_arg)
+      run_queued_callbacks_now(vm, future_obj)
       return NIL
 
     # Add to global namespace
@@ -195,6 +210,7 @@ proc init_async*() =
 
       let future_obj = future_arg.ref.future
       future_obj.complete(value_arg)
+      run_queued_callbacks_now(vm, future_obj)
       return NIL
 
     # Add Future methods
