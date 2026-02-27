@@ -32,37 +32,22 @@ proc complete*(f: FutureObj, value: Value) =
     not_allowed("Future already completed")
   f.state = FsSuccess
   f.value = value
-  # Execute success callbacks
-  # Note: Callbacks are executed immediately when future completes
-  # In real async, these would be scheduled on the event loop
-  for callback in f.success_callbacks:
-    if callback.kind == VkFunction:
-      # Execute Gene function with value as argument
-      # We need a VM instance to execute, but we don't have one here
-      # This will be handled by update_from_nim_future which has VM access
-      discard
-    # For now, callbacks are stored but not executed here
-    # They will be executed by update_from_nim_future or by explicit VM call
+  # Callback execution is VM-mediated:
+  # - vm/async.nim runs callbacks for explicit Future.complete calls.
+  # - vm/async_exec.nim runs callbacks when polling async/thread futures.
 
 proc fail*(f: FutureObj, error: Value) =
   if f.state != FsPending:
     not_allowed("Future already completed")
   f.state = FsFailure
   f.value = error
-  # Execute failure callbacks
-  for callback in f.failure_callbacks:
-    if callback.kind == VkFunction:
-      # Execute Gene function with error as argument
-      # We need a VM instance to execute, but we don't have one here
-      # This will be handled by update_from_nim_future which has VM access
-      discard
-    # For now, callbacks are stored but not executed here
-    # They will be executed by update_from_nim_future or by explicit VM call
+  # Callback execution is VM-mediated (see complete()).
 
 proc update_from_nim_future*(f: FutureObj) =
   ## Check if the underlying Nim future has completed and update our state
   ## This should be called during event loop polling
-  ## NOTE: This version doesn't execute callbacks - use update_future_from_nim in vm/async.nim for that
+  ## NOTE: This updates state only. VM callback execution happens via
+  ## update_future_from_nim/execute_future_callbacks in vm/async*.nim.
   if f.nim_future.isNil or f.state != FsPending:
     return  # No Nim future to check, or already completed
 
@@ -77,13 +62,3 @@ proc update_from_nim_future*(f: FutureObj) =
       # Future succeeded
       f.state = FsSuccess
       f.value = read(f.nim_future)
-
-    # Execute appropriate callbacks
-    if f.state == FsSuccess:
-      for callback in f.success_callbacks:
-        # TODO: Execute callback with value
-        discard
-    else:
-      for callback in f.failure_callbacks:
-        # TODO: Execute callback with error
-        discard
