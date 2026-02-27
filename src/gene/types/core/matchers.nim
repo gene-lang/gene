@@ -4,13 +4,6 @@
 
 #################### Pattern Matching ############
 
-proc new_match_matcher*(): RootMatcher =
-  result = RootMatcher(
-    mode: MatchExpression,
-    type_check: true,
-    return_type_id: NO_TYPE_ID,
-  )
-
 proc new_arg_matcher*(): RootMatcher =
   result = RootMatcher(
     mode: MatchArguments,

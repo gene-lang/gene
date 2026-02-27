@@ -141,13 +141,6 @@ suite "Static type checking":
         0)
   """
 
-  test_strict_type_error """
-    (var x: ((Result Int String) | Int) (Ok 1))
-    (match x
-      (Ok v) (x + 1)
-      _ 0)
-  """
-
   test "Strict type checking: catch binding variable is scoped":
     let checker = tc.new_type_checker(strict = true, module_filename = "test_code")
     let code = cleanup("""

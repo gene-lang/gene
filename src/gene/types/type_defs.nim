@@ -516,7 +516,6 @@ type
 
   MatchingMode* {.size: sizeof(int16) .} = enum
     MatchArguments # (fn f [a b] ...)
-    MatchExpression # Deprecated legacy mode (standalone `match` removed)
 
   # Match the whole input or the first child (if running in ArgumentMode)
   # Can have name, match nothing, or have group of children

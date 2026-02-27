@@ -1582,15 +1582,6 @@ proc check_return(self: TypeChecker, gene: ptr Gene): TypeExpr =
         self.warn("Warning: " & e.msg)
   return ret_type
 
-proc check_match(self: TypeChecker, gene: ptr Gene): TypeExpr =
-  ## `match` has been removed as a language form.
-  ## In strict mode, fail during type-checking.
-  ## In non-strict mode, defer to compiler so users get source-traced diagnostics.
-  if self.strict:
-    raise new_exception(types.Exception,
-      "Type error: match has been removed; use (var pattern value) for binding or (case ...) for branching")
-  return ANY_TYPE
-
 proc check_case(self: TypeChecker, gene: ptr Gene): TypeExpr =
   ## Type check case expression: (case x when (Ok v) body1 when None body2)
   ## Supports normalized form in props and direct source form in children.
@@ -2493,8 +2484,6 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         elif gene.children.len >= 2 and gene.children[0].kind == VkGene:
           discard self.try_register_adt(gene)
         return ANY_TYPE
-      of "match":
-        return self.check_match(gene)
       of "case":
         return self.check_case(gene)
       of "for":
