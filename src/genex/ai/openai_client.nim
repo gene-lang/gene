@@ -45,6 +45,38 @@ proc redactSecret*(value: string): string =
     return "*".repeat(value.len)
   result = value[0..2] & "*".repeat(value.len - 6) & value[value.len-3..value.len-1]
 
+proc is_sensitive_header_name(name: string): bool =
+  let normalized = name.strip().toLowerAscii()
+  case normalized
+  of "authorization", "proxy-authorization", "x-api-key", "api-key", "openai-api-key":
+    return true
+  else:
+    discard
+
+  result = normalized.contains("token") or normalized.contains("secret")
+
+proc redact_header_value(name: string, value: string): string =
+  if not is_sensitive_header_name(name):
+    return value
+
+  let trimmed = value.strip()
+  if trimmed.len == 0:
+    return trimmed
+
+  let first_space = trimmed.find(' ')
+  if first_space > 0 and first_space < trimmed.len - 1:
+    let scheme = trimmed[0 ..< first_space]
+    let credential = trimmed[first_space + 1 .. ^1]
+    return scheme & " " & redactSecret(credential)
+
+  return redactSecret(trimmed)
+
+proc redactHeadersForLog*(headers: Table[string, string]): string =
+  var pairs: seq[string] = @[]
+  for key, value in headers:
+    pairs.add(key & ": " & redact_header_value(key, value))
+  result = "{" & pairs.join(", ") & "}"
+
 # Config building with precedence: options > env > defaults
 proc buildOpenAIConfig*(options: JsonNode = newJNull()): OpenAIConfig =
   let opts = if options.kind != JNull: options else: %*{}
@@ -96,7 +128,7 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
 
     when defined(debug):
       echo "DEBUG: OpenAI API Request: ", httpMethod, " ", url
-      echo "DEBUG: Headers: ", headers
+      echo "DEBUG: Headers: ", redactHeadersForLog(config.headers)
       if body != "":
         echo "DEBUG: Body: ", body[0..min(body.len, 200)] & (if body.len > 200: "..." else: "")
 

@@ -76,7 +76,7 @@ proc performStreamingRequest*(config: OpenAIConfig, endpoint: string,
 
     when defined(debug):
       echo "DEBUG: OpenAI Streaming Request: POST ", url
-      echo "DEBUG: Headers: ", headers
+      echo "DEBUG: Headers: ", redactHeadersForLog(config.headers)
       echo "DEBUG: Body: ", body[0..min(body.len, 200)] & (if body.len > 200: "..." else: "")
 
     # Make streaming request

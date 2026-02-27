@@ -1,8 +1,9 @@
-import unittest, os, strutils
+import unittest, os, strutils, tables
 
 import ../src/gene/vm
 import ../src/gene/logging_core
 import ../src/gene/types except Exception
+import ../src/genex/ai/openai_client
 import ./helpers
 
 test "Logging defaults when config missing":
@@ -69,3 +70,16 @@ test "Gene Logger emits log line":
     check last_log_line.endsWith(" hello")
   finally:
     current_thread_id = saved_thread_id
+
+test "OpenAI debug header logging redacts secrets":
+  var headers = initTable[string, string]()
+  headers["Authorization"] = "Bearer sk-test-secret-123456"
+  headers["X-API-Key"] = "test-api-key-abcdef"
+  headers["X-Trace-Id"] = "trace-123"
+
+  let rendered = redactHeadersForLog(headers)
+  check rendered.contains("Authorization: Bearer ")
+  check rendered.contains("X-API-Key: ")
+  check rendered.contains("X-Trace-Id: trace-123")
+  check not rendered.contains("sk-test-secret-123456")
+  check not rendered.contains("test-api-key-abcdef")
