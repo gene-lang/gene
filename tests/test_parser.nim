@@ -77,11 +77,10 @@ test_parser "+a", to_symbol_value("+a")
 test_parser "#a", to_symbol_value("#a")
 test_parser "a#b", to_symbol_value("a#b")
 test_parser "a:b", to_symbol_value("a:b")
-# TODO: Escape sequences in symbols also broken by parser optimization
-# test_parser "a\\ b", to_symbol_value("a b")
-# test_parser "a\\/b", to_symbol_value("a/b")
+test_parser "a\\ b", to_symbol_value("a b")
+test_parser "a\\/b", to_symbol_value("a/b")
 test_parser "n/A", to_complex_symbol(@["n", "A"])
-# test_parser "n\\/A/B", to_complex_symbol(@["n/A", "B"])
+test_parser "n\\/A/B", to_complex_symbol(@["n/A", "B"])
 test_parser "n/m/A", to_complex_symbol(@["n", "m", "A"])
 test_parser "/A", to_complex_symbol(@["", "A"])
 test_parser "^a", to_symbol_value("^a")
@@ -115,6 +114,7 @@ test_parser "#/(\\d)/[\\1]/m", proc(r: Value) =
 
 test_parser "{}", new_map_value()
 test_parser "{^a 1}", {"a": to_value(1)}.to_value()
+test_parser "{^a\\/b 1}", {"a/b": to_value(1)}.to_value()
 
 test_parser "{^a^b 1}", to_value({"a": to_value({"b": to_value(1)})})
 test_parser "{^a^^b}", to_value({"a": to_value({"b": TRUE})})

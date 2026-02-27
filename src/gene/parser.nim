@@ -547,7 +547,11 @@ proc read_token(self: var Parser, lead_constituent: bool, chars_allowed: openarr
       if pos < self.buf.len:
         ch = self.buf[pos]
         if ch != EndOfFile:
-          result.add(ch)  # Add escaped character (without backslash)
+          # Preserve escaped slash markers (\/) so symbol parsing can
+          # distinguish literal slash from complex-symbol separators.
+          if ch == '/':
+            result.add('\\')
+          result.add(ch)
           inc(pos)
         else:
           break
@@ -566,6 +570,20 @@ proc read_token(self: var Parser, lead_constituent: bool, chars_allowed: openarr
 
 proc read_token(self: var Parser, lead_constituent: bool): string =
   return self.read_token(lead_constituent, [':'])
+
+proc unescape_escaped_slashes(s: string): string =
+  if '\\' notin s:
+    return s
+
+  result = ""
+  var i = 0
+  while i < s.len:
+    if s[i] == '\\' and i + 1 < s.len and s[i + 1] == '/':
+      result.add('/')
+      i += 2
+    else:
+      result.add(s[i])
+      inc(i)
 
 proc read_character(self: var Parser): Value =
   # New character literal syntax: 'a' or '\n' 
@@ -657,40 +675,38 @@ proc skip_ws(self: var Parser) {.gcsafe.} =
   self.bufpos = pos
 
 proc match_symbol(s: string): Value =
-  # TODO: Current optimization doesn't fully handle escape sequences in symbols
-  # Escape sequences like \/ in symbols (e.g., "a\/b" -> "a/b") need proper processing
-  # Current implementation handles most cases but some edge cases with escapes fail
-  # Need to balance performance optimizations with complete escape sequence support
-  
   if s == "/":
     return s.to_symbol_value()
-  
-  # Fast path: check if symbol contains '/' at all
-  let slash_pos = s.find('/')
-  if slash_pos == -1:
-    # No slash found, simple symbol
+
+  if '/' notin s:
     return s.to_symbol_value()
-  
-  # Complex symbol path: use split for better performance
-  var parts = s.split('/')
-  
-  # Handle escape sequences if any (less common path)
-  # NOTE: This is a simplified implementation that doesn't handle all escape cases
-  if '\\' in s:
-    for i in 0..<parts.len:
-      # Only process parts that have escapes
-      if '\\' in parts[i]:
-        var unescaped = ""
-        var j = 0
-        while j < parts[i].len:
-          if parts[i][j] == '\\' and j + 1 < parts[i].len:
-            unescaped.add(parts[i][j + 1])
-            j += 2
-          else:
-            unescaped.add(parts[i][j])
-            j += 1
-        parts[i] = unescaped
-  
+
+  # Fast path for common complex symbols with no escapes.
+  if '\\' notin s:
+    return s.split('/').to_complex_symbol()
+
+  # Split on unescaped '/' only; keep escaped slashes as literal chars.
+  var parts: seq[string] = @[]
+  var part = ""
+  var has_separator = false
+  var i = 0
+  while i < s.len:
+    if s[i] == '\\' and i + 1 < s.len and s[i + 1] == '/':
+      part.add('/')
+      i += 2
+    elif s[i] == '/':
+      has_separator = true
+      parts.add(part)
+      part = ""
+      inc(i)
+    else:
+      part.add(s[i])
+      inc(i)
+
+  if not has_separator:
+    return part.to_symbol_value()
+
+  parts.add(part)
   return parts.to_complex_symbol()
 
 proc interpret_token(token: string): Value =
@@ -782,14 +798,14 @@ proc read_map(self: var Parser, mode: MapKind): Table[Key, Value] {.gcsafe.} =
         self.bufPos.inc()
         if self.buf[self.bufPos] == '^':
           self.bufPos.inc()
-          key = self.read_token(false)
+          key = unescape_escaped_slashes(self.read_token(false))
           result[key.to_key()] = TRUE
         elif self.buf[self.bufPos] == '!':
           self.bufPos.inc()
-          key = self.read_token(false)
+          key = unescape_escaped_slashes(self.read_token(false))
           result[key.to_key()] = NIL
         else:
-          key = self.read_token(false)
+          key = unescape_escaped_slashes(self.read_token(false))
           if key.contains('^'):
             let parts = key.to_keys()
             map = result.addr
