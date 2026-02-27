@@ -1726,7 +1726,25 @@ proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if gene.children.len < 3:
     return ANY_TYPE
 
-  let var_name = if gene.children[0].kind == VkSymbol: gene.children[0].str else: "_"
+  let var_node = gene.children[0]
+  var index_name = ""
+  var value_pattern: Value = NIL
+
+  case var_node.kind
+  of VkSymbol:
+    value_pattern = var_node
+  of VkArray:
+    let items = array_data(var_node)
+    if items.len == 2 and items[0].kind == VkSymbol and items[1].kind in {VkSymbol, VkArray, VkMap}:
+      index_name = items[0].str
+      value_pattern = items[1]
+    else:
+      value_pattern = var_node
+  of VkMap:
+    value_pattern = var_node
+  else:
+    value_pattern = "_".to_symbol_value()
+
   # children[1] should be "in" symbol
   let collection = gene.children[2]
   let collection_type = self.check_expr(collection)
@@ -1739,8 +1757,18 @@ proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if ct.kind == TkApplied and ct.ctor == "Array" and ct.args.len > 0:
     elem_type = ct.args[0]
 
-  if var_name != "_":
-    self.define(var_name, elem_type)
+  if index_name.len > 0 and index_name != "_":
+    self.define(index_name, TypeExpr(kind: TkNamed, name: "Int"))
+
+  case value_pattern.kind
+  of VkSymbol:
+    let var_name = value_pattern.str
+    if var_name != "_":
+      self.define(var_name, elem_type)
+  of VkArray, VkMap:
+    self.define_pattern_bindings(value_pattern, elem_type)
+  else:
+    discard
 
   # Check body
   for i in 3..<gene.children.len:

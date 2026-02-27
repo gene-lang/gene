@@ -21,3 +21,13 @@ test_vm """
   )
   sum
 """, 3
+
+test_vm """
+  (var sum 0)
+  (for [i [a b]] in [[1 2] [3 4]]
+    (sum += i)
+    (sum += a)
+    (sum += b)
+  )
+  sum
+""", 11

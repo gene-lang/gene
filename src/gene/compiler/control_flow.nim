@@ -832,24 +832,33 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   
   let var_node = gene.children[0]
   var index_name: string = ""
-  var value_name: string = ""
+  var value_pattern: Value = NIL
   case var_node.kind
   of VkSymbol:
-    value_name = var_node.str
+    value_pattern = var_node
   of VkArray:
     let items = array_data(var_node)
-    if items.len != 2 or items[0].kind != VkSymbol or items[1].kind != VkSymbol:
-      not_allowed("for loop variable must be a symbol or [index value]")
-    index_name = items[0].str
-    value_name = items[1].str
+    if items.len == 2 and items[0].kind == VkSymbol:
+      # [index value] / [index pattern]
+      index_name = items[0].str
+      if items[1].kind notin {VkSymbol, VkArray, VkMap}:
+        not_allowed("for loop value binding must be a symbol or destructuring pattern")
+      value_pattern = items[1]
+    else:
+      # Destructuring pattern for value
+      value_pattern = var_node
+  of VkMap:
+    # Destructuring map pattern for value
+    value_pattern = var_node
   else:
-    not_allowed("for loop variable must be a symbol or [index value]")
+    not_allowed("for loop variable must be a symbol, pattern, or [index value/pattern]")
   
   # Check for 'in' keyword
   if gene.children.len < 3 or gene.children[1].kind != VkSymbol or gene.children[1].str != "in":
     not_allowed("for loop requires 'in' keyword")
-  
-  let var_name = value_name
+
+  if value_pattern == NIL:
+    not_allowed("for loop requires a value binding pattern")
   let collection = gene.children[2]
   
   # Create a scope for the entire for loop to hold temporary variables
@@ -915,18 +924,38 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkVar, arg0: idx_var.to_value()))
     self.emit(Instruction(kind: IkPop))
 
-  # Store element in loop variable
-  if var_name != "_":
-    let var_index = self.scope_tracker.next_index
-    self.scope_tracker.mappings[var_name.to_key()] = var_index
+  # Store element in loop variable/pattern
+  case value_pattern.kind
+  of VkSymbol:
+    let var_name = value_pattern.str
+    if var_name != "_":
+      let var_index = self.scope_tracker.next_index
+      self.scope_tracker.mappings[var_name.to_key()] = var_index
+      self.add_scope_start()
+      self.scope_tracker.next_index.inc()
+      self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+      # Remove the element value that IkVar leaves on the stack
+      self.emit(Instruction(kind: IkPop))
+    else:
+      # Drop the element when the value is ignored
+      self.emit(Instruction(kind: IkPop))
+  of VkArray, VkMap:
+    # Reuse var-destructuring semantics for loop bindings.
+    let tmp_name = "__for_value".to_symbol_value()
+    let tmp_index = self.scope_tracker.next_index
+    self.scope_tracker.mappings[tmp_name.str.to_key()] = tmp_index
     self.add_scope_start()
     self.scope_tracker.next_index.inc()
-    self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-    # Remove the element value that IkVar leaves on the stack
+    self.emit(Instruction(kind: IkVar, arg0: tmp_index.to_value()))
+    self.emit(Instruction(kind: IkPop))
+
+    var bind_gene = new_gene("var".to_symbol_value())
+    bind_gene.children.add(value_pattern)
+    bind_gene.children.add(tmp_name)
+    self.compile_var(bind_gene)
     self.emit(Instruction(kind: IkPop))
   else:
-    # Drop the element when the value is ignored
-    self.emit(Instruction(kind: IkPop))
+    not_allowed("Unsupported for loop binding pattern")
   
   # Compile body (remaining children after 'in' and collection)
   if gene.children.len > 3:
@@ -1133,10 +1162,18 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
         inc i
         
         var next_catch_label: Label
-        let is_catch_all = pattern.kind == VkSymbol and pattern.str == "*"
+        let is_symbol_pattern = pattern.kind == VkSymbol
+        let is_catch_all = is_symbol_pattern and pattern.str == "*"
+        # catch ex / catch err => bind exception to a variable.
+        # Uppercase symbol catches remain type-based (e.g. catch MyError).
+        let is_catch_binding =
+          is_symbol_pattern and
+          pattern.str.len > 0 and
+          pattern.str != "*" and
+          (pattern.str == "_" or pattern.str[0].isLowerAscii())
         
         # Generate catch matching code
-        if is_catch_all:
+        if is_catch_all or is_catch_binding:
           # Catch all - no need to check type
           self.emit(Instruction(kind: IkCatchStart))
         else:
@@ -1161,6 +1198,21 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
           
           # If not a match, jump to next catch
           self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_catch_label.to_value()))
+
+        # Catch-local scope for optional exception binding and body locals.
+        self.start_scope()
+        if is_catch_binding:
+          self.emit(Instruction(kind: IkPushValue, arg0: App.app.gene_ns))
+          self.emit(Instruction(kind: IkGetMember, arg0: "ex".to_key().to_value()))
+          if pattern.str == "_":
+            self.emit(Instruction(kind: IkPop))
+          else:
+            let catch_var_index = self.scope_tracker.next_index
+            self.scope_tracker.mappings[pattern.str.to_key()] = catch_var_index
+            self.add_scope_start()
+            self.scope_tracker.next_index.inc()
+            self.emit(Instruction(kind: IkVar, arg0: catch_var_index.to_value()))
+            self.emit(Instruction(kind: IkPop))
         
         # Compile catch body
         while i < gene.children.len:
@@ -1169,7 +1221,8 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
             break
           self.compile(body_child)
           inc i
-        
+
+        self.end_scope()
         self.emit(Instruction(kind: IkCatchEnd))
         # Jump to finally if exists, otherwise to end
         if has_finally:
@@ -1178,7 +1231,7 @@ proc compile_try(self: Compiler, gene: ptr Gene) =
           self.emit(Instruction(kind: IkJump, arg0: end_label.to_value()))
         
         # Add label for next catch if this was a type-specific catch
-        if not is_catch_all:
+        if not is_catch_all and not is_catch_binding:
           self.emit(Instruction(kind: IkNoop, label: next_catch_label))
           # Pop the exception handler and push it back for the next catch
           self.emit(Instruction(kind: IkCatchRestore))

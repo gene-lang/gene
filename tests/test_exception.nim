@@ -95,6 +95,22 @@ test_vm """
 
 test_vm """
   (try
+    (throw "boom")
+  catch ex
+    ex
+  )
+""", "boom"
+
+test_vm """
+  (try
+    (throw "boom")
+  catch _
+    7
+  )
+""", 7
+
+test_vm """
+  (try
     (throw)
     1
   catch *
