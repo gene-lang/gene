@@ -295,9 +295,45 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkAssign:
-        not_allowed("IkAssign is not implemented")
-        # let value = self.frame.current()
-        # Find the namespace where the member is defined and assign it there
+        # Assign to nearest namespace where symbol already exists; otherwise
+        # define it in current namespace.
+        let value = self.frame.current()
+        let name = cast[Key](inst.arg0.raw)
+
+        var target_ns = self.frame.ns
+        var cursor = self.frame.ns
+        var found = false
+
+        while cursor != nil:
+          if cursor.members.has_key(name):
+            target_ns = cursor
+            found = true
+            break
+          if cursor.stop_inheritance:
+            break
+          cursor = cursor.parent
+
+        if not found and self.thread_local_ns != nil:
+          cursor = self.thread_local_ns
+          while cursor != nil:
+            if cursor.members.has_key(name):
+              target_ns = cursor
+              found = true
+              break
+            if cursor.stop_inheritance:
+              break
+            cursor = cursor.parent
+
+        if target_ns == nil:
+          if self.thread_local_ns != nil:
+            target_ns = self.thread_local_ns
+          elif App.app.global_ns != NIL:
+            target_ns = App.app.global_ns.ref.ns
+
+        if target_ns == nil:
+          not_allowed("Cannot assign symbol without an active namespace")
+
+        target_ns[name] = value
 
       of IkRepeatInit:
         {.push checks: off}

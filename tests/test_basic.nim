@@ -222,6 +222,12 @@ test_vm """
   a
 """, 1
 
+# Plain symbol assignment should define in current namespace
+test_vm """
+  (a = 1)
+  a
+""", 1
+
 # Namespace nested path assignment
 test_vm """
   (ns n
