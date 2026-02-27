@@ -25,6 +25,7 @@ test_vm "(1 + 2)", 3
 test_vm "(3 - 2)", 1
 test_vm "(2 * 3)", 6
 test_vm "(6 / 2)", 3.0
+test_vm_error "(140737488355327 + 1)" # Crosses 48-bit immediate boundary
 
 test_vm "(2 < 3)", true
 test_vm "(2 < 2)", false

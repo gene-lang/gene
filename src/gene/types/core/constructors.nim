@@ -12,8 +12,7 @@ converter to_value*(v: int): Value {.inline, noSideEffect.} =
     # Fits in 48 bits - use NaN boxing
     result = Value(raw: SMALL_INT_TAG or (cast[uint64](i) and PAYLOAD_MASK))
   else:
-    # TODO: Allocate BigInt for values outside 48-bit range
-    raise newException(OverflowDefect, "Integer " & $i & " outside supported range")
+    raise newException(ValueError, "Integer " & $i & " outside 48-bit range (BigInt not implemented)")
 
 converter to_value*(v: int16): Value {.inline, noSideEffect.} =
   # int16 always fits in 48 bits
@@ -28,8 +27,7 @@ converter to_value*(v: int64): Value {.inline, noSideEffect.} =
     # Fits in 48 bits - use NaN boxing
     result = Value(raw: SMALL_INT_TAG or (cast[uint64](v) and PAYLOAD_MASK))
   else:
-    # TODO: Allocate BigInt for values outside 48-bit range
-    raise newException(OverflowDefect, "Integer " & $v & " outside supported range")
+    raise newException(ValueError, "Integer " & $v & " outside 48-bit range (BigInt not implemented)")
 
 converter to_int*(v: Value): int64 {.inline, noSideEffect.} =
   if is_small_int(v):

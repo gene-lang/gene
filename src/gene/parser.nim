@@ -1526,7 +1526,10 @@ proc read_number(self: var Parser): Value =
     else:
       let parsed_int = parse_biggest_int(self.str)
       # With NaN boxing, we can now represent negative integers correctly
-      result = parsed_int.to_value()
+      try:
+        result = parsed_int.to_value()
+      except ValueError as e:
+        raise new_exception(ParseError, e.msg)
   of TkFloat:
     result = parse_float(self.str)
   of TkError:
