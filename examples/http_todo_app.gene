@@ -7,6 +7,10 @@
 
 # Note: sqlite and http are already loaded in the VM
 # TODO: Fix wildcard imports - they cause VM issues currently
+# Force-load HTTP extension so start_server/respond/redirect globals are registered.
+(var _http genex/http)
+# Force-load HTML tag helpers so tag symbols (UL, LI, DIV, ...) are available.
+(var _html_tags genex/html/tags)
 
 # Prerequisites:
 # A running database server
@@ -585,11 +589,13 @@
 (class TodosController < Controller
   (method index req
     (var todos (Todo/all Todo))
+    (var list_html "")
+    (for todo in todos
+      (list_html .append todo/.to_html/.to_s)
+    )
     (.render
       (UL ^class "list-reset"
-        (todos .map (block [todo]
-          todo/.to_html
-        )) ...
+        list_html
       )
     )
   )

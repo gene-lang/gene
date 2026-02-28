@@ -6,7 +6,7 @@
 import ../types
 
 const
-  GENE_EXT_ABI_VERSION* = 2'u32
+  GENE_EXT_ABI_VERSION* = 3'u32
 
 type
   GeneExtStatus* = enum
@@ -15,6 +15,8 @@ type
     GeneExtAbiMismatch = 2
 
   GeneHostLogFn* = proc(level: int32, logger_name: cstring, message: cstring) {.cdecl, gcsafe.}
+  GeneHostSchedulerTickFn* = proc(vm_user_data: pointer, callback_user_data: pointer) {.cdecl, gcsafe.}
+  GeneHostRegisterSchedulerCallbackFn* = proc(callback: GeneHostSchedulerTickFn, callback_user_data: pointer): int32 {.cdecl, gcsafe.}
 
   GeneHostAbi* {.bycopy.} = object
     abi_version*: uint32
@@ -22,6 +24,7 @@ type
     app_value*: Value
     symbols_data*: pointer         ## ptr ManagedSymbols
     log_message_fn*: GeneHostLogFn
+    register_scheduler_callback_fn*: GeneHostRegisterSchedulerCallbackFn
     result_namespace*: ptr Namespace
 
   GeneExtensionInitFn* = proc(host: ptr GeneHostAbi): int32 {.cdecl.}

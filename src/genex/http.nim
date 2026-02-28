@@ -46,6 +46,7 @@ var http_server: AsyncHttpServer
 var server_handler: proc(req: Value): Value {.gcsafe.}
 var stored_gene_handler: Value  # Store the Gene function/instance
 var stored_vm: ptr VirtualMachine   # Store VM reference for execution
+var http_host_scheduler_registered: bool = false
 
 # Forward declarations
 proc request_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
@@ -459,6 +460,16 @@ proc vm_json_stringify(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
     let json_str = to_json(get_positional_arg(args, 0, has_keyword_args))
     return new_str_value(json_str)
 
+proc http_scheduler_tick(vm_user_data: pointer, callback_user_data: pointer) {.cdecl, gcsafe.} =
+  discard callback_user_data
+  try:
+    poll(0)
+  except CatchableError:
+    discard
+  let vm = cast[ptr VirtualMachine](vm_user_data)
+  if vm != nil:
+    process_pending_http_requests(vm)
+
 
 proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   result = new_namespace("http")
@@ -503,6 +514,10 @@ proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
   if host.abi_version != GENE_EXT_ABI_VERSION:
     return int32(GeneExtAbiMismatch)
   let vm = apply_extension_host_context(host)
+  if host.register_scheduler_callback_fn != nil and not http_host_scheduler_registered:
+    if host.register_scheduler_callback_fn(http_scheduler_tick, nil) != int32(GeneExtOk):
+      return int32(GeneExtErr)
+    http_host_scheduler_registered = true
   run_extension_vm_created_callbacks()
   let ns = init(vm)
   if host.result_namespace != nil:
@@ -799,9 +814,8 @@ proc init_http_classes*() =
     # so the handler must also be available there in concurrent mode.
     App.app.gene_ns.ref.ns["http_worker_handle_request".to_key()] = worker_handler_fn.to_ref_value()
 
-  # Register HTTP poll handler with the scheduler (outside the VmCreatedCallback lambda)
-  # This will be called by run_forever in the main scheduler loop
-  register_scheduler_callback(process_pending_http_requests)
+  # For dynamically loaded extensions, scheduler polling is bridged through
+  # GeneHostAbi.register_scheduler_callback_fn in gene_init.
 
 # Future-based handler execution system
 import locks
@@ -1360,23 +1374,11 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
           await req.respond(Http500, "Worker error: " & e.msg)
           return
       else:
-        # NON-CONCURRENT MODE: Queue for main thread processing
-        # Create a Nim future to await the response
-        let nim_future = newFuture[Value]("http_handler")
-
-        # Add to pending requests list
-        let pending_req = PendingHttpRequest(
-          request: gene_req,
-          nim_future: nim_future,
-          processed: false
-        )
-
-        withLock(pending_lock):
-          pending_http_requests.add(pending_req)
-
-        # Await the Nim future (will be completed when process_pending_http_requests runs)
+        # NON-CONCURRENT MODE: execute the Gene handler inline.
+        # This keeps request handling functional even when extension-local
+        # scheduler callbacks are not wired into the host scheduler.
         try:
-          response = await nim_future
+          response = execute_gene_function(gene_vm_global, gene_handler_global, @[gene_req])
         except CatchableError as e:
           await req.respond(Http500, "Internal Server Error: " & e.msg)
           return

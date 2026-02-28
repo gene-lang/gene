@@ -75,6 +75,33 @@ proc host_log_message_bridge(level: int32, logger_name: cstring, message: cstrin
   let message_str = if message == nil: "" else: $message
   log_message(log_level, logger_name_str, message_str)
 
+type
+  HostSchedulerCallbackEntry = object
+    callback: GeneHostSchedulerTickFn
+    callback_user_data: pointer
+
+var host_scheduler_callback_entries: seq[HostSchedulerCallbackEntry] = @[]
+var host_scheduler_dispatcher_registered = false
+
+proc host_scheduler_dispatcher(vm: ptr VirtualMachine) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    let vm_user_data = cast[pointer](vm)
+    for entry in host_scheduler_callback_entries:
+      if entry.callback != nil:
+        entry.callback(vm_user_data, entry.callback_user_data)
+
+proc host_register_scheduler_callback_bridge(callback: GeneHostSchedulerTickFn, callback_user_data: pointer): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    if callback == nil:
+      return int32(GeneExtErr)
+    host_scheduler_callback_entries.add(
+      HostSchedulerCallbackEntry(callback: callback, callback_user_data: callback_user_data)
+    )
+    if not host_scheduler_dispatcher_registered:
+      host_scheduler_dispatcher_registered = true
+      register_scheduler_callback(host_scheduler_dispatcher)
+    int32(GeneExtOk)
+
 proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a dynamic library extension and return its namespace
   when defined(gene_wasm):
@@ -123,6 +150,7 @@ proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
       app_value: App,
       symbols_data: if vm != nil and vm.symbols != nil: cast[pointer](vm.symbols) else: nil,
       log_message_fn: host_log_message_bridge,
+      register_scheduler_callback_fn: host_register_scheduler_callback_bridge,
       result_namespace: addr ext_ns
     )
 
