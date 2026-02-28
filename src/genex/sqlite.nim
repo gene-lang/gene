@@ -3,6 +3,7 @@ import db_connector/db_sqlite
 import db_connector/sqlite3 as sqlite3mod
 import std/locks
 import ./db
+import ../gene/vm/extension_abi
 
 # For static linking, don't include boilerplate to avoid duplicate set_globals
 when defined(noExtensions):
@@ -267,5 +268,30 @@ proc init_sqlite_classes*() =
 
 # Call init function
 init_sqlite_classes()
+
+proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
+  discard vm
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  if App.app.genex_ns.kind != VkNamespace:
+    return nil
+  let sqlite_val = App.app.genex_ns.ref.ns.members.getOrDefault("sqlite".to_key(), NIL)
+  if sqlite_val.kind == VkNamespace:
+    return sqlite_val.ref.ns
+  return nil
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)
 
 {.pop.}

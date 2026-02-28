@@ -12,7 +12,7 @@ when defined(gene_wasm):
   proc gene_host_free*(p: pointer) {.importc, cdecl.}
 
 proc wasm_unsupported_message*(feature: string): string =
-  "[AIR.WASM.UNSUPPORTED] " & feature & " is not available in wasm"
+  "[GENE.WASM.UNSUPPORTED] " & feature & " is not available in wasm"
 
 proc raise_wasm_unsupported*(feature: string) {.noreturn.} =
   raise newException(ValueError, wasm_unsupported_message(feature))

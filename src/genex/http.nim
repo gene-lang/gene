@@ -10,6 +10,7 @@ import cgi
 
 include ../gene/extension/boilerplate
 import ../gene/vm
+import ../gene/vm/extension_abi
 import ../gene/vm/thread as gene_thread
 import ../gene/serdes
 import std/typedthreads
@@ -495,6 +496,20 @@ proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   fn = new_ref(VkNativeFn)
   fn.native_fn = vm_json_stringify
   result["json_stringify".to_key()] = fn.to_ref_value()
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)
 
 # Request constructor implementation
 proc request_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =

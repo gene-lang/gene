@@ -16,15 +16,15 @@ suite "WASM runtime ABI":
   when defined(gene_wasm):
     test "unsupported thread API returns stable wasm code":
       let output = $gene_eval("(spawn 1)")
-      check output.contains("AIR.WASM.UNSUPPORTED")
+      check output.contains("GENE.WASM.UNSUPPORTED")
       check output.contains("threads")
 
     test "unsupported process API returns stable wasm code":
       let output = $gene_eval("(system/exec \"echo\" \"hi\")")
-      check output.contains("AIR.WASM.UNSUPPORTED")
+      check output.contains("GENE.WASM.UNSUPPORTED")
       check output.contains("process_exec")
 
     test "unsupported file-backed module import returns stable wasm code":
       let output = $gene_eval("(import value from \"tests/fixtures/mod1\") value")
-      check output.contains("AIR.WASM.UNSUPPORTED")
+      check output.contains("GENE.WASM.UNSUPPORTED")
       check output.contains("module_file_loading")

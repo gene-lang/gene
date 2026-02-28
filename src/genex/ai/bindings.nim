@@ -4,7 +4,8 @@
 import tables, json, strutils
 import ../../gene/types
 import ../../gene/vm
-import openai_client, streaming
+import ../../gene/vm/extension_abi
+import openai_client, streaming, documents
 
 var openai_client_class*: Class
 var openai_error_class*: Class
@@ -460,5 +461,45 @@ proc init_openai_classes*() =
     ai_ns["respond".to_key()] = vm_openai_respond.to_value()
     ai_ns["stream".to_key()] = vm_openai_stream.to_value()
 
+    let documents_ns = new_namespace("documents")
+    documents_ns["extract_pdf".to_key()] = vm_ai_documents_extract_pdf.to_value()
+    documents_ns["extract_image".to_key()] = vm_ai_documents_extract_image.to_value()
+    documents_ns["chunk".to_key()] = vm_ai_documents_chunk.to_value()
+    documents_ns["extract_and_chunk".to_key()] = vm_ai_documents_extract_and_chunk.to_value()
+    documents_ns["save_upload".to_key()] = vm_ai_documents_save_upload.to_value()
+    documents_ns["validate_upload".to_key()] = vm_ai_documents_validate_upload.to_value()
+    documents_ns["extract_upload".to_key()] = vm_ai_documents_extract_upload.to_value()
+    ai_ns["documents".to_key()] = documents_ns.to_value()
+
+    global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
+    global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
+    global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
+    global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()
+
 # Call init function
 init_openai_classes()
+
+proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
+  discard vm
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  if App.app.genex_ns.kind != VkNamespace:
+    return nil
+  let ai_val = App.app.genex_ns.ref.ns.members.getOrDefault("ai".to_key(), NIL)
+  if ai_val.kind == VkNamespace:
+    return ai_val.ref.ns
+  return nil
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)

@@ -82,15 +82,4 @@ set_vm_poll_event_loop_hook(poll_event_loop)
 
 include "./stdlib"
 
-# Temporarily import http and sqlite modules until extension loading is fixed
-when not defined(noExtensions) and not defined(gene_wasm):
-  import "../genex/http"
-  import "../genex/sqlite"
-  import "../genex/html"
-  import "../genex/logging"
-  import "../genex/test"
-  import "../genex/ai/bindings"
-  when defined(geneLLM):
-    import "../genex/llm"
-
 {.pop.}

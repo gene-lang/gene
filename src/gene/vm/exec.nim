@@ -955,6 +955,22 @@ proc exec*(self: ptr VirtualMachine): Value =
                 let now_us = host_now_us().float64
                 let elapsed = now_us - self.duration_start_us
                 self.frame.push(elapsed.to_value())
+              elif App != NIL and App.kind == VkApplication and
+                   App.app.genex_ns.kind == VkNamespace and
+                   target.ref.ns == App.app.genex_ns.ref.ns:
+                var member = target.ref.ns.members.getOrDefault(key, NIL)
+                if member == NIL:
+                  let ext_name = case prop.kind:
+                    of VkString, VkSymbol: prop.str
+                    of VkInt: $prop.int64
+                    else: ""
+                  if ext_name.len > 0:
+                    member = ensure_genex_extension(self, ext_name)
+                if member != NIL:
+                  retain(member)
+                  self.frame.push(member)
+                else:
+                  self.frame.push(VOID)
               elif target.ref.ns.has_key(key):
                 let member = target.ref.ns[key]
                 retain(member)
@@ -1115,6 +1131,23 @@ proc exec*(self: ptr VirtualMachine): Value =
                 let member = self.current_exception
                 retain(member)
                 self.frame.push(member)
+              elif App != NIL and App.kind == VkApplication and
+                   App.app.genex_ns.kind == VkNamespace and
+                   target.ref.ns == App.app.genex_ns.ref.ns:
+                var member = target.ref.ns.members.getOrDefault(key, NIL)
+                if member == NIL:
+                  let ext_name = case prop.kind:
+                    of VkString, VkSymbol: prop.str
+                    of VkInt: $prop.int64
+                    else: ""
+                  if ext_name.len > 0:
+                    member = ensure_genex_extension(self, ext_name)
+                if member != NIL:
+                  retain(member)
+                  self.frame.push(member)
+                else:
+                  retain(default_val)
+                  self.frame.push(default_val)
               elif target.ref.ns.has_key(key):
                 let member = target.ref.ns[key]
                 retain(member)
@@ -3365,7 +3398,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 cycle = ModuleLoadStack[start..^1] & @[module_path]
               else:
                 cycle = ModuleLoadStack & @[module_path]
-              not_allowed("[AIR.MODULE.CYCLE] Cyclic import detected: " & cycle.join(" -> "))
+              not_allowed("[GENE.MODULE.CYCLE] Cyclic import detected: " & cycle.join(" -> "))
 
             ModuleLoadState[module_path] = true
             ModuleLoadStack.add(module_path)
@@ -3511,10 +3544,6 @@ proc exec*(self: ptr VirtualMachine): Value =
           # Legacy path for Gene with type set to class
           class_val.gene.type.ref.class
         else:
-          when not defined(release):
-            echo "DEBUG IkNew: class_val.kind = ", class_val.kind
-            if class_val.kind == VkGene:
-              echo "  Gene type = ", class_val.gene.type
           raise new_exception(types.Exception, "new requires a class, got " & $class_val.kind)
 
         let is_macro_call = inst.arg1 != 0

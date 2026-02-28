@@ -40,14 +40,13 @@ suite "C Extension Support":
     init_stdlib()
     discard gene_nil() # Keep c_api linked into the host binary.
 
+    if fileExists("tests/Makefile.c_extension"):
+      discard execShellCmd("cd tests && make -B -f Makefile.c_extension")
+    elif fileExists("Makefile.c_extension"):
+      discard execShellCmd("make -B -f Makefile.c_extension")
+
     let setup_ext_base = extension_base_path()
     let ext_file = extension_file_path(setup_ext_base)
-    if not fileExists(ext_file):
-      if fileExists("tests/Makefile.c_extension"):
-        discard execShellCmd("cd tests && make -f Makefile.c_extension")
-      elif fileExists("Makefile.c_extension"):
-        discard execShellCmd("make -f Makefile.c_extension")
-
     let ext_ready = fileExists(ext_file)
     if not ext_ready:
       skip()

@@ -1,4 +1,4 @@
-import unittest, strutils, tables
+import unittest, strutils, tables, os
 
 import ../src/gene/types except Exception
 import ../src/gene/parser
@@ -64,6 +64,21 @@ proc cleanup*(code: string): string =
     result = "\n" & result
 
 var initialized = false
+var core_extensions_built = false
+
+proc extension_suffix(): string =
+  when defined(macosx):
+    ".dylib"
+  elif defined(windows):
+    ".dll"
+  else:
+    ".so"
+
+proc ensure_core_extensions_built() =
+  if core_extensions_built:
+    return
+  discard execShellCmd("nimble buildext")
+  core_extensions_built = true
 
 # Test-specific native functions
 proc test1(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
@@ -103,6 +118,7 @@ proc test_reentry(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
 
 proc init_all*() =
   if not initialized:
+    ensure_core_extensions_built()
     init_app_and_vm()
     init_stdlib()
     # Register test functions in gene namespace

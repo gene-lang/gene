@@ -2,8 +2,10 @@ import tables, strutils, os, algorithm
 
 import ../gene/types
 import ../gene/logging_core
+import ../gene/vm/extension_abi
 
 var logger_class_global: Class
+var host_log_message_cb: GeneHostLogFn = nil
 
 proc value_to_log_part(value: Value): string =
   case value.kind
@@ -36,7 +38,10 @@ proc logger_log(level: LogLevel, vm: ptr VirtualMachine, args: ptr UncheckedArra
     else:
       "unknown"
   let message = collect_message(args, arg_count, has_keyword_args, 1)
-  log_message(level, logger_name, message)
+  if host_log_message_cb != nil:
+    host_log_message_cb(int32(level), logger_name.cstring, message.cstring)
+  else:
+    log_message(level, logger_name, message)
   NIL
 
 proc logger_info(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -225,3 +230,29 @@ proc init_logging_module*() =
     App.app.genex_ns.ref.ns["logging".to_key()] = logging_ns.to_value()
 
 init_logging_module()
+
+proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
+  discard vm
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  if App.app.genex_ns.kind != VkNamespace:
+    return nil
+  let logging_val = App.app.genex_ns.ref.ns.members.getOrDefault("logging".to_key(), NIL)
+  if logging_val.kind == VkNamespace:
+    return logging_val.ref.ns
+  return nil
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  host_log_message_cb = host.log_message_fn
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)

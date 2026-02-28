@@ -46,7 +46,7 @@ In wasm mode, effectful runtime operations route through host ABI wrappers:
 
 ## Unsupported Features in WASM
 
-These operations fail deterministically with `AIR.WASM.UNSUPPORTED`:
+These operations fail deterministically with `GENE.WASM.UNSUPPORTED`:
 - Thread spawn/messaging APIs (`threads`)
 - Dynamic native extension loading (`dynamic_extension_loading`)
 - Process/shell execution (`process_exec`, `process_shell`)
@@ -56,5 +56,5 @@ These operations fail deterministically with `AIR.WASM.UNSUPPORTED`:
 Example error format:
 
 ```text
-[AIR.WASM.UNSUPPORTED] <feature> is not available in wasm
+[GENE.WASM.UNSUPPORTED] <feature> is not available in wasm
 ```

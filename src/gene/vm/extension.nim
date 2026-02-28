@@ -1,12 +1,14 @@
 when not defined(gene_wasm):
-  import strutils
+  import strutils, os, tables
 
 import ../types
+import ../logging_core
 when defined(gene_wasm):
   import ../wasm_host_abi
 
 when not defined(gene_wasm):
   import dynlib
+  import ./extension_abi
 
   when defined(posix):
     # Use dlopen with RTLD_GLOBAL on POSIX systems
@@ -36,12 +38,42 @@ when not defined(gene_wasm):
         return nil
       return cast[LibHandle](handle)
 
-type
-  # Function type for extension initialization
-  Init* = proc(vm: ptr VirtualMachine): Namespace {.gcsafe, nimcall.}
+proc infer_extension_name(path: string): string =
+  var name = splitFile(path).name
+  if name.startsWith("lib") and name.len > 3:
+    name = name[3..^1]
+  name
 
-  # Function type for setting globals in extension
-  SetGlobals* = proc(vm: ptr VirtualMachine) {.nimcall.}
+proc lookup_genex_namespace(name: string): Namespace =
+  if name.len == 0:
+    return nil
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  if App.app.genex_ns.kind != VkNamespace:
+    return nil
+  let existing = App.app.genex_ns.ref.ns.members.getOrDefault(name.to_key(), NIL)
+  if existing.kind == VkNamespace:
+    return existing.ref.ns
+  nil
+
+proc run_vm_created_callbacks(start_idx: int) =
+  ## Run any VM-created callbacks added after `start_idx`.
+  var i = start_idx
+  while i < VmCreatedCallbacks.len:
+    VmCreatedCallbacks[i]()
+    inc i
+
+proc host_log_message_bridge(level: int32, logger_name: cstring, message: cstring) {.cdecl, gcsafe.} =
+  let log_level = case level
+    of int32(LlError): LlError
+    of int32(LlWarn): LlWarn
+    of int32(LlInfo): LlInfo
+    of int32(LlDebug): LlDebug
+    of int32(LlTrace): LlTrace
+    else: LlInfo
+  let logger_name_str = if logger_name == nil: "" else: $logger_name
+  let message_str = if message == nil: "" else: $message
+  log_message(log_level, logger_name_str, message_str)
 
 proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a dynamic library extension and return its namespace
@@ -61,6 +93,8 @@ proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
       else:
         lib_path = path & ".so"
 
+    let callback_base = VmCreatedCallbacks.len
+
     when defined(posix):
       # Use RTLD_GLOBAL on POSIX to make main executable symbols available
       let handle = loadLibGlobal(lib_path.cstring)
@@ -68,23 +102,55 @@ proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
       let handle = loadLib(lib_path.cstring)
 
     if handle.isNil:
-      raise new_exception(types.Exception, "Failed to load extension: " & lib_path)
+      raise new_exception(types.Exception, "[GENE.EXT.LOAD_FAILED] Failed to load extension: " & lib_path)
 
-    # Call set_globals to pass VM pointer to extension
-    let set_globals = cast[SetGlobals](handle.symAddr("set_globals"))
-    if set_globals == nil:
-      raise new_exception(types.Exception, "set_globals not found in extension: " & path)
+    # Some extension modules register with VmCreatedCallbacks at module load.
+    # Run newly-added callbacks immediately when loading dynamically.
+    run_vm_created_callbacks(callback_base)
+    let post_load_callback_base = VmCreatedCallbacks.len
 
-    set_globals(vm)
+    let init_fn = cast[GeneExtensionInitFn](handle.symAddr("gene_init"))
+    if init_fn == nil:
+      raise new_exception(
+        types.Exception,
+        "[GENE.EXT.SYMBOL_MISSING] Required symbol 'gene_init' not found in extension: " & lib_path
+      )
 
-    # Call init to get the extension's namespace
-    let init = cast[Init](handle.symAddr("init"))
-    if init == nil:
-      raise new_exception(types.Exception, "init not found in extension: " & path)
+    var ext_ns: Namespace = nil
+    var host = GeneHostAbi(
+      abi_version: GENE_EXT_ABI_VERSION,
+      user_data: cast[pointer](vm),
+      app_value: App,
+      symbols_data: if vm != nil and vm.symbols != nil: cast[pointer](vm.symbols) else: nil,
+      log_message_fn: host_log_message_bridge,
+      result_namespace: addr ext_ns
+    )
 
-    result = init(vm)
-    if result == nil:
-      raise new_exception(types.Exception, "Extension init returned nil: " & path)
+    let init_status = init_fn(addr host)
+
+    # gene_init may also append VM-created callbacks (e.g. class registration hooks).
+    run_vm_created_callbacks(post_load_callback_base)
+
+    if init_status == int32(GeneExtAbiMismatch):
+      raise new_exception(
+        types.Exception,
+        "[GENE.EXT.ABI_MISMATCH] Extension ABI mismatch for: " & lib_path
+      )
+    if init_status != int32(GeneExtOk):
+      raise new_exception(
+        types.Exception,
+        "[GENE.EXT.INIT_FAILED] gene_init failed for extension: " & lib_path
+      )
+
+    if ext_ns == nil:
+      ext_ns = lookup_genex_namespace(infer_extension_name(lib_path))
+    if ext_ns == nil:
+      raise new_exception(
+        types.Exception,
+        "[GENE.EXT.INIT_FAILED] Extension did not publish a namespace: " & lib_path
+      )
+
+    result = ext_ns
 
 
 # No longer needed since we use deterministic hashing

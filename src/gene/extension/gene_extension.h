@@ -2,9 +2,8 @@
  * Gene VM C Extension API
  * 
  * This header provides the C interface for creating Gene VM extensions.
- * Extensions must export two functions:
- *   - void set_globals(VirtualMachine* vm)
- *   - Namespace* init(VirtualMachine* vm)
+ * Extensions must export one function:
+ *   - int32_t gene_init(GeneHostAbi* host)
  */
 
 #ifndef GENE_EXTENSION_H
@@ -46,6 +45,30 @@ typedef uint64_t Value;
  */
 typedef uint64_t Key;
 
+/* ========== ABI Types ========== */
+
+#define GENE_EXT_ABI_VERSION 2u
+
+typedef enum GeneExtStatus {
+    GENE_EXT_OK = 0,
+    GENE_EXT_ERR = 1,
+    GENE_EXT_ABI_MISMATCH = 2
+} GeneExtStatus;
+
+typedef void (*GeneHostLogFn)(int32_t level, const char* logger_name, const char* message);
+
+/**
+ * Host ABI passed to gene_init.
+ */
+typedef struct GeneHostAbi {
+    uint32_t abi_version;
+    void* user_data;               /* host-provided context (VirtualMachine*) */
+    uint64_t app_value;            /* host App value */
+    void* symbols_data;            /* host symbol table pointer */
+    GeneHostLogFn log_message_fn;  /* optional host logging callback */
+    Namespace** result_namespace;  /* extension sets this to its namespace */
+} GeneHostAbi;
+
 /* ========== Function Types ========== */
 
 /**
@@ -60,17 +83,7 @@ typedef uint64_t Key;
 typedef Value (*NativeFn)(VirtualMachine* vm, Value* args, 
                           int arg_count, bool has_keyword_args);
 
-/**
- * SetGlobalsFn - Function type for set_globals export
- * Called by VM to pass VM pointer to extension
- */
-typedef void (*SetGlobalsFn)(VirtualMachine* vm);
-
-/**
- * InitFn - Function type for init export
- * Called by VM to initialize extension and get its namespace
- */
-typedef Namespace* (*InitFn)(VirtualMachine* vm);
+typedef int32_t (*GeneExtensionInitFn)(GeneHostAbi* host);
 
 /* ========== Value Conversion Functions ========== */
 
@@ -182,4 +195,3 @@ extern void gene_raise_error(const char* message);
 #endif
 
 #endif /* GENE_EXTENSION_H */
-

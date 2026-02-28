@@ -56,7 +56,7 @@ Ranked by impact-to-effort ratio:
 
 ### 1. Structured Diagnostic Errors (HIGH impact, LOW effort)
 
-**What gene does:** Error values are JSON objects with `code`, `severity`, `stage`, `span` (file/line/col), `message`, `hints`, and `repair_tags`. A `makeDiagnosticMessage` helper builds these. Errors at runtime produce typed codes like `AIR.ARITH.DIV_ZERO`, `AIR.OOP.METHOD_NOT_FOUND`.
+**What gene does:** Error values are JSON objects with `code`, `severity`, `stage`, `span` (file/line/col), `message`, `hints`, and `repair_tags`. A `makeDiagnosticMessage` helper builds these. Errors at runtime produce typed codes like `GENE.ARITH.DIV_ZERO`, `GENE.OOP.METHOD_NOT_FOUND`.
 
 **What gene-old does:** Errors are plain string exceptions. `raise new_exception(types.Exception, ...)` produces unstructured strings. REPL-on-error fallback is a workaround.
 

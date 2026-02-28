@@ -11,9 +11,9 @@
 - [x] 2.4 Route wasm mode time/random/file operations through host ABI wrappers.
 
 ## 3. Runtime Guardrails for Unsupported Features
-- [x] 3.1 Guard thread APIs in wasm mode with deterministic `AIR.WASM.UNSUPPORTED` errors.
-- [x] 3.2 Guard dynamic native extension loading in wasm mode with deterministic `AIR.WASM.UNSUPPORTED` errors.
-- [x] 3.3 Guard process/shell and server-socket APIs in wasm mode with deterministic `AIR.WASM.UNSUPPORTED` errors.
+- [x] 3.1 Guard thread APIs in wasm mode with deterministic `GENE.WASM.UNSUPPORTED` errors.
+- [x] 3.2 Guard dynamic native extension loading in wasm mode with deterministic `GENE.WASM.UNSUPPORTED` errors.
+- [x] 3.3 Guard process/shell and server-socket APIs in wasm mode with deterministic `GENE.WASM.UNSUPPORTED` errors.
 
 ## 4. Tests
 - [x] 4.1 Add wasm smoke test for `gene_eval` basic execution path.

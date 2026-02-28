@@ -13,9 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Global VM pointer (set by set_globals) */
-static VirtualMachine* VM = NULL;
-
 /* ========== Extension Functions ========== */
 
 /**
@@ -123,18 +120,9 @@ static Value c_greet(VirtualMachine* vm, Value* args, int arg_count, bool has_ke
 /* ========== Required Extension Exports ========== */
 
 /**
- * set_globals - Called by VM to pass VM pointer
- * This is called before init()
- */
-void set_globals(VirtualMachine* vm) {
-    VM = vm;
-}
-
-/**
  * init - Initialize extension and return namespace
- * This is called after set_globals()
  */
-Namespace* init(VirtualMachine* vm) {
+static Namespace* init(VirtualMachine* vm) {
     // Create namespace for this extension
     Namespace* ns = gene_new_namespace("c_ext");
     
@@ -149,3 +137,21 @@ Namespace* init(VirtualMachine* vm) {
     return ns;
 }
 
+int32_t gene_init(GeneHostAbi* host) {
+    if (host == NULL) {
+        return GENE_EXT_ERR;
+    }
+    if (host->abi_version != GENE_EXT_ABI_VERSION) {
+        return GENE_EXT_ABI_MISMATCH;
+    }
+
+    VirtualMachine* vm = (VirtualMachine*)host->user_data;
+    Namespace* ns = init(vm);
+    if (ns == NULL) {
+        return GENE_EXT_ERR;
+    }
+    if (host->result_namespace != NULL) {
+        *host->result_namespace = ns;
+    }
+    return GENE_EXT_OK;
+}

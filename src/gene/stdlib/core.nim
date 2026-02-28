@@ -21,8 +21,6 @@ import ./dates as stdlib_dates
 import ./selectors as stdlib_selectors
 import ./gene_meta as stdlib_gene_meta
 import ./aspects as stdlib_aspects
-when not defined(gene_wasm):
-  import ../../genex/ai/ai
 
 when not defined(gene_wasm):
   import osproc, asyncfile
@@ -3688,50 +3686,5 @@ proc init_stdlib*() =
   load_logging_config()
 
   load_logging_config()
-
-  # OpenAI API functions
-  when not defined(noExtensions) and not defined(noai) and not defined(gene_wasm):
-    var ai_ns_val = NIL
-    if App.app.genex_ns.kind == VkNamespace:
-      ai_ns_val = App.app.genex_ns.ref.ns["ai".to_key()]
-
-    var ai_ns: Namespace
-    if ai_ns_val.kind == VkNamespace:
-      ai_ns = ai_ns_val.ref.ns
-    else:
-      ai_ns = new_namespace("ai")
-
-    # OpenAI client creation and operations
-    ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
-    ai_ns["chat".to_key()] = vm_openai_chat.to_value()
-    ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
-    ai_ns["respond".to_key()] = vm_openai_respond.to_value()
-    ai_ns["stream".to_key()] = vm_openai_stream.to_value()
-
-    let documents_ns = new_namespace("documents")
-    documents_ns["extract_pdf".to_key()] = vm_ai_documents_extract_pdf.to_value()
-    documents_ns["extract_image".to_key()] = vm_ai_documents_extract_image.to_value()
-    documents_ns["chunk".to_key()] = vm_ai_documents_chunk.to_value()
-    documents_ns["extract_and_chunk".to_key()] = vm_ai_documents_extract_and_chunk.to_value()
-    documents_ns["save_upload".to_key()] = vm_ai_documents_save_upload.to_value()
-    documents_ns["validate_upload".to_key()] = vm_ai_documents_validate_upload.to_value()
-    documents_ns["extract_upload".to_key()] = vm_ai_documents_extract_upload.to_value()
-    ai_ns["documents".to_key()] = documents_ns.to_value()
-
-    # Register the AI namespace in genex namespace
-    if App.app.genex_ns.kind == VkNamespace:
-      App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
-
-    # Also register in global namespace for direct access
-    global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
-    global_ns["openai_chat".to_key()] = vm_openai_chat.to_value()
-    global_ns["openai_embeddings".to_key()] = vm_openai_embeddings.to_value()
-    global_ns["openai_respond".to_key()] = vm_openai_respond.to_value()
-    global_ns["openai_stream".to_key()] = vm_openai_stream.to_value()
-
-    # Convenience aliases
-    global_ns["OpenAIClient".to_key()] = ai_ns.to_value()
-    # App.app.global_ns.ns["OpenAIClient".to_key()] = ai_ns.to_value()
-
 
 {.pop.}

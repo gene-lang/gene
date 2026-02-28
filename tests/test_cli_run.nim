@@ -261,7 +261,7 @@ suite "Run CLI":
 
     let result = run_command.handle("run", @[app_src])
     check not result.success
-    check result.error.contains("AIR.PACKAGE.BOUNDARY")
+    check result.error.contains("GENE.PACKAGE.BOUNDARY")
 
   test "run prefers importer-relative modules over workspace fallback":
     let root = createTempDir("gene_run_resolve_precedence_", "")

@@ -134,7 +134,7 @@ test "Compilation & VM: explicit exports reject non-exported named imports":
     discard VM.exec(code, "test_code")
     fail()
   except CatchableError as e:
-    check e.msg.contains("AIR.IMPORT.EXPORT_MISSING")
+    check e.msg.contains("GENE.IMPORT.EXPORT_MISSING")
     check e.msg.contains("hidden")
 
 test "Compilation & VM: explicit exports limit wildcard imports":
@@ -159,7 +159,7 @@ test "Compilation & VM: ambiguous module candidates fail with stable code":
     discard VM.exec(code, "test_code")
     fail()
   except CatchableError as e:
-    check e.msg.contains("AIR.MODULE.AMBIGUOUS")
+    check e.msg.contains("GENE.MODULE.AMBIGUOUS")
     check e.msg.contains("mod_ambiguous")
 
 test "Compilation & VM: cyclic imports fail with stable code and chain":
@@ -172,7 +172,7 @@ test "Compilation & VM: cyclic imports fail with stable code and chain":
     discard VM.exec(code, "test_code")
     fail()
   except CatchableError as e:
-    check e.msg.contains("AIR.MODULE.CYCLE")
+    check e.msg.contains("GENE.MODULE.CYCLE")
     check e.msg.contains("mod_cycle_a")
     check e.msg.contains("mod_cycle_b")
 

@@ -168,7 +168,7 @@ proc import_items(self: ptr VirtualMachine, source_ns: Namespace, items: seq[Imp
           self.frame.ns.members[key] = value
     else:
       if export_enforced and not is_exported(source_ns, item.name):
-        not_allowed("[AIR.IMPORT.EXPORT_MISSING] Cannot import '" & item.name &
+        not_allowed("[GENE.IMPORT.EXPORT_MISSING] Cannot import '" & item.name &
           "' from module with explicit exports")
       let value = resolve_import_value(source_ns, item.name)
       let import_name = if item.alias != "":

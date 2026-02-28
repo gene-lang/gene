@@ -39,12 +39,12 @@ var LoadedModuleTypeRegistry* = new_global_type_registry()
 let ExportKey* = "__exports__".to_key()
 
 const
-  MODULE_ERR_NOT_FOUND = "AIR.MODULE.NOT_FOUND"
-  MODULE_ERR_AMBIGUOUS = "AIR.MODULE.AMBIGUOUS"
-  PACKAGE_ERR_NOT_FOUND = "AIR.PACKAGE.NOT_FOUND"
-  PACKAGE_ERR_AMBIGUOUS = "AIR.PACKAGE.AMBIGUOUS"
-  PACKAGE_ERR_BOUNDARY = "AIR.PACKAGE.BOUNDARY"
-  PACKAGE_ERR_INVALID_LOCK = "AIR.PACKAGE.INVALID_LOCK"
+  MODULE_ERR_NOT_FOUND = "GENE.MODULE.NOT_FOUND"
+  MODULE_ERR_AMBIGUOUS = "GENE.MODULE.AMBIGUOUS"
+  PACKAGE_ERR_NOT_FOUND = "GENE.PACKAGE.NOT_FOUND"
+  PACKAGE_ERR_AMBIGUOUS = "GENE.PACKAGE.AMBIGUOUS"
+  PACKAGE_ERR_BOUNDARY = "GENE.PACKAGE.BOUNDARY"
+  PACKAGE_ERR_INVALID_LOCK = "GENE.PACKAGE.INVALID_LOCK"
 
 proc canonical_path(path: string): string =
   if path.len == 0:
@@ -854,15 +854,13 @@ proc ensure_genex_extension*(vm: ptr VirtualMachine, part: string): Value =
       raise_wasm_unsupported("dynamic_extension_loading")
     when not defined(noExtensions):
       let ext_path = extension_library_path(part)
-      if fileExists(ext_path):
-        try:
-          let ext_ns = load_extension(vm, ext_path)
-          if ext_ns != nil:
-            member = ext_ns.to_value()
-            App.app.genex_ns.ref.ns.members[key] = member
-        except CatchableError:
-          discard
-    # Even if extension loading failed, keep NIL to prevent repeated attempts
+      if not fileExists(ext_path):
+        not_allowed("[GENE.EXT.LOAD_FAILED] Extension library not found: " & ext_path)
+      let ext_ns = load_extension(vm, ext_path)
+      if ext_ns == nil:
+        not_allowed("[GENE.EXT.INIT_FAILED] Extension did not publish namespace: " & ext_path)
+      member = ext_ns.to_value()
+      App.app.genex_ns.ref.ns.members[key] = member
   return member
 
 proc resolve_from_root(vm: ptr VirtualMachine, root: Value, parts: seq[string]): Value =

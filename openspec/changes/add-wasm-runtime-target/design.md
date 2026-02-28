@@ -72,7 +72,7 @@ Runtime and stdlib effect paths (time/random/file operations) are routed through
 
 ### 5. Unsupported Feature Contract
 
-In `gene_wasm` mode, runtime features with no valid WASM mapping SHALL fail deterministically with a stable code (`AIR.WASM.UNSUPPORTED`) and feature identifier:
+In `gene_wasm` mode, runtime features with no valid WASM mapping SHALL fail deterministically with a stable code (`GENE.WASM.UNSUPPORTED`) and feature identifier:
 
 - thread spawning/thread messaging APIs
 - native extension loading (`native/load`, dynamic import extensions)

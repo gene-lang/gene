@@ -41,17 +41,17 @@ Features that are not supported in wasm mode SHALL fail deterministically with a
 
 #### Scenario: Unsupported thread operation in wasm
 - **WHEN** code executes thread APIs in `gene_wasm` mode
-- **THEN** runtime SHALL fail with `AIR.WASM.UNSUPPORTED`
+- **THEN** runtime SHALL fail with `GENE.WASM.UNSUPPORTED`
 - **AND** include the unsupported feature name in the error message
 
 #### Scenario: Unsupported native extension loading in wasm
 - **WHEN** code executes native extension loading in `gene_wasm` mode
-- **THEN** runtime SHALL fail with `AIR.WASM.UNSUPPORTED`
+- **THEN** runtime SHALL fail with `GENE.WASM.UNSUPPORTED`
 - **AND** include the unsupported feature name in the error message
 
 #### Scenario: Unsupported process or socket server operation in wasm
 - **WHEN** code executes process/shell or server-socket APIs in `gene_wasm` mode
-- **THEN** runtime SHALL fail with `AIR.WASM.UNSUPPORTED`
+- **THEN** runtime SHALL fail with `GENE.WASM.UNSUPPORTED`
 - **AND** include the unsupported feature name in the error message
 
 ### Requirement: Native Build Non-Regression

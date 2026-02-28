@@ -108,7 +108,7 @@ This produces:
 
 WASM mode exports `gene_eval(code: cstring): cstring` and uses host ABI wrappers for time/random/file effects.
 
-Current wasm limitations are explicit runtime errors with stable code `AIR.WASM.UNSUPPORTED` for:
+Current wasm limitations are explicit runtime errors with stable code `GENE.WASM.UNSUPPORTED` for:
 - thread APIs
 - dynamic native extension loading
 - process/shell execution

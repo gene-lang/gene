@@ -1,6 +1,7 @@
 {.push warning[ResultShadowed]: off.}
 import tables, strutils, uri
 import ../gene/types
+import ../gene/vm/extension_abi
 
 # Helper to create native function value
 proc wrap_native_fn(fn: NativeFn): Value =
@@ -399,3 +400,28 @@ proc init_html_module*() =
 
 # Auto-initialize on import
 init_html_module()
+
+proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
+  discard vm
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  if App.app.genex_ns.kind != VkNamespace:
+    return nil
+  let html_val = App.app.genex_ns.ref.ns.members.getOrDefault("html".to_key(), NIL)
+  if html_val.kind == VkNamespace:
+    return html_val.ref.ns
+  return nil
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)

@@ -181,6 +181,7 @@ const SYM_CONTAINER* = SYMBOL_TAG or 4
 
 proc init_values*() =
   SYMBOLS = ManagedSymbols()
+  SYMBOLS_SHARED = nil
   discard "_".to_symbol_value()
   discard "self".to_symbol_value()
   discard "gene".to_symbol_value()

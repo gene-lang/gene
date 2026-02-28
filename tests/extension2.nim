@@ -1,4 +1,5 @@
 include ../src/gene/extension/boilerplate
+import ../src/gene/vm/extension_abi
 
 type
   Extension2 = ref object of CustomValue
@@ -30,5 +31,19 @@ proc init*(vm: ptr VirtualMachine): Namespace =
   var ext2_name_ref = new_ref(VkNativeFn)
   ext2_name_ref.native_fn = extension2_name
   result["extension2_name".to_key()] = ext2_name_ref.to_ref_value()
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)
 
 {.pop.}
