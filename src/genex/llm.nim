@@ -377,31 +377,6 @@ when defined(GENE_LLM_MOCK):
 
   init_llm_module()
 
-proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
-  discard vm
-  if App == NIL or App.kind != VkApplication:
-    return nil
-  if App.app.genex_ns.kind != VkNamespace:
-    return nil
-  let llm_val = App.app.genex_ns.ref.ns.members.getOrDefault("llm".to_key(), NIL)
-  if llm_val.kind == VkNamespace:
-    return llm_val.ref.ns
-  return nil
-
-proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
-  if host == nil:
-    return int32(GeneExtErr)
-  if host.abi_version != GENE_EXT_ABI_VERSION:
-    return int32(GeneExtAbiMismatch)
-  let vm = apply_extension_host_context(host)
-  run_extension_vm_created_callbacks()
-  let ns = init(vm)
-  if host.result_namespace != nil:
-    host.result_namespace[] = ns
-  if ns == nil:
-    return int32(GeneExtErr)
-  int32(GeneExtOk)
-
 else:
   const
     llmSourceDir = parentDir(currentSourcePath())
@@ -1154,3 +1129,28 @@ else:
         App.app.genex_ns.ref.ns["llm".to_key()] = llm_ns.to_ref_value()
 
   init_llm_module()
+
+proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
+  discard vm
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  if App.app.genex_ns.kind != VkNamespace:
+    return nil
+  let llm_val = App.app.genex_ns.ref.ns.members.getOrDefault("llm".to_key(), NIL)
+  if llm_val.kind == VkNamespace:
+    return llm_val.ref.ns
+  return nil
+
+proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
+  if host == nil:
+    return int32(GeneExtErr)
+  if host.abi_version != GENE_EXT_ABI_VERSION:
+    return int32(GeneExtAbiMismatch)
+  let vm = apply_extension_host_context(host)
+  run_extension_vm_created_callbacks()
+  let ns = init(vm)
+  if host.result_namespace != nil:
+    host.result_namespace[] = ns
+  if ns == nil:
+    return int32(GeneExtErr)
+  int32(GeneExtOk)

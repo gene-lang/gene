@@ -839,6 +839,34 @@ proc extension_library_path(name: string): string =
   else:
     result = "build" / ("lib" & name & ".so")
 
+proc extension_library_filename(name: string): string =
+  ## Determine extension library filename (without directory).
+  when defined(windows):
+    result = "lib" & name & ".dll"
+  elif defined(macosx):
+    result = "lib" & name & ".dylib"
+  else:
+    result = "lib" & name & ".so"
+
+proc extension_library_candidates(name: string): seq[string] =
+  ## Candidate lookup paths for a genex extension library.
+  let lib_name = extension_library_filename(name)
+
+  # 1) Relative to cwd.
+  result.add(extension_library_path(name))
+
+  # 2) Relative to GENE_HOME (if provided).
+  let gene_home = getEnv("GENE_HOME", "")
+  if gene_home.len > 0:
+    append_unique(result, joinPath(gene_home, "build", lib_name))
+
+  # 3) Relative to the executable directory (e.g. <repo>/bin/gene -> <repo>/build).
+  let app_file = getAppFilename()
+  if app_file.len > 0:
+    let app_dir = parentDir(app_file)
+    if app_dir.len > 0:
+      append_unique(result, joinPath(parentDir(app_dir), "build", lib_name))
+
 proc ensure_genex_extension*(vm: ptr VirtualMachine, part: string): Value =
   ## Ensure a genex extension is loaded when accessing genex/<part>.
   if App == NIL or App.kind != VkApplication:
@@ -853,15 +881,44 @@ proc ensure_genex_extension*(vm: ptr VirtualMachine, part: string): Value =
     when defined(gene_wasm):
       raise_wasm_unsupported("dynamic_extension_loading")
     when not defined(noExtensions):
-      let ext_path = extension_library_path(part)
-      if not fileExists(ext_path):
-        not_allowed("[GENE.EXT.LOAD_FAILED] Extension library not found: " & ext_path)
+      let candidates = extension_library_candidates(part)
+      var ext_path = ""
+      for candidate in candidates:
+        if fileExists(candidate):
+          ext_path = candidate
+          break
+      if ext_path.len == 0:
+        # Missing extension is treated as unavailable so callers can probe with
+        # conditionals like: (if genex/sqlite ... else ...).
+        return NIL
       let ext_ns = load_extension(vm, ext_path)
       if ext_ns == nil:
         not_allowed("[GENE.EXT.INIT_FAILED] Extension did not publish namespace: " & ext_path)
       member = ext_ns.to_value()
       App.app.genex_ns.ref.ns.members[key] = member
   return member
+
+proc ensure_global_extension_symbol*(vm: ptr VirtualMachine, name: Key): Value =
+  ## Lazily load extension-provided global helpers on first symbol resolution.
+  if App == NIL or App.kind != VkApplication:
+    return NIL
+  if App.app.global_ns.kind != VkNamespace:
+    return NIL
+
+  var ext_name = ""
+  if name == "start_server".to_key() or
+     name == "respond".to_key() or
+     name == "respond_sse".to_key() or
+     name == "redirect".to_key() or
+     name == "http_get".to_key() or
+     name == "http_post".to_key():
+    ext_name = "http"
+
+  if ext_name.len == 0:
+    return NIL
+
+  discard ensure_genex_extension(vm, ext_name)
+  return App.app.global_ns.ref.ns.members.getOrDefault(name, NIL)
 
 proc resolve_from_root(vm: ptr VirtualMachine, root: Value, parts: seq[string]): Value =
   ## Resolve a path against a root namespace value.

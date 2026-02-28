@@ -533,6 +533,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                     value = self.thread_local_ns[name]
                     if value != NIL:
                       found_ns = self.thread_local_ns
+                if value == NIL:
+                  # Lazy-load extension-provided globals (e.g. start_server).
+                  value = ensure_global_extension_symbol(self, name)
+                  if value != NIL and App != NIL and App.kind == VkApplication and App.app.global_ns.kind == VkNamespace:
+                    found_ns = App.app.global_ns.ref.ns
 
                 # Update cache if we found the value
                 if value != NIL:
@@ -555,6 +560,11 @@ proc exec*(self: ptr VirtualMachine): Value =
                   value = self.thread_local_ns[name]
                   if value != NIL:
                     found_ns = self.thread_local_ns
+              if value == NIL:
+                # Lazy-load extension-provided globals (e.g. start_server).
+                value = ensure_global_extension_symbol(self, name)
+                if value != NIL and App != NIL and App.kind == VkApplication and App.app.global_ns.kind == VkNamespace:
+                  found_ns = App.app.global_ns.ref.ns
 
               # Initialize cache if we found the value
               if value != NIL:
