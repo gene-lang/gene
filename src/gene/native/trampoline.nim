@@ -31,6 +31,11 @@ const
 
 static:
   assert NativeCtxOffsetVm == 0
-  assert NativeCtxOffsetTrampoline == 8
-  assert NativeCtxOffsetDescriptors == 16
-  assert NativeCtxOffsetDescriptorCount == 24
+  when sizeof(pointer) == 8:
+    assert NativeCtxOffsetTrampoline == 8
+    assert NativeCtxOffsetDescriptors == 16
+    assert NativeCtxOffsetDescriptorCount == 24
+  else:
+    assert NativeCtxOffsetTrampoline == int32(sizeof(pointer))
+    assert NativeCtxOffsetDescriptors == int32(sizeof(pointer) * 2)
+    assert NativeCtxOffsetDescriptorCount == int32(sizeof(pointer) * 3)

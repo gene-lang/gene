@@ -17,6 +17,19 @@ task speedy, "Optimized build for maximum performance":
   exec "mkdir -p bin"
   exec "nim c -d:release --mm:orc --opt:speed --passC:\"-march=native -O3\" -o:bin/gene src/gene.nim"
 
+task wasm, "Build Gene WASM runtime module":
+  mkDir("web")
+  if findExe("emcc").len == 0:
+    echo "emcc was not found on PATH."
+    echo "Install Emscripten (emsdk) and activate it:"
+    echo "  git clone https://github.com/emscripten-core/emsdk.git"
+    echo "  cd emsdk"
+    echo "  ./emsdk install latest"
+    echo "  ./emsdk activate latest"
+    echo "  source ./emsdk_env.sh"
+    quit("emcc is required for `nimble wasm`.", QuitFailure)
+  exec "nim c --skipUserCfg --skipProjCfg --skipParentCfg -d:gene_wasm -d:gene_wasm_emscripten -d:release -d:emscripten --cpu:wasm32 --os:linux --mm:orc --threads:off --cc:clang --clang.exe:emcc --clang.linkerexe:emcc --passL:'--no-entry -sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sNO_EXIT_RUNTIME=1 -sENVIRONMENT=web -sEXPORTED_FUNCTIONS=[\"_gene_eval\"] -sEXPORTED_RUNTIME_METHODS=[\"cwrap\"]' -o:web/gene_wasm.js src/gene_wasm.nim"
+
 task bench, "Build and run benchmarks":
   exec "nim c -d:release --mm:orc --opt:speed --passC:\"-march=native\" -r bench/run_benchmarks.nim"
 
@@ -67,6 +80,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_macro.nim"
   exec "nim c -r tests/test_async.nim"
   exec "nim c -r tests/test_future_callbacks.nim"
+  exec "nim c -r tests/test_wasm.nim"
   exec "nim c -r tests/test_module.nim"
   exec "nim c -r tests/test_cli_gir.nim"
   exec "nim c -r tests/test_cli_run.nim"

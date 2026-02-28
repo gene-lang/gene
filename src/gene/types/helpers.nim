@@ -1,8 +1,9 @@
-import os, times, tables
+import os, tables
 
 import ./type_defs
 import ./core
 import ./classes
+import ../wasm_host_abi
 
 proc refresh_env_map*()
 proc set_program_args*(program: string, args: seq[string])
@@ -109,10 +110,10 @@ proc init_app_and_vm*() =
   let time_ns = new_namespace("time")
   # Simple time function that returns current timestamp
   proc time_now(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-    return epochTime().to_value()
+    return host_now_unix().to_value()
 
   proc time_now_us(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-    return (epochTime() * 1_000_000).to_value()
+    return host_now_us().to_value()
 
   var time_now_fn = new_ref(VkNativeFn)
   time_now_fn.native_fn = time_now

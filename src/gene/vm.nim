@@ -22,6 +22,7 @@ import ./vm/utils
 import ./vm/profile
 export profile
 import ./serdes
+import ./wasm_host_abi
 import ./native/runtime
 import ./native/hir
 import ./native/trampoline
@@ -54,7 +55,7 @@ proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args:
 proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], caller_context: Frame): Value
 proc exec_method_kw_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], kw_pairs: seq[(Key, Value)], caller_context: Frame): Value
 proc format_runtime_exception(self: ptr VirtualMachine, value: Value): string
-proc spawn_thread(code: ptr Gene, return_value: bool): Value
+proc spawn_thread(code: Value, return_value: bool): Value
 proc poll_event_loop*(self: ptr VirtualMachine)
 proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran: bool, value: Value]
 proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value
@@ -82,7 +83,7 @@ set_vm_poll_event_loop_hook(poll_event_loop)
 include "./stdlib"
 
 # Temporarily import http and sqlite modules until extension loading is fixed
-when not defined(noExtensions):
+when not defined(noExtensions) and not defined(gene_wasm):
   import "../genex/http"
   import "../genex/sqlite"
   import "../genex/html"

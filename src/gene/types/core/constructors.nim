@@ -89,7 +89,7 @@ proc str*(v: Value): string =
 
         of SYMBOL_TAG:
           let x = cast[int64](u and PAYLOAD_MASK)
-          result = get_symbol(x)
+          result = get_symbol(x.int)
 
         else:
           not_allowed(fmt"{v} is not a string.")
@@ -151,10 +151,10 @@ proc len*(self: Value): int =
     # Calculate range length: (end - start) / step + 1
     let start = self.ref.range_start.int64
     let endVal = self.ref.range_end.int64
-    let step = if self.ref.range_step == NIL: 1 else: self.ref.range_step.int64
+    let step = if self.ref.range_step == NIL: 1'i64 else: self.ref.range_step.int64
     if step == 0:
       return 0
-    return ((endVal - start) div step) + 1
+    return int(((endVal - start) div step) + 1'i64)
   else:
     return 0
 

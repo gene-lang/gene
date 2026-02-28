@@ -1,6 +1,8 @@
 import times
 
 import ../types
+when defined(gene_wasm):
+  import ../wasm_host_abi
 import ./classes
 
 proc init_date_classes*(object_class: Class) =
@@ -89,20 +91,26 @@ proc init_date_classes*(object_class: Class) =
   datetime_class.def_native_method("hour", datetime_hour)
 
 proc init_date_functions*() =
+  proc host_now_datetime(): DateTime {.inline.} =
+    when defined(gene_wasm):
+      fromUnix(host_now_unix()).local()
+    else:
+      times.now()
+
   proc gene_today_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now()
+    let dt = host_now_datetime()
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
   proc gene_now_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now()
+    let dt = host_now_datetime()
     new_datetime_value(dt)
 
   proc gene_yesterday_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now() - initDuration(days = 1)
+    let dt = host_now_datetime() - initDuration(days = 1)
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
   proc gene_tomorrow_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now() + initDuration(days = 1)
+    let dt = host_now_datetime() + initDuration(days = 1)
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
   var today_fn = new_ref(VkNativeFn)

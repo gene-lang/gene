@@ -142,47 +142,48 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
       # Ignore "No handles or timers registered" - this is normal when using Gene futures
       discard
 
-    # Check for thread replies (non-blocking)
-    # Only check if we're the main thread (thread 0)
-    if THREADS[0].in_use:
-      while true:
-        let msg_opt = THREAD_DATA[0].channel.try_recv()
-        if msg_opt.isNone():
-          break
+    when not defined(gene_wasm):
+      # Check for thread replies (non-blocking)
+      # Only check if we're the main thread (thread 0)
+      if THREADS[0].in_use:
+        while true:
+          let msg_opt = THREAD_DATA[0].channel.try_recv()
+          if msg_opt.isNone():
+            break
 
-        let msg = msg_opt.get()
-        if msg.msg_type == MtReply:
-          # Complete the future with the reply payload
-          if self.thread_futures.hasKey(msg.from_message_id):
-            let future_obj = self.thread_futures[msg.from_message_id]
-            var payload = msg.payload
-            if msg.payload_bytes.bytes.len > 0:
-              try:
-                payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
-              except CatchableError as ex:
-                discard future_obj.fail(new_async_error("GENE.THREAD.REPLY.DECODE", ex.msg, "thread_reply_decode"))
+          let msg = msg_opt.get()
+          if msg.msg_type == MtReply:
+            # Complete the future with the reply payload
+            if self.thread_futures.hasKey(msg.from_message_id):
+              let future_obj = self.thread_futures[msg.from_message_id]
+              var payload = msg.payload
+              if msg.payload_bytes.bytes.len > 0:
+                try:
+                  payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+                except CatchableError as ex:
+                  discard future_obj.fail(new_async_error("GENE.THREAD.REPLY.DECODE", ex.msg, "thread_reply_decode"))
+                  self.execute_future_callbacks(future_obj)
+                  # Fail the attached Nim future if present
+                  if future_obj.nim_future != nil and not future_obj.nim_future.finished:
+                    future_obj.nim_future.fail(newException(system.Exception, ex.msg))
+                  self.thread_futures.del(msg.from_message_id)
+                  continue
+              let error_msg = thread_error_message(payload)
+              if error_msg.len > 0:
+                discard future_obj.fail(new_async_error("GENE.THREAD.REPLY.FAILURE", error_msg, "thread_reply"))
                 self.execute_future_callbacks(future_obj)
                 # Fail the attached Nim future if present
                 if future_obj.nim_future != nil and not future_obj.nim_future.finished:
-                  future_obj.nim_future.fail(newException(system.Exception, ex.msg))
+                  future_obj.nim_future.fail(newException(system.Exception, error_msg))
                 self.thread_futures.del(msg.from_message_id)
                 continue
-            let error_msg = thread_error_message(payload)
-            if error_msg.len > 0:
-              discard future_obj.fail(new_async_error("GENE.THREAD.REPLY.FAILURE", error_msg, "thread_reply"))
+              discard future_obj.complete(payload)
+              # Execute callbacks inline
               self.execute_future_callbacks(future_obj)
-              # Fail the attached Nim future if present
+              # Complete the attached Nim future if present (for non-blocking HTTP handlers)
               if future_obj.nim_future != nil and not future_obj.nim_future.finished:
-                future_obj.nim_future.fail(newException(system.Exception, error_msg))
+                future_obj.nim_future.complete(payload)
               self.thread_futures.del(msg.from_message_id)
-              continue
-            discard future_obj.complete(payload)
-            # Execute callbacks inline
-            self.execute_future_callbacks(future_obj)
-            # Complete the attached Nim future if present (for non-blocking HTTP handlers)
-            if future_obj.nim_future != nil and not future_obj.nim_future.finished:
-              future_obj.nim_future.complete(payload)
-            self.thread_futures.del(msg.from_message_id)
 
     # Remove any terminal thread futures that were cancelled/timed out externally.
     var terminal_ids: seq[int] = @[]

@@ -75,107 +75,107 @@ proc reset_thread_vm_state() =
   ## Reset VM state between jobs (reuse allocations/pools).
   reset_vm_state()
 
-# VM initialization for worker threads
-proc init_vm_for_thread*(thread_id: int) =
-  ## Initialize VM for a worker thread
-  ## Note: App is shared from main thread, only VM is thread-local
+when not defined(gene_wasm):
+  # VM initialization for worker threads
+  proc init_vm_for_thread*(thread_id: int) =
+    ## Initialize VM for a worker thread
+    ## Note: App is shared from main thread, only VM is thread-local
+    setup_thread_vm(thread_id)
 
-  setup_thread_vm(thread_id)
+  # Thread handler
+  proc thread_handler*(thread_id: int) {.thread.} =
+    ## Main thread execution loop
+    {.cast(gcsafe).}:
+      try:
+        # Initialize VM for this thread
+        init_vm_for_thread(thread_id)
 
-# Thread handler
-proc thread_handler*(thread_id: int) {.thread.} =
-  ## Main thread execution loop
-  {.cast(gcsafe).}:
-    try:
-      # Initialize VM for this thread
-      init_vm_for_thread(thread_id)
+        # Message loop
+        when DEBUG_VM:
+          echo "DEBUG thread_handler: Starting message loop for thread ", thread_id
+        while true:
+          # Receive message (blocking)
+          let msg = THREAD_DATA[thread_id].channel.recv()
 
-      # Message loop
-      when DEBUG_VM:
-        echo "DEBUG thread_handler: Starting message loop for thread ", thread_id
-      while true:
-        # Receive message (blocking)
-        let msg = THREAD_DATA[thread_id].channel.recv()
+          # Check for termination
+          if msg.msg_type == MtTerminate:
+            break
 
-        # Check for termination
-        if msg.msg_type == MtTerminate:
-          break
+          # Reset VM state from previous execution
+          reset_thread_vm_state()
 
-        # Reset VM state from previous execution
-        reset_thread_vm_state()
-
-        # Execute based on message type
-        case msg.msg_type:
-        of MtRun, MtRunExpectReply:
-          try:
-            # Compile the Gene AST locally (thread-safe, no shared refs)
-            when DEBUG_VM:
-              echo "DEBUG thread_handler: Compiling code: ", msg.code
-            let cu = compile_init(msg.code)
-
-            # Set up VM with scope tracker
-            let scope_tracker = new_scope_tracker()
-            VM.frame = new_frame()
-            VM.frame.stack_index = 0
-            VM.frame.scope = new_scope(scope_tracker)
-            VM.frame.ns = App.app.gene_ns.ref.ns  # Set namespace for symbol lookup
-            VM.cu = cu
-            VM.pc = 0
-
-            # Execute
-            let result = VM.exec()
-
-            # Send reply if requested
-            if msg.msg_type == MtRunExpectReply:
-              let ser = serialize_literal(result)
-              let reply = ThreadMessage(
-                id: next_message_id,
-                msg_type: MtReply,
-                payload: NIL,
-                payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
-                from_message_id: msg.id,
-                from_thread_id: thread_id,
-                from_thread_secret: THREADS[thread_id].secret
-              )
-              next_message_id += 1
-              THREAD_DATA[msg.from_thread_id].channel.send(reply)
-          except CatchableError as e:
-            when not defined(release):
-              echo "Thread ", thread_id, " handler error: ", e.msg
-              echo e.getStackTrace()
-            if msg.msg_type == MtRunExpectReply:
-              let error_payload = new_map_value()
-              map_data(error_payload)["__thread_error__".to_key()] = true.to_value()
-              map_data(error_payload)["message".to_key()] = e.msg.to_value()
-              let ser = serialize_literal(error_payload)
-              let reply = ThreadMessage(
-                id: next_message_id,
-                msg_type: MtReply,
-                payload: NIL,
-                payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
-                from_message_id: msg.id,
-                from_thread_id: thread_id,
-                from_thread_secret: THREADS[thread_id].secret
-              )
-              next_message_id += 1
-              THREAD_DATA[msg.from_thread_id].channel.send(reply)
-
-        of MtSend, MtSendExpectReply:
-          # User message - invoke callbacks
-          # Deserialize payload if present
-          var payload = msg.payload
-          if msg.payload_bytes.bytes.len > 0:
+          # Execute based on message type
+          case msg.msg_type:
+          of MtRun, MtRunExpectReply:
             try:
-              payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
-            except:
-              payload = NIL
-          let msg_value = msg.to_value()
-          msg_value.ref.thread_message.payload = payload
+              # Compile the Gene AST locally (thread-safe, no shared refs)
+              when DEBUG_VM:
+                echo "DEBUG thread_handler: Compiling code: ", msg.code
+              let cu = compile_init(msg.code)
 
-          # Invoke all registered message callbacks
-          for callback in VM.message_callbacks:
-            try:
-              case callback.kind:
+              # Set up VM with scope tracker
+              let scope_tracker = new_scope_tracker()
+              VM.frame = new_frame()
+              VM.frame.stack_index = 0
+              VM.frame.scope = new_scope(scope_tracker)
+              VM.frame.ns = App.app.gene_ns.ref.ns  # Set namespace for symbol lookup
+              VM.cu = cu
+              VM.pc = 0
+
+              # Execute
+              let result = VM.exec()
+
+              # Send reply if requested
+              if msg.msg_type == MtRunExpectReply:
+                let ser = serialize_literal(result)
+                let reply = ThreadMessage(
+                  id: next_message_id,
+                  msg_type: MtReply,
+                  payload: NIL,
+                  payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
+                  from_message_id: msg.id,
+                  from_thread_id: thread_id,
+                  from_thread_secret: THREADS[thread_id].secret
+                )
+                next_message_id += 1
+                THREAD_DATA[msg.from_thread_id].channel.send(reply)
+            except CatchableError as e:
+              when not defined(release):
+                echo "Thread ", thread_id, " handler error: ", e.msg
+                echo e.getStackTrace()
+              if msg.msg_type == MtRunExpectReply:
+                let error_payload = new_map_value()
+                map_data(error_payload)["__thread_error__".to_key()] = true.to_value()
+                map_data(error_payload)["message".to_key()] = e.msg.to_value()
+                let ser = serialize_literal(error_payload)
+                let reply = ThreadMessage(
+                  id: next_message_id,
+                  msg_type: MtReply,
+                  payload: NIL,
+                  payload_bytes: ThreadPayload(bytes: string_to_bytes(ser.to_s())),
+                  from_message_id: msg.id,
+                  from_thread_id: thread_id,
+                  from_thread_secret: THREADS[thread_id].secret
+                )
+                next_message_id += 1
+                THREAD_DATA[msg.from_thread_id].channel.send(reply)
+
+          of MtSend, MtSendExpectReply:
+            # User message - invoke callbacks
+            # Deserialize payload if present
+            var payload = msg.payload
+            if msg.payload_bytes.bytes.len > 0:
+              try:
+                payload = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
+              except:
+                payload = NIL
+            let msg_value = msg.to_value()
+            msg_value.ref.thread_message.payload = payload
+
+            # Invoke all registered message callbacks
+            for callback in VM.message_callbacks:
+              try:
+                case callback.kind:
                 of VkFunction:
                   discard VM.exec_function(callback, @[msg_value])
                 of VkNativeFn:
@@ -184,96 +184,105 @@ proc thread_handler*(thread_id: int) {.thread.} =
                   discard VM.exec_function(callback, @[])
                 else:
                   discard
-            except:
-              discard  # Ignore callback errors for now
+              except:
+                discard  # Ignore callback errors for now
 
-          # If message requests reply and wasn't handled, send NIL reply
-          if msg.msg_type == MtSendExpectReply and not msg.handled:
-            var reply: ThreadMessage
-            new(reply)
-            reply.id = next_message_id
-            reply.msg_type = MtReply
-            reply.payload = NIL
-            reply.payload_bytes = ThreadPayload(bytes: @[])
-            reply.from_message_id = msg.id
-            reply.from_thread_id = thread_id
-            reply.from_thread_secret = THREADS[thread_id].secret
-            next_message_id += 1
-            THREAD_DATA[msg.from_thread_id].channel.send(reply)
+            # If message requests reply and wasn't handled, send NIL reply
+            if msg.msg_type == MtSendExpectReply and not msg.handled:
+              var reply: ThreadMessage
+              new(reply)
+              reply.id = next_message_id
+              reply.msg_type = MtReply
+              reply.payload = NIL
+              reply.payload_bytes = ThreadPayload(bytes: @[])
+              reply.from_message_id = msg.id
+              reply.from_thread_id = thread_id
+              reply.from_thread_secret = THREADS[thread_id].secret
+              next_message_id += 1
+              THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
-        of MtReply:
-          discard
+          of MtReply:
+            discard
 
-        of MtTerminate:
-          break
+          of MtTerminate:
+            break
 
-    except CatchableError as e:
-      echo "Thread ", thread_id, " crashed: ", e.msg
-      when not defined(release):
-        echo e.getStackTrace()
-    finally:
-      if VM != nil:
-        free_vm_ptr(VM)
-        VM = nil
-      cleanup_thread(thread_id)
+      except CatchableError as e:
+        echo "Thread ", thread_id, " crashed: ", e.msg
+        when not defined(release):
+          echo e.getStackTrace()
+      finally:
+        if VM != nil:
+          free_vm_ptr(VM)
+          VM = nil
+        cleanup_thread(thread_id)
 
-# Spawn functions
-proc spawn_thread(code: ptr Gene, return_value: bool): Value =
-  ## Spawn a new thread to execute Gene AST
-  ## Returns thread reference or future
-  let thread_id = get_free_thread()
+  # Spawn functions
+  proc spawn_thread(code: Value, return_value: bool): Value =
+    ## Spawn a new thread to execute code payload.
+    ## Payload can be a form, stream, or literal expression.
+    ## Returns thread reference or future
+    let thread_id = get_free_thread()
 
-  if thread_id == -1:
-    raise newException(ValueError, "Thread pool exhausted (max " & $MAX_THREADS & " threads)")
+    if thread_id == -1:
+      raise newException(ValueError, "Thread pool exhausted (max " & $MAX_THREADS & " threads)")
 
-  # Initialize thread
-  let parent_id = current_thread_id
-  init_thread(thread_id, parent_id)
+    # Initialize thread
+    let parent_id = current_thread_id
+    init_thread(thread_id, parent_id)
 
-  # Create thread
-  createThread(THREAD_DATA[thread_id].thread, thread_handler, thread_id)
+    # Create thread
+    createThread(THREAD_DATA[thread_id].thread, thread_handler, thread_id)
 
-  # Create message - use new() to allocate to avoid GC issues with threading
-  var msg: ThreadMessage
-  new(msg)
-  msg.id = next_message_id
-  msg.msg_type = if return_value: MtRunExpectReply else: MtRun
-  msg.payload = NIL
-  msg.payload_bytes = ThreadPayload(bytes: @[])
-  msg.code = cast[Value](code)  # Pass Gene AST as Value (thread will compile it)
-  msg.from_thread_id = current_thread_id
-  msg.from_thread_secret = THREADS[current_thread_id].secret
-  let message_id = next_message_id
-  next_message_id += 1
+    # Create message - use new() to allocate to avoid GC issues with threading
+    var msg: ThreadMessage
+    new(msg)
+    msg.id = next_message_id
+    msg.msg_type = if return_value: MtRunExpectReply else: MtRun
+    msg.payload = NIL
+    msg.payload_bytes = ThreadPayload(bytes: @[])
+    msg.code = code
+    msg.from_thread_id = current_thread_id
+    msg.from_thread_secret = THREADS[current_thread_id].secret
+    let message_id = next_message_id
+    next_message_id += 1
 
-  # Send message to thread (send the ref directly)
-  THREAD_DATA[thread_id].channel.send(msg)
+    # Send message to thread (send the ref directly)
+    THREAD_DATA[thread_id].channel.send(msg)
 
-  # Return value
-  if return_value:
-    # Create a future for the return value
-    let future_obj = FutureObj(
-      state: FsPending,
-      value: NIL,
-      success_callbacks: @[],
-      failure_callbacks: @[],
-      nim_future: nil
-    )
+    # Return value
+    if return_value:
+      # Create a future for the return value
+      let future_obj = FutureObj(
+        state: FsPending,
+        value: NIL,
+        success_callbacks: @[],
+        failure_callbacks: @[],
+        nim_future: nil
+      )
 
-    # Store future in VM's thread_futures table keyed by message ID
-    VM.thread_futures[message_id] = future_obj
-    VM.poll_enabled = true
+      # Store future in VM's thread_futures table keyed by message ID
+      VM.thread_futures[message_id] = future_obj
+      VM.poll_enabled = true
 
-    # Return the future
-    let future_val = new_ref(VkFuture)
-    future_val.future = future_obj
-    return future_val.to_ref_value()
-  else:
-    # Return thread reference
-    let thread_ref = types.Thread(
-      id: thread_id,
-      secret: THREADS[thread_id].secret
-    )
-    return thread_ref.to_value()
+      # Return the future
+      let future_val = new_ref(VkFuture)
+      future_val.future = future_obj
+      return future_val.to_ref_value()
+    else:
+      # Return thread reference
+      let thread_ref = types.Thread(
+        id: thread_id,
+        secret: THREADS[thread_id].secret
+      )
+      return thread_ref.to_value()
+else:
+  proc init_vm_for_thread*(thread_id: int) =
+    discard thread_id
+
+  proc spawn_thread(code: Value, return_value: bool): Value =
+    discard code
+    discard return_value
+    raise_wasm_unsupported("threads")
 
 # ========== End Threading Support ==========

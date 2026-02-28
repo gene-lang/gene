@@ -1,5 +1,11 @@
 # Forward declarations for new types
-import tables, sets, asyncdispatch, dynlib
+import tables, sets, asyncdispatch
+
+when defined(gene_wasm):
+  type
+    LibHandle* = pointer
+else:
+  import dynlib
 
 const
   NO_TYPE_ID* = -1'i32

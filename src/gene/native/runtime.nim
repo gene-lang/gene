@@ -78,39 +78,38 @@ proc compile_to_native*(f: Function): NativeCompileResult =
 
   when nativeArch == "none":
     result.message = "Native codegen not supported on this architecture"
-    return
-
-  if f.is_nil or f.body_compiled.is_nil:
-    result.message = "Function not compiled"
-    return
-
-  if not isNativeEligible(f.body_compiled, f):
-    result.message = "Function not eligible for native compilation"
-    return
-
-  var hir: HirFunction
-  var has_hir = false
-  try:
-    hir = bytecodeToHir(f.body_compiled, f)
-    has_hir = true
-    if not validate_hir(hir):
-      release_descriptors(hir.callDescriptors)
-      result.message = "HIR contains unsupported operations"
+  else:
+    if f.is_nil or f.body_compiled.is_nil:
+      result.message = "Function not compiled"
       return
-    let code = codegen.generateCode(hir)
-    let entry = make_executable(code)
-    if entry.is_nil:
-      release_descriptors(hir.callDescriptors)
-      result.message = "Failed to allocate executable memory"
+
+    if not isNativeEligible(f.body_compiled, f):
+      result.message = "Function not eligible for native compilation"
       return
-    result.ok = true
-    result.entry = entry
-    result.code = code
-    result.returnFloat = hir.returnType == HtF64
-    result.returnString = hir.returnType == HtString
-    result.returnValue = hir.returnType in {HtValue, HtString}
-    result.descriptors = hir.callDescriptors
-  except CatchableError as e:
-    if has_hir:
-      release_descriptors(hir.callDescriptors)
-    result.message = "Native codegen failed: " & e.msg
+
+    var hir: HirFunction
+    var has_hir = false
+    try:
+      hir = bytecodeToHir(f.body_compiled, f)
+      has_hir = true
+      if not validate_hir(hir):
+        release_descriptors(hir.callDescriptors)
+        result.message = "HIR contains unsupported operations"
+        return
+      let code = codegen.generateCode(hir)
+      let entry = make_executable(code)
+      if entry.is_nil:
+        release_descriptors(hir.callDescriptors)
+        result.message = "Failed to allocate executable memory"
+        return
+      result.ok = true
+      result.entry = entry
+      result.code = code
+      result.returnFloat = hir.returnType == HtF64
+      result.returnString = hir.returnType == HtString
+      result.returnValue = hir.returnType in {HtValue, HtString}
+      result.descriptors = hir.callDescriptors
+    except CatchableError as e:
+      if has_hir:
+        release_descriptors(hir.callDescriptors)
+      result.message = "Native codegen failed: " & e.msg

@@ -1,5 +1,7 @@
 import std/math, random
 import ../types
+when defined(gene_wasm):
+  import ../wasm_host_abi
 
 # Math functions for the Gene standard library
 
@@ -208,16 +210,23 @@ proc math_max*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
 var rng_initialized = false
 
 proc ensure_rng() =
+  when defined(gene_wasm):
+    return
   if not rng_initialized:
     randomize()
     rng_initialized = true
 
 proc math_random*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  ensure_rng()
-  return rand(1.0).to_value()
+  when defined(gene_wasm):
+    let raw = host_rand_i64()
+    let positive = if raw < 0: -raw else: raw
+    let ratio = (positive mod 1_000_000'i64).float64 / 1_000_000.0
+    return ratio.to_value()
+  else:
+    ensure_rng()
+    return rand(1.0).to_value()
 
 proc math_random_int*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  ensure_rng()
   if arg_count < 1:
     raise new_exception(types.Exception, "random_int requires at least 1 argument (max)")
 
@@ -233,10 +242,27 @@ proc math_random_int*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
     if min_arg.kind != VkInt:
       raise new_exception(types.Exception, "random_int min must be an integer")
     let min_val = min_arg.int64.int
-    return (rand(max_val - min_val) + min_val).int64.to_value()
+    if max_val <= min_val:
+      raise new_exception(types.Exception, "random_int max must be greater than min")
+    when defined(gene_wasm):
+      let span = (max_val - min_val).int64
+      let raw = host_rand_i64()
+      let positive = if raw < 0: -raw else: raw
+      return ((positive mod span) + min_val.int64).to_value()
+    else:
+      ensure_rng()
+      return (rand(max_val - min_val) + min_val).int64.to_value()
   else:
     # Only max provided, min is 0
-    return rand(max_val).int64.to_value()
+    if max_val <= 0:
+      raise new_exception(types.Exception, "random_int max must be greater than 0")
+    when defined(gene_wasm):
+      let raw = host_rand_i64()
+      let positive = if raw < 0: -raw else: raw
+      return (positive mod max_val.int64).to_value()
+    else:
+      ensure_rng()
+      return rand(max_val).int64.to_value()
 
 # Constants
 proc math_pi*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =

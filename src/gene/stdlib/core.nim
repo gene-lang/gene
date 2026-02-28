@@ -1,5 +1,5 @@
 {.push warning[ResultShadowed]: off.}
-import base64, re, osproc, os, strutils, times, asyncdispatch, asyncfile, tables
+import base64, re, os, strutils, times, asyncdispatch, tables
 import std/json as nim_json
 import ../types
 from ../types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name, types_equivalent
@@ -8,6 +8,7 @@ import ../compiler
 import ../repl_session
 import ../vm/thread
 import ../logging_core
+import ../wasm_host_abi
 import ./math as stdlib_math
 import ./io as stdlib_io
 import ./system as stdlib_system
@@ -20,7 +21,11 @@ import ./dates as stdlib_dates
 import ./selectors as stdlib_selectors
 import ./gene_meta as stdlib_gene_meta
 import ./aspects as stdlib_aspects
-import ../../genex/ai/ai
+when not defined(gene_wasm):
+  import ../../genex/ai/ai
+
+when not defined(gene_wasm):
+  import osproc, asyncfile
 
 # Note: Extensions register their poll handlers via register_scheduler_callback
 # This avoids direct dependency from core to extensions like HTTP
@@ -1326,20 +1331,26 @@ proc init_regex_and_json() =
   App.app.gene_ns.ns["json".to_key()] = json_ns.to_value()
 
 proc init_date_functions() =
+  proc host_now_datetime(): DateTime {.inline.} =
+    when defined(gene_wasm):
+      fromUnix(host_now_unix()).local()
+    else:
+      times.now()
+
   proc gene_today_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now()
+    let dt = host_now_datetime()
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
   proc gene_now_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now()
+    let dt = host_now_datetime()
     new_datetime_value(dt)
 
   proc gene_yesterday_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now() - initDuration(days = 1)
+    let dt = host_now_datetime() - initDuration(days = 1)
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
   proc gene_tomorrow_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let dt = times.now() + initDuration(days = 1)
+    let dt = host_now_datetime() + initDuration(days = 1)
     new_date_value(dt.year, ord(dt.month), dt.monthday)
 
   var today_fn = new_ref(VkNativeFn)
@@ -3218,11 +3229,10 @@ proc file_read(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_coun
     raise new_exception(types.Exception, "File/read requires a string path")
 
   let path = path_arg.str
-  try:
-    let content = readFile(path)
-    return content.to_value()
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
+  let read_result = host_read_text_file(path)
+  if read_result.ok:
+    return read_result.content.to_value()
+  raise new_exception(types.Exception, "Failed to read file '" & path & "': " & read_result.error)
 
 proc file_write(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
@@ -3239,11 +3249,10 @@ proc file_write(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
   let path = path_arg.str
   let content = content_arg.str
 
-  try:
-    writeFile(path, content)
+  let write_result = host_write_text_file(path, content)
+  if write_result.ok:
     return NIL
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
+  raise new_exception(types.Exception, "Failed to write file '" & path & "': " & write_result.error)
 
 proc file_read_async(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -3264,31 +3273,40 @@ proc file_read_async(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     nim_future: nil
   )
 
-  # Try to open file and create async read operation
-  try:
-    let file = openAsync(path, fmRead)
-    let nim_read_future = file.readAll()
+  when defined(gene_wasm):
+    let read_result = host_read_text_file(path)
+    if read_result.ok:
+      gene_future_obj.state = FsSuccess
+      gene_future_obj.value = read_result.content.to_value()
+    else:
+      gene_future_obj.state = FsFailure
+      gene_future_obj.value = new_str_value("Failed to read file '" & path & "': " & read_result.error)
+  else:
+    # Try to open file and create async read operation
+    try:
+      let file = openAsync(path, fmRead)
+      let nim_read_future = file.readAll()
 
-    # Add callback to complete Gene future when Nim future completes
-    nim_read_future.addCallback proc() {.gcsafe.} =
-      try:
-        let content = nim_read_future.read()
-        file.close()
-        gene_future_obj.state = FsSuccess
-        gene_future_obj.value = content.to_value()
-      except IOError as e:
-        gene_future_obj.state = FsFailure
-        gene_future_obj.value = new_str_value("Failed to read file '" & path & "': " & e.msg)
-      except CatchableError as e:
-        gene_future_obj.state = FsFailure
-        gene_future_obj.value = new_str_value("Error reading file: " & e.msg)
-  except IOError as e:
-    # File open failed - create a failed future immediately
-    gene_future_obj.state = FsFailure
-    gene_future_obj.value = new_str_value("Failed to open file '" & path & "': " & e.msg)
-  except CatchableError as e:
-    gene_future_obj.state = FsFailure
-    gene_future_obj.value = new_str_value("Error opening file: " & e.msg)
+      # Add callback to complete Gene future when Nim future completes
+      nim_read_future.addCallback proc() {.gcsafe.} =
+        try:
+          let content = nim_read_future.read()
+          file.close()
+          gene_future_obj.state = FsSuccess
+          gene_future_obj.value = content.to_value()
+        except IOError as e:
+          gene_future_obj.state = FsFailure
+          gene_future_obj.value = new_str_value("Failed to read file '" & path & "': " & e.msg)
+        except CatchableError as e:
+          gene_future_obj.state = FsFailure
+          gene_future_obj.value = new_str_value("Error reading file: " & e.msg)
+    except IOError as e:
+      # File open failed - create a failed future immediately
+      gene_future_obj.state = FsFailure
+      gene_future_obj.value = new_str_value("Failed to open file '" & path & "': " & e.msg)
+    except CatchableError as e:
+      gene_future_obj.state = FsFailure
+      gene_future_obj.value = new_str_value("Error opening file: " & e.msg)
 
   let gene_future_val = new_ref(VkFuture)
   gene_future_val.future = gene_future_obj
@@ -3324,27 +3342,36 @@ proc file_write_async(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
     nim_future: nil
   )
 
-  # Create Nim future for async file writing
-  let file = openAsync(path, fmWrite)
-  let nim_write_future = file.write(content)
+  when defined(gene_wasm):
+    let write_result = host_write_text_file(path, content)
+    if write_result.ok:
+      gene_future_obj.state = FsSuccess
+      gene_future_obj.value = NIL
+    else:
+      gene_future_obj.state = FsFailure
+      gene_future_obj.value = new_str_value("Failed to write file '" & path & "': " & write_result.error)
+  else:
+    # Create Nim future for async file writing
+    let file = openAsync(path, fmWrite)
+    let nim_write_future = file.write(content)
 
-  # Add callback to complete Gene future when Nim future completes
-  nim_write_future.addCallback proc() {.gcsafe.} =
-    try:
-      # Write future is Future[void], just check if it failed
-      if nim_write_future.failed:
+    # Add callback to complete Gene future when Nim future completes
+    nim_write_future.addCallback proc() {.gcsafe.} =
+      try:
+        # Write future is Future[void], just check if it failed
+        if nim_write_future.failed:
+          gene_future_obj.state = FsFailure
+          gene_future_obj.value = new_str_value("Failed to write file '" & path & "'")
+        else:
+          file.close()
+          gene_future_obj.state = FsSuccess
+          gene_future_obj.value = NIL
+      except IOError as e:
         gene_future_obj.state = FsFailure
-        gene_future_obj.value = new_str_value("Failed to write file '" & path & "'")
-      else:
-        file.close()
-        gene_future_obj.state = FsSuccess
-        gene_future_obj.value = NIL
-    except IOError as e:
-      gene_future_obj.state = FsFailure
-      gene_future_obj.value = new_str_value("Failed to write file '" & path & "': " & e.msg)
-    except CatchableError as e:
-      gene_future_obj.state = FsFailure
-      gene_future_obj.value = new_str_value("Error writing file: " & e.msg)
+        gene_future_obj.value = new_str_value("Failed to write file '" & path & "': " & e.msg)
+      except CatchableError as e:
+        gene_future_obj.state = FsFailure
+        gene_future_obj.value = new_str_value("Error writing file: " & e.msg)
 
   let gene_future_val = new_ref(VkFuture)
   gene_future_val.future = gene_future_obj
@@ -3459,13 +3486,16 @@ proc init_gene_core_functions() =
 
 proc init_os_io_namespaces() =
   proc os_exec_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("os.exec requires a command string")
-    let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
-    if cmd_arg.kind != VkString:
-      not_allowed("os.exec expects a string command")
-    let (output, _) = execCmdEx(cmd_arg.str)
-    output.to_value()
+    when defined(gene_wasm):
+      raise_wasm_unsupported("process_shell")
+    else:
+      if get_positional_count(arg_count, has_keyword_args) < 1:
+        not_allowed("os.exec requires a command string")
+      let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
+      if cmd_arg.kind != VkString:
+        not_allowed("os.exec expects a string command")
+      let (output, _) = execCmdEx(cmd_arg.str)
+      output.to_value()
 
   let os_ns = new_namespace("os")
   var os_exec_fn = new_ref(VkNativeFn)
@@ -3660,7 +3690,7 @@ proc init_stdlib*() =
   load_logging_config()
 
   # OpenAI API functions
-  when not defined(noExtensions) and not defined(noai):
+  when not defined(noExtensions) and not defined(noai) and not defined(gene_wasm):
     var ai_ns_val = NIL
     if App.app.genex_ns.kind == VkNamespace:
       ai_ns_val = App.app.genex_ns.ref.ns["ai".to_key()]

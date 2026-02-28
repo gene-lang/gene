@@ -1,4 +1,4 @@
-import math, hashes, tables, sets, re, bitops, unicode, strutils, strformat
+import hashes, tables, sets, re, bitops, unicode, strutils, strformat
 import locks
 import random
 import times
@@ -44,7 +44,11 @@ const CHAR4_MASK = 0xFFF1_0000_0004_0000u64
 
 const EMPTY_STRING* = Value(raw: STRING_TAG)  # Empty string is a null pointer with STRING_TAG
 
-const BIGGEST_INT = 2^61 - 1
+const BIGGEST_INT =
+  when sizeof(int) >= 8:
+    int((2'i64 shl 61) - 1'i64)
+  else:
+    int.high
 
 #################### Forward declarations #################
 # Value basics

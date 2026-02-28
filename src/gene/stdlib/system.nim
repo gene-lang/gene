@@ -1,53 +1,64 @@
 {.push warning[ResultShadowed]: off.}
-import tables, os, osproc
+import os
 import ../types
+when defined(gene_wasm):
+  import ../wasm_host_abi
+
+when not defined(gene_wasm):
+  import tables, osproc
 
 # System functions for the Gene standard library
 
 # Process execution
 proc system_exec*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if arg_count < 1:
-    raise new_exception(types.Exception, "exec requires at least 1 argument (command)")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("process_exec")
+  else:
+    if arg_count < 1:
+      raise new_exception(types.Exception, "exec requires at least 1 argument (command)")
 
-  let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
-  if cmd_arg.kind != VkString:
-    raise new_exception(types.Exception, "exec requires a string command")
+    let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
+    if cmd_arg.kind != VkString:
+      raise new_exception(types.Exception, "exec requires a string command")
 
-  var cmd = cmd_arg.str
-  var cmd_args: seq[string] = @[]
+    var cmd = cmd_arg.str
+    var cmd_args: seq[string] = @[]
 
-  # Collect additional arguments
-  for i in 1..<get_positional_count(arg_count, has_keyword_args):
-    let arg = get_positional_arg(args, i, has_keyword_args)
-    if arg.kind == VkString:
-      cmd_args.add(arg.str)
-    else:
-      cmd_args.add(arg.str_no_quotes())
+    # Collect additional arguments
+    for i in 1..<get_positional_count(arg_count, has_keyword_args):
+      let arg = get_positional_arg(args, i, has_keyword_args)
+      if arg.kind == VkString:
+        cmd_args.add(arg.str)
+      else:
+        cmd_args.add(arg.str_no_quotes())
 
-  try:
-    let result = execProcess(cmd, args = cmd_args, options = {poUsePath})
-    return result.to_value()
-  except OSError as e:
-    raise new_exception(types.Exception, "Failed to execute command: " & e.msg)
+    try:
+      let result = execProcess(cmd, args = cmd_args, options = {poUsePath})
+      return result.to_value()
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to execute command: " & e.msg)
 
 proc system_shell*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if arg_count < 1:
-    raise new_exception(types.Exception, "shell requires 1 argument (command)")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("process_shell")
+  else:
+    if arg_count < 1:
+      raise new_exception(types.Exception, "shell requires 1 argument (command)")
 
-  let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
-  if cmd_arg.kind != VkString:
-    raise new_exception(types.Exception, "shell requires a string command")
+    let cmd_arg = get_positional_arg(args, 0, has_keyword_args)
+    if cmd_arg.kind != VkString:
+      raise new_exception(types.Exception, "shell requires a string command")
 
-  let cmd = cmd_arg.str
-  try:
-    let result = execCmdEx(cmd)
-    # Return a map with output and exit_code
-    var result_map = initTable[Key, Value]()
-    result_map["output".to_key()] = result.output.to_value()
-    result_map["exit_code".to_key()] = result.exitCode.int64.to_value()
-    return new_map_value(result_map)
-  except OSError as e:
-    raise new_exception(types.Exception, "Failed to execute shell command: " & e.msg)
+    let cmd = cmd_arg.str
+    try:
+      let result = execCmdEx(cmd)
+      # Return a map with output and exit_code
+      var result_map = initTable[Key, Value]()
+      result_map["output".to_key()] = result.output.to_value()
+      result_map["exit_code".to_key()] = result.exitCode.int64.to_value()
+      return new_map_value(result_map)
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to execute shell command: " & e.msg)
 
 # Current working directory
 proc system_cwd*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =

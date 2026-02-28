@@ -96,6 +96,26 @@ nimble speedy
 nim c -o:bin/gene src/gene.nim
 ```
 
+### WASM Build (Emscripten)
+
+```bash
+nimble wasm
+```
+
+This produces:
+- `web/gene_wasm.js`
+- `web/gene_wasm.wasm`
+
+WASM mode exports `gene_eval(code: cstring): cstring` and uses host ABI wrappers for time/random/file effects.
+
+Current wasm limitations are explicit runtime errors with stable code `AIR.WASM.UNSUPPORTED` for:
+- thread APIs
+- dynamic native extension loading
+- process/shell execution
+- file-backed module loading and directory/delete filesystem operations
+
+See `docs/wasm.md` for details.
+
 ## Local LLM Runtime (llama.cpp)
 
 Gene ships with a `genex/llm` namespace that can call local GGUF models through [llama.cpp](https://github.com/ggerganov/llama.cpp). The runtime is optional — you can stay on the built-in mock backend by compiling with `-d:GENE_LLM_MOCK` — but if you want real inference:

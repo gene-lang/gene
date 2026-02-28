@@ -1,5 +1,6 @@
 import tables, os
 import ../types
+import ../wasm_host_abi
 
 # I/O functions for the Gene standard library
 
@@ -36,11 +37,10 @@ proc io_file_read_instance*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Val
     raise new_exception(types.Exception, "File instance has no path")
 
   let path = path_value.str
-  try:
-    let content = readFile(path)
-    return content.to_value()
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
+  let read_result = host_read_text_file(path)
+  if read_result.ok:
+    return read_result.content.to_value()
+  raise new_exception(types.Exception, "Failed to read file '" & path & "': " & read_result.error)
 
 # File static method: read (for File/read "path" syntax)
 proc io_file_read*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -52,11 +52,10 @@ proc io_file_read*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_
     raise new_exception(types.Exception, "File/read requires a string path")
 
   let path = path_arg.str
-  try:
-    let content = readFile(path)
-    return content.to_value()
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to read file '" & path & "': " & e.msg)
+  let read_result = host_read_text_file(path)
+  if read_result.ok:
+    return read_result.content.to_value()
+  raise new_exception(types.Exception, "Failed to read file '" & path & "': " & read_result.error)
 
 # File instance method: write
 proc io_file_write_instance*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -75,11 +74,10 @@ proc io_file_write_instance*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Va
   let content_arg = get_positional_arg(args, 1, has_keyword_args)
   let content = content_arg.str_no_quotes()
 
-  try:
-    writeFile(path, content)
+  let write_result = host_write_text_file(path, content)
+  if write_result.ok:
     return NIL
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
+  raise new_exception(types.Exception, "Failed to write file '" & path & "': " & write_result.error)
 
 # File static method: write
 proc io_file_write*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -95,11 +93,10 @@ proc io_file_write*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
   let path = path_arg.str
   let content = content_arg.str_no_quotes()
 
-  try:
-    writeFile(path, content)
+  let write_result = host_write_text_file(path, content)
+  if write_result.ok:
     return NIL
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to write file '" & path & "': " & e.msg)
+  raise new_exception(types.Exception, "Failed to write file '" & path & "': " & write_result.error)
 
 proc io_file_append*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 2:
@@ -114,13 +111,22 @@ proc io_file_append*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
   let path = path_arg.str
   let content = content_arg.str_no_quotes()
 
-  try:
-    let file = open(path, fmAppend)
-    file.write(content)
-    file.close()
-    return NIL
-  except IOError as e:
-    raise new_exception(types.Exception, "Failed to append to file '" & path & "': " & e.msg)
+  when defined(gene_wasm):
+    let existing = host_read_text_file(path)
+    if not existing.ok:
+      raise new_exception(types.Exception, "Failed to append to file '" & path & "': " & existing.error)
+    let write_result = host_write_text_file(path, existing.content & content)
+    if write_result.ok:
+      return NIL
+    raise new_exception(types.Exception, "Failed to append to file '" & path & "': " & write_result.error)
+  else:
+    try:
+      let file = open(path, fmAppend)
+      file.write(content)
+      file.close()
+      return NIL
+    except IOError as e:
+      raise new_exception(types.Exception, "Failed to append to file '" & path & "': " & e.msg)
 
 proc io_file_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -131,7 +137,7 @@ proc io_file_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     raise new_exception(types.Exception, "File/exists requires a string path")
 
   let path = path_arg.str
-  return fileExists(path).to_value()
+  return host_file_exists(path).to_value()
 
 proc io_file_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -142,11 +148,14 @@ proc io_file_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     raise new_exception(types.Exception, "File/delete requires a string path")
 
   let path = path_arg.str
-  try:
-    removeFile(path)
-    return NIL
-  except OSError as e:
-    raise new_exception(types.Exception, "Failed to delete file '" & path & "': " & e.msg)
+  when defined(gene_wasm):
+    raise_wasm_unsupported("file_delete")
+  else:
+    try:
+      removeFile(path)
+      return NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to delete file '" & path & "': " & e.msg)
 
 # Dir class methods
 proc io_dir_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -158,7 +167,10 @@ proc io_dir_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
     raise new_exception(types.Exception, "Dir/exists requires a string path")
 
   let path = path_arg.str
-  return dirExists(path).to_value()
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    return dirExists(path).to_value()
 
 proc io_dir_create*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -169,11 +181,14 @@ proc io_dir_create*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
     raise new_exception(types.Exception, "Dir/create requires a string path")
 
   let path = path_arg.str
-  try:
-    createDir(path)
-    return NIL
-  except OSError as e:
-    raise new_exception(types.Exception, "Failed to create directory '" & path & "': " & e.msg)
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      createDir(path)
+      return NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to create directory '" & path & "': " & e.msg)
 
 proc io_dir_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -184,11 +199,14 @@ proc io_dir_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
     raise new_exception(types.Exception, "Dir/delete requires a string path")
 
   let path = path_arg.str
-  try:
-    removeDir(path)
-    return NIL
-  except OSError as e:
-    raise new_exception(types.Exception, "Failed to delete directory '" & path & "': " & e.msg)
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      removeDir(path)
+      return NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to delete directory '" & path & "': " & e.msg)
 
 proc io_dir_list*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -199,13 +217,16 @@ proc io_dir_list*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     raise new_exception(types.Exception, "Dir/list requires a string path")
 
   let path = path_arg.str
-  try:
-    var files: seq[Value] = @[]
-    for kind, file_path in walkDir(path):
-      files.add(file_path.to_value())
-    return new_array_value(files)
-  except OSError as e:
-    raise new_exception(types.Exception, "Failed to list directory '" & path & "': " & e.msg)
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      var files: seq[Value] = @[]
+      for kind, file_path in walkDir(path):
+        files.add(file_path.to_value())
+      return new_array_value(files)
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to list directory '" & path & "': " & e.msg)
 
 # Path operations
 proc io_path_join*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =

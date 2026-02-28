@@ -4,6 +4,8 @@ import ../types
 import ../compiler
 import ../gir
 import ../parser
+when defined(gene_wasm):
+  import ../wasm_host_abi
 when not defined(noExtensions):
   import ./extension
 
@@ -848,6 +850,8 @@ proc ensure_genex_extension*(vm: ptr VirtualMachine, part: string): Value =
   var member = App.app.genex_ns.ref.ns.members.getOrDefault(key, NIL)
 
   if member == NIL:
+    when defined(gene_wasm):
+      raise_wasm_unsupported("dynamic_extension_loading")
     when not defined(noExtensions):
       let ext_path = extension_library_path(part)
       if fileExists(ext_path):
@@ -1188,6 +1192,9 @@ proc handle_import*(vm: ptr VirtualMachine, import_gene: ptr Gene): tuple[path: 
       return ("", @[], nil, false, true)
     else:
       not_allowed("Module path not specified in import statement")
+
+  when defined(gene_wasm):
+    raise_wasm_unsupported("module_file_loading")
   
   var package_name = package_from_stmt
   if "pkg".to_key() in import_gene.props and package_name.len == 0:

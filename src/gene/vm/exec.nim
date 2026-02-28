@@ -946,13 +946,13 @@ proc exec*(self: ptr VirtualMachine): Value =
                 retain(member)
                 self.frame.push(member)
               elif key == "duration_start".to_key() and (target == App.app.gene_ns or target == App.app.global_ns):
-                let now_us = epochTime() * 1_000_000
+                let now_us = host_now_us().float64
                 self.duration_start_us = now_us
                 self.frame.push(now_us.to_value())
               elif key == "duration".to_key() and (target == App.app.gene_ns or target == App.app.global_ns):
                 if self.duration_start_us == 0.0:
                   not_allowed("duration_start is not set")
-                let now_us = epochTime() * 1_000_000
+                let now_us = host_now_us().float64
                 let elapsed = now_us - self.duration_start_us
                 self.frame.push(elapsed.to_value())
               elif target.ref.ns.has_key(key):
@@ -1278,7 +1278,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkRange:
             # Calculate the i-th element in the range
             let start = collection.ref.range_start.int64
-            let step = if collection.ref.range_step == NIL: 1 else: collection.ref.range_step.int64
+            let step = if collection.ref.range_step == NIL: 1'i64 else: collection.ref.range_step.int64
             let value = start + (i * step)
             self.frame.push(value.to_value())
           else:
@@ -4127,7 +4127,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               raise new_exception(types.Exception, self.format_runtime_exception(cancelled_error))
           of FsPending:
             # Poll event loop until future completes
-            let start_time = epochTime()
+            let start_time_us = host_now_us()
             while future.state == FsPending:
               self.event_loop_counter = EVENT_LOOP_POLL_INTERVAL
               self.poll_enabled = true
@@ -4137,7 +4137,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 break
 
               if timeout_ms >= 0:
-                let elapsed_ms = ((epochTime() - start_time) * 1000.0).int
+                let elapsed_ms = ((host_now_us() - start_time_us) div 1000).int
                 if elapsed_ms >= timeout_ms:
                   let timeout_error = new_async_error("GENE.ASYNC.TIMEOUT", "await timed out", "await")
                   if future.fail(timeout_error):
@@ -4193,8 +4193,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let return_value_flag = self.frame.pop()
         let code_val = self.frame.pop()
         let return_value = return_value_flag == TRUE
-        let code = cast[ptr Gene](code_val)  # Gene AST
-        let result = spawn_thread(code, return_value)
+        let result = spawn_thread(code_val, return_value)
         self.frame.push(result)
         {.pop.}
 
@@ -4245,13 +4244,13 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkVmDurationStart:
         # Record start time in microseconds (statement-only)
-        self.duration_start_us = epochTime() * 1_000_000
+        self.duration_start_us = host_now_us().float64
 
       of IkVmDuration:
         # Return elapsed microseconds since duration_start
         if self.duration_start_us == 0.0:
           not_allowed("duration_start is not set")
-        let now_us = epochTime() * 1_000_000
+        let now_us = host_now_us().float64
         let elapsed = now_us - self.duration_start_us
         self.frame.push(elapsed.to_value())
 
