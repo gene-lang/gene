@@ -1,6 +1,8 @@
 # GeneClaw Configuration
 # Environment variables and application settings
 
+(var $ns/log (new genex/logging/Logger $ns))
+
 ($ns/PORT = 4090)
 ($ns/DB_PATH = "geneclaw.sqlite")
 ($ns/OPENAI_API_KEY = $env/OPENAI_API_KEY)
@@ -12,7 +14,25 @@
 ($ns/MAX_TOOL_CALLS = 8)
 
 # Workspace root for filesystem tool
-($ns/WORKSPACE_ROOT = $env/GENECLAW_WORKSPACE)
-(if_not WORKSPACE_ROOT ($ns/WORKSPACE_ROOT = "/tmp/geneclaw"))
+($ns/WORKSPACE_ROOT = ($env/GENECLAW_WORKSPACE || #"#{$env/HOME}/.geneclaw"))
+
 # Shell allowlist
 ($ns/SHELL_ALLOWLIST = ["ls" "cat" "echo" "date" "wc" "head" "tail" "grep" "find"])
+
+# Log loaded configuration (redact secrets)
+(log .info #"PORT=#{PORT} DB_PATH=#{DB_PATH} MODEL=#{OPENAI_MODEL}")
+(log .info #"MAX_STEPS=#{MAX_STEPS} MAX_TOOL_CALLS=#{MAX_TOOL_CALLS}")
+(log .info #"WORKSPACE_ROOT=#{WORKSPACE_ROOT}")
+(log .info #"SHELL_ALLOWLIST=#{SHELL_ALLOWLIST}")
+(if OPENAI_API_KEY
+  (log .info "OPENAI_API_KEY is set")
+else
+  (log .warn "OPENAI_API_KEY not set - will run in mock mode")
+)
+(if SLACK_APP_TOKEN
+  (log .info "Slack Socket Mode enabled")
+elif SLACK_BOT_TOKEN
+  (log .info "Slack Webhook Mode enabled")
+else
+  (log .debug "Slack integration not configured")
+)

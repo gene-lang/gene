@@ -1,0 +1,16 @@
+# GeneClaw Logging Configuration
+# Levels: ERROR, WARN, INFO, DEBUG, TRACE
+#
+# Hierarchy: logger names are slash-separated.
+# A setting for "geneclaw" applies to all sub-loggers unless overridden.
+
+{
+  ^level "TRACE"
+  ^loggers {
+    ^geneclaw         {^level "TRACE"}
+    ^geneclaw/db      {^level "TRACE"}
+    ^geneclaw/tools   {^level "TRACE"}
+    ^geneclaw/agent   {^level "TRACE"}
+    ^geneclaw/main    {^level "TRACE"}
+  }
+}

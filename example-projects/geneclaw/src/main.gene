@@ -8,6 +8,8 @@
 (import init_tools from "tools")
 (import run_agent from "agent")
 
+(var log (new genex/logging/Logger $ns))
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -32,6 +34,7 @@
 # Route Handlers
 # ============================================================
 (fn handle_health [req]
+  (log .trace "Health check")
   (json_response 200 {^status "ok" ^service "geneclaw" ^version "0.1.0"})
 )
 
@@ -45,11 +48,16 @@
     (var channel_id (body/channel_id || "general"))
     (var text body/text)
 
+    (log .info #"Chat request workspace=#{workspace_id} user=#{user_id} channel=#{channel_id}")
+    (log .debug #"Chat text: #{text}")
+
     (if text/.empty
+      (log .warn "Chat request missing text field")
       (return (json_response 400 {^error "Missing text field"}))
     )
 
     (var result (run_agent workspace_id user_id channel_id text))
+    (log .info #"Chat response run=#{result/run_id} steps=#{result/steps} tool_calls=#{result/tool_calls}")
     (json_response 200 {
       ^ok true
       ^run_id result/run_id
@@ -58,6 +66,7 @@
       ^tool_calls result/tool_calls
     })
   catch *
+    (log .error #"Chat handler error: #{$ex/message}")
     (json_response 500 {^error #"Agent error: #{$ex/message}"})
   )
 )
@@ -69,24 +78,29 @@
 
     # URL verification challenge
     (if (body/type == "url_verification")
+      (log .info "Slack URL verification challenge received")
       (return (json_response 200 {^challenge body/challenge}))
     )
 
     # Only handle event_callback
     (if (body/type != "event_callback")
+      (log .debug #"Ignoring Slack event type: #{body/type}")
       (return (json_response 200 {^ok true}))
     )
 
     (var event body/event)
     (if_not event
+      (log .debug "Slack event_callback with no event payload")
       (return (json_response 200 {^ok true}))
     )
 
     # Ignore bot messages
     (if event/bot_id
+      (log .trace #"Ignoring bot message from bot_id=#{event/bot_id}")
       (return (json_response 200 {^ok true}))
     )
     (if (event/subtype == "bot_message")
+      (log .trace "Ignoring bot_message subtype")
       (return (json_response 200 {^ok true}))
     )
 
@@ -96,11 +110,16 @@
     (var text event/text)
 
     (if (text/.empty || channel_id/.empty)
+      (log .debug "Slack event missing text or channel - skipping")
       (return (json_response 200 {^ok true}))
     )
 
+    (log .info #"Slack event workspace=#{workspace_id} user=#{user_id} channel=#{channel_id}")
+    (log .debug #"Slack text: #{text}")
+
     # Run agent
     (var result (run_agent workspace_id user_id channel_id text))
+    (log .info #"Slack agent done run=#{result/run_id} steps=#{result/steps}")
 
     # Reply to Slack
     (if (SLACK_BOT_TOKEN && result/response)
@@ -111,19 +130,21 @@
       })
       (if thread_ts then (reply_payload/thread_ts = thread_ts))
       (try
+        (log .debug #"Posting Slack reply to channel=#{channel_id}")
         (await (http_post "https://slack.com/api/chat.postMessage"
           reply_payload/.to_json
           {
             ^Content-Type "application/json; charset=utf-8"
             ^Authorization #"Bearer #{SLACK_BOT_TOKEN}"}))
+        (log .info "Slack reply sent successfully")
       catch *
-        (println "Slack reply failed:" $ex/message)
+        (log .error #"Slack reply failed: #{$ex/message}")
       )
     )
 
     (json_response 200 {^ok true})
   catch *
-    (println "Slack event error:" $ex/message)
+    (log .error #"Slack event handler error: #{$ex/message}")
     (json_response 200 {^ok true})
   )
 )
@@ -134,7 +155,7 @@
 (fn handle_request [req]
   (var path req/.path)
   (var method req/.method)
-  (println method path)
+  (log .info #"#{method} #{path}")
 
   (if (path == "/health")
     (handle_health req)
@@ -143,6 +164,7 @@
   elif ((path == "/slack/events") && (method == "POST"))
     (handle_slack_event req)
   else
+    (log .warn #"404 Not found: #{method} #{path}")
     (json_response 404 {^error "Not found"})
   )
 )
@@ -150,32 +172,20 @@
 # ============================================================
 # Startup
 # ============================================================
-(println "=== GeneClaw Agent Platform ===")
+(log .info "=== GeneClaw Agent Platform ===")
 (init_db)
 (init_tools)
-(println)
 
 (if SLACK_APP_TOKEN
   # Socket Mode: connect to Slack via outbound WebSocket (no public URL needed)
-  (println
-#"""Starting Slack Socket Mode...
-Starting HTTP server on http://localhost:#{PORT} (health + REST API)
-Endpoints:
-  GET  /health         - Health check
-  POST /api/chat       - Send message to agent
-  POST /slack/events   - Slack Events API webhook (disabled in socket mode)
-""")
+  (log .info #"Starting Slack Socket Mode on http://localhost:#{PORT}")
+  (log .info "Endpoints: GET /health, POST /api/chat, POST /slack/events (disabled)")
   (genex/http/start_server PORT handle_request)
   (genex/ai/start_slack_socket_mode SLACK_APP_TOKEN SLACK_BOT_TOKEN run_agent)
 else
   # Webhook mode: Slack sends events via HTTP POST
-  (println
-#"""Starting server on http://localhost:#{PORT}")
-Endpoints:
-  GET  /health         - Health check
-  POST /api/chat       - Send message to agent
-  POST /slack/events   - Slack Events API webhook
-""")
+  (log .info #"Starting server on http://localhost:#{PORT}")
+  (log .info "Endpoints: GET /health, POST /api/chat, POST /slack/events")
   (genex/http/start_server PORT handle_request)
 )
 (run_forever)

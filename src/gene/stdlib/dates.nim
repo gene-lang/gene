@@ -85,10 +85,44 @@ proc init_date_classes*(object_class: Class) =
       not_allowed("DateTime.hour must be called on a datetime")
     self_val.ref.dt_hour.int.to_value()
 
+  proc datetime_minute(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.minute requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.minute must be called on a datetime")
+    self_val.ref.dt_minute.int.to_value()
+
+  proc datetime_second(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.second requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.second must be called on a datetime")
+    self_val.ref.dt_second.int.to_value()
+
+  proc datetime_to_i(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("DateTime.to_i requires self")
+    let self_val = get_positional_arg(args, 0, has_keyword_args)
+    if self_val.kind != VkDateTime:
+      not_allowed("DateTime.to_i must be called on a datetime")
+    let r = self_val.ref
+    let dt = dateTime(
+      r.dt_year.int, Month(r.dt_month), MonthdayRange(r.dt_day),
+      r.dt_hour.int, r.dt_minute.int, r.dt_second.int,
+      zone = utc()
+    )
+    let epoch_secs = dt.toTime().toUnix()
+    (epoch_secs * 1000).to_value()
+
   datetime_class.def_native_method("year", datetime_year)
   datetime_class.def_native_method("month", datetime_month)
   datetime_class.def_native_method("day", datetime_day)
   datetime_class.def_native_method("hour", datetime_hour)
+  datetime_class.def_native_method("minute", datetime_minute)
+  datetime_class.def_native_method("second", datetime_second)
+  datetime_class.def_native_method("to_i", datetime_to_i)
 
 proc init_date_functions*() =
   proc host_now_datetime(): DateTime {.inline.} =

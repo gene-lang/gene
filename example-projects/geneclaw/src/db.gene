@@ -3,6 +3,7 @@
 
 (import DB_PATH from "config")
 
+(var log (new genex/logging/Logger $ns))
 (var DB)
 
 (fn $ns/get_db [] DB)
@@ -10,8 +11,10 @@
 (fn $ns/init_db []
   (if genex/sqlite
     (try
+      (log .info #"Opening database: #{DB_PATH}")
       (DB = (genex/sqlite/open DB_PATH))
       (DB .exec "PRAGMA journal_mode=WAL")
+      (log .debug "WAL journal mode enabled")
 
       # Memory events table
       (DB .exec "CREATE TABLE IF NOT EXISTS memory_events (
@@ -50,13 +53,13 @@
       )")
       (DB .exec "CREATE INDEX IF NOT EXISTS idx_audit_run ON tool_audit(run_id)")
 
-      (println "Database initialized:" DB_PATH)
+      (log .info #"Database initialized: #{DB_PATH} (3 tables ready)")
     catch *
-      (println "Failed to open SQLite:" $ex/message)
+      (log .error #"Failed to open SQLite: #{$ex/message}")
       (DB = nil)
     )
   else
-    (println "genex/sqlite unavailable - memory will not persist")
+    (log .warn "genex/sqlite unavailable - memory will not persist")
   )
 )
 
@@ -66,13 +69,19 @@
   (if_not DB then (return))
   (var now (gene/now))
   (var meta_str (if meta then meta/.to_json else "{}"))
-  (DB .exec "INSERT INTO memory_events (workspace_id, session_id, role, content, meta_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)"
-    workspace_id session_id role content meta_str now)
+  (log .debug #"memory_append session=#{session_id} role=#{role} content_len=#{content/.length}")
+  (try
+    (DB .exec "INSERT INTO memory_events (workspace_id, session_id, role, content, meta_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)"
+      workspace_id session_id role content meta_str now)
+  catch *
+    (log .error #"memory_append failed: #{$ex/message}")
+  )
 )
 
 (fn $ns/memory_recent [session_id limit]
   (if_not DB then (return []))
   (try
+    (log .debug #"memory_recent session=#{session_id} limit=#{limit}")
     (var rows (DB .query "SELECT role, content, meta_json FROM memory_events WHERE session_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT ?" session_id limit))
     (if_not rows (return []))
     # Reverse so oldest is first
@@ -84,8 +93,10 @@
       (result .append {^role row/0 ^content row/1})
       (i -= 1)
     )
+    (log .debug #"memory_recent returned #{result/.size} entries")
     result
   catch *
+    (log .error #"memory_recent failed: #{$ex/message}")
     []
   )
 )
@@ -95,11 +106,16 @@
 (fn $ns/audit_log [run_id workspace_id tool_name status args_json result_json duration_ms]
   (if_not DB then (return))
   (var now (gene/now))
-  (DB .exec "INSERT INTO tool_audit (run_id, workspace_id, tool_name, status, args_json, result_json, duration_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    run_id workspace_id tool_name status
-    (if args_json then args_json/.to_json else "{}")
-    (if result_json then result_json/.to_json else "{}")
-    duration_ms now)
+  (log .debug #"audit_log run=#{run_id} tool=#{tool_name} status=#{status} duration=#{duration_ms}ms")
+  (try
+    (DB .exec "INSERT INTO tool_audit (run_id, workspace_id, tool_name, status, args_json, result_json, duration_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      run_id workspace_id tool_name status
+      (if args_json then args_json/.to_json else "{}")
+      (if result_json then result_json/.to_json else "{}")
+      duration_ms now)
+  catch *
+    (log .error #"audit_log failed: #{$ex/message}")
+  )
 )
 
 # --- Run tracking ---
@@ -107,13 +123,27 @@
 (fn $ns/run_create [run_id workspace_id user_id]
   (if_not DB then (return))
   (var now (gene/now))
-  (DB .exec "INSERT INTO agent_runs (run_id, workspace_id, user_id, state, started_at_ms) VALUES (?, ?, ?, 'running', ?)"
-    run_id workspace_id user_id now)
+  (log .info #"run_create run=#{run_id} workspace=#{workspace_id} user=#{user_id}")
+  (try
+    (DB .exec "INSERT INTO agent_runs (run_id, workspace_id, user_id, state, started_at_ms) VALUES (?, ?, ?, 'running', ?)"
+      run_id workspace_id user_id now)
+  catch *
+    (log .error #"run_create failed: #{$ex/message}")
+  )
 )
 
 (fn $ns/run_complete [run_id state error]
   (if_not DB then (return))
   (var now (gene/now))
-  (DB .exec "UPDATE agent_runs SET state = ?, ended_at_ms = ?, error = ? WHERE run_id = ?"
-    state now (if error then error else "") run_id)
+  (if error
+    (log .warn #"run_complete run=#{run_id} state=#{state} error=#{error}")
+  else
+    (log .info #"run_complete run=#{run_id} state=#{state}")
+  )
+  (try
+    (DB .exec "UPDATE agent_runs SET state = ?, ended_at_ms = ?, error = ? WHERE run_id = ?"
+      state now (if error then error else "") run_id)
+  catch *
+    (log .error #"run_complete failed: #{$ex/message}")
+  )
 )
