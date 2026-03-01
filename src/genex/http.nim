@@ -1784,34 +1784,28 @@ proc ws_connection_recv(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
 
   let ws = get_ws_handle(self)
 
-  # Create a Gene future backed by a Nim future
-  let nim_fut = newFuture[Value]("ws_connection_recv")
-
-  # Launch the async recv and resolve the future when done
-  let self_captured = self
-  proc do_recv() {.async.} =
-    try:
-      let frame = await ws_module.ws_recv(ws)
-      if frame.opcode == ws_module.WsOpClose:
-        {.cast(gcsafe).}:
-          instance_props(self_captured)["closed".to_key()] = TRUE
-          nim_fut.complete(NIL)
-      else:
-        nim_fut.complete(frame.payload.to_value())
-    except CatchableError as e:
-      {.cast(gcsafe).}:
-        instance_props(self_captured)["closed".to_key()] = TRUE
-        nim_fut.complete(NIL)
-
+  # Recv synchronously — waitFor drives the event loop properly for SSL
+  var result_val: Value
   {.cast(gcsafe).}:
-    asyncCheck do_recv()
+    try:
+      let frame = waitFor ws_module.ws_recv(ws)
+      if frame.opcode == ws_module.WsOpClose:
+        instance_props(self)["closed".to_key()] = TRUE
+        result_val = NIL
+      else:
+        result_val = frame.payload.to_value()
+    except CatchableError:
+      instance_props(self)["closed".to_key()] = TRUE
+      result_val = NIL
 
-  # Wrap as Gene future
+  # Return as an already-completed Gene future (no Nim future needed).
   let future_obj = FutureObj(
-    nim_future: nim_fut
+    state: FsSuccess,
+    value: result_val,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nil,
   )
-  vm.pending_futures.add(future_obj)
-  vm.poll_enabled = true
 
   let future_val = new_ref(VkFuture)
   future_val.future = future_obj
@@ -1841,7 +1835,10 @@ proc ws_connection_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value]
   return NIL
 
 proc vm_ws_connect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-  ## ws_connect(url) — returns a Future that resolves to a WsConnection instance.
+  ## ws_connect(url) — returns a completed Future with a WsConnection instance.
+  ## The connect is performed synchronously via waitFor so that the Nim event
+  ## loop drives the TLS handshake directly (the VM's poll(0) loop cannot
+  ## drive byte-level async recv on SSL sockets).
   if arg_count < 1:
     raise new_exception(types.Exception, "ws_connect requires a URL argument")
 
@@ -1850,25 +1847,25 @@ proc vm_ws_connect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_
     raise new_exception(types.Exception, "ws_connect URL must be a string")
 
   let url = url_val.str
-  let nim_fut = newFuture[Value]("ws_connect")
 
-  proc do_connect() {.async.} =
-    try:
-      let ws = await ws_module.ws_connect(url)
-      let instance = new_ws_connection_instance(ws)
-      nim_fut.complete(instance)
-    except CatchableError as e:
-      nim_fut.fail(newException(IOError, "WebSocket connect failed: " & e.msg))
-
+  # Connect synchronously — waitFor drives the event loop properly for SSL
+  var ws: ws_module.WebSocket
   {.cast(gcsafe).}:
-    asyncCheck do_connect()
+    try:
+      ws = waitFor ws_module.ws_connect(url)
+    except CatchableError as e:
+      raise new_exception(types.Exception, "WebSocket connect failed: " & e.msg)
 
-  # Wrap as Gene future
+  let instance = new_ws_connection_instance(ws)
+
+  # Return as an already-completed Gene future (no Nim future needed).
   let future_obj = FutureObj(
-    nim_future: nim_fut
+    state: FsSuccess,
+    value: instance,
+    success_callbacks: @[],
+    failure_callbacks: @[],
+    nim_future: nil,
   )
-  vm.pending_futures.add(future_obj)
-  vm.poll_enabled = true
 
   let future_val = new_ref(VkFuture)
   future_val.future = future_obj

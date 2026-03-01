@@ -106,6 +106,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_ai_scheduler.nim"
   exec "nim c -r tests/test_ai_provider_router.nim"
   exec "nim c -r tests/test_ai_slack_ingress.nim"
+  exec "nim c -r tests/test_ai_slack_socket_mode.nim"
   exec "nim c -r tests/test_ai_memory_store.nim"
   exec "nim c -r tests/test_ai_workspace_policy.nim"
   exec "nim c -r tests/test_ext.nim"

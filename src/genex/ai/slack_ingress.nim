@@ -11,6 +11,7 @@ import ./utils
 import ./control_slack
 import ./agent_runtime
 import ./conversation
+import ./slack_socket_mode
 
 
 type
@@ -148,3 +149,59 @@ proc handle_slack_request*(
     "state": $step_result.state,
     "message": step_result.message
   })
+
+
+# ---------------------------------------------------------------------------
+# Socket Mode integration
+# ---------------------------------------------------------------------------
+
+proc dispatch_socket_mode_event(ingress: SlackIngress; event_type: string; payload: JsonNode) =
+  ## Process an events_api payload from Socket Mode through the same
+  ## agent pipeline as the webhook path (steps 5-9 of handle_slack_request).
+  if event_type != "events_api" or payload.isNil:
+    return
+
+  # Deduplicate by event_id
+  let event_id = slack_event_id(payload)
+  if event_id.len > 0 and ingress.replay_guard.mark_or_is_duplicate(event_id):
+    return
+
+  # Convert to CommandEnvelope
+  var envelope: CommandEnvelope
+  try:
+    envelope = slack_event_to_command(payload)
+  except ValueError:
+    return
+
+  # Record in conversation store
+  if not ingress.conversation_store.isNil:
+    let session_key = envelope.workspace_id & ":" & envelope.channel_id
+    ingress.conversation_store.append_message(session_key, "user", envelope.text,
+      %*{"user_id": envelope.user_id, "command_id": envelope.command_id})
+
+  # Start agent run
+  let run_id = ingress.runtime.start_run(envelope)
+  let step_result = ingress.runtime.run_until_terminal(run_id, ingress.provider)
+
+  # Record agent reply
+  if not ingress.conversation_store.isNil and step_result.message.len > 0:
+    let session_key = envelope.workspace_id & ":" & envelope.channel_id
+    ingress.conversation_store.append_message(session_key, "assistant", step_result.message,
+      %*{"run_id": run_id})
+
+  # Reply to Slack
+  if step_result.state == ArsCompleted and step_result.message.len > 0:
+    let target = reply_target_from_envelope(envelope)
+    discard ingress.slack_client.slack_reply(target, step_result.message)
+
+proc start_socket_mode*(ingress: SlackIngress; app_token: string): SlackSocketMode =
+  ## Create and return a Socket Mode client wired to the ingress pipeline.
+  ## The caller should `await client.start()` to begin receiving events.
+  let handler = proc(event_type: string; payload: JsonNode) {.gcsafe.} =
+    ingress.dispatch_socket_mode_event(event_type, payload)
+
+  new_slack_socket_mode(
+    app_token = app_token,
+    bot_token = ingress.config.bot_token,
+    event_handler = handler
+  )

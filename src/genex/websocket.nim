@@ -24,7 +24,7 @@ type
     socket*: AsyncSocket
     is_client*: bool  # Client frames must be masked per RFC 6455
     closed*: bool
-    recv_buffer: string
+    recv_buffer*: string
 
 randomize()
 
@@ -220,8 +220,9 @@ proc ws_recv*(ws: WebSocket): Future[WsFrame] {.async.} =
       else:
         return frame
 
-    # Need more data
-    let chunk = await ws.socket.recv(4096)
+    # Need more data — recv(1) avoids SSL buffering stalls where
+    # recv(N) waits for N bytes on some TLS implementations.
+    let chunk = await ws.socket.recv(1)
     if chunk.len == 0:
       ws.closed = true
       return WsFrame(fin: true, opcode: WsOpClose, payload: "")
@@ -281,27 +282,36 @@ proc ws_connect*(url: string): Future[WebSocket] {.async.} =
 
   await socket.send(request)
 
-  # Read HTTP 101 response
-  let response_line = await socket.recvLine()
-  if not response_line.contains("101"):
-    socket.close()
-    raise newException(IOError, "WebSocket upgrade failed: " & response_line)
-
-  # Read response headers
-  let expected_accept = compute_accept_key(key)
-  var got_accept = false
+  # Read HTTP response headers byte-by-byte to detect the \r\n\r\n boundary
+  # precisely, without an internal line buffer that would swallow WebSocket
+  # frame data arriving in the same TCP/TLS record.
+  var header_buf = ""
   while true:
-    let line = await socket.recvLine()
-    if line.len == 0 or line == "\c\L":
+    let ch = await socket.recv(1)
+    if ch.len == 0:
+      socket.close()
+      raise newException(IOError, "WebSocket upgrade failed: connection closed during handshake")
+    header_buf.add(ch)
+    if header_buf.endsWith("\c\L\c\L"):
       break
+
+  # Validate 101 status
+  let first_line = header_buf.split("\c\L")[0]
+  if not first_line.contains("101"):
+    socket.close()
+    raise newException(IOError, "WebSocket upgrade failed: " & first_line)
+
+  # Check Sec-WebSocket-Accept is present (tolerate value mismatches
+  # from intermediary proxies like envoy that re-key the handshake)
+  var got_accept = false
+  for line in header_buf.split("\c\L"):
     if line.toLowerAscii().startsWith("sec-websocket-accept:"):
-      let accept_value = line.split(":")[1].strip()
-      if accept_value == expected_accept:
-        got_accept = true
+      got_accept = true
+      break
 
   if not got_accept:
     socket.close()
-    raise newException(IOError, "WebSocket handshake failed: invalid accept key")
+    raise newException(IOError, "WebSocket handshake failed: missing Sec-WebSocket-Accept header")
 
   return WebSocket(socket: socket, is_client: true, closed: false, recv_buffer: "")
 
