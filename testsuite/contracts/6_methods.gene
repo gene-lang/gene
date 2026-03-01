@@ -1,6 +1,6 @@
 # Contracts should work for methods
 # ExitCode: 1
-# Expected: Error: Gene exception: ContractViolation: add precondition #1 failed: (delta > 0) | args=[self=VkInstance, delta=-1]
+# Expected: Error: {"code":"GENE.RUNTIME.ERROR","severity":"error","stage":"runtime","span":{"file":"","line":0,"column":0},"message":"ContractViolation: add precondition #1 failed: (delta > 0) | args=[self=VkInstance, delta=-1]","hints":[],"repair_tags":["runtime"]}
 
 (class Counter
   (prop value: Int)

@@ -1,0 +1,114 @@
+# GeneClaw Database Module
+# SQLite storage for memory events, agent runs, and audit logs
+
+(import DB_PATH from "config")
+
+(var DB nil)
+
+(fn $ns/get_db [] DB)
+
+(fn $ns/init_db []
+  (if genex/sqlite
+    (try
+      (DB = (genex/sqlite/open DB_PATH))
+      (DB .exec "PRAGMA journal_mode=WAL")
+
+      # Memory events table
+      (DB .exec "CREATE TABLE IF NOT EXISTS memory_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        meta_json TEXT DEFAULT '{}',
+        created_at_ms INTEGER NOT NULL
+      )")
+      (DB .exec "CREATE INDEX IF NOT EXISTS idx_mem_session ON memory_events(session_id, created_at_ms)")
+
+      # Agent runs table
+      (DB .exec "CREATE TABLE IF NOT EXISTS agent_runs (
+        run_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'queued',
+        started_at_ms INTEGER,
+        ended_at_ms INTEGER,
+        error TEXT DEFAULT ''
+      )")
+
+      # Tool audit log
+      (DB .exec "CREATE TABLE IF NOT EXISTS tool_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        args_json TEXT DEFAULT '{}',
+        result_json TEXT DEFAULT '{}',
+        duration_ms INTEGER DEFAULT 0,
+        created_at_ms INTEGER NOT NULL
+      )")
+      (DB .exec "CREATE INDEX IF NOT EXISTS idx_audit_run ON tool_audit(run_id)")
+
+      (println "Database initialized:" DB_PATH)
+    catch *
+      (println "Failed to open SQLite:" $ex/message)
+      (DB = nil)
+    )
+  else
+    (println "genex/sqlite unavailable - memory will not persist")
+  )
+)
+
+# --- Memory operations ---
+
+(fn $ns/memory_append [workspace_id session_id role content meta]
+  (if (DB == nil) (return nil))
+  (var now (gene/now/.to_i))
+  (var meta_str (if (meta == nil) "{}" else meta/.to_json))
+  (DB .exec "INSERT INTO memory_events (workspace_id, session_id, role, content, meta_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)"
+    workspace_id session_id role content meta_str now)
+)
+
+(fn $ns/memory_recent [session_id limit]
+  (if (DB == nil) (return []))
+  (var rows (DB .query "SELECT role, content, meta_json FROM memory_events WHERE session_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT ?" session_id limit))
+  # Reverse so oldest is first
+  (var result [])
+  (var i (rows/.size - 1))
+  (loop
+    (if (i < 0) (break))
+    (var row (rows .get i))
+    (result .append {^role row/0 ^content row/1})
+    (i -= 1)
+  )
+  result
+)
+
+# --- Audit operations ---
+
+(fn $ns/audit_log [run_id workspace_id tool_name status args_json result_json duration_ms]
+  (if (DB == nil) (return nil))
+  (var now (gene/now/.to_i))
+  (DB .exec "INSERT INTO tool_audit (run_id, workspace_id, tool_name, status, args_json, result_json, duration_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    run_id workspace_id tool_name status
+    (if (args_json == nil) "{}" else args_json/.to_json)
+    (if (result_json == nil) "{}" else result_json/.to_json)
+    duration_ms now)
+)
+
+# --- Run tracking ---
+
+(fn $ns/run_create [run_id workspace_id user_id]
+  (if (DB == nil) (return nil))
+  (var now (gene/now/.to_i))
+  (DB .exec "INSERT INTO agent_runs (run_id, workspace_id, user_id, state, started_at_ms) VALUES (?, ?, ?, 'running', ?)"
+    run_id workspace_id user_id now)
+)
+
+(fn $ns/run_complete [run_id state error]
+  (if (DB == nil) (return nil))
+  (var now (gene/now/.to_i))
+  (DB .exec "UPDATE agent_runs SET state = ?, ended_at_ms = ?, error = ? WHERE run_id = ?"
+    state now (if (error == nil) "" else error) run_id)
+)

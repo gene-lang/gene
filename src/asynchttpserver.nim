@@ -338,7 +338,7 @@ proc processRequest(
   # Call the user's callback.
   await callback(request)
 
-  if "upgrade" in request.headers.getOrDefault("connection"):
+  if "upgrade" in request.headers.getOrDefault("connection").toLowerAscii():
     return false
 
   # The request has been served, from this point on returning `true` means the
@@ -372,7 +372,10 @@ proc processClient(server: AsyncHttpServer, client: AsyncSocket, address: string
       server, request, client, address, lineFut, callback
     )
     if not retry:
-      client.close()
+      # Don't close socket when connection was upgraded (e.g. WebSocket)
+      let conn = request.mget().headers.getOrDefault("connection").toLowerAscii()
+      if "upgrade" notin conn:
+        client.close()
       break
 
 const

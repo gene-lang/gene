@@ -1,6 +1,8 @@
 import std/json
 import std/tables
 import std/strutils
+import std/httpclient
+import std/os
 
 import wrappers/openssl
 
@@ -204,3 +206,79 @@ proc mark_or_is_duplicate*(guard: SlackReplayGuard; event_id: string; now_ms = n
 
   guard.seen[event_id] = now_ms
   false
+
+
+# --- Slack reply adapter ---
+
+type
+  SlackReplyTarget* = object
+    channel*: string
+    thread_ts*: string
+
+  SlackReplyResult* = object
+    ok*: bool
+    error*: string
+    ts*: string
+
+  SlackClient* = ref object
+    bot_token*: string
+    base_url*: string
+
+
+proc new_slack_client*(bot_token = ""; base_url = "https://slack.com"): SlackClient =
+  let token =
+    if bot_token.len > 0: bot_token
+    else: getEnv("SLACK_BOT_TOKEN")
+  SlackClient(bot_token: token, base_url: base_url)
+
+proc reply_target_from_envelope*(envelope: CommandEnvelope): SlackReplyTarget =
+  SlackReplyTarget(
+    channel: envelope.channel_id,
+    thread_ts: envelope.thread_id
+  )
+
+proc slack_reply*(client: SlackClient; target: SlackReplyTarget; text: string): SlackReplyResult =
+  if client.isNil or client.bot_token.len == 0:
+    return SlackReplyResult(ok: false, error: "missing bot token")
+  if target.channel.len == 0:
+    return SlackReplyResult(ok: false, error: "missing channel")
+  if text.len == 0:
+    return SlackReplyResult(ok: false, error: "empty message")
+
+  let payload = %*{
+    "channel": target.channel,
+    "text": text
+  }
+  if target.thread_ts.len > 0:
+    payload["thread_ts"] = %target.thread_ts
+
+  let url = client.base_url & "/api/chat.postMessage"
+  var http = newHttpClient()
+  try:
+    http.headers = newHttpHeaders({
+      "Content-Type": "application/json; charset=utf-8",
+      "Authorization": "Bearer " & client.bot_token
+    })
+    let response = http.request(url, httpMethod = HttpPost, body = $payload)
+    let body = parseJson(response.body)
+
+    if body.kind == JObject and body.hasKey("ok") and body["ok"].kind == JBool and body["ok"].getBool():
+      let ts =
+        if body.hasKey("ts") and body["ts"].kind == JString: body["ts"].getStr()
+        else: ""
+      SlackReplyResult(ok: true, error: "", ts: ts)
+    else:
+      let err =
+        if body.kind == JObject and body.hasKey("error") and body["error"].kind == JString:
+          body["error"].getStr()
+        else:
+          "unknown Slack API error"
+      SlackReplyResult(ok: false, error: err)
+  except CatchableError as e:
+    SlackReplyResult(ok: false, error: e.msg)
+  finally:
+    http.close()
+
+proc slack_ack_json*(): JsonNode =
+  ## Return the minimal 200 OK body Slack expects within 3 seconds.
+  %*{"ok": true}

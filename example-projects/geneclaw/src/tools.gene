@@ -1,0 +1,194 @@
+# GeneClaw Tool Registry
+# Declarative tool registry with policy gate and audit trail
+
+(import SHELL_ALLOWLIST WORKSPACE_ROOT from "config")
+(import audit_log from "db")
+
+# Tool registry: name -> {^description ^params ^handler}
+(var TOOLS {})
+
+# Policy: workspace_id -> {^allowed_tools ^denied_tools}
+(var POLICIES {})
+
+(fn $ns/register_tool [name description params handler]
+  (TOOLS .set name {
+    ^description description
+    ^params params
+    ^handler handler
+  })
+)
+
+(fn $ns/set_workspace_policy [workspace_id policy]
+  (POLICIES .set workspace_id policy)
+)
+
+(fn $ns/check_policy [workspace_id tool_name]
+  (var policy (POLICIES .get workspace_id nil))
+  (if (policy == nil) (return true))
+
+  # Check denied list
+  (var denied (policy .get "denied_tools" []))
+  (denied .each (fn [d]
+    (if (d == tool_name) (return false))
+  ))
+
+  # Check allowed list (if non-empty, only listed tools are allowed)
+  (var allowed (policy .get "allowed_tools" []))
+  (if (allowed/.size > 0)
+    (var found false)
+    (allowed .each (fn [a]
+      (if (a == tool_name) (found = true))
+    ))
+    (return found)
+  )
+  true
+)
+
+(fn $ns/invoke_tool [run_id workspace_id tool_name args]
+  # Policy gate
+  (if ((check_policy workspace_id tool_name) == false)
+    (audit_log run_id workspace_id tool_name "denied" args nil 0)
+    (return {^ok false ^error #"Tool '#{tool_name}' denied for workspace #{workspace_id}"})
+  )
+
+  (var tool (TOOLS .get tool_name nil))
+  (if (tool == nil)
+    (audit_log run_id workspace_id tool_name "not_found" args nil 0)
+    (return {^ok false ^error #"Unknown tool: #{tool_name}"})
+  )
+
+  (var start_ms (gene/now/.to_i))
+  (try
+    (var result (tool/handler args))
+    (var duration ((gene/now/.to_i) - start_ms))
+    (audit_log run_id workspace_id tool_name "success" args result duration)
+    {^ok true ^result result}
+  catch *
+    (var duration ((gene/now/.to_i) - start_ms))
+    (audit_log run_id workspace_id tool_name "failed" args {^error $ex/message} duration)
+    {^ok false ^error #"Tool failed: #{$ex/message}"}
+  )
+)
+
+(fn $ns/list_tools []
+  (var names [])
+  (TOOLS .each (fn [name _def]
+    (names .append name)
+  ))
+  names
+)
+
+(fn $ns/build_tools_prompt []
+  (var parts [])
+  (TOOLS .each (fn [name def]
+    (parts .append #"- #{name}: #{def/description}")
+  ))
+  (parts .join "\n")
+)
+
+# --- Built-in tools ---
+
+(fn $ns/init_tools []
+  # Ensure workspace directory exists
+  (try
+    (system/shell #"mkdir -p #{WORKSPACE_ROOT}")
+  catch *
+    nil
+  )
+
+  (register_tool "get_time"
+    "Get the current date and time"
+    {}
+    (fn [args]
+      {^result ((gene/now) .to_s)}
+    )
+  )
+
+  (register_tool "shell"
+    "Run an allowlisted shell command"
+    {^command "The command to run" ^args "Arguments as a string"}
+    (fn [args]
+      (var cmd (args .get "command" ""))
+      (if (cmd/.length == 0)
+        (return {^error "Missing command"})
+      )
+
+      # Check allowlist
+      (var allowed false)
+      (SHELL_ALLOWLIST .each (fn [c]
+        (if (c == cmd) (allowed = true))
+      ))
+      (if (allowed == false)
+        (return {^error #"Command '#{cmd}' is not allowlisted"})
+      )
+
+      (var cmd_args (args .get "args" ""))
+      (var full_cmd #"cd #{WORKSPACE_ROOT} && #{cmd} #{cmd_args}")
+      (var result (system/shell full_cmd))
+      {^exit_code result/exit_code ^output result/output}
+    )
+  )
+
+  (register_tool "read_file"
+    "Read a file within the workspace"
+    {^path "Relative path within workspace"}
+    (fn [args]
+      (var path (args .get "path" ""))
+      (if (path/.length == 0)
+        (return {^error "Missing path"})
+      )
+      # Reject path traversal
+      (if ((path .index "..") >= 0)
+        (return {^error "Path traversal not allowed"})
+      )
+      (var full_path #"#{WORKSPACE_ROOT}/#{path}")
+      (try
+        (var content (gene/io/read full_path))
+        {^path path ^content content}
+      catch *
+        {^error #"Cannot read: #{$ex/message}"}
+      )
+    )
+  )
+
+  (register_tool "write_file"
+    "Write a file within the workspace"
+    {^path "Relative path" ^content "File content"}
+    (fn [args]
+      (var path (args .get "path" ""))
+      (var content (args .get "content" ""))
+      (if (path/.length == 0)
+        (return {^error "Missing path"})
+      )
+      (if ((path .index "..") >= 0)
+        (return {^error "Path traversal not allowed"})
+      )
+      (var full_path #"#{WORKSPACE_ROOT}/#{path}")
+      (try
+        (gene/io/write full_path content)
+        {^path path ^bytes content/.length}
+      catch *
+        {^error #"Cannot write: #{$ex/message}"}
+      )
+    )
+  )
+
+  (register_tool "http_get"
+    "Fetch a URL via HTTP GET"
+    {^url "The URL to fetch"}
+    (fn [args]
+      (var url (args .get "url" ""))
+      (if (url/.length == 0)
+        (return {^error "Missing url"})
+      )
+      (try
+        (var resp (await (http_get url)))
+        {^status resp/status ^body (if (resp/body/.length > 4000) then ((resp/body .substr 0 4000) .append "...[truncated]") else resp/body)}
+      catch *
+        {^error #"HTTP fetch failed: #{$ex/message}"}
+      )
+    )
+  )
+
+  (println #"Registered #{(list_tools)/.size} tools:" (list_tools))
+)

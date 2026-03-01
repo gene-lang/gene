@@ -1,0 +1,16 @@
+# GeneClaw Configuration
+# Environment variables and application settings
+
+($ns/PORT = 4090)
+($ns/DB_PATH = "geneclaw.sqlite")
+($ns/OPENAI_API_KEY = ($env .get "OPENAI_API_KEY" ""))
+($ns/OPENAI_MODEL = ($env .get "OPENAI_MODEL" "gpt-4o-mini"))
+($ns/SLACK_SIGNING_SECRET = ($env .get "SLACK_SIGNING_SECRET" ""))
+($ns/SLACK_BOT_TOKEN = ($env .get "SLACK_BOT_TOKEN" ""))
+($ns/MAX_STEPS = 16)
+($ns/MAX_TOOL_CALLS = 8)
+
+# Workspace root for filesystem tool
+($ns/WORKSPACE_ROOT = ($env .get "GENECLAW_WORKSPACE" "/tmp/geneclaw"))
+# Shell allowlist
+($ns/SHELL_ALLOWLIST = ["ls" "cat" "echo" "date" "wc" "head" "tail" "grep" "find"])

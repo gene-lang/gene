@@ -1,6 +1,6 @@
 # Basic precondition failure should raise ContractViolation
 # ExitCode: 1
-# Expected: Error: Gene exception: ContractViolation: positive_only precondition #1 failed: (x > 0) | args=[x=-2]
+# Expected: Error: {"code":"GENE.RUNTIME.ERROR","severity":"error","stage":"runtime","span":{"file":"","line":0,"column":0},"message":"ContractViolation: positive_only precondition #1 failed: (x > 0) | args=[x=-2]","hints":[],"repair_tags":["runtime"]}
 
 (fn positive_only [x: Int] -> Int
   ^pre [(x > 0)]

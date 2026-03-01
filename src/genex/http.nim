@@ -7,6 +7,7 @@ import asyncdispatch, asyncnet
 import asyncfutures  # Import asyncfutures explicitly
 import nativesockets, net
 import cgi
+import websocket as ws_module
 
 include ../gene/extension/boilerplate
 import ../gene/vm
@@ -37,6 +38,11 @@ var server_request_class_global: Class
 
 var server_response_class_global: Class
 var server_stream_class_global: Class
+var ws_connection_class_global: Class
+
+# WebSocket handler stored from ^websocket keyword arg
+var ws_handler_global: Value = NIL
+var ws_path_global: string = ""
 
 # Concurrent mode flag
 var concurrent_mode: bool = false
@@ -59,6 +65,11 @@ proc vm_respond_sse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
 proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc server_stream_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 proc server_stream_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc ws_connection_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc ws_connection_recv(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc ws_connection_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc vm_ws_connect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc new_ws_connection_instance(ws: ws_module.WebSocket): Value {.gcsafe.}
 proc execute_gene_function(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.}
 proc process_pending_http_requests*(vm: ptr VirtualMachine) {.gcsafe.}
 proc response_to_literal(resp: Value): Value {.gcsafe.}
@@ -508,6 +519,11 @@ proc init*(vm: ptr VirtualMachine): Namespace {.exportc, dynlib.} =
   fn.native_fn = vm_json_stringify
   result["json_stringify".to_key()] = fn.to_ref_value()
 
+  # WebSocket client connect
+  fn = new_ref(VkNativeFn)
+  fn.native_fn = vm_ws_connect
+  result["ws_connect".to_key()] = fn.to_ref_value()
+
 proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
   if host == nil:
     return int32(GeneExtErr)
@@ -760,6 +776,13 @@ proc init_http_classes*() =
       server_stream_class_global.def_native_method("send", server_stream_send)
       server_stream_class_global.def_native_method("close", server_stream_close)
 
+    # Create WsConnection class
+    {.cast(gcsafe).}:
+      ws_connection_class_global = new_class("WsConnection")
+      ws_connection_class_global.def_native_method("send", ws_connection_send)
+      ws_connection_class_global.def_native_method("recv", ws_connection_recv)
+      ws_connection_class_global.def_native_method("close", ws_connection_close)
+
     # Store classes in gene namespace
     let request_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
@@ -773,12 +796,16 @@ proc init_http_classes*() =
     let server_stream_class_ref = new_ref(VkClass)
     {.cast(gcsafe).}:
       server_stream_class_ref.class = server_stream_class_global
+    let ws_connection_class_ref = new_ref(VkClass)
+    {.cast(gcsafe).}:
+      ws_connection_class_ref.class = ws_connection_class_global
 
     if App.app.gene_ns.kind == VkNamespace:
       App.app.gene_ns.ref.ns["Request".to_key()] = request_class_ref.to_ref_value()
       App.app.gene_ns.ref.ns["ServerRequest".to_key()] = server_request_class_ref.to_ref_value()
       App.app.gene_ns.ref.ns["Response".to_key()] = response_class_ref.to_ref_value()
       App.app.gene_ns.ref.ns["ServerStream".to_key()] = server_stream_class_ref.to_ref_value()
+      App.app.gene_ns.ref.ns["WsConnection".to_key()] = ws_connection_class_ref.to_ref_value()
 
     # Add helper functions to global namespace
     let get_fn = new_ref(VkNativeFn)
@@ -805,6 +832,11 @@ proc init_http_classes*() =
     let redirect_fn = new_ref(VkNativeFn)
     redirect_fn.native_fn = vm_redirect
     App.app.global_ns.ref.ns["redirect".to_key()] = redirect_fn.to_ref_value()
+
+    # WebSocket client connect function
+    let ws_connect_fn = new_ref(VkNativeFn)
+    ws_connect_fn.native_fn = vm_ws_connect
+    App.app.global_ns.ref.ns["ws_connect".to_key()] = ws_connect_fn.to_ref_value()
 
     # Register HTTP worker handler for thread-based concurrent processing
     let worker_handler_fn = new_ref(VkNativeFn)
@@ -1319,6 +1351,27 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
   await sleepAsync(1)
 
   {.cast(gcsafe).}:
+    # --- WebSocket upgrade detection ---
+    let is_ws_upgrade = req.headers.hasKey("Upgrade") and
+                        req.headers["Upgrade"].toLowerAscii() == "websocket"
+
+    if is_ws_upgrade and ws_handler_global.kind != VkNil:
+      # Check path if one was configured
+      let path_ok = ws_path_global.len == 0 or req.url.path == ws_path_global
+      if path_ok:
+        try:
+          let ws = await ws_module.ws_accept(req.client, req.headers)
+          let ws_instance = new_ws_connection_instance(ws)
+          # Call the Gene WebSocket handler with the connection
+          discard execute_gene_function(gene_vm_global, ws_handler_global, @[ws_instance])
+        except CatchableError as e:
+          when not defined(release):
+            echo "WebSocket upgrade error: ", e.msg
+        return
+      else:
+        # Path doesn't match — fall through to normal request handling
+        discard
+
     # Convert async request to Gene request
     let gene_req = create_server_request(req)
 
@@ -1440,6 +1493,19 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
   let handler = if get_positional_count(arg_count, has_keyword_args) > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
 
   let port = if port_val.kind == VkInt: port_val.int64.int else: 8080
+
+  # Check for ^websocket keyword arg: {^path "/ws" ^handler ws_handler}
+  {.cast(gcsafe).}:
+    let ws_val = if has_keyword_args: get_keyword_arg(args, "websocket") else: NIL
+    if ws_val.kind == VkMap:
+      ws_path_global = ""
+      ws_handler_global = NIL
+      let path_val = map_data(ws_val).getOrDefault("path".to_key(), NIL)
+      if path_val.kind == VkString:
+        ws_path_global = path_val.str
+      let handler_val = map_data(ws_val).getOrDefault("handler".to_key(), NIL)
+      if handler_val.kind != VkNil:
+        ws_handler_global = handler_val
 
   # Check for ^concurrent option and ^workers count
   {.cast(gcsafe).}:
@@ -1655,6 +1721,158 @@ proc vm_redirect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
   instance_props(instance)["headers".to_key()] = headers
 
   return instance
+
+# ============ WebSocket Connection Methods ============
+
+proc get_ws_handle(instance: Value): ws_module.WebSocket =
+  ## Extract the Nim WebSocket from a WsConnection instance.
+  let ptr_val = instance_props(instance).getOrDefault("__ws_handle".to_key(), NIL)
+  if ptr_val.kind != VkPointer:
+    raise new_exception(types.Exception, "WsConnection has no active handle")
+  cast[ws_module.WebSocket](ptr_val.to_pointer())
+
+proc new_ws_connection_instance(ws: ws_module.WebSocket): Value {.gcsafe.} =
+  ## Create a Gene WsConnection instance wrapping a Nim WebSocket.
+  {.cast(gcsafe).}:
+    let cls = if ws_connection_class_global != nil: ws_connection_class_global else: new_class("WsConnection")
+    let instance = new_instance_value(cls)
+    # Store the WebSocket ref as a pointer — prevent GC collection via GC_ref
+    GC_ref(ws)
+    instance_props(instance)["__ws_handle".to_key()] = cast[pointer](ws).to_value()
+    instance_props(instance)["closed".to_key()] = FALSE
+    return instance
+
+proc ws_connection_send(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  ## WsConnection .send(text)
+  if get_positional_count(arg_count, has_keyword_args) < 2:
+    raise new_exception(types.Exception, "WsConnection.send requires data")
+
+  let self = get_positional_arg(args, 0, has_keyword_args)
+  if self.kind != VkInstance:
+    raise new_exception(types.Exception, "WsConnection.send must be called on a WsConnection instance")
+
+  let data_val = get_positional_arg(args, 1, has_keyword_args)
+  let payload = case data_val.kind
+    of VkString: data_val.str
+    of VkMap, VkArray: $data_val
+    else: $data_val
+
+  let closed_val = instance_props(self).getOrDefault("closed".to_key(), FALSE)
+  if closed_val == TRUE:
+    return FALSE
+
+  let ws = get_ws_handle(self)
+  try:
+    waitFor ws_module.ws_send(ws, payload)
+    return TRUE
+  except CatchableError:
+    instance_props(self)["closed".to_key()] = TRUE
+    return FALSE
+
+proc ws_connection_recv(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  ## WsConnection .recv() — returns a Future that resolves to the next message string.
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "WsConnection.recv requires self")
+
+  let self = get_positional_arg(args, 0, has_keyword_args)
+  if self.kind != VkInstance:
+    raise new_exception(types.Exception, "WsConnection.recv must be called on a WsConnection instance")
+
+  let closed_val = instance_props(self).getOrDefault("closed".to_key(), FALSE)
+  if closed_val == TRUE:
+    return NIL
+
+  let ws = get_ws_handle(self)
+
+  # Create a Gene future backed by a Nim future
+  let nim_fut = newFuture[Value]("ws_connection_recv")
+
+  # Launch the async recv and resolve the future when done
+  let self_captured = self
+  proc do_recv() {.async.} =
+    try:
+      let frame = await ws_module.ws_recv(ws)
+      if frame.opcode == ws_module.WsOpClose:
+        {.cast(gcsafe).}:
+          instance_props(self_captured)["closed".to_key()] = TRUE
+          nim_fut.complete(NIL)
+      else:
+        nim_fut.complete(frame.payload.to_value())
+    except CatchableError as e:
+      {.cast(gcsafe).}:
+        instance_props(self_captured)["closed".to_key()] = TRUE
+        nim_fut.complete(NIL)
+
+  {.cast(gcsafe).}:
+    asyncCheck do_recv()
+
+  # Wrap as Gene future
+  let future_obj = FutureObj(
+    nim_future: nim_fut
+  )
+  vm.pending_futures.add(future_obj)
+  vm.poll_enabled = true
+
+  let future_val = new_ref(VkFuture)
+  future_val.future = future_obj
+  return future_val.to_ref_value()
+
+proc ws_connection_close(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  ## WsConnection .close()
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "WsConnection.close requires self")
+
+  let self = get_positional_arg(args, 0, has_keyword_args)
+  if self.kind != VkInstance:
+    raise new_exception(types.Exception, "WsConnection.close must be called on a WsConnection instance")
+
+  let closed_val = instance_props(self).getOrDefault("closed".to_key(), FALSE)
+  if closed_val == TRUE:
+    return NIL
+
+  let ws = get_ws_handle(self)
+  try:
+    waitFor ws_module.ws_close(ws)
+  except CatchableError:
+    discard
+
+  instance_props(self)["closed".to_key()] = TRUE
+  GC_unref(ws)
+  return NIL
+
+proc vm_ws_connect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  ## ws_connect(url) — returns a Future that resolves to a WsConnection instance.
+  if arg_count < 1:
+    raise new_exception(types.Exception, "ws_connect requires a URL argument")
+
+  let url_val = get_positional_arg(args, 0, has_keyword_args)
+  if url_val.kind != VkString:
+    raise new_exception(types.Exception, "ws_connect URL must be a string")
+
+  let url = url_val.str
+  let nim_fut = newFuture[Value]("ws_connect")
+
+  proc do_connect() {.async.} =
+    try:
+      let ws = await ws_module.ws_connect(url)
+      let instance = new_ws_connection_instance(ws)
+      nim_fut.complete(instance)
+    except CatchableError as e:
+      nim_fut.fail(newException(IOError, "WebSocket connect failed: " & e.msg))
+
+  {.cast(gcsafe).}:
+    asyncCheck do_connect()
+
+  # Wrap as Gene future
+  let future_obj = FutureObj(
+    nim_future: nim_fut
+  )
+  vm.pending_futures.add(future_obj)
+  vm.poll_enabled = true
+
+  let future_val = new_ref(VkFuture)
+  future_val.future = future_obj
+  return future_val.to_ref_value()
 
 # Call init_http_classes to register the callback
 init_http_classes()

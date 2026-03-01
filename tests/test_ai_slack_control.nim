@@ -98,3 +98,36 @@ suite "Slack control adapter":
     # After ttl, event id is expired and can be accepted again.
     guard.cleanup_replay_guard(now_ms = 12000)
     check not guard.mark_or_is_duplicate("Ev1", now_ms = 12000)
+
+  test "reply target from envelope":
+    let cmd = new_command_envelope(
+      command_id = "c-1",
+      source = CsSlack,
+      channel_id = "C-chan",
+      thread_id = "1700000000.000"
+    )
+    let target = reply_target_from_envelope(cmd)
+    check target.channel == "C-chan"
+    check target.thread_ts == "1700000000.000"
+
+  test "slack reply rejects invalid inputs":
+    # nil client
+    let r0 = slack_reply(nil, SlackReplyTarget(channel: "C1"), "hello")
+    check not r0.ok
+    check r0.error == "missing bot token"
+
+    let client = new_slack_client(bot_token = "xoxb-test")
+
+    # missing channel
+    let r1 = client.slack_reply(SlackReplyTarget(channel: ""), "hello")
+    check not r1.ok
+    check r1.error == "missing channel"
+
+    # empty message
+    let r2 = client.slack_reply(SlackReplyTarget(channel: "C1"), "")
+    check not r2.ok
+    check r2.error == "empty message"
+
+  test "slack ack json":
+    let ack = slack_ack_json()
+    check ack["ok"].getBool() == true

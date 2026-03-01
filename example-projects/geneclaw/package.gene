@@ -1,0 +1,12 @@
+^name "geneclaw"
+^version "0.1.0"
+^license "MIT"
+^author [
+  "Gene Team"
+]
+^gene-version "*"
+^main-module "main"
+^source-dir "src"
+^description "GeneClaw - a tool-using agent platform built on Gene"
+^homepage "https://github.com/gene-language/gene"
+^repository "https://github.com/gene-language/gene.git"
