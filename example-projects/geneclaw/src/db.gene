@@ -67,7 +67,7 @@
 
 (fn $ns/memory_append [workspace_id session_id role content meta]
   (if_not DB then (return))
-  (var now (gene/now))
+  (var now gene/now/.call/.to_i)
   (var meta_str (if meta then meta/.to_json else "{}"))
   (log .debug #"memory_append session=#{session_id} role=#{role} content_len=#{content/.length}")
   (try
@@ -82,16 +82,12 @@
   (if_not DB then (return []))
   (try
     (log .debug #"memory_recent session=#{session_id} limit=#{limit}")
-    (var rows (DB .query "SELECT role, content, meta_json FROM memory_events WHERE session_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT ?" session_id limit))
+    # Order ASC so oldest-first; sub-select with DESC LIMIT gives the N most recent rows
+    (var rows (DB .query "SELECT role, content FROM (SELECT role, content, created_at_ms FROM memory_events WHERE session_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT ?) ORDER BY created_at_ms ASC" session_id limit))
     (if_not rows (return []))
-    # Reverse so oldest is first
     (var result [])
-    (var i (rows/.size - 1))
-    (loop
-      (if (i < 0) (break))
-      (var row rows/i)
+    (for row rows
       (result .append {^role row/0 ^content row/1})
-      (i -= 1)
     )
     (log .debug #"memory_recent returned #{result/.size} entries")
     result
@@ -105,7 +101,7 @@
 
 (fn $ns/audit_log [run_id workspace_id tool_name status args_json result_json duration_ms]
   (if_not DB then (return))
-  (var now (gene/now))
+  (var now gene/now/.call/.to_i)
   (log .debug #"audit_log run=#{run_id} tool=#{tool_name} status=#{status} duration=#{duration_ms}ms")
   (try
     (DB .exec "INSERT INTO tool_audit (run_id, workspace_id, tool_name, status, args_json, result_json, duration_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -122,7 +118,7 @@
 
 (fn $ns/run_create [run_id workspace_id user_id]
   (if_not DB then (return))
-  (var now (gene/now))
+  (var now gene/now/.call/.to_i)
   (log .info #"run_create run=#{run_id} workspace=#{workspace_id} user=#{user_id}")
   (try
     (DB .exec "INSERT INTO agent_runs (run_id, workspace_id, user_id, state, started_at_ms) VALUES (?, ?, ?, 'running', ?)"
@@ -134,7 +130,8 @@
 
 (fn $ns/run_complete [run_id state error]
   (if_not DB then (return))
-  (var now (gene/now))
+  (var now gene/now/.call/.to_i)
+
   (if error
     (log .warn #"run_complete run=#{run_id} state=#{state} error=#{error}")
   else

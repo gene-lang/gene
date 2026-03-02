@@ -209,6 +209,11 @@ proc buildChatPayload*(config: OpenAIConfig, options: JsonNode): JsonNode =
     "stream": if options.hasKey("stream"): options["stream"].getBool(false) else: false
   }
 
+  # Native tool calling support
+  if options.hasKey("tools"):
+    payload["tools"] = options["tools"]
+    payload["tool_choice"] = if options.hasKey("tool_choice"): options["tool_choice"] else: %*"auto"
+
   # Merge optional parameters
   let optionalFields = ["top_p", "n", "stop", "presence_penalty", "frequency_penalty", "logit_bias", "user"]
   for field in optionalFields:

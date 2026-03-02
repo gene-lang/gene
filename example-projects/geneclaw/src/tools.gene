@@ -1,5 +1,5 @@
 # GeneClaw Tool Registry
-# Declarative tool registry with policy gate and audit trail
+# Declarative tool registry with JSON Schema specs for native OpenAI tool calling
 
 (import genex/http/http_get)
 (import SHELL_ALLOWLIST WORKSPACE_ROOT from "config")
@@ -10,11 +10,8 @@
 # Tool registry: name -> {^description ^params ^handler}
 (var TOOLS {})
 
-# Policy: workspace_id -> {^allowed_tools ^denied_tools}
-(var POLICIES {})
-
 (fn $ns/register_tool [name description params handler]
-  (TOOLS/name = {
+  (TOOLS .set name {
     ^description description
     ^params params
     ^handler handler
@@ -22,34 +19,8 @@
   (log .debug #"Registered tool: #{name}")
 )
 
-# (fn $ns/set_workspace_policy [workspace_id policy]
-#   (POLICIES/workspace_id = policy)
-# )
-
 (fn $ns/check_policy [workspace_id tool_name]
   (return true)
-  # (var policy POLICIES/workspace_id)
-  # (if_not policy then (return true))
-
-  # # Check denied list
-  # (var denied policy/denied_tools)
-  # (if denied
-  #   (denied .each (fn [d]
-  #     (if (d == tool_name) then (return false))
-  #   ))
-  # )
-
-  # # Check allowed list (if non-empty, only listed tools are allowed)
-  # (var allowed policy/allowed_tools)
-  # (if_not allowed/.empty
-  #   (var found false)
-  #   (allowed .each (fn [a]
-  #     (if (a == tool_name) (found = true))
-  #   ))
-  #   (return found)
-  # )
-
-  # true
 )
 
 (fn $ns/invoke_tool [run_id workspace_id tool_name args]
@@ -70,16 +41,16 @@
     (return {^ok false ^error #"Unknown tool: #{tool_name}"})
   )
 
-  (var start_ms ((gene/now) .to_i))
+  (var start_ms gene/now/.call/.to_i)
   (try
     (var result (tool/handler args))
-    (var duration (((gene/now) .to_i) - start_ms))
+    (var duration (gene/now/.call/.to_i - start_ms))
     (log .info #"Tool #{tool_name} succeeded in #{duration}ms")
     (log .debug #"Tool #{tool_name} result=#{result/.to_json}")
     (audit_log run_id workspace_id tool_name "success" args result duration)
     {^ok true ^result result}
   catch *
-    (var duration (((gene/now) .to_i) - start_ms))
+    (var duration (gene/now/.call/.to_i - start_ms))
     (log .error #"Tool #{tool_name} failed after #{duration}ms: #{$ex/message}")
     (audit_log run_id workspace_id tool_name "failed" args {^error $ex/message} duration)
     {^ok false ^error #"Tool failed: #{$ex/message}"}
@@ -94,12 +65,20 @@
   names
 )
 
-(fn $ns/build_tools_prompt []
-  (var parts [])
+# Build OpenAI-format tools array for native tool calling
+(fn $ns/build_tools_spec []
+  (var specs [])
   (TOOLS .each (fn [name def]
-    (parts .append #"- #{name}: #{def/description}")
+    (specs .append {
+      ^type "function"
+      ^function {
+        ^name name
+        ^description def/description
+        ^parameters def/params
+      }
+    })
   ))
-  (parts .join "\n")
+  specs
 )
 
 # --- Built-in tools ---
@@ -117,9 +96,9 @@
 
   (register_tool "get_time"
     "Get the current date and time"
-    {}
+    {^type "object" ^properties {} ^required []}
     (fn [args]
-      (var result {^result (gene/now/.to_s)})
+      (var result {^result gene/now/.call/.to_s})
       (log .trace "get_time invoked")
       result
     )
@@ -127,7 +106,12 @@
 
   (register_tool "shell"
     "Run an allowlisted shell command"
-    {^command "The command to run" ^args "Arguments as a string"}
+    {^type "object"
+     ^properties {
+       ^command {^type "string" ^description "The command to run"}
+       ^args {^type "string" ^description "Arguments as a string"}
+     }
+     ^required ["command"]}
     (fn [args]
       (var cmd args/command)
       (if cmd/.empty
@@ -156,7 +140,11 @@
 
   (register_tool "read_file"
     "Read a file within the workspace"
-    {^path "Relative path within workspace"}
+    {^type "object"
+     ^properties {
+       ^path {^type "string" ^description "Relative path within workspace"}
+     }
+     ^required ["path"]}
     (fn [args]
       (var path args/path)
       (if path/.empty
@@ -182,7 +170,12 @@
 
   (register_tool "write_file"
     "Write a file within the workspace"
-    {^path "Relative path" ^content "File content"}
+    {^type "object"
+     ^properties {
+       ^path {^type "string" ^description "Relative path within workspace"}
+       ^content {^type "string" ^description "File content to write"}
+     }
+     ^required ["path" "content"]}
     (fn [args]
       (var path args/path)
       (var content args/content)
@@ -208,7 +201,11 @@
 
   (register_tool "http_get"
     "Fetch a URL via HTTP GET"
-    {^url "The URL to fetch"}
+    {^type "object"
+     ^properties {
+       ^url {^type "string" ^description "The URL to fetch"}
+     }
+     ^required ["url"]}
     (fn [args]
       (var url args/url)
       (if url/.empty
@@ -226,5 +223,5 @@
     )
   )
 
-  (log .info #"Registered #{(list_tools)/.size} tools: #{(list_tools)}")
+  (log .info #"Registered #{TOOLS/.size} tools")
 )

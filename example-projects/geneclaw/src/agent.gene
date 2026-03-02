@@ -1,10 +1,10 @@
 # GeneClaw Agent Orchestrator
-# Deterministic run loop: receive command -> call LLM -> dispatch tools -> reply
+# Native OpenAI tool calling: structured tool specs, no text-based JSON parsing
 
 (import OPENAI_API_KEY OPENAI_MODEL MAX_STEPS MAX_TOOL_CALLS from "config")
 (import memory_append memory_recent from "db")
 (import run_create run_complete from "db")
-(import invoke_tool build_tools_prompt from "tools")
+(import invoke_tool build_tools_spec from "tools")
 
 (var log (new genex/logging/Logger $ns))
 (var RUN_COUNTER 0)
@@ -14,56 +14,11 @@
   #"run-#{RUN_COUNTER}"
 )
 
-(fn extract_json [text]
-  # Extract first JSON object from text
-  (var start (text .index "{"))
-  (if (start < 0) then (return nil))
-  (var i start)
-  (var depth 0)
-  (var in_str false)
-  (var escape false)
-  (loop
-    (if (i >= text/.length) then (break))
-    (var ch (text .char_at i))
-    (if in_str
-      (if escape
-        (escape = false)
-      elif (ch == '\\')
-        (escape = true)
-      elif (ch == '"')
-        (in_str = false)
-      )
-    else
-      (if (ch == '"')
-        (in_str = true)
-      elif (ch == '{')
-        (depth += 1)
-      elif (ch == '}')
-        (depth -= 1)
-        (if (depth == 0)
-          (return (text .substr start i))
-        )
-      )
-    )
-    (i += 1)
-  )
-  nil
-)
-
-(fn build_messages [history user_text tools_prompt]
+(fn build_messages [history user_text]
   (var messages [])
 
-  # System prompt
-  (var system_text #"You are GeneClaw, a capable AI agent. You can use tools to complete tasks.
-
-Available tools:
-#{tools_prompt}
-
-When you need a tool, respond with ONLY a JSON object:
-{\"tool\": \"tool_name\", \"args\": {\"param\": \"value\"}}
-
-After receiving a tool result, provide a natural response.
-For general conversation, respond normally without tool calls.")
+  # System prompt - no tool listing needed, OpenAI handles that natively
+  (var system_text "You are GeneClaw, a capable AI agent. You can use tools to complete tasks. After receiving a tool result, provide a natural response. For general conversation, respond normally without tool calls.")
 
   (messages .append {^role "system" ^content system_text})
 
@@ -74,46 +29,55 @@ For general conversation, respond normally without tool calls.")
 
   # Current user message
   (messages .append {^role "user" ^content user_text})
-  (log .debug #"Built #{messages/.size} messages (#{history/.size} history + system + user)")
+
+  # Log full content sent to LLM
+  (log .info #"Built #{messages/.size} messages (#{history/.size} history + system + user)")
+  (var msg_idx 0)
+  (messages .each (fn [msg]
+    (log .info #"--- Message #{msg_idx} [#{msg/role}] ---")
+    (log .info msg/content)
+    (msg_idx += 1)
+  ))
+  (log .info "--- End of messages ---")
   messages
 )
 
-(fn call_llm [messages]
-  # Call OpenAI-compatible API
+(fn call_llm [messages tools_spec]
+  # Call OpenAI-compatible API with native tool calling
   (if OPENAI_API_KEY/.empty
     # Mock mode
     (log .info "LLM call skipped (mock mode - no API key)")
-    (return #"I received your message. (Running in mock mode - set OPENAI_API_KEY to enable LLM)")
+    (return {^content "I received your message. (Running in mock mode - set OPENAI_API_KEY to enable LLM)" ^tool_calls []})
   )
 
   (if genex/ai
     (try
-      (log .info #"Calling LLM model=#{OPENAI_MODEL} messages=#{messages/.size}")
-      (var start_ms ((gene/now) .to_i))
+      (log .info #"Calling LLM model=#{OPENAI_MODEL} messages=#{messages/.size} tools=#{tools_spec/.size}")
+      (var start_ms gene/now/.call/.to_i)
       (var client (new OpenAIClient {^api_key OPENAI_API_KEY ^model OPENAI_MODEL}))
-      (log .debug "Sending chat request")
-      (var response (client .chat {^messages messages}))
-      (var duration (((gene/now) .to_i) - start_ms))
+      (var response (client .chat {^messages messages ^tools tools_spec}))
+      (var duration (gene/now/.call/.to_i - start_ms))
       (if response
         (var choices (response .get "choices" []))
         (if (choices/.length > 0)
           (var first_choice choices/0)
           (var msg first_choice/message)
           (var content (msg .get "content" ""))
-          (log .info #"LLM responded in #{duration}ms content_len=#{content/.length}")
+          (var tool_calls (msg .get "tool_calls" []))
+          (log .info #"LLM responded in #{duration}ms content_len=#{content/.length} tool_calls=#{tool_calls/.size}")
           (log .trace #"LLM response: #{content}")
-          (return content)
+          (return {^content content ^tool_calls tool_calls})
         )
       )
       (log .warn #"LLM returned empty response after #{duration}ms")
-      "I could not generate a response."
+      {^content "I could not generate a response." ^tool_calls []}
     catch *
       (log .error #"LLM call failed: #{$ex/message}")
-      #"LLM error: #{$ex/message}"
+      {^content #"LLM error: #{$ex/message}" ^tool_calls []}
     )
   else
     (log .error "genex/ai module unavailable")
-    "genex/ai module unavailable. Set OPENAI_API_KEY and rebuild with AI support."
+    {^content "genex/ai module unavailable." ^tool_calls []}
   )
 )
 
@@ -137,9 +101,9 @@ For general conversation, respond normally without tool calls.")
   # Record user message
   (memory_append workspace_id session_id "user" text {^user_id user_id})
 
-  (var tools_prompt (build_tools_prompt))
+  (var tools_spec (build_tools_spec))
   (var step 0)
-  (var tool_calls 0)
+  (var tool_call_count 0)
   (var final_response "")
 
   (loop
@@ -151,64 +115,61 @@ For general conversation, respond normally without tool calls.")
     (step += 1)
     (log .info #"#{run_id} step #{step}/#{MAX_STEPS}")
 
-    # Build messages and call LLM
-    (var messages (build_messages history text tools_prompt))
-    (var response (call_llm messages))
+    # Build messages and call LLM with native tools
+    (var messages (build_messages history text))
+    (var result (call_llm messages tools_spec))
+    (var content result/content)
+    (var tool_calls result/tool_calls)
 
-    # Check if response is a tool call
-    (var tool_json_str (extract_json response))
-    (if tool_json_str
-      (try
-        (var parsed (gene/json/parse tool_json_str))
-        (if (parsed .has "tool")
-          # Tool dispatch
-          (if (tool_calls >= MAX_TOOL_CALLS)
-            (log .warn #"#{run_id} hit MAX_TOOL_CALLS limit (#{MAX_TOOL_CALLS})")
-            (final_response = "Agent reached maximum tool call limit.")
-            (break)
-          )
-          (tool_calls += 1)
-
-          (var tool_name parsed/tool)
-          (var tool_args (parsed .get "args" {}))
-          (log .info #"#{run_id} dispatching tool #{tool_calls}/#{MAX_TOOL_CALLS}: #{tool_name}")
-          (var tool_result (invoke_tool run_id workspace_id tool_name tool_args))
-
-          # Add tool result to history for next iteration
-          (var result_text (if tool_result/ok
-            #"Tool '#{tool_name}' result: #{tool_result/result/.to_json}"
-          else
-            #"Tool '#{tool_name}' error: #{tool_result/error}"
-          ))
-          (log .debug #"#{run_id} tool result: #{result_text}")
-          (history .append {^role "assistant" ^content response})
-          (history .append {^role "user" ^content #"Tool result: #{result_text}"})
-          (text = #"The tool returned: #{result_text}")
-        else
-          # Not a tool call, treat as final response
-          (log .debug #"#{run_id} JSON found but no 'tool' key - treating as final response")
-          (final_response = response)
-          (break)
-        )
-      catch *
-        # JSON parse failed, treat as normal response
-        (log .debug #"#{run_id} JSON parse failed - treating as final response")
-        (final_response = response)
-        (break)
-      )
-    else
-      # No JSON found, this is a normal response
-      (log .debug #"#{run_id} no JSON in response - final response")
-      (final_response = response)
+    # No tool calls -> final response
+    (if (tool_calls/.size == 0)
+      (log .debug #"#{run_id} no tool calls - final response")
+      (final_response = content)
       (break)
     )
+
+    # Dispatch each tool call
+    (if (tool_call_count >= MAX_TOOL_CALLS)
+      (log .warn #"#{run_id} hit MAX_TOOL_CALLS limit (#{MAX_TOOL_CALLS})")
+      (final_response = "Agent reached maximum tool call limit.")
+      (break)
+    )
+
+    # Add assistant message with tool_calls to history
+    (history .append {^role "assistant" ^content content ^tool_calls tool_calls})
+
+    (tool_calls .each (fn [tc]
+      (tool_call_count += 1)
+      (var fn_info tc/function)
+      (var tool_name fn_info/name)
+      (var tool_args_str fn_info/arguments)
+      (log .info #"#{run_id} dispatching tool #{tool_call_count}/#{MAX_TOOL_CALLS}: #{tool_name}")
+
+      # Parse arguments JSON string
+      (var tool_args (try (gene/json/parse tool_args_str) catch * {}))
+      (var tool_result (invoke_tool run_id workspace_id tool_name tool_args))
+
+      # Build result text
+      (var result_text (if tool_result/ok
+        tool_result/result/.to_json
+      else
+        #"Error: #{tool_result/error}"
+      ))
+      (log .debug #"#{run_id} tool result: #{result_text}")
+
+      # Add tool result message with tool_call_id (OpenAI format)
+      (history .append {^role "tool" ^tool_call_id tc/id ^content result_text})
+    ))
+
+    # Update text for next iteration context
+    (text = "Continue based on the tool results above.")
   )
 
   # Record agent response
   (memory_append workspace_id session_id "assistant" final_response {^run_id run_id})
   (run_complete run_id "completed" nil)
 
-  (log .info #"=== Agent run completed: #{run_id} steps=#{step} tool_calls=#{tool_calls} response_len=#{final_response/.length} ===")
+  (log .info #"=== Agent run completed: #{run_id} steps=#{step} tool_calls=#{tool_call_count} response_len=#{final_response/.length} ===")
 
-  {^run_id run_id ^response final_response ^steps step ^tool_calls tool_calls}
+  {^run_id run_id ^response final_response ^steps step ^tool_calls tool_call_count}
 )

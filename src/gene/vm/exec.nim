@@ -5444,7 +5444,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator:
+        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
           # Use template to get class
           let value_class = get_value_class(obj)
           if value_class == nil:
@@ -5601,7 +5601,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator:
+        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
           # Use template to get class
           let value_class = get_value_class(obj)
           if value_class == nil:
@@ -5768,7 +5768,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator:
+        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
           # Use template to get class
           let value_class = get_value_class(obj)
           if value_class == nil:
@@ -5872,7 +5872,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               not_allowed("Method must be a function or native function")
           else:
             not_allowed("Method " & method_name & " not found on instance")
-        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator:
+        of VkString, VkArray, VkMap, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
           # Use template to get class
           let value_class = get_value_class(obj)
           if value_class == nil:
