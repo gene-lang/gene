@@ -99,6 +99,10 @@ else
   )
 )
 
+(repeat 2
+  (println "Repeating")
+)
+
 # ===== 4. DATA STRUCTURES =====
 # Arrays
 (var arr [1 2 3 4 5])
@@ -152,7 +156,7 @@ else
 (println "6 * 7 =" (6 * 7))
 (println "15 / 3 =" (15 / 3))
 (println "10 % 3 =" (10 % 3))
-(println "2 + 3 * 4 =" (2 + (3 * 4)))  # Operator precedence
+(println "2 + 3 * 4 =" (2 + 3 * 4))  # Operator precedence
 
 # Comparison operators
 (println "10 > 5 =" (10 > 5))
@@ -163,7 +167,10 @@ else
 # Boolean operators
 (println "true && false =" (true && false))
 (println "true || false =" (true || false))
-# (println "!true =" (! true))
+(println "1 && 2 && 3 =" (1 && 2 && 3))
+(println "1 || 2 && 3 =" (1 || 2 && 3))
+(println "1 && 2 || 3 =" (1 && 2 || 3))
+(println "! true =" (! true))
 
 # ===== 6. STRINGS =====
 (var s "Hello, Gene!")
@@ -269,7 +276,10 @@ catch *
   ($caller_eval expr)  # Evaluate the expression in the caller's context.
 )
 
-# (debug! (5 + 3))                # Prints "DEBUG: (5 + 3)", returns 8
+(debug! (5 + 3))                # Prints "DEBUG: (5 + 3)", returns 8
+
+(var a 2)
+(debug! (a + 1))
 
 # ===== 13. COMPLEX NESTED STRUCTURES =====
 (var data =

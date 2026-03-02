@@ -1044,7 +1044,7 @@ proc compile_gene(self: Compiler, input: Value) =
       of "..":
         self.compile_range_operator(gene)
         return
-      of "not":
+      of "not", "!":
         if gene.children.len != 1:
           when not defined(release):
             let trace = self.current_trace()

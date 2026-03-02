@@ -3271,8 +3271,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
           # If we were in exec_function, stop the exec loop by returning
           if returning_from_exec_function:
-            result = v
-            return result
+            return v
 
           continue
         {.pop.}
@@ -3979,9 +3978,10 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.frame.push(expr_to_eval)
 
           else:
-            # For complex expressions, compile and execute
-            # This will have issues with local variables, but at least handles globals
-            let compiled = compile_init(expr_to_eval)
+            # For complex expressions, compile and execute in the caller's scope.
+            # Pass the caller's scope tracker so the compiler knows about local variables.
+            let parent_tracker = if caller_frame.scope != nil: caller_frame.scope.tracker else: nil
+            let compiled = compile_init(expr_to_eval, parent_scope_tracker = parent_tracker)
 
             # Save current state
             let saved_frame = self.frame
@@ -4002,6 +4002,8 @@ proc exec*(self: ptr VirtualMachine): Value =
             eval_frame.scope = caller_frame.scope
             # Mark this so IkEnd knows to return
             eval_frame.from_exec_function = true
+            # Set caller_address so IkEnd/IkReturn can restore cu/pc
+            eval_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
 
             # Switch to evaluation context
             self.frame = eval_frame
