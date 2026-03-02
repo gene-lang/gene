@@ -3322,8 +3322,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             not_allowed("Cannot create nested namespace '" & name.str & "': parent namespace not found. Did you forget to create the parent namespace first?")
           parent_ns = namespace_from_value(container_value)
 
-        # Create the namespace
-        let ns = new_namespace(name.str)
+        # Create the namespace with inheritance:
+        # - nested namespace: inherit from its container namespace
+        # - top-level declaration: inherit from current frame namespace
+        let ns_parent = if parent_ns != nil: parent_ns else: self.frame.ns
+        let ns = new_namespace(ns_parent, name.str)
         let r = new_ref(VkNamespace)
         r.ns = ns
         let v = r.to_ref_value()
