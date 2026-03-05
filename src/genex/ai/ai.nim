@@ -1,7 +1,7 @@
-## Main module for genex/ai - OpenAI-compatible API wrapper
-## Exports all OpenAI functionality to Gene
+## Main module for genex/ai provider wrappers
+## Exports OpenAI/Anthropic functionality to Gene
 
-import bindings, openai_client, streaming
+import bindings, openai_client, anthropic_client, streaming
 import documents, vectordb, conversation, tools, rag, utils, control_slack, agent_runtime, scheduler, provider_router, slack_ingress, slack_socket_mode, memory_store, workspace_policy
 
 # Export the native functions that will be registered with the VM
@@ -10,11 +10,15 @@ export vm_openai_chat
 export vm_openai_embeddings
 export vm_openai_respond
 export vm_openai_stream
+export vm_anthropic_new_client
+export vm_anthropic_messages
 
 # Export types and utilities
 export OpenAIConfig, OpenAIError, StreamingChunk, StreamEvent
+export AnthropicConfig, AnthropicError
 export buildOpenAIConfig, geneValueToJson, jsonToGeneValue
 export buildChatPayload, buildEmbeddingsPayload, buildResponsesPayload
+export buildAnthropicConfig, buildAnthropicMessagesPayload, isAnthropicOAuthToken
 export redactSecret, getEnvVar
 export documents
 export vectordb, conversation, tools, rag, utils, control_slack, agent_runtime, scheduler, provider_router, slack_ingress, slack_socket_mode, memory_store, workspace_policy

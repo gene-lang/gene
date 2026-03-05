@@ -1,12 +1,12 @@
-## Gene VM bindings for OpenAI API
-## Bridges the Nim OpenAI client to Gene's VM system
+## Gene VM bindings for OpenAI/Anthropic APIs
+## Bridges provider clients to Gene's VM system
 
 import tables, json, strutils, deques
 import asyncdispatch
 import ../../gene/types
 import ../../gene/vm
 import ../../gene/vm/extension_abi
-import openai_client, streaming, documents
+import openai_client, anthropic_client, streaming, documents
 import slack_socket_mode, control_slack, utils as ai_utils
 
 var openai_client_class*: Class
@@ -14,7 +14,13 @@ var openai_error_class*: Class
 var openai_clients: Table[system.int64, OpenAIConfig] = initTable[system.int64, OpenAIConfig]()
 var next_client_id: system.int64 = 1
 
+var anthropic_client_class*: Class
+var anthropic_error_class*: Class
+var anthropic_clients: Table[system.int64, AnthropicConfig] = initTable[system.int64, AnthropicConfig]()
+var next_anthropic_client_id: system.int64 = 1
+
 proc openai_client_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
+proc anthropic_client_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.}
 
 # Helper to convert Gene Value to JsonNode
 proc geneValueToJson*(value: Value): JsonNode =
@@ -148,6 +154,81 @@ proc fetch_client_config(client_val: Value): tuple[config: OpenAIConfig, err: Va
 
   (cfg, NIL)
 
+proc attach_anthropic_error_class(instance: Value) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if not anthropic_error_class.isNil:
+      instance_class(instance) = anthropic_error_class
+
+proc new_anthropic_error*(message: string): Value {.gcsafe.} =
+  let error_class = block:
+    {.cast(gcsafe).}:
+      anthropic_error_class
+  let error_obj = new_instance_value(error_class)
+  attach_anthropic_error_class(error_obj)
+  instance_props(error_obj)["message".to_key()] = message.to_value
+  instance_props(error_obj)["type".to_key()] = "error".to_value
+  result = error_obj
+
+proc anthropic_error_value*(err: AnthropicError): Value {.gcsafe.} =
+  let error_class = block:
+    {.cast(gcsafe).}:
+      anthropic_error_class
+  let error_obj = new_instance_value(error_class)
+  attach_anthropic_error_class(error_obj)
+  instance_props(error_obj)["message".to_key()] = err.msg.to_value
+  instance_props(error_obj)["status".to_key()] = err.status.to_value
+  if err.provider_error.len > 0:
+    instance_props(error_obj)["provider_error".to_key()] = err.provider_error.to_value
+  if err.request_id.len > 0:
+    instance_props(error_obj)["request_id".to_key()] = err.request_id.to_value
+  if err.retry_after != 0:
+    instance_props(error_obj)["retry_after".to_key()] = err.retry_after.to_value
+  if err.metadata != nil:
+    instance_props(error_obj)["metadata".to_key()] = jsonToGeneValue(err.metadata)
+  result = error_obj
+
+proc register_anthropic_client(config: AnthropicConfig): Value =
+  let client_id = next_anthropic_client_id
+  inc(next_anthropic_client_id)
+  anthropic_clients[client_id] = config
+
+  let instance_class = block:
+    {.cast(gcsafe).}:
+      (
+        if anthropic_client_class != nil:
+          anthropic_client_class
+        else:
+          var base_parent: Class = nil
+          if App != nil and App.app.object_class.kind == VkClass:
+            base_parent = App.app.object_class.ref.class
+          new_class("AnthropicClient", base_parent)
+      )
+  let instance = new_instance_value(instance_class)
+
+  instance_props(instance)["client_id".to_key()] = client_id.to_value
+  instance_props(instance)["base_url".to_key()] = config.base_url.to_value
+  instance_props(instance)["model".to_key()] = config.model.to_value
+
+  result = instance
+
+proc fetch_anthropic_client_config(client_val: Value): tuple[config: AnthropicConfig, err: Value] =
+  if client_val.kind != VkInstance:
+    return (nil, new_anthropic_error("Invalid Anthropic client"))
+
+  if not instance_props(client_val).has_key("client_id".to_key()):
+    return (nil, new_anthropic_error("Invalid Anthropic client"))
+
+  let client_id = instance_props(client_val)["client_id".to_key()].to_int()
+  var cfg: AnthropicConfig = nil
+  {.cast(gcsafe).}:
+    if anthropic_clients.hasKey(client_id):
+      cfg = anthropic_clients[client_id]
+
+  if cfg.isNil:
+    return (nil, new_anthropic_error("Anthropic client not found"))
+
+  (cfg, NIL)
+
 # Native function: Create new OpenAI client
 proc vm_openai_new_client*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   var options: JsonNode = newJNull()
@@ -168,6 +249,26 @@ proc openai_client_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[
   {.cast(gcsafe).}:
     result = register_client(config)
 
+# Native function: Create new Anthropic client
+proc vm_anthropic_new_client*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  var options: JsonNode = newJNull()
+
+  if get_positional_count(arg_count, has_keyword_args) > 0:
+    let options_val = get_positional_arg(args, 0, has_keyword_args)
+    options = geneValueToJson(options_val)
+
+  let config = buildAnthropicConfig(options)
+  return register_anthropic_client(config)
+
+proc anthropic_client_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  var options: JsonNode = newJNull()
+  if get_positional_count(arg_count, has_keyword_args) > 0:
+    options = geneValueToJson(get_positional_arg(args, 0, has_keyword_args))
+
+  let config = buildAnthropicConfig(options)
+  {.cast(gcsafe).}:
+    result = register_anthropic_client(config)
+
 proc openai_error_result(err: OpenAIError): Value =
   return openai_error_value(err)
 
@@ -187,6 +288,20 @@ proc call_openai_endpoint(config: OpenAIConfig, endpoint: string, payload: JsonN
     if ai_debug:
       echo "[genex/ai] call_openai_endpoint caught OpenAIError: ", e.msg
     return openai_error_value(e)
+
+proc call_anthropic_endpoint(config: AnthropicConfig, endpoint: string, payload: JsonNode): Value {.gcsafe.} =
+  let ai_debug = getEnvVar("GENE_AI_DEBUG", "") == "1"
+  try:
+    if ai_debug:
+      echo "[genex/ai] call_anthropic_endpoint start endpoint=", endpoint
+    let response = performAnthropicRequest(config, "POST", endpoint, payload)
+    if ai_debug:
+      echo "[genex/ai] call_anthropic_endpoint success endpoint=", endpoint
+    return jsonToGeneValue(response)
+  except AnthropicError as e:
+    if ai_debug:
+      echo "[genex/ai] call_anthropic_endpoint caught AnthropicError: ", e.msg
+    return anthropic_error_value(e)
 
 proc call_gene_callable(vm: ptr VirtualMachine, callable: Value, args: seq[Value]) {.gcsafe.} =
   case callable.kind
@@ -239,6 +354,33 @@ proc openai_error_to_s(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
   let props = instance_props(self_val)
   let message_key = "message".to_key()
   var desc = "OpenAIError"
+  if props.hasKey(message_key) and props[message_key].kind == VkString:
+    desc &= ": " & props[message_key].str
+
+  var details: seq[string] = @[]
+  for key_name in ["status", "request_id", "provider_error"]:
+    let k = key_name.to_key()
+    if props.hasKey(k):
+      details.add(key_name & "=" & $props[k])
+  if props.hasKey("retry_after".to_key()):
+    details.add("retry_after=" & $props["retry_after".to_key()])
+
+  if details.len > 0:
+    desc &= " (" & details.join(", ") & ")"
+
+  return desc.to_value()
+
+proc anthropic_error_to_s(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return "AnthropicError".to_value()
+
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  if self_val.kind != VkInstance:
+    return "AnthropicError".to_value()
+
+  let props = instance_props(self_val)
+  let message_key = "message".to_key()
+  var desc = "AnthropicError"
   if props.hasKey(message_key) and props[message_key].kind == VkString:
     desc &= ": " & props[message_key].str
 
@@ -408,6 +550,37 @@ proc vm_openai_client_respond*(vm: ptr VirtualMachine, args: ptr UncheckedArray[
   let payload = buildResponsesPayload(config, options)
   return call_openai_endpoint(config, "/responses", payload)
 
+proc vm_anthropic_messages*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 2:
+    return new_anthropic_error("Anthropic messages requires client and options arguments")
+
+  let client_val = get_positional_arg(args, 0, has_keyword_args)
+  let options_val = get_positional_arg(args, 1, has_keyword_args)
+
+  let (config, err) = fetch_anthropic_client_config(client_val)
+  if err != NIL:
+    return err
+
+  let options = geneValueToJson(options_val)
+  let payload = buildAnthropicMessagesPayload(config, options)
+  return call_anthropic_endpoint(config, "/messages", payload)
+
+proc vm_anthropic_client_messages*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return new_anthropic_error("Anthropic client messages requires self argument")
+
+  let self_val = get_positional_arg(args, 0, has_keyword_args)
+  let (config, err) = fetch_anthropic_client_config(self_val)
+  if err != NIL:
+    return err
+
+  var options = %*{}
+  if get_positional_count(arg_count, has_keyword_args) > 1:
+    options = geneValueToJson(get_positional_arg(args, 1, has_keyword_args))
+
+  let payload = buildAnthropicMessagesPayload(config, options)
+  return call_anthropic_endpoint(config, "/messages", payload)
+
 proc attach_openai_client_class*(cls: Class) =
   openai_client_class = cls
   cls.def_native_constructor(openai_client_constructor)
@@ -421,6 +594,18 @@ proc attach_openai_client_class*(cls: Class) =
       parent_cls = App.app.object_class.ref.class
     openai_error_class = new_class("OpenAIError", parent_cls)
     openai_error_class.def_native_method("to_s", openai_error_to_s)
+
+proc attach_anthropic_client_class*(cls: Class) =
+  anthropic_client_class = cls
+  cls.def_native_constructor(anthropic_client_constructor)
+  cls.def_native_method("messages", vm_anthropic_client_messages)
+  cls.def_native_method("chat", vm_anthropic_client_messages)
+  if anthropic_error_class.isNil:
+    var parent_cls: Class = nil
+    if App.app.object_class.kind == VkClass:
+      parent_cls = App.app.object_class.ref.class
+    anthropic_error_class = new_class("AnthropicError", parent_cls)
+    anthropic_error_class.def_native_method("to_s", anthropic_error_to_s)
 
 # ---------------------------------------------------------------------------
 # Slack Socket Mode native binding
@@ -519,26 +704,38 @@ proc init_openai_classes*() =
     # Create OpenAI namespace
     let ai_ns = new_namespace("ai")
 
-    # Create OpenAIClient class and attach native constructor/methods
+    # Create OpenAI/Anthropic client classes and attach native constructors/methods
     var base_parent: Class = nil
     if App.app.object_class.kind == VkClass:
       base_parent = App.app.object_class.ref.class
     let openai_client_class = new_class("OpenAIClient", base_parent)
+    let anthropic_client_class = new_class("AnthropicClient", base_parent)
     {.cast(gcsafe).}:
       attach_openai_client_class(openai_client_class)
+      attach_anthropic_client_class(anthropic_client_class)
 
-    # Register OpenAI client constructor helper
+    # Register provider client constructor helpers
     let global_ns = App.app.global_ns.ref.ns
     ai_ns["new_client".to_key()] = vm_openai_new_client.to_value()
     global_ns["openai_new_client".to_key()] = vm_openai_new_client.to_value()
+    ai_ns["new_anthropic_client".to_key()] = vm_anthropic_new_client.to_value()
+    global_ns["anthropic_new_client".to_key()] = vm_anthropic_new_client.to_value()
 
-    # Register the class in namespaces
+    # Register OpenAI class in namespaces
     let openai_class_ref = new_ref(VkClass)
     openai_class_ref.class = openai_client_class
     let openai_class_value = openai_class_ref.to_ref_value()
 
     ai_ns["OpenAIClient".to_key()] = openai_class_value
     global_ns["OpenAIClient".to_key()] = openai_class_value
+
+    # Register Anthropic class in namespaces
+    let anthropic_class_ref = new_ref(VkClass)
+    anthropic_class_ref.class = anthropic_client_class
+    let anthropic_class_value = anthropic_class_ref.to_ref_value()
+
+    ai_ns["AnthropicClient".to_key()] = anthropic_class_value
+    global_ns["AnthropicClient".to_key()] = anthropic_class_value
 
     {.cast(gcsafe).}:
       if not openai_error_class.isNil:
@@ -547,6 +744,12 @@ proc init_openai_classes*() =
         let error_class_value = error_class_ref.to_ref_value()
         ai_ns["OpenAIError".to_key()] = error_class_value
         global_ns["OpenAIError".to_key()] = error_class_value
+      if not anthropic_error_class.isNil:
+        let error_class_ref = new_ref(VkClass)
+        error_class_ref.class = anthropic_error_class
+        let error_class_value = error_class_ref.to_ref_value()
+        ai_ns["AnthropicError".to_key()] = error_class_value
+        global_ns["AnthropicError".to_key()] = error_class_value
 
     # Register the AI namespace in genex namespace
     App.app.genex_ns.ref.ns["ai".to_key()] = ai_ns.to_value()
@@ -556,6 +759,8 @@ proc init_openai_classes*() =
     ai_ns["embeddings".to_key()] = vm_openai_embeddings.to_value()
     ai_ns["respond".to_key()] = vm_openai_respond.to_value()
     ai_ns["stream".to_key()] = vm_openai_stream.to_value()
+    ai_ns["anthropic_messages".to_key()] = vm_anthropic_messages.to_value()
+    global_ns["anthropic_messages".to_key()] = vm_anthropic_messages.to_value()
     ai_ns["start_slack_socket_mode".to_key()] = vm_start_slack_socket_mode.to_value()
 
     let documents_ns = new_namespace("documents")
