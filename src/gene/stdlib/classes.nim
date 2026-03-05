@@ -207,6 +207,27 @@ proc object_to_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
   raise new_exception(types.Exception,
     "Type error: cannot convert " & actual_type & " to " & target_type)
 
+proc object_selector_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                            arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional < 2:
+    not_allowed("Object.@ expects at least one selector segment")
+
+  let target = get_positional_arg(args, 0, has_keyword_args)
+  var segments: seq[Value] = @[]
+  for i in 1..<positional:
+    segments.add(get_positional_arg(args, i, has_keyword_args))
+
+  let selector = new_selector_value(segments)
+  if App.app.selector_class.kind != VkClass or App.app.selector_class.ref.class == nil:
+    not_allowed("Selector class is not initialized")
+
+  let call_method = App.app.selector_class.ref.class.get_method("call")
+  if call_method == nil or call_method.callable.kind != VkNativeFn:
+    not_allowed("Selector.call is not available")
+
+  call_native_fn(call_method.callable.ref.native_fn, vm, @[selector, target])
+
 proc int_to_i_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
                      arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if get_positional_count(arg_count, has_keyword_args) == 0:
@@ -255,6 +276,7 @@ proc init_basic_classes*(): Class =
   object_class.def_native_method("to_s", object_to_s_method)
   object_class.def_native_method("is", object_is_method)
   object_class.def_native_method("to", object_to_method)
+  object_class.def_native_method("@", object_selector_method)
   App.app.gene_ns.ns["Object".to_key()] = App.app.object_class
   App.app.global_ns.ns["Object".to_key()] = App.app.object_class
 

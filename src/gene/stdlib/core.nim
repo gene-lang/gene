@@ -19,6 +19,7 @@ import ./strings as stdlib_strings
 import ./collections as stdlib_collections
 import ./dates as stdlib_dates
 import ./selectors as stdlib_selectors
+import ./gdat as stdlib_gdat
 import ./gene_meta as stdlib_gene_meta
 import ./aspects as stdlib_aspects
 
@@ -4026,6 +4027,7 @@ proc init_gene_namespace*() =
   stdlib_dates.init_date_classes(object_class)
 
   stdlib_json.init_json_namespace()
+  stdlib_gdat.init_gdat_namespace()
   stdlib_dates.init_date_functions()
 
   stdlib_selectors.init_selector_class(object_class)

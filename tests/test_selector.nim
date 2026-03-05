@@ -232,6 +232,25 @@ test_vm """
 """, "n"
 
 test_vm """
+  (var data {^users [{^name "Alice"} {^name "Bob"}]})
+  (@users/*/name data)
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 2
+  check array_data(r)[0] == "Alice".to_value()
+  check array_data(r)[1] == "Bob".to_value()
+
+test_vm """
+  (var data {^users [{^name "Alice"} {^name "Bob"}]})
+  (data .@users/0/name)
+""", "Alice"
+
+test_vm """
+  (var data {^users [{^name "Alice"} {^name "Bob"}]})
+  (data .@ "users" 1 "name")
+""", "Bob"
+
+test_vm """
   (var data [[10 11] [20 21]])
   ((@ * 1) data)
 """, proc(r: Value) =

@@ -91,6 +91,16 @@ proc apply_container_to_type(gene: ptr Gene) =
   gene.props[container_key()] = container_value
   gene.type = base
 
+proc selector_segment_from_part*(part: string): Value =
+  if part.len == 0:
+    not_allowed("@ selector segment cannot be empty")
+  if part in ["*", "**", "@", "@@", "!"]:
+    return part.to_symbol_value()
+  try:
+    return parseInt(part).to_value()
+  except ValueError:
+    return part.to_value()
+
 #################### Trace Helpers #################
 
 proc current_trace(self: Compiler): SourceTrace =
@@ -265,17 +275,7 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       var segments: seq[Value] = @[]
 
       proc add_segment(part: string) =
-        if part.len == 0:
-          not_allowed("@ selector segment cannot be empty")
-        if part == "!":
-          # Special path operator: assert not void (used by @a/!/b and @a/b/!)
-          segments.add("!".to_symbol_value())
-          return
-        try:
-          let index = parseInt(part)
-          segments.add(index.to_value())
-        except ValueError:
-          segments.add(part.to_value())
+        segments.add(selector_segment_from_part(part))
 
       add_segment(r.csymbol[0][1..^1])
       for part in r.csymbol[1..^1]:
@@ -361,16 +361,7 @@ proc compile_symbol(self: Compiler, input: Value) =
 
         var segments: seq[Value] = @[]
         for part in prop_name.split("/"):
-          if part.len == 0:
-            not_allowed("@ selector segment cannot be empty")
-          if part == "!":
-            segments.add("!".to_symbol_value())
-            continue
-          try:
-            let index = parseInt(part)
-            segments.add(index.to_value())
-          except ValueError:
-            segments.add(part.to_value())
+          segments.add(selector_segment_from_part(part))
 
         if segments.len == 0:
           not_allowed("@ selector requires at least one segment")

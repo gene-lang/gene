@@ -408,21 +408,62 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   var method_name: string
   var method_value: Value
   var start_index = 0
+  var method_prefix_args: seq[Value] = @[]
+
+  proc parse_method_symbol(node: Value): tuple[name: string, args: seq[Value]] =
+    case node.kind
+    of VkSymbol:
+      if not node.str.starts_with("."):
+        not_allowed("Method symbol must start with '.'")
+      let raw = node.str[1..^1]
+      if raw.startsWith("@"):
+        result.name = "@"
+        let first_segment = raw[1..^1]
+        if first_segment.len > 0:
+          result.args.add(selector_segment_from_part(first_segment))
+      else:
+        result.name = raw
+    of VkComplexSymbol:
+      let parts = node.ref.csymbol
+      if parts.len == 0 or not parts[0].starts_with("."):
+        not_allowed("Method symbol must start with '.'")
+      let raw = parts[0][1..^1]
+      if not raw.startsWith("@"):
+        not_allowed("Complex dotted method symbols are only supported for selector @ paths")
+      result.name = "@"
+      let first_segment = raw[1..^1]
+      if first_segment.len > 0:
+        result.args.add(selector_segment_from_part(first_segment))
+      for part in parts[1..^1]:
+        result.args.add(selector_segment_from_part(part))
+    else:
+      not_allowed("Invalid method symbol type: " & $node.kind)
 
   if gene.type.kind == VkSymbol and gene.type.str.starts_with("."):
     # (.method_name args...) - self is implicit
-    method_name = gene.type.str[1..^1]
+    let parsed = parse_method_symbol(gene.type)
+    method_name = parsed.name
+    method_prefix_args = parsed.args
+    method_value = method_name.to_symbol_value()
+    self.emit(Instruction(kind: IkSelf))
+  elif gene.type.kind == VkComplexSymbol and gene.type.ref.csymbol.len > 0 and
+      gene.type.ref.csymbol[0].starts_with("."):
+    # (.@path/... args...) - self is implicit selector method shorthand
+    let parsed = parse_method_symbol(gene.type)
+    method_name = parsed.name
+    method_prefix_args = parsed.args
     method_value = method_name.to_symbol_value()
     self.emit(Instruction(kind: IkSelf))
   else:
     # (obj .method_name args...) - obj is explicit
     self.compile(gene.type)
-    let first = gene.children[0]
-    method_name = first.str[1..^1]
+    let parsed = parse_method_symbol(gene.children[0])
+    method_name = parsed.name
+    method_prefix_args = parsed.args
     method_value = method_name.to_symbol_value()
     start_index = 1  # Skip the method name when adding arguments
 
-  let arg_count = gene.children.len - start_index
+  let arg_count = method_prefix_args.len + (gene.children.len - start_index)
 
   # Check if this is a macro-like method (ends with !)
   let is_macro_like_method = method_name.ends_with("!")
@@ -455,6 +496,9 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     self.emit(Instruction(kind: IkSwap))
     self.emit(Instruction(kind: IkGeneAddChild))
     self.quote_level.inc()
+    for arg in method_prefix_args:
+      self.emit(Instruction(kind: IkPushValue, arg0: arg))
+      self.emit(Instruction(kind: IkGeneAddChild))
     for k, v in gene.props:
       let key_str = $k
       if key_str.startsWith("..."):
@@ -491,6 +535,9 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     self.emit(Instruction(kind: IkNoop, label: fn_label))
     self.emit(Instruction(kind: IkSwap))
     self.emit(Instruction(kind: IkGeneAddChild))
+    for arg in method_prefix_args:
+      self.emit(Instruction(kind: IkPushValue, arg0: arg))
+      self.emit(Instruction(kind: IkGeneAddChild))
     for k, v in gene.props:
       let key_str = $k
       if key_str.startsWith("..."):
@@ -529,11 +576,15 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
     if is_macro_like_method:
       # For macro-like methods, pass arguments as unevaluated expressions
       self.quote_level.inc()
+      for arg in method_prefix_args:
+        self.emit(Instruction(kind: IkPushValue, arg0: arg))
       for i in start_index..<gene.children.len:
         self.compile(gene.children[i])
       self.quote_level.dec()
     else:
       # For regular methods, evaluate arguments normally
+      for arg in method_prefix_args:
+        self.emit(Instruction(kind: IkPushValue, arg0: arg))
       for i in start_index..<gene.children.len:
         self.compile(gene.children[i])
 
@@ -565,6 +616,9 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
   for k, v in gene.props:
     self.emit(Instruction(kind: IkPushValue, arg0: cast[Value](k)))
     self.compile(v)
+
+  for arg in method_prefix_args:
+    self.emit(Instruction(kind: IkPushValue, arg0: arg))
 
   for i in start_index..<gene.children.len:
     self.compile(gene.children[i])
@@ -795,6 +849,11 @@ proc compile_gene(self: Compiler, input: Value) =
         # Transform to method call format
         self.compile_method_call(gene)
         return
+    elif first_child.kind == VkComplexSymbol and first_child.ref.csymbol.len > 0 and
+        first_child.ref.csymbol[0].starts_with(".@"):
+      # Selector method shorthand: (obj .@path/... [args...])
+      self.compile_method_call(gene)
+      return
   
   # Check if type is an arithmetic operator
   if `type`.kind == VkSymbol:

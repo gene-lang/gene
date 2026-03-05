@@ -134,6 +134,185 @@ proc init_collection_classes*(object_class: Class) =
 
   array_class.def_native_method("contains", vm_array_contains)
 
+  proc vm_array_push(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.push requires a value")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("push must be called on an array")
+    let value = get_positional_arg(args, 1, has_keyword_args)
+    array_data(arr).add(value)
+    array_data(arr).len.to_value()
+
+  array_class.def_native_method("push", vm_array_push)
+
+  proc vm_array_pop(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.pop requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("pop must be called on an array")
+    let len = array_data(arr).len
+    if len == 0:
+      return NIL
+    result = array_data(arr)[len - 1]
+    array_data(arr).setLen(len - 1)
+
+  array_class.def_native_method("pop", vm_array_pop)
+
+  proc vm_array_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.find requires a predicate")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("find must be called on an array")
+    let predicate = get_positional_arg(args, 1, has_keyword_args)
+    case predicate.kind
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+      for item in array_data(arr):
+        var matched: Value
+        {.cast(gcsafe).}:
+          matched = vm_exec_callable(vm, predicate, @[item])
+        if matched.to_bool():
+          return item
+      return NIL
+    else:
+      not_allowed("find predicate must be callable, got " & $predicate.kind)
+
+  array_class.def_native_method("find", vm_array_find)
+
+  proc vm_array_any(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.any requires a predicate")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("any must be called on an array")
+    let predicate = get_positional_arg(args, 1, has_keyword_args)
+    case predicate.kind
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+      for item in array_data(arr):
+        var matched: Value
+        {.cast(gcsafe).}:
+          matched = vm_exec_callable(vm, predicate, @[item])
+        if matched.to_bool():
+          return TRUE
+      return FALSE
+    else:
+      not_allowed("any predicate must be callable, got " & $predicate.kind)
+
+  array_class.def_native_method("any", vm_array_any)
+
+  proc vm_array_all(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.all requires a predicate")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("all must be called on an array")
+    let predicate = get_positional_arg(args, 1, has_keyword_args)
+    case predicate.kind
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+      for item in array_data(arr):
+        var matched: Value
+        {.cast(gcsafe).}:
+          matched = vm_exec_callable(vm, predicate, @[item])
+        if not matched.to_bool():
+          return FALSE
+      return TRUE
+    else:
+      not_allowed("all predicate must be callable, got " & $predicate.kind)
+
+  array_class.def_native_method("all", vm_array_all)
+
+  proc vm_array_zip(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.zip requires another array")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("zip must be called on an array")
+    let other = get_positional_arg(args, 1, has_keyword_args)
+    if other.kind != VkArray:
+      not_allowed("zip argument must be an array")
+    let len = min(array_data(arr).len, array_data(other).len)
+    var result_ref = new_array_value()
+    for i in 0..<len:
+      var pair = new_array_value()
+      array_data(pair).add(array_data(arr)[i])
+      array_data(pair).add(array_data(other)[i])
+      array_data(result_ref).add(pair)
+    result_ref
+
+  array_class.def_native_method("zip", vm_array_zip)
+
+  proc vm_array_take(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.take requires count")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("take must be called on an array")
+    let count_val = get_positional_arg(args, 1, has_keyword_args)
+    if count_val.kind != VkInt:
+      not_allowed("take count must be an integer")
+    let data = array_data(arr)
+    var count = count_val.int64.int
+    if count < 0:
+      count = 0
+    if count > data.len:
+      count = data.len
+    var result_ref = new_array_value()
+    for i in 0..<count:
+      array_data(result_ref).add(data[i])
+    result_ref
+
+  array_class.def_native_method("take", vm_array_take)
+
+  proc vm_array_skip(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Array.skip requires count")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("skip must be called on an array")
+    let count_val = get_positional_arg(args, 1, has_keyword_args)
+    if count_val.kind != VkInt:
+      not_allowed("skip count must be an integer")
+    let data = array_data(arr)
+    var count = count_val.int64.int
+    if count < 0:
+      count = 0
+    if count > data.len:
+      count = data.len
+    var result_ref = new_array_value()
+    for i in count..<data.len:
+      array_data(result_ref).add(data[i])
+    result_ref
+
+  array_class.def_native_method("skip", vm_array_skip)
+
+  proc vm_array_to_map(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.to_map requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("to_map must be called on an array")
+
+    var result_ref = new_map_value()
+    for item in array_data(arr):
+      if item.kind != VkArray:
+        not_allowed("to_map expects [key value] pairs")
+      let pair = array_data(item)
+      if pair.len != 2:
+        not_allowed("to_map expects [key value] pairs")
+      let key_val = pair[0]
+      let key = case key_val.kind
+        of VkString, VkSymbol: key_val.str.to_key()
+        of VkInt: ($key_val.int64).to_key()
+        else:
+          not_allowed("to_map key must be string, symbol, or int")
+          "".to_key()
+      map_data(result_ref)[key] = pair[1]
+    result_ref
+
+  array_class.def_native_method("to_map", vm_array_to_map)
+
   proc vm_array_to_json(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Array.to_json requires self")

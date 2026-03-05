@@ -7,6 +7,7 @@ import ./stdlib/json
 import ./stdlib/collections
 import ./stdlib/dates
 import ./stdlib/selectors
+import ./stdlib/gdat
 import ./stdlib/gene_meta
 import ./stdlib/aspects
 
