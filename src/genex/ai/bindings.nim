@@ -1,7 +1,7 @@
 ## Gene VM bindings for OpenAI API
 ## Bridges the Nim OpenAI client to Gene's VM system
 
-import tables, json, strutils
+import tables, json, strutils, deques
 import asyncdispatch
 import ../../gene/types
 import ../../gene/vm
@@ -428,6 +428,14 @@ proc attach_openai_client_class*(cls: Class) =
 
 var slack_vm_global: ptr VirtualMachine = nil
 var slack_callback_global: Value = NIL
+var slack_reply_client_global: SlackClient = nil
+
+type
+  PendingSlackCommand = object
+    envelope: CommandEnvelope
+
+var slack_pending_commands: Deque[PendingSlackCommand] = initDeque[PendingSlackCommand]()
+const max_pending_slack_commands = 256
 
 proc execute_gene_callback(vm: ptr VirtualMachine, fn: Value, args: seq[Value]): Value {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -476,39 +484,18 @@ proc vm_start_slack_socket_mode*(vm: ptr VirtualMachine, args: ptr UncheckedArra
       echo "Socket Mode: skipping event: ", e.msg
       return
 
-    # Call the Gene callback with (workspace_id, user_id, channel_id, text)
-    var result: Value
+    # Queue command and execute it from scheduler tick to avoid running Gene VM
+    # from inside async WebSocket callbacks.
     {.cast(gcsafe).}:
-      let stored_vm = slack_vm_global
-      let stored_cb = slack_callback_global
-      try:
-        result = execute_gene_callback(stored_vm, stored_cb, @[
-          envelope.workspace_id.to_value,
-          envelope.user_id.to_value,
-          envelope.channel_id.to_value,
-          envelope.text.to_value
-        ])
-      except CatchableError as e:
-        echo "Socket Mode: agent error: ", e.msg
-        return
-      except system.Exception as e:
-        echo "Socket Mode: agent error: ", e.msg
-        return
-
-    # Reply to Slack with the response field from the result
-    if result.kind == VkMap:
-      let response_key = "response".to_key()
-      if map_data(result).hasKey(response_key):
-        let response_val = map_data(result)[response_key]
-        if response_val.kind == VkString and response_val.str.len > 0:
-          let target = reply_target_from_envelope(envelope)
-          let reply_result = slack_client.slack_reply(target, response_val.str)
-          if not reply_result.ok:
-            echo "Socket Mode: Slack reply failed: ", reply_result.error
+      if slack_pending_commands.len >= max_pending_slack_commands:
+        discard slack_pending_commands.popFirst()
+        echo "Socket Mode: pending queue full, dropping oldest event"
+      slack_pending_commands.addLast(PendingSlackCommand(envelope: envelope))
 
   let client = new_slack_socket_mode(app_token, bot_token, event_handler)
 
   {.cast(gcsafe).}:
+    slack_reply_client_global = slack_client
     asyncCheck client.start()
     # Give the event loop time to start the connection
     try:
@@ -597,6 +584,58 @@ proc init*(vm: ptr VirtualMachine): Namespace {.gcsafe.} =
 
 var ai_host_scheduler_registered = false
 
+proc drain_slack_command_queue() {.gcsafe.} =
+  ## Execute queued Slack commands from scheduler context.
+  var processed = 0
+  while processed < 8:
+    var pending: PendingSlackCommand
+    var has_pending = false
+    {.cast(gcsafe).}:
+      if slack_pending_commands.len > 0:
+        pending = slack_pending_commands.popFirst()
+        has_pending = true
+    if not has_pending:
+      break
+
+    inc processed
+
+    var result: Value = NIL
+    {.cast(gcsafe).}:
+      let stored_vm = slack_vm_global
+      let stored_cb = slack_callback_global
+      if stored_vm.isNil or stored_cb == NIL:
+        echo "Socket Mode: callback context is not initialized"
+        continue
+      try:
+        result = execute_gene_callback(stored_vm, stored_cb, @[
+          pending.envelope.workspace_id.to_value,
+          pending.envelope.user_id.to_value,
+          pending.envelope.channel_id.to_value,
+          pending.envelope.text.to_value
+        ])
+      except CatchableError as e:
+        echo "Socket Mode: agent error: ", e.msg
+        continue
+      except system.Exception as e:
+        echo "Socket Mode: agent error: ", e.msg
+        continue
+
+    if result.kind == VkMap:
+      let response_key = "response".to_key()
+      if map_data(result).hasKey(response_key):
+        let response_val = map_data(result)[response_key]
+        if response_val.kind == VkString and response_val.str.len > 0:
+          let target = reply_target_from_envelope(pending.envelope)
+          let client = block:
+            {.cast(gcsafe).}:
+              slack_reply_client_global
+          if client.isNil:
+            echo "Socket Mode: Slack reply skipped: missing client"
+          else:
+            let reply_result = client.slack_reply(target, response_val.str)
+            if not reply_result.ok:
+              echo "Socket Mode: Slack reply failed: ", reply_result.error
+
 proc ai_scheduler_tick(vm_user_data: pointer, callback_user_data: pointer) {.cdecl, gcsafe.} =
   ## Called by the host's run_forever loop to pump the extension's async dispatcher.
   discard callback_user_data
@@ -604,6 +643,7 @@ proc ai_scheduler_tick(vm_user_data: pointer, callback_user_data: pointer) {.cde
     poll(0)
   except CatchableError:
     discard
+  drain_slack_command_queue()
 
 proc gene_init*(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.} =
   if host == nil:

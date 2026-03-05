@@ -39,16 +39,16 @@ Key modules:
 ```gene
 # Comments start with #
 (var x 10)                 # Variable declaration
-(x = (+ x 1))              # Assignment
-(fn add [a b] (+ a b))     # Function definition
-(if (> x 5) "big" "small") # Conditional
+(x = (x + 1))              # Assignment
+(fn add [a b] (a + b))     # Function definition
+(if (x > 5) then "big" else "small") # Conditional
 (do expr1 expr2 expr3)     # Sequencing
 (try
   (throw "boom")
 catch *
   ($ex .message))          # Catch all exceptions with $ex
 (async (println "hi"))     # Real async execution with event loop
-{:a 1 :b [1 2 3]}          # Map literal with nested array
+{^a 1 ^b [1 2 3]}          # Map literal with nested array
 ```
 
 ## Syntax Reminder (Do Not Deviate)
@@ -254,7 +254,6 @@ m/key                         # Map access
 
 ## Contribution Tips
 
-- Align new behaviour with `gene-new/` unless intentionally diverging; port interpreter tests when possible.
 - Maintain GIR compatibility when touching instruction encoding.
 - Prefer adding new VM instructions to `InstructionKind` with corresponding compiler/VM changes together in one change.
 - Keep new docs linked from `docs/README.md` to avoid stale references.

@@ -28,10 +28,15 @@
 
 (fn $ns/invoke_tool [run_id workspace_id user_id channel_id tool_name args]
   (log .info #"invoke_tool run=#{run_id} tool=#{tool_name}")
-  (log .debug #"invoke_tool args=#{args/.to_json}")
+  (var tool_args (if (args is Map) args else {}))
+  (if (args is Map)
+    (log .debug #"invoke_tool args=#{tool_args/.to_json}")
+  else
+    (log .warn "invoke_tool args is not a map; coercing to {}")
+  )
 
   # Inject invocation context so tools like 'schedule' can access it
-  (args .set "_context" {
+  (tool_args .set "_context" {
     ^run_id run_id
     ^workspace_id workspace_id
     ^user_id user_id
@@ -41,22 +46,22 @@
   (var tool (TOOLS .get tool_name))
   (if_not tool
     (log .warn #"Unknown tool requested: #{tool_name}")
-    (audit_log run_id workspace_id tool_name "not_found" args nil 0)
+    (audit_log run_id workspace_id tool_name "not_found" tool_args nil 0)
     (return {^ok false ^error #"Unknown tool: #{tool_name}"})
   )
 
   (var start_ms gene/now/.call/.to_i)
   (try
-    (var result (tool/handler args))
+    (var result (tool/handler tool_args))
     (var duration (gene/now/.call/.to_i - start_ms))
     (log .info #"Tool #{tool_name} succeeded in #{duration}ms")
     (log .debug #"Tool #{tool_name} result=#{result/.to_json}")
-    (audit_log run_id workspace_id tool_name "success" args result duration)
+    (audit_log run_id workspace_id tool_name "success" tool_args result duration)
     {^ok true ^result result}
   catch *
     (var duration (gene/now/.call/.to_i - start_ms))
     (log .error #"Tool #{tool_name} failed after #{duration}ms: #{$ex/message}")
-    (audit_log run_id workspace_id tool_name "failed" args {^error $ex/message} duration)
+    (audit_log run_id workspace_id tool_name "failed" tool_args {^error $ex/message} duration)
     {^ok false ^error #"Tool failed: #{$ex/message}"}
   )
 )

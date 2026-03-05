@@ -167,8 +167,9 @@
       (var tool_args_str fn_info/arguments)
       (log .info #"#{run_id} dispatching tool #{tool_call_count}/#{MAX_TOOL_CALLS}: #{tool_name}")
 
-      # Parse arguments JSON string
-      (var tool_args (try (gene/json/parse tool_args_str) catch * {}))
+      # Parse arguments JSON string; coerce to map for tool handlers.
+      (var parsed_args (try (gene/json/parse tool_args_str) catch * nil))
+      (var tool_args (if (parsed_args is Map) parsed_args else {}))
       (var tool_result (invoke_tool run_id workspace_id user_id channel_id tool_name tool_args))
 
       # Build result text

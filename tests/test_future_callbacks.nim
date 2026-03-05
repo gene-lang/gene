@@ -212,6 +212,19 @@ suite "Future Callbacks":
     count
     """, 1
 
+  test "callback re-entry via poll_event_loop does not recurse":
+    test_vm """
+    (var count 0)
+    (var f (new gene/Future))
+    (f .on_success (fn [v]
+      (count = (count + 1))
+      # Re-enter event loop while callback list is being processed
+      (gene/poll_event_loop)
+    ))
+    (f .complete 1)
+    count
+    """, 1
+
   test "state method returns correct state":
     test_vm """
     (var f (async 42))

@@ -72,7 +72,11 @@ proc schedule_future_callbacks(vm: ptr VirtualMachine, future_obj: FutureObj) =
 proc execute_future_callbacks*(vm: ptr VirtualMachine, future_obj: FutureObj) {.gcsafe.} =
   ## Unified callback execution path for all future completion sources.
   if future_obj.state == FsSuccess:
-    for callback in future_obj.success_callbacks:
+    # Snapshot then clear to prevent re-entrant poll loops from re-invoking
+    # the same callback list before this execution finishes.
+    let callbacks = future_obj.success_callbacks
+    future_obj.success_callbacks.setLen(0)
+    for callback in callbacks:
       if not run_callback_now(vm, callback, future_obj.value):
         future_obj.state = FsFailure
         if vm.current_exception == NIL:
@@ -80,15 +84,16 @@ proc execute_future_callbacks*(vm: ptr VirtualMachine, future_obj: FutureObj) {.
         else:
           future_obj.value = vm.current_exception
         break
-    future_obj.success_callbacks.setLen(0)
 
   elif future_obj.state in {FsFailure, FsCancelled}:
-    for callback in future_obj.failure_callbacks:
+    # Snapshot then clear for the same re-entrancy reason as success path.
+    let callbacks = future_obj.failure_callbacks
+    future_obj.failure_callbacks.setLen(0)
+    for callback in callbacks:
       if not run_callback_now(vm, callback, future_obj.value):
         if vm.current_exception != NIL:
           future_obj.value = vm.current_exception
         break
-    future_obj.failure_callbacks.setLen(0)
 
 proc future_on_success(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   # Extract future and callback from args
