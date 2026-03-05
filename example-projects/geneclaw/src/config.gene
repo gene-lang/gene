@@ -7,6 +7,8 @@
 ($ns/DB_PATH = "geneclaw.sqlite")
 ($ns/OPENAI_API_KEY = $env/OPENAI_API_KEY)
 ($ns/OPENAI_MODEL = ($env/OPENAI_MODEL || "gpt-5-mini"))
+($ns/OPENAI_BASE_URL = ($env/OPENAI_BASE_URL || $env/OPENAI_API_BASE || ""))
+($ns/OPENAI_TIMEOUT_MS = (($env/OPENAI_TIMEOUT_MS || "60000") .to_i))
 ($ns/SLACK_SIGNING_SECRET = $env/SLACK_SIGNING_SECRET)
 ($ns/SLACK_BOT_TOKEN = $env/SLACK_BOT_TOKEN)
 ($ns/SLACK_APP_TOKEN = $env/SLACK_APP_TOKEN)
@@ -16,14 +18,16 @@
 # Workspace root for filesystem tool
 ($ns/WORKSPACE_ROOT = ($env/GENECLAW_WORKSPACE || #"#{$env/HOME}/.geneclaw"))
 
-# Shell allowlist
-($ns/SHELL_ALLOWLIST = ["ls" "cat" "echo" "date" "wc" "head" "tail" "grep" "find"])
-
 # Log loaded configuration (redact secrets)
 (log .info #"PORT=#{PORT} DB_PATH=#{DB_PATH} MODEL=#{OPENAI_MODEL}")
 (log .info #"MAX_STEPS=#{MAX_STEPS} MAX_TOOL_CALLS=#{MAX_TOOL_CALLS}")
+(log .info #"OPENAI_TIMEOUT_MS=#{OPENAI_TIMEOUT_MS}")
 (log .info #"WORKSPACE_ROOT=#{WORKSPACE_ROOT}")
-(log .info #"SHELL_ALLOWLIST=#{SHELL_ALLOWLIST}")
+(if OPENAI_BASE_URL/.empty
+  (log .info "OPENAI_BASE_URL not set; using client default")
+else
+  (log .info #"OPENAI_BASE_URL=#{OPENAI_BASE_URL}")
+)
 (if OPENAI_API_KEY
   (log .info "OPENAI_API_KEY is set")
 else

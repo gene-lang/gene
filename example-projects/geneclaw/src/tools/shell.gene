@@ -1,0 +1,27 @@
+# GeneClaw tool: shell
+
+(fn $ns/register_shell_tool [register_tool log workspace_root]
+  (register_tool "shell"
+    "Run a shell command"
+    {^type "object"
+     ^properties {
+       ^command {^type "string" ^description "The command to run"}
+       ^args {^type "string" ^description "Arguments as a string"}
+     }
+     ^required ["command"]}
+    (fn [args]
+      (var cmd args/command)
+      (if cmd/.empty
+        (return {^error "Missing command"})
+      )
+
+      (var cmd_args args/args)
+      (if cmd_args/.empty then (cmd_args = ""))
+      (var full_cmd #"cd #{workspace_root} && #{cmd} #{cmd_args}")
+      (log .debug #"shell exec: #{full_cmd}")
+      (var result (system/shell full_cmd))
+      (log .debug #"shell exit_code=#{result/exit_code}")
+      {^exit_code result/exit_code ^output result/output}
+    )
+  )
+)

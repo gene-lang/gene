@@ -1,9 +1,15 @@
 # GeneClaw Tool Registry
-# Declarative tool registry with JSON Schema specs for native OpenAI tool calling
+# Registry/orchestration; individual tools live in src/tools/*.gene
 
-(import genex/http/http_get)
-(import SHELL_ALLOWLIST WORKSPACE_ROOT from "config")
+(import WORKSPACE_ROOT from "config")
 (import audit_log from "db")
+
+(import register_get_time_tool from "tools/get_time")
+(import register_shell_tool from "tools/shell")
+(import register_read_file_tool from "tools/read_file")
+(import register_write_file_tool from "tools/write_file")
+(import register_http_get_tool from "tools/http_get")
+(import register_browser_playwright_tool from "tools/browser_playwright")
 
 (var log (new genex/logging/Logger $ns))
 
@@ -19,22 +25,11 @@
   (log .debug #"Registered tool: #{name}")
 )
 
-(fn $ns/check_policy [workspace_id tool_name]
-  (return true)
-)
-
 (fn $ns/invoke_tool [run_id workspace_id tool_name args]
   (log .info #"invoke_tool run=#{run_id} tool=#{tool_name}")
   (log .debug #"invoke_tool args=#{args/.to_json}")
 
-  # Policy gate
-  (if_not (check_policy workspace_id tool_name)
-    (log .warn #"Tool denied by policy: #{tool_name} workspace=#{workspace_id}")
-    (audit_log run_id workspace_id tool_name "denied" args nil 0)
-    (return {^ok false ^error #"Tool '#{tool_name}' denied for workspace #{workspace_id}"})
-  )
-
-  (var tool TOOLS/tool_name)
+  (var tool (TOOLS .get tool_name))
   (if_not tool
     (log .warn #"Unknown tool requested: #{tool_name}")
     (audit_log run_id workspace_id tool_name "not_found" args nil 0)
@@ -81,8 +76,6 @@
   specs
 )
 
-# --- Built-in tools ---
-
 (fn $ns/init_tools []
   (log .info "Initializing built-in tools")
 
@@ -94,134 +87,13 @@
     (log .warn #"Could not create workspace directory: #{$ex/message}")
   )
 
-  (register_tool "get_time"
-    "Get the current date and time"
-    {^type "object" ^properties {} ^required []}
-    (fn [args]
-      (var result {^result gene/now/.call/.to_s})
-      (log .trace "get_time invoked")
-      result
-    )
-  )
-
-  (register_tool "shell"
-    "Run an allowlisted shell command"
-    {^type "object"
-     ^properties {
-       ^command {^type "string" ^description "The command to run"}
-       ^args {^type "string" ^description "Arguments as a string"}
-     }
-     ^required ["command"]}
-    (fn [args]
-      (var cmd args/command)
-      (if cmd/.empty
-        (return {^error "Missing command"})
-      )
-
-      # Check allowlist
-      (var allowed false)
-      (SHELL_ALLOWLIST .each (fn [c]
-        (if (c == cmd) (allowed = true))
-      ))
-      (if_not allowed
-        (log .warn #"Shell command blocked (not allowlisted): #{cmd}")
-        (return {^error #"Command '#{cmd}' is not allowlisted"})
-      )
-
-      (var cmd_args args/args)
-      (if cmd_args/.empty then (cmd_args = ""))
-      (var full_cmd #"cd #{WORKSPACE_ROOT} && #{cmd} #{cmd_args}")
-      (log .debug #"shell exec: #{full_cmd}")
-      (var result (system/shell full_cmd))
-      (log .debug #"shell exit_code=#{result/exit_code}")
-      {^exit_code result/exit_code ^output result/output}
-    )
-  )
-
-  (register_tool "read_file"
-    "Read a file within the workspace"
-    {^type "object"
-     ^properties {
-       ^path {^type "string" ^description "Relative path within workspace"}
-     }
-     ^required ["path"]}
-    (fn [args]
-      (var path args/path)
-      (if path/.empty
-        (return {^error "Missing path"})
-      )
-      # Reject path traversal
-      (if ((path .index "..") >= 0)
-        (log .warn #"Path traversal attempt blocked: #{path}")
-        (return {^error "Path traversal not allowed"})
-      )
-      (var full_path #"#{WORKSPACE_ROOT}/#{path}")
-      (log .debug #"read_file: #{full_path}")
-      (try
-        (var content (gene/io/read full_path))
-        (log .debug #"read_file success: #{path} (#{content/.length} bytes)")
-        {^path path ^content content}
-      catch *
-        (log .warn #"read_file failed: #{path} - #{$ex/message}")
-        {^error #"Cannot read: #{$ex/message}"}
-      )
-    )
-  )
-
-  (register_tool "write_file"
-    "Write a file within the workspace"
-    {^type "object"
-     ^properties {
-       ^path {^type "string" ^description "Relative path within workspace"}
-       ^content {^type "string" ^description "File content to write"}
-     }
-     ^required ["path" "content"]}
-    (fn [args]
-      (var path args/path)
-      (var content args/content)
-      (if path/.empty
-        (return {^error "Missing path"})
-      )
-      (if ((path .index "..") >= 0)
-        (log .warn #"Path traversal attempt blocked: #{path}")
-        (return {^error "Path traversal not allowed"})
-      )
-      (var full_path #"#{WORKSPACE_ROOT}/#{path}")
-      (log .debug #"write_file: #{full_path} (#{content/.length} bytes)")
-      (try
-        (gene/io/write full_path content)
-        (log .info #"write_file success: #{path} (#{content/.length} bytes)")
-        {^path path ^bytes content/.length}
-      catch *
-        (log .error #"write_file failed: #{path} - #{$ex/message}")
-        {^error #"Cannot write: #{$ex/message}"}
-      )
-    )
-  )
-
-  (register_tool "http_get"
-    "Fetch a URL via HTTP GET"
-    {^type "object"
-     ^properties {
-       ^url {^type "string" ^description "The URL to fetch"}
-     }
-     ^required ["url"]}
-    (fn [args]
-      (var url args/url)
-      (if url/.empty
-        (return {^error "Missing url"})
-      )
-      (log .debug #"http_get: #{url}")
-      (try
-        (var resp (await (http_get url)))
-        (log .debug #"http_get status=#{resp/status} body_len=#{resp/body/.length}")
-        {^status resp/status ^body (if (resp/body/.length > 4000) then ((resp/body .substr 0 4000) .append "...[truncated]") else resp/body)}
-      catch *
-        (log .error #"http_get failed: #{url} - #{$ex/message}")
-        {^error #"HTTP fetch failed: #{$ex/message}"}
-      )
-    )
-  )
+  # Register tool modules
+  (register_get_time_tool register_tool log)
+  (register_shell_tool register_tool log WORKSPACE_ROOT)
+  (register_read_file_tool register_tool log WORKSPACE_ROOT)
+  (register_write_file_tool register_tool log WORKSPACE_ROOT)
+  (register_http_get_tool register_tool log)
+  (register_browser_playwright_tool register_tool log WORKSPACE_ROOT)
 
   (log .info #"Registered #{TOOLS/.size} tools")
 )

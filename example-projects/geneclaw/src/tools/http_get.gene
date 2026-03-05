@@ -1,0 +1,29 @@
+# GeneClaw tool: http_get
+
+(import genex/http/http_get)
+
+(fn $ns/register_http_get_tool [register_tool log]
+  (register_tool "http_get"
+    "Fetch a URL via HTTP GET"
+    {^type "object"
+     ^properties {
+       ^url {^type "string" ^description "The URL to fetch"}
+     }
+     ^required ["url"]}
+    (fn [args]
+      (var url args/url)
+      (if url/.empty
+        (return {^error "Missing url"})
+      )
+      (log .debug #"http_get: #{url}")
+      (try
+        (var resp (await (http_get url)))
+        (log .debug #"http_get status=#{resp/status} body_len=#{resp/body/.size}")
+        {^status resp/status ^body (if (resp/body/.size > 4000) then ((resp/body .substr 0 4000) .append "...[truncated]") else resp/body)}
+      catch *
+        (log .error #"http_get failed: #{url} - #{$ex/message}")
+        {^error #"HTTP fetch failed: #{$ex/message}"}
+      )
+    )
+  )
+)

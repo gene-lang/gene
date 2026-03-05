@@ -7,6 +7,7 @@
 (import init_db from "db")
 (import init_tools from "tools")
 (import run_agent from "agent")
+(import genex/http/http_post)
 
 (var log (new genex/logging/Logger $ns))
 
@@ -123,7 +124,7 @@
 
     # Reply to Slack
     (if (SLACK_BOT_TOKEN && result/response)
-      (var thread_ts event/thread_ts || event_ts)
+      (var thread_ts (event/thread_ts || event/ts))
       (var reply_payload {
         ^channel channel_id
         ^text result/response

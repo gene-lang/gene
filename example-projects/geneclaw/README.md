@@ -4,25 +4,27 @@ A tool-using AI agent platform built entirely in Gene.
 
 ## What it does
 
-GeneClaw receives commands (via REST API or Slack webhook), runs a bounded agent loop that can call tools, and returns the result. All tool calls go through a policy gate and are audit-logged to SQLite.
+GeneClaw receives commands (via REST API or Slack webhook), runs a bounded agent loop that can call tools, and returns the result. All tool calls are audit-logged to SQLite.
 
 ## Architecture
 
 ```
 Slack/REST → Router → Agent Orchestrator → LLM (OpenAI)
                               ↓
-                      Tool Registry ← Policy Gate
-                        ↓      ↓       ↓       ↓
-                     shell  read_file  http   get_time
-                              ↓
-                      SQLite (memory + audit)
+                        Tool Registry
+                        ↓      ↓       ↓       ↓        ↓
+                     shell  read_file  http   get_time  browser_playwright
+                               ↓
+                     SQLite (memory + audit)
 ```
 
 ## Files
 
 - `src/main.gene` - HTTP server, routing, Slack webhook handler
 - `src/agent.gene` - Agent run loop with step/tool-call budget
-- `src/tools.gene` - Tool registry, policy engine, built-in tools
+- `src/tools.gene` - Tool registry/orchestration
+- `src/tools/*.gene` - Individual tool modules
+- `src/tools/*.mjs` - Playwright helper scripts
 - `src/config.gene` - Environment variable configuration
 - `src/db.gene` - SQLite schema, memory, audit log, run tracking
 
@@ -42,7 +44,7 @@ cd example-projects/geneclaw
 | Variable | Default | Description |
 |---|---|---|
 | `OPENAI_API_KEY` | (empty = mock mode) | OpenAI API key |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model to use |
+| `OPENAI_MODEL` | `gpt-5-mini` | Model to use |
 | `SLACK_SIGNING_SECRET` | | Slack app signing secret |
 | `SLACK_BOT_TOKEN` | | Slack bot OAuth token |
 | `GENECLAW_WORKSPACE` | `/tmp/geneclaw` | Filesystem tool root |
@@ -73,12 +75,26 @@ POST /slack/events
 - `read_file` - Read files within workspace (path-traversal blocked)
 - `write_file` - Write files within workspace
 - `http_get` - Fetch a URL
+- `browser_playwright` - Browser control (`list_pages`, `navigate`, `click`, `fill`, `text`, `screenshot`, etc.) with auto-attach to Chrome CDP (`http://127.0.0.1:9333`) and managed Playwright server fallback
+
+## Playwright tool prerequisites
+
+- Install Node.js and Playwright package in `example-projects/geneclaw`:
+
+```bash
+npm i playwright
+```
+
+- If you already run Chrome with DevTools open (for example `--remote-debugging-port=9333`), the tool will auto-connect on normal actions.
+- If no browser is listening, the tool auto-starts a managed browser server by default.
+- You can still start explicitly:
+  - `browser_playwright` with `{^action "server_start" ^channel "chrome" ^headless true}`
+- Optional args for control:
+  - `cdp_url` (e.g. `http://127.0.0.1:9333`)
+  - `auto_start` (default `true`)
+  - `connect_timeout_ms`
 
 ## Safety
 
-- Tool calls go through a policy gate before execution
-- Shell commands are restricted to an allowlist
-- File operations are scoped to the workspace directory
-- Path traversal (`..`) is rejected
 - All tool invocations are audit-logged with run_id, duration, args, and result
 - Agent runs are bounded by `MAX_STEPS` (16) and `MAX_TOOL_CALLS` (8)

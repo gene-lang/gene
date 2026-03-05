@@ -1,7 +1,7 @@
 # GeneClaw Agent Orchestrator
 # Native OpenAI tool calling: structured tool specs, no text-based JSON parsing
 
-(import OPENAI_API_KEY OPENAI_MODEL MAX_STEPS MAX_TOOL_CALLS from "config")
+(import OPENAI_API_KEY OPENAI_MODEL OPENAI_BASE_URL OPENAI_TIMEOUT_MS MAX_STEPS MAX_TOOL_CALLS from "config")
 (import memory_append memory_recent from "db")
 (import run_create run_complete from "db")
 (import invoke_tool build_tools_spec from "tools")
@@ -24,7 +24,17 @@
 
   # Conversation history
   (history .each (fn [entry]
-    (messages .append {^role entry/role ^content entry/content})
+    (var msg {^role entry/role ^content (entry/content || "")})
+    (if (entry/role == "assistant")
+      (if entry/tool_calls
+        (msg .set "tool_calls" entry/tool_calls)
+      )
+    elif (entry/role == "tool")
+      (if entry/tool_call_id
+        (msg .set "tool_call_id" entry/tool_call_id)
+      )
+    )
+    (messages .append msg)
   ))
 
   # Current user message
@@ -52,19 +62,31 @@
 
   (if genex/ai
     (try
-      (log .info #"Calling LLM model=#{OPENAI_MODEL} messages=#{messages/.size} tools=#{tools_spec/.size}")
+      (log .info #"Calling LLM model=#{OPENAI_MODEL} messages=#{messages/.size} tools=#{tools_spec/.size} timeout_ms=#{OPENAI_TIMEOUT_MS}")
       (var start_ms gene/now/.call/.to_i)
-      (var client (new OpenAIClient {^api_key OPENAI_API_KEY ^model OPENAI_MODEL}))
+      (var client_opts {^api_key OPENAI_API_KEY ^model OPENAI_MODEL ^timeout_ms OPENAI_TIMEOUT_MS})
+      (if_not OPENAI_BASE_URL/.empty
+        (client_opts .set "base_url" OPENAI_BASE_URL)
+      )
+      (var client (new OpenAIClient client_opts))
       (var response (client .chat {^messages messages ^tools tools_spec}))
+      (log .debug "LLM chat returned")
       (var duration (gene/now/.call/.to_i - start_ms))
       (if response
-        (var choices (response .get "choices" []))
-        (if (choices/.length > 0)
+        # OpenAI bindings return an OpenAIError instance on transport/API failures.
+        (var error_message response/message)
+        (if error_message
+          (log .error #"LLM call failed: #{error_message}")
+          (return {^content #"LLM error: #{error_message}" ^tool_calls []})
+        )
+        (var choices (try (response .get "choices" []) catch * []))
+        (if (choices/.size > 0)
           (var first_choice choices/0)
           (var msg first_choice/message)
-          (var content (msg .get "content" ""))
+          (var content ((msg .get "content" "") .to_s))
           (var tool_calls (msg .get "tool_calls" []))
-          (log .info #"LLM responded in #{duration}ms content_len=#{content/.length} tool_calls=#{tool_calls/.size}")
+          (if_not tool_calls (tool_calls = []))
+          (log .info #"LLM responded in #{duration}ms content_len=#{content/.size} tool_calls=#{tool_calls/.size}")
           (log .trace #"LLM response: #{content}")
           (return {^content content ^tool_calls tool_calls})
         )

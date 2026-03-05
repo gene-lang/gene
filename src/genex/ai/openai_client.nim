@@ -1,7 +1,7 @@
 ## OpenAI-Compatible API Client for Gene
 ## Implements the OpenAIClient class with support for chat completions, responses, embeddings, and streaming
 
-import json, httpclient, strutils, os, tables
+import json, httpclient, strutils, os, tables, asyncdispatch
 
 type
   OpenAIConfig* = ref object
@@ -114,13 +114,36 @@ proc buildOpenAIConfig*(options: JsonNode = newJNull()): OpenAIConfig =
     result.extra = %*{}
 
 # HTTP client wrapper with signing and error handling
+proc to_http_method(http_method: string): HttpMethod =
+  case http_method.toUpperAscii()
+  of "GET": HttpGet
+  of "POST": HttpPost
+  of "PUT": HttpPut
+  of "DELETE": HttpDelete
+  of "HEAD": HttpHead
+  of "PATCH": HttpPatch
+  of "OPTIONS": HttpOptions
+  else: HttpPost
+
+proc request_async(url: string, http_method: HttpMethod, body: string, headers: HttpHeaders): Future[AsyncResponse] {.async.} =
+  let ai_debug = getEnvVar("GENE_AI_DEBUG", "") == "1"
+  if ai_debug:
+    echo "[genex/ai] request_async start ", $http_method, " ", url
+  var client = newAsyncHttpClient()
+  try:
+    return await client.request(url, httpMethod = http_method, body = body, headers = headers)
+  finally:
+    if ai_debug:
+      echo "[genex/ai] request_async close client"
+    client.close()
+
 proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
                    payload: JsonNode = newJNull(), streaming: bool = false): JsonNode =
-  var client = newHttpClient(timeout = config.timeout_ms)
-
   try:
+    let ai_debug = getEnvVar("GENE_AI_DEBUG", "") == "1"
     let url = config.base_url & endpoint
     let body = if payload.kind != JNull: $payload else: ""
+    let request_method = to_http_method(httpMethod)
 
     var headers = newHttpHeaders()
     for key, value in config.headers:
@@ -131,17 +154,40 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
       echo "DEBUG: Headers: ", redactHeadersForLog(config.headers)
       if body != "":
         echo "DEBUG: Body: ", body[0..min(body.len, 200)] & (if body.len > 200: "..." else: "")
+    if ai_debug:
+      echo "[genex/ai] performRequest start method=", httpMethod, " url=", url, " timeout_ms=", $config.timeout_ms
 
-    let response = client.request(url, httpMethod = case httpMethod.toUpperAscii():
-      of "GET": HttpGet
-      of "POST": HttpPost
-      of "PUT": HttpPut
-      of "DELETE": HttpDelete
-      of "HEAD": HttpHead
-      of "PATCH": HttpPatch
-      of "OPTIONS": HttpOptions
-      else: HttpPost,  # Default to POST for OpenAI APIs
-      body = body, headers = headers)
+    let request_future = request_async(url, request_method, body, headers)
+    if ai_debug:
+      echo "[genex/ai] waiting request future"
+    let request_done = waitFor(request_future.withTimeout(config.timeout_ms))
+    if ai_debug:
+      echo "[genex/ai] request_done=", $request_done
+    if not request_done:
+      if ai_debug:
+        echo "[genex/ai] timeout branch raising OpenAIError"
+      raise OpenAIError(
+        msg: "Network error: request timed out after " & $config.timeout_ms & "ms",
+        status: -1,
+        provider_error: "timeout"
+      )
+    let response = request_future.read()
+    if ai_debug:
+      echo "[genex/ai] response received status=", response.status
+
+    let body_future = response.body()
+    if ai_debug:
+      echo "[genex/ai] waiting body future"
+    let body_done = waitFor(body_future.withTimeout(config.timeout_ms))
+    if ai_debug:
+      echo "[genex/ai] body_done=", $body_done
+    if not body_done:
+      raise OpenAIError(
+        msg: "Network error: response body timed out after " & $config.timeout_ms & "ms",
+        status: -1,
+        provider_error: "timeout"
+      )
+    let response_body = body_future.read()
 
     when defined(debug):
       echo "DEBUG: Response status: ", response.status
@@ -149,7 +195,7 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
 
     let statusCode = response.status.split()[0]  # Extract just the status code (e.g., "200" from "200 OK")
     if statusCode != "200":
-      let errorBody = try: parseJson(response.body) except: %*{"message": response.body}
+      let errorBody = try: parseJson(response_body) except: %*{"message": response_body}
       var errorMsg = ""
       var errorType = ""
       if errorBody.hasKey("error"):
@@ -181,21 +227,23 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
       raise error
 
     if not streaming:
-      result = parseJson(response.body)
+      result = parseJson(response_body)
     else:
       # For streaming, we'll handle the response body differently
-      result = %*{"streaming": true, "body": response.body}
+      result = %*{"streaming": true, "body": response_body}
 
   except OpenAIError:
+    if getEnvVar("GENE_AI_DEBUG", "") == "1":
+      echo "[genex/ai] performRequest rethrow OpenAIError"
     raise
   except Exception as e:
+    if getEnvVar("GENE_AI_DEBUG", "") == "1":
+      echo "[genex/ai] performRequest wrapping exception: ", e.msg
     raise OpenAIError(
       msg: "Network error: " & e.msg,
       status: -1,
       provider_error: "network"
     )
-  finally:
-    client.close()
 
 # Payload builders for different endpoints
 proc buildChatPayload*(config: OpenAIConfig, options: JsonNode): JsonNode =

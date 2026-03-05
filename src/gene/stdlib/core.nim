@@ -2440,7 +2440,10 @@ proc core_sleep*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
 # Helper proc to call scheduler callbacks - isolates gcsafe access
 proc call_scheduler_callbacks(vm: ptr VirtualMachine) {.gcsafe.} =
   {.cast(gcsafe).}:
-    for callback in scheduler_callbacks:
+    # Iterate over a stable snapshot because callbacks can register
+    # additional callbacks while run_forever is executing.
+    let callbacks_snapshot = scheduler_callbacks
+    for callback in callbacks_snapshot:
       try:
         callback(vm)
       except CatchableError as e:

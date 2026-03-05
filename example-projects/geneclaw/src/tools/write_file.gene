@@ -1,0 +1,31 @@
+# GeneClaw tool: write_file
+
+(fn $ns/register_write_file_tool [register_tool log workspace_root]
+  (register_tool "write_file"
+    "Write a file within the workspace"
+    {^type "object"
+     ^properties {
+       ^path {^type "string" ^description "Relative path within workspace"}
+       ^content {^type "string" ^description "File content to write"}
+     }
+     ^required ["path" "content"]}
+    (fn [args]
+      (var path args/path)
+      (var content args/content)
+      (if path/.empty
+        (return {^error "Missing path"})
+      )
+
+      (var full_path #"#{workspace_root}/#{path}")
+      (log .debug #"write_file: #{full_path} (#{content/.size} bytes)")
+      (try
+        (gene/io/write full_path content)
+        (log .info #"write_file success: #{path} (#{content/.size} bytes)")
+        {^path path ^bytes content/.size}
+      catch *
+        (log .error #"write_file failed: #{path} - #{$ex/message}")
+        {^error #"Cannot write: #{$ex/message}"}
+      )
+    )
+  )
+)

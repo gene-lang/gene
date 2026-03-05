@@ -1,0 +1,29 @@
+# GeneClaw tool: read_file
+
+(fn $ns/register_read_file_tool [register_tool log workspace_root]
+  (register_tool "read_file"
+    "Read a file within the workspace"
+    {^type "object"
+     ^properties {
+       ^path {^type "string" ^description "Relative path within workspace"}
+     }
+     ^required ["path"]}
+    (fn [args]
+      (var path args/path)
+      (if path/.empty
+        (return {^error "Missing path"})
+      )
+
+      (var full_path #"#{workspace_root}/#{path}")
+      (log .debug #"read_file: #{full_path}")
+      (try
+        (var content (gene/io/read full_path))
+        (log .debug #"read_file success: #{path} (#{content/.size} bytes)")
+        {^path path ^content content}
+      catch *
+        (log .warn #"read_file failed: #{path} - #{$ex/message}")
+        {^error #"Cannot read: #{$ex/message}"}
+      )
+    )
+  )
+)

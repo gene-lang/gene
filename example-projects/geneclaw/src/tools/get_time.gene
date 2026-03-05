@@ -1,0 +1,13 @@
+# GeneClaw tool: get_time
+
+(fn $ns/register_get_time_tool [register_tool log]
+  (register_tool "get_time"
+    "Get the current date and time"
+    {^type "object" ^properties {} ^required []}
+    (fn [args]
+      (var result {^result gene/now/.call/.to_s})
+      (log .trace "get_time invoked")
+      result
+    )
+  )
+)

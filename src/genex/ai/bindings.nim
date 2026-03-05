@@ -172,10 +172,20 @@ proc openai_error_result(err: OpenAIError): Value =
   return openai_error_value(err)
 
 proc call_openai_endpoint(config: OpenAIConfig, endpoint: string, payload: JsonNode): Value {.gcsafe.} =
+  let ai_debug = getEnvVar("GENE_AI_DEBUG", "") == "1"
   try:
+    if ai_debug:
+      echo "[genex/ai] call_openai_endpoint start endpoint=", endpoint
     let response = performRequest(config, "POST", endpoint, payload)
-    return jsonToGeneValue(response)
+    if ai_debug:
+      echo "[genex/ai] call_openai_endpoint success endpoint=", endpoint
+    let gene_response = jsonToGeneValue(response)
+    if ai_debug:
+      echo "[genex/ai] call_openai_endpoint converted response"
+    return gene_response
   except OpenAIError as e:
+    if ai_debug:
+      echo "[genex/ai] call_openai_endpoint caught OpenAIError: ", e.msg
     return openai_error_value(e)
 
 proc call_gene_callable(vm: ptr VirtualMachine, callable: Value, args: seq[Value]) {.gcsafe.} =

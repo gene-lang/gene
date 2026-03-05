@@ -86,7 +86,7 @@
     (var rows (DB .query "SELECT role, content FROM (SELECT role, content, created_at_ms FROM memory_events WHERE session_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT ?) ORDER BY created_at_ms ASC" session_id limit))
     (if_not rows (return []))
     (var result [])
-    (for row rows
+    (for row in rows
       (result .append {^role row/0 ^content row/1})
     )
     (log .debug #"memory_recent returned #{result/.size} entries")

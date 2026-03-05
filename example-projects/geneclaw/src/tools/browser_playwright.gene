@@ -1,0 +1,67 @@
+# GeneClaw tool: browser_playwright
+# Uses Playwright protocol via a local Node helper.
+
+(fn $ns/register_browser_playwright_tool [register_tool log workspace_root]
+  (register_tool "browser_playwright"
+    "Control a browser using Playwright protocol (auto-attach to Chrome CDP or start managed server, then navigate/click/fill/extract/screenshot)"
+    {^type "object"
+     ^properties {
+       ^action {^type "string" ^description "Action: server_start|server_stop|server_status|list_pages|new_page|navigate|click|fill|press|text|content|screenshot|evaluate|close_page"}
+       ^ws_endpoint {^type "string" ^description "Optional Playwright ws endpoint; uses state/env if omitted"}
+       ^cdp_url {^type "string" ^description "Optional Chrome DevTools endpoint, e.g. http://127.0.0.1:9333"}
+       ^page_index {^type "integer" ^description "Target page index (default 0)"}
+       ^url {^type "string" ^description "URL for navigation/new_page"}
+       ^selector {^type "string" ^description "Selector for click/fill/press/text"}
+       ^value {^type "string" ^description "Value for fill"}
+       ^key {^type "string" ^description "Key for press"}
+       ^script {^type "string" ^description "JS expression for evaluate"}
+       ^path {^type "string" ^description "Output path for screenshot"}
+       ^timeout_ms {^type "integer" ^description "Per-action timeout in ms"}
+       ^connect_timeout_ms {^type "integer" ^description "Browser connect timeout in ms"}
+       ^auto_start {^type "boolean" ^description "If no browser endpoint is available, start a managed browser (default true)"}
+       ^wait_until {^type "string" ^description "Navigation waitUntil: load|domcontentloaded|networkidle|commit"}
+       ^full_page {^type "boolean" ^description "Screenshot full page"}
+       ^headless {^type "boolean" ^description "server_start: headless browser (default true)"}
+       ^channel {^type "string" ^description "server_start: browser channel, e.g. chrome"}
+       ^port {^type "integer" ^description "server_start: local ws port (default 9333)"}
+       ^host {^type "string" ^description "server_start: bind host (default 127.0.0.1)"}
+       ^start_timeout_ms {^type "integer" ^description "server_start: startup wait timeout"}
+     }
+     ^required ["action"]}
+    (fn [args]
+      (var tool_dir "src/tools")
+      (var script_path #"#{tool_dir}/playwright_action.mjs")
+      (var state_dir #"#{workspace_root}/playwright")
+      (var state_file #"#{state_dir}/state.json")
+
+      (try
+        (system/shell #"mkdir -p #{state_dir}")
+      catch *
+        (return {^error #"Failed to create Playwright state dir: #{$ex/message}"})
+      )
+
+      (var req_file #"#{state_dir}/req_#{gene/now/.call/.to_i}.json")
+      (gene/io/write req_file args/.to_json)
+
+      (var cmd #"node #{script_path} #{req_file} #{state_file}")
+      (log .debug #"browser_playwright exec: #{cmd}")
+      (var result (system/shell cmd))
+
+      (try
+        (system/shell #"rm -f #{req_file}")
+      catch *
+        NIL
+      )
+
+      (if (result/exit_code != 0)
+        (return {^error "Playwright helper failed" ^exit_code result/exit_code ^output result/output})
+      )
+
+      (try
+        (gene/json/parse result/output)
+      catch *
+        {^ok false ^error "Playwright helper returned non-JSON output" ^output result/output}
+      )
+    )
+  )
+)
