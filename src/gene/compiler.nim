@@ -122,6 +122,42 @@ proc emit(self: Compiler, instr: Instruction) =
     return
   self.output.add_instruction(instr, self.current_trace())
 
+proc copy_type_descs(type_descs: seq[TypeDesc]): seq[TypeDesc] =
+  if type_descs.len == 0:
+    return @[]
+  result = newSeqOfCap[TypeDesc](type_descs.len)
+  for desc in type_descs:
+    result.add(desc)
+
+proc infer_nested_module_path(matcher: RootMatcher, body: seq[Value]): string =
+  for node in body:
+    if node.kind == VkGene and node.gene != nil and node.gene.trace != nil:
+      let module_path = module_path_from_source(node.gene.trace.filename)
+      if module_path.len > 0:
+        return module_path
+
+  if matcher != nil:
+    for desc in matcher.type_descriptors:
+      if desc.module_path.len > 0 and desc.module_path != BUILTIN_TYPE_MODULE_PATH:
+        return desc.module_path
+
+proc seed_nested_type_context(self: Compiler, matcher: RootMatcher, body: seq[Value]) =
+  if matcher != nil and matcher.type_descriptors.len > 0:
+    self.output.type_descriptors = copy_type_descs(matcher.type_descriptors)
+    self.output.type_aliases = matcher.type_aliases
+
+  let module_path = infer_nested_module_path(matcher, body)
+  if module_path.len > 0:
+    self.output.module_path = module_path
+
+  self.output.type_registry = populate_registry(self.output.type_descriptors, self.output.module_path)
+
+proc finalize_nested_type_context(self: Compiler, matcher: RootMatcher) =
+  self.output.type_registry = populate_registry(self.output.type_descriptors, self.output.module_path)
+  if matcher != nil:
+    matcher.type_descriptors = self.output.type_descriptors
+    matcher.type_aliases = self.output.type_aliases
+
 #################### Forward Declarations #################
 proc compile*(self: Compiler, input: Value)
 proc compile*(f: Function, eager_functions: bool)
@@ -209,7 +245,8 @@ proc simple_def_name(name_val: Value): string =
   ## Return a simple local name for defs (fn/class/ns/etc) or "" when not eligible.
   case name_val.kind
   of VkSymbol, VkString:
-    let name = name_val.str
+    let parsed_name = split_generic_definition_name(name_val.str)
+    let name = parsed_name.base_name
     if name.len == 0:
       return ""
     if name.contains("/") or name.starts_with("$"):
@@ -504,6 +541,7 @@ proc compile*(f: Function, eager_functions: bool) =
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.seed_nested_type_context(f.matcher, f.body)
   self.module_init_mode = f.name == "__init__"
   self.local_definitions = self.module_init_mode
   self.emit(Instruction(kind: IkStart))
@@ -570,8 +608,7 @@ proc compile*(f: Function, eager_functions: bool) =
   self.output.peephole_optimize()  # Apply peephole optimizations
   self.output.update_jumps()
   self.output.kind = CkFunction
-  if f.matcher != nil and f.matcher.type_descriptors.len > 0:
-    self.output.type_descriptors = f.matcher.type_descriptors
+  self.finalize_nested_type_context(f.matcher)
   f.body_compiled = self.output
   f.body_compiled.matcher = f.matcher
 
@@ -589,6 +626,7 @@ proc compile*(b: Block, eager_functions: bool) =
     trace_stack: @[],
     method_access_mode: MamAutoCall
   )
+  self.seed_nested_type_context(b.matcher, b.body)
   self.emit(Instruction(kind: IkStart))
   self.scope_trackers.add(b.scope_tracker)
   self.declared_names.add(initTable[Key, bool]())
@@ -624,8 +662,7 @@ proc compile*(b: Block, eager_functions: bool) =
   self.output.optimize_noops()  # Optimize BEFORE resolving jumps
   self.output.peephole_optimize()  # Apply peephole optimizations
   self.output.update_jumps()
-  if b.matcher != nil and b.matcher.type_descriptors.len > 0:
-    self.output.type_descriptors = b.matcher.type_descriptors
+  self.finalize_nested_type_context(b.matcher)
   b.body_compiled = self.output
   b.body_compiled.matcher = b.matcher
 

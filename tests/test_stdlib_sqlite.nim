@@ -27,7 +27,7 @@ proc recreate_db() =
 
 suite "SQLite stdlib":
   recreate_db()
-  init_all()
+  init_all_with_extensions()
 
   test_vm """
     (var db (genex/sqlite/open "/tmp/gene-test.db"))

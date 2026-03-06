@@ -57,14 +57,73 @@ proc find_named_type_descriptor(cu: CompilationUnit, name: string): tuple[type_i
       return (i.int32, desc, true)
   (NO_TYPE_ID, TypeDesc(module_path: cu.module_path, kind: TdkNamed, name: name), false)
 
+proc ensure_named_type_descriptor(cu: CompilationUnit, name: string): tuple[type_id: TypeId, desc: TypeDesc, found: bool] =
+  let lookup = find_named_type_descriptor(cu, name)
+  if lookup.found:
+    return lookup
+  if cu == nil:
+    return lookup
+
+  var desc_index = initTable[string, TypeId]()
+  ensure_type_desc_index(cu.type_descriptors, desc_index)
+  let type_id = intern_type_desc(cu.type_descriptors,
+    TypeDesc(module_path: cu.module_path, kind: TdkNamed, name: name), desc_index)
+  cu.type_registry = populate_registry(cu.type_descriptors, cu.module_path)
+  (type_id, cu.type_descriptors[type_id.int], true)
+
 proc ensure_class_runtime_type(self: ptr VirtualMachine, class: Class): RtTypeObj =
   if class == nil:
     return nil
   if class.runtime_type != nil:
     return class.runtime_type
-  let lookup = find_named_type_descriptor(self.cu, class.name)
+  let lookup = ensure_named_type_descriptor(self.cu, class.name)
   class.runtime_type = new_runtime_type_object(lookup.type_id, lookup.desc)
   class.runtime_type
+
+proc current_runtime_type_descs(self: ptr VirtualMachine): seq[TypeDesc] =
+  if self != nil and self.cu != nil and self.cu.type_descriptors.len > 0:
+    return self.cu.type_descriptors
+  builtin_type_descs()
+
+proc normalize_runtime_type_input(value: Value): Value =
+  case value.kind
+  of VkClass:
+    if value.ref != nil and value.ref.class != nil and value.ref.class.name.len > 0:
+      return value.ref.class.name.to_symbol_value()
+    return "Any".to_symbol_value()
+  of VkComplexSymbol:
+    if value.ref != nil and value.ref.csymbol.len > 0:
+      return value.ref.csymbol.join("/").to_symbol_value()
+    return "Any".to_symbol_value()
+  of VkString:
+    if value.str.len == 0:
+      return "Any".to_symbol_value()
+    return value.str.to_symbol_value()
+  else:
+    return value
+
+proc resolve_runtime_type_arg(self: ptr VirtualMachine, value: Value): tuple[type_id: TypeId, type_descs: seq[TypeDesc], found: bool] =
+  if is_runtime_type_value(value):
+    let payload = runtime_type_payload(value)
+    return (payload.runtime_type.type_id, payload.type_descs, true)
+
+  case value.kind
+  of VkClass:
+    let rt = self.ensure_class_runtime_type(value.ref.class)
+    if rt == nil:
+      return (NO_TYPE_ID, @[], false)
+    return (rt.type_id, self.current_runtime_type_descs(), true)
+  of VkSymbol, VkString, VkComplexSymbol, VkGene:
+    var descs = self.current_runtime_type_descs()
+    let aliases = if self != nil and self.cu != nil: self.cu.type_aliases else: initTable[string, TypeId]()
+    let module_path = if self != nil and self.cu != nil: self.cu.module_path else: ""
+    let type_id = resolve_type_value_to_id(normalize_runtime_type_input(value), descs, aliases, module_path)
+    if self != nil and self.cu != nil:
+      self.cu.type_descriptors = descs
+      self.cu.type_registry = populate_registry(self.cu.type_descriptors, self.cu.module_path)
+    return (type_id, descs, true)
+  else:
+    (NO_TYPE_ID, @[], false)
 
 proc native_args_supported(f: Function, args: seq[Value]): bool =
   const nativeArgLimit =

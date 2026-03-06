@@ -26,7 +26,7 @@
 (assert ((explicit_any nil 0) == [nil 0]))
 (println "Test 3 passed: Explicit Any accepts anything")
 
-# === Test 4: Return type annotations (documentation only for now) ===
+# === Test 4: Return type annotations are enforced ===
 (fn typed_return [x: Int] -> Int
   x)
 
@@ -73,15 +73,14 @@
 (assert ((first_element [[1] [2]]) == [1]))
 (println "Test 7 passed: Array type check works regardless of element types")
 
-# === Test 8: Generic-like behavior (type variables treated as Any) ===
-# Gene doesn't have true generics yet, but untyped params act like type variables
-(fn identity [x]
+# === Test 8: Explicit generic functions stay polymorphic ===
+(fn identity:T [x: T] -> T
   x)
 
 (assert ((identity 42) == 42))
 (assert ((identity "hello") == "hello"))
 (assert ((identity [1 2 3]) == [1 2 3]))
-(println "Test 8 passed: Identity function works with any type")
+(println "Test 8 passed: Explicit generic function works with any type")
 
 (println "")
 (println "=== Phase 3 gradual typing tests completed ===")

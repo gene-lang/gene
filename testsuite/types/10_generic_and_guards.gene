@@ -1,0 +1,35 @@
+# Explicit generic functions and flow-sensitive guards
+
+(fn identity:T [x: T] -> T
+  x)
+
+(println "identity_int=" (identity 42))
+# Expected: identity_int=42
+
+(println "identity_string=" (identity "hello"))
+# Expected: identity_string=hello
+
+(class Echo
+  (method echo:T [x: T] -> T
+    x))
+
+(var echo (new Echo))
+(println "echo_int=" (echo .echo 7))
+# Expected: echo_int=7
+
+(println "echo_string=" (echo .echo "ok"))
+# Expected: echo_string=ok
+
+(var maybe_name: (String | Nil) "Gene")
+(println "guard_not_nil=" (if (maybe_name != nil)
+  (maybe_name ++ "!")
+else
+  "missing"))
+# Expected: guard_not_nil=Gene!
+
+(var maybe_number: (Int | String) "text")
+(println "guard_not_is=" (if (not (maybe_number .is Int))
+  maybe_number
+else
+  "bad"))
+# Expected: guard_not_is=text

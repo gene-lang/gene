@@ -269,6 +269,10 @@ type
     initializer_hook*: RtImplLoader
     method_hooks*: Table[Key, RtImplLoader]
 
+  RuntimeTypeValueData* = ref object of CustomValue
+    runtime_type*: RtTypeObj
+    type_descs*: seq[TypeDesc]
+
   ScopeTracker* = ref object
     parent*: ScopeTracker   # If parent is nil, the scope is the top level scope.
     parent_index_max*: int16
@@ -535,6 +539,7 @@ type
     type_check*: bool  # Whether runtime type validation is enabled
     return_type_id*: TypeId
     type_descriptors*: seq[TypeDesc]
+    type_aliases*: Table[string, TypeId]
 
   MatchingHintMode* {.size: sizeof(int16) .} = enum
     MhDefault
@@ -618,6 +623,7 @@ type
 
     IkPushValue   # push value to the next slot
     IkPushNil
+    IkPushTypeValue
     IkPop
     IkDup         # duplicate top stack element
     IkDup2        # duplicate top two stack elements

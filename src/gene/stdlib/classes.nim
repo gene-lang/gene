@@ -1,7 +1,8 @@
 import strutils, tables
 
 import ../types
-from ../types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name
+from ../types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name,
+  is_compatible, is_runtime_type_value, runtime_type_payload
 
 proc display_value*(val: Value; top_level: bool): string {.gcsafe.} =
   case val.kind
@@ -138,6 +139,10 @@ proc object_is_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
   let self_arg = get_positional_arg(args, 0, has_keyword_args)
   let target_arg = get_positional_arg(args, 1, has_keyword_args)
 
+  if is_runtime_type_value(target_arg):
+    let payload = runtime_type_payload(target_arg)
+    return is_compatible(self_arg, payload.runtime_type.type_id, payload.type_descs).to_value()
+
   var target_class: Class
   case target_arg.kind
   of VkClass:
@@ -162,6 +167,17 @@ proc object_is_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
       return TRUE
     current = current.parent
   return FALSE
+
+proc init_type_class*(object_class: Class) =
+  var r: ptr Reference
+  let type_class = new_class("Type")
+  type_class.parent = object_class
+  type_class.def_native_method("to_s", object_to_s_method)
+  r = new_ref(VkClass)
+  r.class = type_class
+  let type_value = r.to_ref_value()
+  App.app.gene_ns.ns["Type".to_key()] = type_value
+  App.app.global_ns.ns["Type".to_key()] = type_value
 
 proc object_to_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
                       arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =

@@ -386,6 +386,22 @@ catch *
 (println "{^a 1} is Map =" ({^a 1} is Map))
 (println "person is Person =" (person is Person))
 
+# Explicit generic function + flow guard
+(fn identity:T [x: T] -> T
+  x
+)
+(println "identity(42) =" (identity 42))
+(println "identity(\"generic\") =" (identity "generic"))
+(println "(String | Nil) =" (String | Nil))
+(type DisplayLabel (String | Nil))
+(println "DisplayLabel equivalent =" (types_equivalent DisplayLabel `(Nil | String)))
+(fn format_label [label: DisplayLabel] -> String
+  (if (label != nil) then label else "missing"))
+(println "format_label(\"Gene\") =" (format_label "Gene"))
+(println "format_label(nil) =" (format_label nil))
+(var maybe_label: (String | Nil) "Gene")
+(println "guarded label =" (if (maybe_label != nil) then #"#{maybe_label}!" else "missing"))
+
 # ============================================================================
 # 10) MACRO-LIKE FUNCTIONS AND CALLER EVAL
 # ============================================================================

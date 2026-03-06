@@ -6,6 +6,7 @@
 
 # --- 1. Type aliases ---
 (type UserId Int)
+(type DisplayName (String | Nil))
 
 # --- 2. Typed function with return type ---
 (fn add [x: Int y: Int] -> Int
@@ -36,7 +37,11 @@
 (fn double [n: Int] -> Int
   (n * 2))
 
-# --- 6. Result type (built-in ADT) ---
+# --- 6. Explicit generic function ---
+(fn identity:T [x: T] -> T
+  x)
+
+# --- 7. Result type (built-in ADT) ---
 (fn safe_div [a: Int b: Int] -> (Result Int String)
   (if (b == 0)
     (Err "division by zero")
@@ -65,10 +70,31 @@
 (println "42 is Int:" (42 .is Int))
 (println "\"hi\" is String:" ("hi" .is String))
 (println "c is Counter:" (c .is Counter))
+(println "(String | Nil) =" (String | Nil))
+(println "DisplayName equivalent:" (types_equivalent DisplayName `(Nil | String)))
 
 (println "")
 (println "=== Higher-Order Functions ===")
 (println "apply(double, 7) =" (apply double 7))
+
+(println "")
+(println "=== Generic Functions ===")
+(println "identity(42) =" (identity 42))
+(println "identity(\"typed\") =" (identity "typed"))
+
+(println "")
+(println "=== Flow Guards ===")
+(var maybe_name: (String | Nil) "Gene")
+(fn show_name [name: DisplayName] -> String
+  (if (name != nil)
+    name
+  else
+    "missing"))
+(println "show_name(nil) =" (show_name nil))
+(println "not nil guard =" (if (maybe_name != nil)
+  (maybe_name ++ "!")
+else
+  "missing"))
 
 (println "")
 (println "=== Result Type ===")

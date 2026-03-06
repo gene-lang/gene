@@ -57,6 +57,8 @@ Built-in type IDs come from `src/gene/types/descriptors.nim` (`Any=0`, `Int=1`, 
 - `to_function` parses annotations and sets `matcher.children[i].type_id`.
 - Return annotation sets `matcher.return_type_id`.
 - Matcher carries the descriptor table via `matcher.type_descriptors`.
+- Explicit generic params on functions/methods use definition-name syntax like `identity:T`.
+- Generic type params are interned as `TdkVar` descriptors for the matcher path.
 
 2. Typed local variables
 
@@ -72,6 +74,20 @@ Built-in type IDs come from `src/gene/types/descriptors.nim` (`Any=0`, `Int=1`, 
 4. Type aliases
 
 - `(type Alias Expr)` is resolved to a `TypeId` and stored in `CompilationUnit.type_aliases`.
+- The same form now also binds a runtime type value, so `Alias` can be used in value position:
+
+```gene
+(type X (String | Nil))
+X
+(types_equivalent X `(Nil | String))
+```
+
+- Standalone type expressions also compile to runtime type values:
+
+```gene
+(String | Nil)
+(Fn [Int] String)
+```
 
 ## 4. Runtime enforcement
 
@@ -102,6 +118,7 @@ Runtime checks are in `src/gene/vm/args.nim` and `src/gene/vm/exec.nim`, impleme
 ### Generic/applied type behavior
 
 - Applied checks like `(Array Int)` are currently shallow at runtime: outer constructor is checked, element-level enforcement is limited.
+- Generic function type params are compile-time only today: runtime validation treats `TdkVar` as `Any`, while the checker preserves the param/return relationship statically.
 
 ## 5. GIR serialization
 
@@ -109,15 +126,14 @@ GIR serializer is `src/gene/gir.nim`.
 
 Current version is:
 
-- `GIR_VERSION = 13`
+- `GIR_VERSION = 18`
 
 Typing-relevant data persisted in GIR:
 
 - `module_types` tree (`ModuleTypeNode`)
 - `type_descriptors` table (`seq[TypeDesc]`)
+- `type_aliases`
 - Scope tracker snapshots include `type_expectation_ids`
-
-Note: `type_aliases` are currently not serialized in GIR. This can cause behavior differences between fresh source compile and cached GIR in alias-heavy code.
 
 ## 6. Module boundary typing
 

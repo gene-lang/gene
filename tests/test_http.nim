@@ -5,7 +5,7 @@ import ./helpers
 
 suite "HTTP Extension Tests":
   test "Load HTTP extension":
-    init_all()
+    init_all_with_extensions()
     
     # Load the HTTP extension
     let ns = load_extension(VM, "build/libhttp")
@@ -28,14 +28,14 @@ suite "HTTP Extension Tests":
     check ns.members.hasKey(to_key("json_stringify"))
   
   test "JSON parse and stringify":
-    init_all()
+    init_all_with_extensions()
     let ns = load_extension(VM, "build/libhttp")
     
     # Test json_parse
     let json_parse = ns["json_parse".to_key()]
     let json_str = new_str_value("{\"name\":\"test\",\"value\":42}")
-    let args = new_array_value(json_str)
-    let parsed = json_parse.ref.native_fn(VM, args)
+    var parse_args = [json_str]
+    let parsed = json_parse.ref.native_fn(VM, cast[ptr UncheckedArray[Value]](parse_args[0].addr), 1, false)
     
     check parsed.kind == VkMap
     let map_ref = map_data(parsed)
@@ -48,8 +48,8 @@ suite "HTTP Extension Tests":
     
     # Test json_stringify
     let json_stringify = ns["json_stringify".to_key()]
-    let stringify_args = new_array_value(parsed)
-    let stringified = json_stringify.ref.native_fn(VM, stringify_args)
+    var stringify_args = [parsed]
+    let stringified = json_stringify.ref.native_fn(VM, cast[ptr UncheckedArray[Value]](stringify_args[0].addr), 1, false)
     
     check stringified.kind == VkString
     # The order might vary, so we just check that it contains the expected parts
@@ -59,33 +59,33 @@ suite "HTTP Extension Tests":
     check "\"\"value\"\":42" in result_str or "\"value\":42" in result_str
   
   test "JSON with arrays":
-    init_all()
+    init_all_with_extensions()
     let ns = load_extension(VM, "build/libhttp")
     
     let json_parse = ns["json_parse".to_key()]
     let json_str = new_str_value("[1,2,3,\"test\",null,true,false]")
-    let args = new_array_value(json_str)
-    let parsed = json_parse.ref.native_fn(VM, args)
+    var parse_args = [json_str]
+    let parsed = json_parse.ref.native_fn(VM, cast[ptr UncheckedArray[Value]](parse_args[0].addr), 1, false)
     
     check parsed.kind == VkArray
-    let arr_ref = parsed.ref
-    check arr_ref.arr.len == 7
-    check arr_ref.arr[0].to_int == 1
-    check arr_ref.arr[1].to_int == 2
-    check arr_ref.arr[2].to_int == 3
-    check arr_ref.arr[3].str == "test"
-    check arr_ref.arr[4].kind == VkNil
-    check arr_ref.arr[5].to_bool == true
-    check arr_ref.arr[6].to_bool == false
+    let arr_ref = array_data(parsed)
+    check arr_ref.len == 7
+    check arr_ref[0].to_int == 1
+    check arr_ref[1].to_int == 2
+    check arr_ref[2].to_int == 3
+    check arr_ref[3].str == "test"
+    check arr_ref[4].kind == VkNil
+    check arr_ref[5].to_bool == true
+    check arr_ref[6].to_bool == false
   
   test "JSON with nested structures":
-    init_all()
+    init_all_with_extensions()
     let ns = load_extension(VM, "build/libhttp")
     
     let json_parse = ns["json_parse".to_key()]
     let json_str = new_str_value("{\"user\":{\"name\":\"Alice\",\"age\":30},\"items\":[1,2,3]}")
-    let args = new_array_value(json_str)
-    let parsed = json_parse.ref.native_fn(VM, args)
+    var parse_args = [json_str]
+    let parsed = json_parse.ref.native_fn(VM, cast[ptr UncheckedArray[Value]](parse_args[0].addr), 1, false)
     
     check parsed.kind == VkMap
     let map_ref = map_data(parsed)

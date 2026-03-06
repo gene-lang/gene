@@ -43,6 +43,60 @@ proc new_runtime_type_object*(type_id: TypeId, descriptor: TypeDesc): RtTypeObj 
     method_hooks: initTable[Key, RtImplLoader]()
   )
 
+proc copy_type_descs(type_descs: seq[TypeDesc]): seq[TypeDesc] =
+  if type_descs.len == 0:
+    return builtin_type_descs()
+  result = newSeqOfCap[TypeDesc](type_descs.len)
+  for desc in type_descs:
+    result.add(desc)
+
+proc runtime_type_value_class*(): Class =
+  if App == NIL or App.kind != VkApplication:
+    return nil
+  let type_key = "Type".to_key()
+  if App.app.gene_ns.kind == VkNamespace and App.app.gene_ns.ns.hasKey(type_key):
+    let type_value = App.app.gene_ns.ns[type_key]
+    if type_value.kind == VkClass and type_value.ref != nil:
+      return type_value.ref.class
+  if App.app.global_ns.kind == VkNamespace and App.app.global_ns.ns.hasKey(type_key):
+    let type_value = App.app.global_ns.ns[type_key]
+    if type_value.kind == VkClass and type_value.ref != nil:
+      return type_value.ref.class
+  nil
+
+proc new_runtime_type_value*(type_id: TypeId, type_descs: seq[TypeDesc]): Value =
+  let custom_class = runtime_type_value_class()
+  if custom_class.is_nil:
+    raise new_exception(type_defs.Exception, "Runtime Type class is not initialized")
+
+  let descs = copy_type_descs(type_descs)
+  let actual_type_id =
+    if type_id != NO_TYPE_ID and type_id >= 0 and type_id.int < descs.len:
+      type_id
+    else:
+      BUILTIN_TYPE_ANY_ID
+  let payload = RuntimeTypeValueData(
+    runtime_type: new_runtime_type_object(actual_type_id, descs[actual_type_id.int]),
+    type_descs: descs
+  )
+  let ref_val = new_ref(VkCustom)
+  ref_val.custom_class = custom_class
+  ref_val.custom_data = payload
+  ref_val.to_ref_value()
+
+proc is_runtime_type_value*(value: Value): bool =
+  value.kind == VkCustom and value.ref != nil and value.ref.custom_data != nil and
+    (value.ref.custom_data of RuntimeTypeValueData)
+
+proc runtime_type_payload*(value: Value, context = "Runtime type value expected"): RuntimeTypeValueData =
+  if not is_runtime_type_value(value):
+    raise new_exception(type_defs.Exception, context)
+  RuntimeTypeValueData(value.ref.custom_data)
+
+proc runtime_type_value_string*(value: Value): string =
+  let payload = runtime_type_payload(value)
+  type_desc_to_string(payload.runtime_type.type_id, payload.type_descs)
+
 proc attach_constructor_hook*(rt: RtTypeObj, hook: RtImplLoader) =
   if rt == nil:
     return
@@ -119,42 +173,6 @@ proc type_desc_to_rt(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): RtT
     )
   of TdkVar:
     RtType(kind: RtAny)
-
-proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0): string =
-  if type_id == NO_TYPE_ID:
-    return "Any"
-  if type_id < 0 or type_id.int >= type_descs.len:
-    return "Any"
-  if depth > 64:
-    return "Any"
-
-  let desc = type_descs[type_id.int]
-  case desc.kind
-  of TdkAny:
-    "Any"
-  of TdkNamed:
-    desc.name
-  of TdkApplied:
-    var parts: seq[string] = @[desc.ctor]
-    for arg in desc.args:
-      parts.add(type_desc_to_string(arg, type_descs, depth + 1))
-    "(" & parts.join(" ") & ")"
-  of TdkUnion:
-    var parts: seq[string] = @[]
-    for member in desc.members:
-      parts.add(type_desc_to_string(member, type_descs, depth + 1))
-    "(" & parts.join(" | ") & ")"
-  of TdkFn:
-    var params: seq[string] = @[]
-    for param in desc.params:
-      params.add(type_desc_to_string(param, type_descs, depth + 1))
-    let ret = type_desc_to_string(desc.ret, type_descs, depth + 1)
-    let effects =
-      if desc.effects.len > 0: " ! [" & desc.effects.join(" ") & "]"
-      else: ""
-    "(Fn [" & params.join(" ") & "] " & ret & effects & ")"
-  of TdkVar:
-    "T" & $desc.var_id
 
 # Runtime type checking using NaN tags
 proc is_int*(v: Value): bool {.inline.} =
@@ -310,6 +328,16 @@ proc type_expr_compatible(actual: RtType, expected: RtType): bool =
     return true
   if actual.kind == RtAny or expected.kind == RtAny:
     return true
+  if actual.kind == RtUnion and expected.kind == RtUnion:
+    for actual_member in actual.members:
+      var matched = false
+      for expected_member in expected.members:
+        if type_expr_compatible(actual_member, expected_member):
+          matched = true
+          break
+      if not matched:
+        return false
+    return true
   if expected.kind == RtUnion:
     for member in expected.members:
       if type_expr_compatible(actual, member):
@@ -408,6 +436,14 @@ proc types_equivalent*(left_type_id: TypeId, right_type_id: TypeId,
     return left_type_id == right_type_id
   let left = type_desc_to_rt(type_descs, left_type_id)
   let right = type_desc_to_rt(type_descs, right_type_id)
+  return type_expr_compatible(left, right) and type_expr_compatible(right, left)
+
+proc types_equivalent*(left_type_id: TypeId, left_descs: seq[TypeDesc],
+                      right_type_id: TypeId, right_descs: seq[TypeDesc]): bool =
+  let left_source = if left_descs.len > 0: left_descs else: builtin_type_descs()
+  let right_source = if right_descs.len > 0: right_descs else: builtin_type_descs()
+  let left = type_desc_to_rt(left_source, left_type_id)
+  let right = type_desc_to_rt(right_source, right_type_id)
   return type_expr_compatible(left, right) and type_expr_compatible(right, left)
 
 proc normalize_numeric_type_name(expected_type: string): string =

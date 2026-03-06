@@ -233,6 +233,8 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   let name = gene.children[0]
   if name.kind != VkSymbol:
     not_allowed("Method name must be a symbol")
+  let parsed_name = split_generic_definition_name(name.str)
+  let method_name = parsed_name.base_name.to_symbol_value()
   
   # Create a function from the method definition
   # The method is similar to (fn name [args] body...) but bound to the class
@@ -241,8 +243,10 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   for k, v in gene.props:
     fn_value.gene.props[k] = v
 
-  # Add the method name
-  fn_value.gene.children.add(gene.children[0])
+  # Preserve generic method parameters on the lowered function name so
+  # to_function can intern TdkVar descriptors. The runtime-visible method
+  # name is still the stripped base name via IkDefineMethod.
+  fn_value.gene.children.add(name)
   
   # Handle args - check if self is already the first parameter
   let args = gene.children[1]
@@ -290,7 +294,7 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   self.compile_fn(fn_value, define_binding = false)
   
   # Add the method to the class
-  self.emit(Instruction(kind: IkDefineMethod, arg0: name))
+  self.emit(Instruction(kind: IkDefineMethod, arg0: method_name))
 
 proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
   # Constructor definition: (ctor args body...) or (ctor! args body...)

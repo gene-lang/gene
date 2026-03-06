@@ -3,6 +3,7 @@ import unittest
 import ./helpers
 import ../src/gene/parser
 import ../src/gene/type_checker as tc
+import ../src/gene/types except Exception
 
 proc test_strict_type_error(code: string) =
   var code = cleanup(code)
@@ -180,3 +181,111 @@ suite "Static type checking":
     for node in read_all(code):
       checker.type_check_node(node)
     check true
+
+  test_vm """
+    (fn identity:T [x: T] -> T
+      x)
+    [(identity 42) (identity "hello")]
+  """, proc(result: Value) =
+    check result.kind == VkArray
+    check array_data(result).len == 2
+    check array_data(result)[0] == 42
+    check array_data(result)[1] == "hello".to_value()
+
+  test_vm """
+    (types_equivalent (String | Nil) `(Nil | String))
+  """, TRUE
+
+  test_vm """
+    ("hi" is (String | Nil))
+  """, TRUE
+
+  test_vm """
+    ("hi" .is (String | Nil))
+  """, TRUE
+
+  test_vm """
+    (type X (String | Nil))
+    (types_equivalent X `(String | Nil))
+  """, TRUE
+
+  test_vm """
+    (type UserId (Int | String))
+    (var uid: UserId 99)
+    uid
+  """, 99
+
+  test_vm """
+    (type X (String | Nil))
+    (fn f [x: X] -> String
+      (if (x != nil)
+        x
+      else
+        "missing"))
+    [(f "ok") (f nil)]
+  """, proc(result: Value) =
+    check result.kind == VkArray
+    check array_data(result).len == 2
+    check array_data(result)[0] == "ok".to_value()
+    check array_data(result)[1] == "missing".to_value()
+
+  test_vm_error """
+    (type X (String | Nil))
+    (fn f [x: X] -> String
+      (if (x != nil)
+        x
+      else
+        "missing"))
+    (f 1)
+  """
+
+  test_vm """
+    (class Box
+      (method echo:T [x: T] -> T
+        x))
+    (var box (new Box))
+    [(box .echo 42) (box .echo "hello")]
+  """, proc(result: Value) =
+    check result.kind == VkArray
+    check array_data(result).len == 2
+    check array_data(result)[0] == 42
+    check array_data(result)[1] == "hello".to_value()
+
+  test_vm """
+    (var x: (String | Nil) "hi")
+    (if (x != nil)
+      (x ++ "!")
+    else
+      "missing")
+  """, "hi!".to_value()
+
+  test_vm """
+    (class Point
+      ^fields {^x Int ^y Int}
+      (ctor [x y]
+        (/x = x)
+        (/y = y))
+    )
+    (var p (new Point 3 4))
+    (var maybe_label: (String | Nil) "Gene")
+    (if (maybe_label != nil)
+      maybe_label
+    else
+      "missing")
+  """, "Gene".to_value()
+
+  test_vm """
+    (var x: (Int | String) "hi")
+    (if (not (x .is Int))
+      x
+    else
+      "bad")
+  """, "hi".to_value()
+
+  test_strict_type_error """
+    (var x: (String | Nil) nil)
+    (if (x != nil)
+      "ok"
+    else
+      (x ++ "!"))
+  """

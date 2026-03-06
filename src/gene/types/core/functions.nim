@@ -39,6 +39,33 @@ proc register_type_descs(registry: ModuleTypeRegistry, type_descs: seq[TypeDesc]
   for i, desc in type_descs:
     registry.descriptors[i.TypeId] = desc
 
+proc resolve_local_type_value_to_id(v: Value,
+                                    type_descs: var seq[TypeDesc],
+                                    type_desc_index: var Table[string, TypeId],
+                                    type_aliases: Table[string, TypeId],
+                                    type_vars: Table[string, TypeId],
+                                    module_path: string): TypeId {.gcsafe.} =
+  case v.kind
+  of VkSymbol, VkString:
+    if type_vars.hasKey(v.str):
+      return type_vars[v.str]
+  else:
+    discard
+  resolve_type_value_to_id_with_index(v, type_descs, type_desc_index, type_aliases, type_vars, module_path)
+
+proc ensure_local_generic_type_id(name: string,
+                                  type_descs: var seq[TypeDesc],
+                                  type_desc_index: var Table[string, TypeId],
+                                  generic_type_ids: var Table[string, TypeId],
+                                  module_path: string): TypeId {.gcsafe.} =
+  if generic_type_ids.hasKey(name):
+    return generic_type_ids[name]
+  let type_id = intern_type_desc(type_descs,
+    TypeDesc(module_path: module_path, kind: TdkVar, var_id: generic_type_ids.len.int32),
+    type_desc_index)
+  generic_type_ids[name] = type_id
+  type_id
+
 proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
                   type_aliases: Table[string, TypeId] = initTable[string, TypeId](),
                   module_path = "",
@@ -71,11 +98,14 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
   # Intern types into the provided table (CU's or local).
   template type_descs: var seq[TypeDesc] = cu_type_descs
   let aliases = type_aliases
+  var type_desc_index = initTable[string, TypeId]()
+  ensure_type_desc_index(type_descs, type_desc_index)
   let use_precomputed_type_ids = type_expectation_ids.len > 0 or return_type_id != NO_TYPE_ID
   let pre_key = "pre".to_key()
   let post_key = "post".to_key()
   let examples_key = "examples".to_key()
   let intent_key = "intent".to_key()
+  var generic_type_ids = initTable[string, TypeId]()
 
   # Extract type annotations as name -> TypeId mapping, and strip them from args
   proc strip_type_annotations(args: Value, type_id_map: var Table[string, TypeId],
@@ -95,7 +125,8 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
         if i < src.len:
           let type_val = src[i]
           if not use_precomputed_type_ids and not type_id_map.hasKey(base):
-            type_id_map[base] = resolve_type_value_to_id(type_val, type_descs, aliases, module_path)
+            type_id_map[base] = resolve_local_type_value_to_id(
+              type_val, type_descs, type_desc_index, aliases, generic_type_ids, module_path)
           i.inc # Skip type expression
         continue
       elif item.kind == VkArray:
@@ -137,6 +168,7 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
 
   var name: string
   let matcher = new_arg_matcher()
+  matcher.type_aliases = aliases
   var body_start: int
   var is_generator = false
   var is_macro_like = false
@@ -155,7 +187,11 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
         apply_type_annotations(matcher, type_id_map)
       body_start = 1
     of VkSymbol, VkString:
-      name = first.str
+      let parsed_name = split_generic_definition_name(first.str)
+      name = parsed_name.base_name
+      for type_param in parsed_name.type_params:
+        discard ensure_local_generic_type_id(
+          type_param, type_descs, type_desc_index, generic_type_ids, module_path)
       # Check if function name ends with ! (macro-like function)
       if name.len > 0 and name[^1] == '!':
         is_macro_like = true
@@ -206,7 +242,8 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
       if use_precomputed_type_ids:
         matcher.return_type_id = return_type_id
       else:
-        matcher.return_type_id = resolve_type_value_to_id(ret_type, type_descs, aliases, module_path)
+        matcher.return_type_id = resolve_local_type_value_to_id(
+          ret_type, type_descs, type_desc_index, aliases, generic_type_ids, module_path)
       body_start += 2
   anchor_module_paths(type_descs, module_path)
   register_type_descs(type_registry, type_descs, module_path)

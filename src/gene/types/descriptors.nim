@@ -239,6 +239,42 @@ proc canonicalize_type_desc_owner*(desc: TypeDesc, fallback_module_path = ""): T
   if owner.len > 0:
     result.module_path = owner
 
+proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0): string {.gcsafe.} =
+  if type_id == NO_TYPE_ID:
+    return "Any"
+  if type_id < 0 or type_id.int >= type_descs.len:
+    return "Any"
+  if depth > 64:
+    return "Any"
+
+  let desc = type_descs[type_id.int]
+  case desc.kind
+  of TdkAny:
+    "Any"
+  of TdkNamed:
+    desc.name
+  of TdkApplied:
+    var parts: seq[string] = @[desc.ctor]
+    for arg in desc.args:
+      parts.add(type_desc_to_string(arg, type_descs, depth + 1))
+    "(" & join_strings(parts, " ") & ")"
+  of TdkUnion:
+    var parts: seq[string] = @[]
+    for member in desc.members:
+      parts.add(type_desc_to_string(member, type_descs, depth + 1))
+    "(" & join_strings(parts, " | ") & ")"
+  of TdkFn:
+    var params: seq[string] = @[]
+    for param in desc.params:
+      params.add(type_desc_to_string(param, type_descs, depth + 1))
+    let ret = type_desc_to_string(desc.ret, type_descs, depth + 1)
+    let effects =
+      if desc.effects.len > 0: " ! [" & join_strings(desc.effects, " ") & "]"
+      else: ""
+    "(Fn [" & join_strings(params, " ") & "] " & ret & effects & ")"
+  of TdkVar:
+    "T" & $desc.var_id
+
 proc module_registry_scope(path: string): string {.inline.} =
   if path.len == 0: "<local>" else: path
 

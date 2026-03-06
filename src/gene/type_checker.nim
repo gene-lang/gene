@@ -79,6 +79,7 @@ type
     current_class*: string
     init_self_stack*: seq[TypeExpr]
     effect_stack*: seq[seq[string]]
+    type_param_scopes*: seq[Table[string, TypeExpr]]
     type_descs*: seq[TypeDesc]
     type_desc_index*: Table[string, TypeId]
     warnings*: seq[string]
@@ -164,6 +165,7 @@ proc new_type_checker*(strict: bool = true, module_filename: string = ""): TypeC
     current_class: "",
     init_self_stack: @[],
     effect_stack: @[],
+    type_param_scopes: @[],
     type_descs: builtin_type_descs(),
     type_desc_index: initTable[string, TypeId](),
     warnings: @[]
@@ -214,6 +216,73 @@ proc fresh_var(self: TypeChecker): TypeExpr =
   self.next_var_id.inc
   result = TypeExpr(kind: TkVar, id: id)
 
+proc resolve(self: TypeChecker, t: TypeExpr): TypeExpr
+proc resolve_self(self: TypeChecker, t: TypeExpr): TypeExpr
+
+proc lookup_type_param(self: TypeChecker, name: string): TypeExpr =
+  if self == nil or name.len == 0 or self.type_param_scopes.len == 0:
+    return nil
+  for i in countdown(self.type_param_scopes.len - 1, 0):
+    if self.type_param_scopes[i].hasKey(name):
+      return self.type_param_scopes[i][name]
+  nil
+
+proc push_type_param_scope(self: TypeChecker, params: seq[string]) =
+  var scope = initTable[string, TypeExpr]()
+  for name in params:
+    if scope.hasKey(name):
+      raise new_exception(types.Exception, "Duplicate type parameter: " & name)
+    scope[name] = self.fresh_var()
+  self.type_param_scopes.add(scope)
+
+proc pop_type_param_scope(self: TypeChecker) =
+  if self == nil or self.type_param_scopes.len == 0:
+    return
+  discard self.type_param_scopes.pop()
+
+proc instantiate_type_vars(self: TypeChecker, t: TypeExpr): TypeExpr =
+  var replacements = initTable[int, TypeExpr]()
+
+  proc clone(node: TypeExpr): TypeExpr =
+    let rt = self.resolve_self(self.resolve(node))
+    if rt == nil:
+      return nil
+    case rt.kind
+    of TkAny:
+      ANY_TYPE
+    of TkNamed:
+      TypeExpr(kind: TkNamed, name: rt.name)
+    of TkApplied:
+      var args: seq[TypeExpr] = @[]
+      for arg in rt.args:
+        args.add(clone(arg))
+      TypeExpr(kind: TkApplied, ctor: rt.ctor, args: args)
+    of TkUnion:
+      var members: seq[TypeExpr] = @[]
+      for member in rt.members:
+        members.add(clone(member))
+      TypeExpr(kind: TkUnion, members: members)
+    of TkFn:
+      var params: seq[ParamType] = @[]
+      for param in rt.params:
+        params.add(ParamType(label: param.label, typ: clone(param.typ)))
+      TypeExpr(
+        kind: TkFn,
+        params: params,
+        ret: clone(rt.ret),
+        variadic: rt.variadic,
+        kw_splat: rt.kw_splat,
+        effects: rt.effects
+      )
+    of TkVar:
+      if replacements.hasKey(rt.id):
+        return replacements[rt.id]
+      let fresh = self.fresh_var()
+      replacements[rt.id] = fresh
+      fresh
+
+  clone(t)
+
 proc resolve(self: TypeChecker, t: TypeExpr): TypeExpr =
   if t == nil:
     return ANY_TYPE
@@ -222,8 +291,6 @@ proc resolve(self: TypeChecker, t: TypeExpr): TypeExpr =
   result = t
 
 proc type_to_string(t: TypeExpr): string
-
-proc resolve_self(self: TypeChecker, t: TypeExpr): TypeExpr
 
 proc occurs(self: TypeChecker, id: int, t: TypeExpr): bool =
   let rt = self.resolve(t)
@@ -851,6 +918,9 @@ proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
       return ANY_TYPE
     if name == "Self":
       return TypeExpr(kind: TkNamed, name: "Self")
+    let type_param = self.lookup_type_param(name)
+    if type_param != nil:
+      return type_param
     if self.types.hasKey(name):
       return self.types[name]
     if self.classes.hasKey(name):
@@ -1027,7 +1097,9 @@ proc resolve_self(self: TypeChecker, t: TypeExpr): TypeExpr =
   return rt
 
 proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], props: Table[Key, Value], context: string): TypeExpr =
-  let ct = self.resolve(callee_type)
+  var ct = self.resolve(callee_type)
+  if ct != nil and ct.kind == TkFn:
+    ct = self.instantiate_type_vars(ct)
   if ct == nil or ct.kind == TkAny:
     return ANY_TYPE
   # Allow calling type variables (unknown types) - they might be callable
@@ -1380,25 +1452,45 @@ proc check_var(self: TypeChecker, gene: ptr Gene): TypeExpr =
   self.define(name, ANY_TYPE)
   return ANY_TYPE
 
-proc extract_type_guard(self: TypeChecker, cond: Value): tuple[name: string, guarded_type: TypeExpr, found: bool] =
-  ## Detect simple type guard patterns like: (x .is Int) and (x is Int)
+proc extract_type_guard(self: TypeChecker, cond: Value): tuple[name: string, guarded_type: TypeExpr, found: bool, negated: bool] =
+  ## Detect simple type guard patterns like:
+  ##   (x .is Int)
+  ##   (x is Int)
+  ##   (not (x .is Int))
+  ##   (x == nil)
+  ##   (x != nil)
   if cond.kind != VkGene or cond.gene == nil:
-    return ("", nil, false)
+    return ("", nil, false, false)
   let gene = cond.gene
+  if gene.`type`.kind == VkSymbol and gene.`type`.str == "not" and gene.children.len > 0:
+    let inner = self.extract_type_guard(gene.children[0])
+    if inner.found:
+      return (inner.name, inner.guarded_type, true, not inner.negated)
+    return ("", nil, false, false)
+
+  if gene.children.len >= 2 and gene.children[0].kind == VkSymbol and gene.children[0].str in ["==", "!="]:
+    let op = gene.children[0].str
+    let left = gene.`type`
+    let right = gene.children[1]
+    if left.kind == VkSymbol and left.str.len > 0 and left.str != "_" and right == NIL:
+      return (left.str, TypeExpr(kind: TkNamed, name: "Nil"), true, op == "!=")
+    if right.kind == VkSymbol and right.str.len > 0 and right.str != "_" and left == NIL:
+      return (right.str, TypeExpr(kind: TkNamed, name: "Nil"), true, op == "!=")
+
   let recv = gene.`type`
   if recv.kind != VkSymbol:
-    return ("", nil, false)
+    return ("", nil, false, false)
   let name = recv.str
   if name.len == 0 or name == "_":
-    return ("", nil, false)
+    return ("", nil, false, false)
   if gene.children.len < 2:
-    return ("", nil, false)
+    return ("", nil, false, false)
 
   let guard_sym = gene.children[0]
   if guard_sym.kind == VkSymbol and (guard_sym.str == ".is" or guard_sym.str == "is"):
     let narrowed = self.parse_type_expr(gene.children[1])
-    return (name, narrowed, true)
-  return ("", nil, false)
+    return (name, narrowed, true, false)
+  return ("", nil, false, false)
 
 proc same_type(self: TypeChecker, a: TypeExpr, b: TypeExpr): bool =
   let ra = self.resolve_self(self.resolve(a))
@@ -1555,24 +1647,36 @@ proc check_if(self: TypeChecker, gene: ptr Gene): TypeExpr =
   let has_else = else_items.len > 0
   let else_expr = if has_else: branch_expr(else_items) else: NIL
 
-  let cond_type = self.check_expr(cond)
+  discard self.check_expr(cond)
   # Allow any truthy/falsy value in if conditions (runtime to_bool handles coercion)
 
   let guard = self.extract_type_guard(cond)
   let has_guard = guard.found
+  let original_guard_type = if has_guard: self.lookup(guard.name) else: nil
 
   self.push_scope()
   if has_guard:
-    self.define(guard.name, guard.guarded_type)
+    let narrowed =
+      if guard.negated and original_guard_type != nil:
+        self.subtract_narrowed_type(original_guard_type, guard.guarded_type)
+      else:
+        guard.guarded_type
+    self.define(guard.name, narrowed)
   let then_type = self.check_expr(then_expr)
   self.pop_scope()
 
   if has_else:
     self.push_scope()
     if has_guard:
-      let current = self.lookup(guard.name)
-      if current != nil:
-        self.define(guard.name, self.subtract_narrowed_type(current, guard.guarded_type))
+      let narrowed_else =
+        if guard.negated:
+          guard.guarded_type
+        elif original_guard_type != nil:
+          self.subtract_narrowed_type(original_guard_type, guard.guarded_type)
+        else:
+          nil
+      if narrowed_else != nil:
+        self.define(guard.name, narrowed_else)
     let else_type = self.check_expr(else_expr)
     self.pop_scope()
     try:
@@ -2005,6 +2109,7 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if gene.children.len == 0:
     return ANY_TYPE
   var name = "<unnamed>"
+  var type_params: seq[string] = @[]
   var args_val: Value = NIL
   var body_start = 1
   let first = gene.children[0]
@@ -2012,7 +2117,9 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
     args_val = first
     body_start = 1
   elif first.kind in {VkSymbol, VkString}:
-    name = first.str
+    let parsed_name = split_generic_definition_name(first.str)
+    name = parsed_name.base_name
+    type_params = parsed_name.type_params
     if gene.children.len < 2:
       return ANY_TYPE
     args_val = gene.children[1]
@@ -2027,6 +2134,10 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
     body_start = 2
   else:
     return ANY_TYPE
+
+  if type_params.len > 0:
+    self.push_type_param_scope(type_params)
+    defer: self.pop_type_param_scope()
 
   # Handle optional return type: (-> Type)
   var return_type: TypeExpr = ANY_TYPE
@@ -2200,9 +2311,14 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
   let name_val = gene.children[0]
   if name_val.kind != VkSymbol:
     return ANY_TYPE
-  let method_name = name_val.str
+  let parsed_name = split_generic_definition_name(name_val.str)
+  let method_name = parsed_name.base_name
+  let type_params = parsed_name.type_params
   let args_val = gene.children[1]
   var body_start = 2
+  if type_params.len > 0:
+    self.push_type_param_scope(type_params)
+    defer: self.pop_type_param_scope()
   var return_type: TypeExpr = ANY_TYPE
   if body_start < gene.children.len:
     let maybe_arrow = gene.children[body_start]

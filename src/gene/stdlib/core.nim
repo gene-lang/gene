@@ -2,7 +2,8 @@
 import base64, re, os, strutils, times, asyncdispatch, tables
 import std/json as nim_json
 import ../types
-from ../types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name, types_equivalent
+from ../types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name,
+  types_equivalent, is_runtime_type_value, runtime_type_payload
 import ../parser
 import ../compiler
 import ../repl_session
@@ -2279,6 +2280,19 @@ proc core_println*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_
   echo s
   return NIL
 
+proc core_concat*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional == 0:
+    return "".to_value()
+
+  var buffer = newStringOfCap(32)
+  for i in 0..<positional:
+    let arg = get_positional_arg(args, i, has_keyword_args)
+    if arg.kind != VkString:
+      not_allowed("++ expects String arguments")
+    buffer.add(arg.str)
+  buffer.to_value()
+
 # Assert condition
 proc core_assert*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count > 0:
@@ -2383,6 +2397,23 @@ proc normalize_type_input(value: Value): Value =
   else:
     return value
 
+proc resolve_runtime_type_input(vm: ptr VirtualMachine, value: Value): tuple[type_id: TypeId, type_descs: seq[TypeDesc], found: bool] =
+  if is_runtime_type_value(value):
+    let payload = runtime_type_payload(value)
+    return (payload.runtime_type.type_id, payload.type_descs, true)
+
+  if value.kind notin {VkSymbol, VkString, VkGene, VkClass, VkComplexSymbol}:
+    return (NO_TYPE_ID, @[], false)
+
+  var descs = runtime_type_descs_for(vm)
+  let aliases = if vm != nil and vm.cu != nil: vm.cu.type_aliases else: initTable[string, TypeId]()
+  let module_path = if vm != nil and vm.cu != nil: vm.cu.module_path else: ""
+  let type_id = resolve_type_value_to_id(normalize_type_input(value), descs, aliases, module_path)
+  if vm != nil and vm.cu != nil:
+    vm.cu.type_descriptors = descs
+    vm.cu.type_registry = populate_registry(vm.cu.type_descriptors, vm.cu.module_path)
+  (type_id, descs, true)
+
 proc core_types_equivalent(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                            has_keyword_args: bool): Value =
   let positional = get_positional_count(arg_count, has_keyword_args)
@@ -2392,15 +2423,15 @@ proc core_types_equivalent(vm: ptr VirtualMachine, args: ptr UncheckedArray[Valu
   let left_raw = get_positional_arg(args, 0, has_keyword_args)
   let right_raw = get_positional_arg(args, 1, has_keyword_args)
 
-  if left_raw.kind notin {VkSymbol, VkString, VkGene, VkClass, VkComplexSymbol}:
+  let left = resolve_runtime_type_input(vm, left_raw)
+  let right = resolve_runtime_type_input(vm, right_raw)
+
+  if not left.found:
     not_allowed("types_equivalent expects a type expression/value as first argument")
-  if right_raw.kind notin {VkSymbol, VkString, VkGene, VkClass, VkComplexSymbol}:
+  if not right.found:
     not_allowed("types_equivalent expects a type expression/value as second argument")
 
-  var descs = runtime_type_descs_for(vm)
-  let left_id = resolve_type_value_to_id(normalize_type_input(left_raw), descs)
-  let right_id = resolve_type_value_to_id(normalize_type_input(right_raw), descs)
-  return types_equivalent(left_id, right_id, descs).to_value()
+  return types_equivalent(left.type_id, left.type_descs, right.type_id, right.type_descs).to_value()
 
 # Debug value (write to stderr)
 proc core_debug*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -4020,6 +4051,7 @@ proc init_gene_namespace*() =
     return
   types.gene_namespace_initialized = true
   let object_class = stdlib_classes.init_basic_classes()
+  stdlib_classes.init_type_class(object_class)
   stdlib_strings.init_string_class(object_class)
   stdlib_regex.init_regex_class(object_class)
 
@@ -4088,6 +4120,7 @@ proc init_stdlib*() =
   var global_ns = App.app.global_ns.ns
   global_ns["print".to_key()] = core_print.to_value()
   global_ns["println".to_key()] = core_println.to_value()
+  global_ns["++".to_key()] = core_concat.to_value()
 
   # Collections
   global_ns["len".to_key()] = NativeFn(core_len).to_value()

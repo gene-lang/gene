@@ -9,8 +9,12 @@ from ./types/runtime_types import
   validate_type,
   validate_or_coerce_type,
   emit_type_warning,
+  is_compatible,
   runtime_type_name,
   new_runtime_type_object,
+  new_runtime_type_value,
+  is_runtime_type_value,
+  runtime_type_payload,
   resolve_constructor,
   resolve_initializer,
   resolve_method

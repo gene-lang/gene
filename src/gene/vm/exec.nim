@@ -1402,6 +1402,9 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.push(inst.arg0)
       of IkPushNil:
         self.frame.push(NIL)
+      of IkPushTypeValue:
+        let type_id = inst.arg0.int64.TypeId
+        self.frame.push(new_runtime_type_value(type_id, self.current_runtime_type_descs()))
       of IkPop:
         discard self.frame.pop()
       of IkDup:
@@ -2835,38 +2838,13 @@ proc exec*(self: ptr VirtualMachine): Value =
         # (x is Type) — check if value is an instance of type
         let type_arg = self.frame.pop()
         let value = self.frame.pop()
-        if type_arg.kind != VkClass:
-          not_allowed("is requires a class type on the right side")
-        let target_class = type_arg.ref.class
-        if target_class.is_nil:
-          self.frame.push(FALSE)
+        let resolved = self.resolve_runtime_type_arg(type_arg)
+        if not resolved.found:
+          not_allowed("is requires a type value on the right side")
+        if resolved.type_id == NO_TYPE_ID:
+          self.frame.push(TRUE)
         else:
-          # Get the class of the value
-          var actual_class: Class = nil
-          case value.kind
-          of VkInt: actual_class = App.app.int_class.ref.class
-          of VkFloat: actual_class = App.app.float_class.ref.class
-          of VkBool: actual_class = App.app.bool_class.ref.class
-          of VkString: actual_class = App.app.string_class.ref.class
-          of VkNil: actual_class = App.app.nil_class.ref.class
-          of VkSymbol: actual_class = App.app.symbol_class.ref.class
-          of VkArray: actual_class = App.app.array_class.ref.class
-          of VkMap: actual_class = App.app.map_class.ref.class
-          of VkInstance: actual_class = value.instance_class
-          of VkCustom:
-            if value.ref.custom_class != nil:
-              actual_class = value.ref.custom_class
-          of VkFunction, VkNativeFn: actual_class = App.app.function_class.ref.class
-          else: discard
-          # Walk the inheritance chain
-          var matched = false
-          var current = actual_class
-          while current != nil:
-            if current == target_class:
-              matched = true
-              break
-            current = current.parent
-          self.frame.push(if matched: TRUE else: FALSE)
+          self.frame.push(is_compatible(value, resolved.type_id, resolved.type_descs).to_value())
 
       of IkCreateRange:
         let step = self.frame.pop()
@@ -3200,6 +3178,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           b.matcher.type_check = self.type_check
           if self.cu != nil and self.cu.type_descriptors.len > 0:
             b.matcher.type_descriptors = self.cu.type_descriptors
+            b.matcher.type_aliases = self.cu.type_aliases
 
         if not b.matcher.is_empty():
           for child in b.matcher.children:

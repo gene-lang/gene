@@ -2,7 +2,19 @@
 
 **Author:** Sunni (AI) + Guoliang Cao  
 **Date:** 2026-02-07  
-**Status:** Draft / Discussion  
+**Status:** Partially implemented  
+
+## Current Status
+
+Implemented:
+- explicit generic functions via `fn name:T`
+- explicit generic methods via `method name:T`
+- call-site polymorphism through checker-side freshening of generic type variables
+
+Deferred:
+- generic classes
+- bounds / constraints
+- reified runtime generic class instances
 
 ## Design Principles
 
@@ -174,7 +186,7 @@ The type checker already has infrastructure for generics:
 
 **Question:** Are parameterized type aliases different from classes? Or should they just be sugar?
 
-**Recommendation:** Keep type aliases lightweight — they're names for type expressions, not new runtime types. `(type (Pair A B) ...)` creates a compile-time alias. Classes create runtime types.
+**Recommendation:** Keep type aliases lightweight — they're names for type expressions, not new nominal runtime classes. `(type (Pair A B) ...)` should resolve to a descriptor-backed runtime type value plus a compile-time alias; classes still create distinct nominal runtime types.
 
 ## Scenario 6: Constrained Types (Bounds)
 

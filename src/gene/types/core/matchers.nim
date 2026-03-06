@@ -9,6 +9,7 @@ proc new_arg_matcher*(): RootMatcher =
     mode: MatchArguments,
     type_check: true,
     return_type_id: NO_TYPE_ID,
+    type_aliases: initTable[string, TypeId](),
   )
 
 proc new_matcher*(root: RootMatcher, kind: MatcherKind): Matcher =
@@ -300,6 +301,7 @@ proc type_expr_to_string*(v: Value): string =
 proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc],
                                         type_desc_index: var Table[string, TypeId],
                                         type_aliases: Table[string, TypeId],
+                                        type_vars: Table[string, TypeId],
                                         module_path: string): TypeId {.gcsafe.} =
   ## Resolve a Gene AST type expression to a TypeId, interning into type_descs.
   ## Handles: symbols (Int), applied types (Array Int), unions (Int | String), Fn types.
@@ -309,6 +311,8 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
     let builtin_id = lookup_builtin_type(v.str)
     if builtin_id != NO_TYPE_ID:
       return builtin_id
+    if type_vars.hasKey(v.str):
+      return type_vars[v.str]
     # Check type aliases
     if type_aliases.hasKey(v.str):
       return type_aliases[v.str]
@@ -319,6 +323,8 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
     let builtin_id = lookup_builtin_type(v.str)
     if builtin_id != NO_TYPE_ID:
       return builtin_id
+    if type_vars.hasKey(v.str):
+      return type_vars[v.str]
     if type_aliases.hasKey(v.str):
       return type_aliases[v.str]
     return intern_type_desc(type_descs,
@@ -338,16 +344,16 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
           if item.kind == VkSymbol and item.str.startsWith("^"):
             # Keyword param - skip label, use type
             if i + 1 < items.len:
-              params.add(resolve_type_value_to_id_with_index(items[i + 1], type_descs, type_desc_index, type_aliases, module_path))
+              params.add(resolve_type_value_to_id_with_index(items[i + 1], type_descs, type_desc_index, type_aliases, type_vars, module_path))
               i += 2
             else:
               params.add(BUILTIN_TYPE_ANY_ID)
               i += 1
           else:
-            params.add(resolve_type_value_to_id_with_index(item, type_descs, type_desc_index, type_aliases, module_path))
+            params.add(resolve_type_value_to_id_with_index(item, type_descs, type_desc_index, type_aliases, type_vars, module_path))
             i += 1
       let ret =
-        if gene.children.len > 1: resolve_type_value_to_id_with_index(gene.children[1], type_descs, type_desc_index, type_aliases, module_path)
+        if gene.children.len > 1: resolve_type_value_to_id_with_index(gene.children[1], type_descs, type_desc_index, type_aliases, type_vars, module_path)
         else: BUILTIN_TYPE_ANY_ID
       var effects: seq[string] = @[]
       if gene.children.len > 2:
@@ -364,7 +370,7 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
     if is_union_gene(gene):
       var members: seq[TypeId] = @[]
       for member in union_members(v):
-        members.add(resolve_type_value_to_id_with_index(member, type_descs, type_desc_index, type_aliases, module_path))
+        members.add(resolve_type_value_to_id_with_index(member, type_descs, type_desc_index, type_aliases, type_vars, module_path))
       return intern_type_desc(type_descs,
         TypeDesc(module_path: module_path, kind: TdkUnion, members: members), type_desc_index)
     # Handle applied type: (Array Int)
@@ -372,7 +378,7 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
       let ctor = gene.`type`.str
       var args: seq[TypeId] = @[]
       for child in gene.children:
-        args.add(resolve_type_value_to_id_with_index(child, type_descs, type_desc_index, type_aliases, module_path))
+        args.add(resolve_type_value_to_id_with_index(child, type_descs, type_desc_index, type_aliases, type_vars, module_path))
       return intern_type_desc(type_descs,
         TypeDesc(module_path: module_path, kind: TdkApplied, ctor: ctor, args: args), type_desc_index)
     return BUILTIN_TYPE_ANY_ID
@@ -384,4 +390,5 @@ proc resolve_type_value_to_id*(v: Value, type_descs: var seq[TypeDesc],
                               module_path = ""): TypeId {.gcsafe.} =
   var type_desc_index = initTable[string, TypeId]()
   ensure_type_desc_index(type_descs, type_desc_index)
-  resolve_type_value_to_id_with_index(v, type_descs, type_desc_index, type_aliases, module_path)
+  resolve_type_value_to_id_with_index(v, type_descs, type_desc_index, type_aliases,
+    initTable[string, TypeId](), module_path)

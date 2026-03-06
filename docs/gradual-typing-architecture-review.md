@@ -59,8 +59,8 @@
 - NaN-tag-based fast type tests (`is_int`, `is_float`, `is_string`, etc.)
 - `validate_type()` raises catchable Gene exceptions on mismatch
 - Union, ADT, and function type compatibility at runtime
-- Wired into VM variable and argument binding paths (`IkVar`, `IkVarAssign`, `IkVarAssignInherited`, and matcher-based arg processing) when type expectations exist
-- Current representation is string-backed; this is the migration target for descriptor-backed runtime types
+- Wired into VM variable, argument, return, and typed-property paths when descriptor expectations exist
+- Current runtime checks are descriptor-backed; strings remain mostly for diagnostics and display
 
 ### 3. NaN-Boxing Value Representation
 
@@ -110,9 +110,9 @@ Type narrowing exists in limited form, but it is not yet comprehensive across `i
 
 `TkApplied` supports applied types (`Array<T>`, `Map<K,V>`, etc.), and users can define parametric ADTs. The missing piece is first-class generics for functions/classes (with proper polymorphic instantiation/monomorphization). Constructor typing is still partially special-cased (`Ok`/`Err`/`Some`/`None`).
 
-### 6. Class Fields Are Untyped at Runtime
+### 6. Class Fields Are Still Raw Storage at Runtime
 
-Instance fields stored as raw `Value` arrays. `^fields` annotations exist only in the type checker's `ClassInfo`, not in runtime `Class` objects. No layout optimization for known-type fields.
+Instance fields are still stored as raw `Value` slots/tables. Runtime `Class` objects now carry property type metadata and validate typed assignments, but there is still no specialized typed field layout or deeper storage optimization.
 
 ## Deferred / Out of Scope (Current Phase)
 

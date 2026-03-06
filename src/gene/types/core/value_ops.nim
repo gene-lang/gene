@@ -497,6 +497,12 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         result = $self.ref.time_hour & ":" & $self.ref.time_minute & ":" & $self.ref.time_second
       of VkFuture:
         result = "<Future " & $self.ref.future.state & ">"
+      of VkCustom:
+        if self.ref != nil and self.ref.custom_data != nil and (self.ref.custom_data of RuntimeTypeValueData):
+          let payload = RuntimeTypeValueData(self.ref.custom_data)
+          result = type_desc_to_string(payload.runtime_type.type_id, payload.type_descs)
+        else:
+          result = $self.kind
       else:
         result = $self.kind
 
@@ -576,6 +582,12 @@ proc `$`*(self: Value): string {.gcsafe.} =
         result = $self.ref.time_hour & ":" & $self.ref.time_minute & ":" & $self.ref.time_second
       of VkFuture:
         result = "<Future " & $self.ref.future.state & ">"
+      of VkCustom:
+        if self.ref != nil and self.ref.custom_data != nil and (self.ref.custom_data of RuntimeTypeValueData):
+          let payload = RuntimeTypeValueData(self.ref.custom_data)
+          result = type_desc_to_string(payload.runtime_type.type_id, payload.type_descs)
+        else:
+          result = $self.kind
       else:
         result = $self.kind
 

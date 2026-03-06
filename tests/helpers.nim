@@ -118,7 +118,6 @@ proc test_reentry(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
 
 proc init_all*() =
   if not initialized:
-    ensure_core_extensions_built()
     init_app_and_vm()
     init_stdlib()
     # Register test functions in gene namespace
@@ -127,6 +126,10 @@ proc init_all*() =
     App.app.gene_ns.ns["test_increment".to_key()] = test_increment.to_value()
     App.app.gene_ns.ns["test_reentry".to_key()] = test_reentry.to_value()
     initialized = true
+
+proc init_all_with_extensions*() =
+  ensure_core_extensions_built()
+  init_all()
 
 proc test_parser*(code: string, result: Value) =
   var code = cleanup(code)

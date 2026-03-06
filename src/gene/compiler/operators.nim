@@ -372,6 +372,145 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   self.emit(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
   # echo fmt"Added GeneEnd with label {end_label} at position {self.output.instructions.len - 1}"
 
+proc likely_runtime_type_leaf(self: Compiler, value: Value): bool =
+  case value.kind
+  of VkSymbol:
+    let name = value.str
+    if self.output.type_aliases.hasKey(name):
+      return true
+    if lookup_builtin_type(name) != NO_TYPE_ID:
+      return true
+    if name.len > 0 and name[0].isUpperAscii():
+      return true
+    false
+  else:
+    false
+
+proc likely_runtime_type_head(self: Compiler, value: Value): bool =
+  case value.kind
+  of VkSymbol:
+    let name = value.str
+    if name == "Fn":
+      return true
+    if self.output.type_aliases.hasKey(name):
+      return true
+    if lookup_builtin_type(name) != NO_TYPE_ID:
+      return true
+    false
+  else:
+    false
+
+proc is_union_type_gene(gene: ptr Gene): bool =
+  if gene == nil:
+    return false
+  if gene.`type`.kind == VkSymbol and gene.`type`.str == "|":
+    return true
+  for child in gene.children:
+    if child.kind == VkSymbol and child.str == "|":
+      return true
+  false
+
+proc union_type_members(value: Value): seq[Value] =
+  if value.kind == VkGene and value.gene != nil and is_union_type_gene(value.gene):
+    let gene = value.gene
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "|":
+      return gene.children
+
+    result.add(gene.`type`)
+    var i = 0
+    while i < gene.children.len:
+      let child = gene.children[i]
+      if child.kind == VkSymbol and child.str == "|":
+        if i + 1 < gene.children.len:
+          result.add(gene.children[i + 1])
+        i += 2
+      else:
+        i.inc()
+    return result
+
+  @[value]
+
+proc looks_like_runtime_type_expr(self: Compiler, value: Value, depth = 0): bool =
+  if depth > 64:
+    return false
+
+  case value.kind
+  of VkSymbol, VkString, VkComplexSymbol:
+    return self.likely_runtime_type_leaf(value)
+  of VkGene:
+    if value.gene == nil or value.gene.props.len > 0:
+      return false
+    let gene = value.gene
+
+    if is_union_type_gene(gene):
+      for member in union_type_members(value):
+        if not self.looks_like_runtime_type_expr(member, depth + 1):
+          return false
+      return true
+
+    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
+      if gene.children.len > 0 and gene.children[0].kind == VkArray:
+        let items = array_data(gene.children[0])
+        var i = 0
+        while i < items.len:
+          let item = items[i]
+          if item.kind == VkSymbol and item.str.startsWith("^"):
+            i.inc()
+            if i < items.len and not self.looks_like_runtime_type_expr(items[i], depth + 1):
+              return false
+            i.inc()
+            continue
+          if not self.looks_like_runtime_type_expr(item, depth + 1):
+            return false
+          i.inc()
+      if gene.children.len > 1 and not self.looks_like_runtime_type_expr(gene.children[1], depth + 1):
+        return false
+      return true
+
+    if not self.likely_runtime_type_head(gene.`type`):
+      return false
+    for child in gene.children:
+      if not self.looks_like_runtime_type_expr(child, depth + 1):
+        return false
+    true
+  else:
+    false
+
+proc emit_type_local_binding(self: Compiler, name: string) =
+  let reserved = self.reserve_local_binding(name)
+  self.add_scope_start()
+  self.emit(Instruction(kind: IkVar, arg0: reserved.index.to_value()))
+  if not reserved.new_binding:
+    self.scope_tracker.next_index = reserved.old_next_index
+  if self.declared_names.len > 0:
+    self.declared_names[^1][reserved.key] = true
+
+proc compile_runtime_type_expr(self: Compiler, input: Value): bool =
+  if input.kind != VkGene:
+    return false
+  if not self.looks_like_runtime_type_expr(input):
+    return false
+  let type_id = resolve_type_value_to_id(input, self.output.type_descriptors,
+    self.output.type_aliases, self.output.module_path)
+  self.emit(Instruction(kind: IkPushTypeValue, arg0: type_id.to_value()))
+  true
+
+proc compile_type_alias(self: Compiler, gene: ptr Gene) =
+  if gene.children.len < 2 or gene.children[0].kind != VkSymbol:
+    self.emit(Instruction(kind: IkPushNil))
+    return
+
+  let alias_name = gene.children[0].str
+  let type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors,
+    self.output.type_aliases, self.output.module_path)
+  self.output.type_aliases[alias_name] = type_id
+  self.emit(Instruction(kind: IkPushTypeValue, arg0: type_id.to_value()))
+
+  if self.local_definitions:
+    self.emit(Instruction(kind: IkNamespaceStore, arg0: alias_name.to_symbol_value()))
+
+  self.emit_type_local_binding(alias_name)
+
 # TODO: handle special cases:
 # 1. No arguments
 # 2. All arguments are primitives or array/map of primitives
@@ -641,7 +780,7 @@ proc normalized_infix_operator(op_value: Value): string {.inline.} =
   case op_value.kind
   of VkSymbol:
     let op = op_value.str
-    if op in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "is", "&&", "||"]:
+    if op in ["+", "-", "*", "/", "%", "**", "++", "./", "<", "<=", ">", ">=", "==", "!=", "is", "&&", "||"]:
       return op
   of VkComplexSymbol:
     # Parser variant: "./" can be emitted as complex symbol @[".", ""]
@@ -657,7 +796,7 @@ proc infix_precedence(op: string): int {.inline.} =
     90
   of "*", "/", "%", "**":
     80
-  of "+", "-":
+  of "+", "-", "++":
     70
   of "<", "<=", ">", ">=", "==", "!=", "is":
     60
@@ -1161,12 +1300,7 @@ proc compile_gene(self: Compiler, input: Value) =
         self.emit(Instruction(kind: IkPushNil))
         return
       of "type":
-        # Register type alias: (type Name TypeExpr)
-        if gene.children.len >= 2 and gene.children[0].kind == VkSymbol:
-          let alias_name = gene.children[0].str
-          let type_id = resolve_type_value_to_id(gene.children[1], self.output.type_descriptors, self.output.type_aliases, self.output.module_path)
-          self.output.type_aliases[alias_name] = type_id
-        self.emit(Instruction(kind: IkPushNil))
+        self.compile_type_alias(gene)
         return
       of "object":
         self.compile_object(gene)
@@ -1332,5 +1466,8 @@ proc compile_gene(self: Compiler, input: Value) =
 
               self.emit(Instruction(kind: IkPushNil))
               return
+
+  if self.compile_runtime_type_expr(input):
+    return
 
   self.compile_gene_unknown(gene)

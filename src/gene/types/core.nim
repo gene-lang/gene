@@ -6,6 +6,7 @@ import os
 import asyncdispatch  # For async I/O support
 
 import ./type_defs
+import ../utils
 export type_defs
 
 #################### NaN Boxing implementation ####################

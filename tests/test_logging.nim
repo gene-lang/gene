@@ -47,7 +47,7 @@ test "Logging format includes level and name":
     current_thread_id = saved_thread_id
 
 test "Gene Logger emits log line":
-  init_all()
+  init_all_with_extensions()
   reset_logging_config()
   load_logging_config(joinPath(getTempDir(), "missing_logging.gene"))
   # Save and restore global state to avoid test pollution

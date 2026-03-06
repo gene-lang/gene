@@ -48,7 +48,7 @@ proc setupTestDb(): bool =
 suite "PostgreSQL stdlib":
   let dbAvailable = setupTestDb()
 
-  init_all()
+  init_all_with_extensions()
 
   if not dbAvailable:
     echo "Skipping PostgreSQL tests (set GENE_TEST_POSTGRES_URL to run)"

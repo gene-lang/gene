@@ -640,3 +640,57 @@ suite "GIR CLI":
     check class_obj.runtime_type.constructor != NIL
     check class_obj.runtime_type.initializer != NIL
     check len(class_obj.runtime_type.methods) > 0
+
+  test "generic function signatures intern type variables as descriptors":
+    var descs = builtin_type_descs()
+    let fn_obj = to_function(parser.read("(fn identity:T [x: T] -> T x)"), descs)
+
+    check fn_obj.matcher != nil
+    check fn_obj.matcher.children.len == 1
+    let param_type_id = fn_obj.matcher.children[0].type_id
+    check param_type_id != NO_TYPE_ID
+    check descs[int(param_type_id)].kind == TdkVar
+    check fn_obj.matcher.return_type_id != NO_TYPE_ID
+    check descs[int(fn_obj.matcher.return_type_id)].kind == TdkVar
+
+  test "generic function matcher survives GIR roundtrip":
+    let code = """
+      (fn identity:T [x: T] -> T x)
+      (identity 42)
+    """
+    let compiled = compiler.parse_and_compile(code, "<generic-descriptor-roundtrip>")
+    var generic_fn: Function = nil
+    for inst in compiled.instructions:
+      if inst.kind == IkFunction:
+        let info = to_function_def_info(inst.arg0)
+        generic_fn = to_function(info.input, compiled.type_descriptors, compiled.type_aliases,
+          compiled.module_path, populate_registry(compiled.type_descriptors, compiled.module_path),
+          info.type_expectation_ids, info.return_type_id)
+        break
+
+    check generic_fn != nil
+    check generic_fn.matcher.children.len == 1
+    let before_param_type = generic_fn.matcher.children[0].type_id
+    check before_param_type != NO_TYPE_ID
+    check compiled.type_descriptors[int(before_param_type)].kind == TdkVar
+
+    let out_dir = "build/tests"
+    createDir(out_dir)
+    let gir_path = out_dir / "generic_descriptor_roundtrip.gir"
+    gir.save_gir(compiled, gir_path, "<generic-descriptor-roundtrip>")
+    let loaded = gir.load_gir(gir_path)
+    removeFile(gir_path)
+
+    var loaded_fn: Function = nil
+    for inst in loaded.instructions:
+      if inst.kind == IkFunction:
+        let info = to_function_def_info(inst.arg0)
+        loaded_fn = to_function(info.input, loaded.type_descriptors, loaded.type_aliases,
+          loaded.module_path, populate_registry(loaded.type_descriptors, loaded.module_path),
+          info.type_expectation_ids, info.return_type_id)
+        break
+
+    check loaded_fn != nil
+    let after_param_type = loaded_fn.matcher.children[0].type_id
+    check after_param_type != NO_TYPE_ID
+    check loaded.type_descriptors[int(after_param_type)].kind == TdkVar

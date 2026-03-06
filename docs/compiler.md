@@ -96,26 +96,20 @@ The compiler uses `ScopeTracker` to map variable names to local indices. Variabl
 
 ## Type System Architecture
 
-### Current State (Problem)
+### Current State
 
-Types currently flow through the pipeline in **two parallel paths**:
+The active pipeline is descriptor-first:
 
-**Path 1 — Strings:**
-```
-AST props ("__tc_binding_type": "Int")
-  → ScopeTracker.type_expectations: seq[string]
-  → runtime: parse_type_string("Int") → validate
-```
-
-**Path 2 — TypeDesc/TypeId (incomplete):**
 ```
 TypeChecker.TypeExpr
-  → TypeDesc objects in CompilationUnit.type_descriptors
-  → ScopeTracker.type_expectation_ids: seq[TypeId]
-  → partially used in runtime
+  → TypeDesc / TypeId
+  → CompilationUnit.type_descriptors
+  → ScopeTracker.type_expectation_ids / matcher.type_id / return_type_id
+  → GIR serialization
+  → runtime validation
 ```
 
-Both paths exist simultaneously. Strings are the primary path; TypeDesc is layered on top but doesn't replace strings. This is the core instability.
+Strings are still used for display and diagnostics, but not as the primary execution metadata path.
 
 ### Target Architecture
 
@@ -159,22 +153,14 @@ It creates a TypeDesc and registers it in the module's type registry. Subsequent
 
 #### Instruction-Level Type Storage
 
-Type descriptors are stored directly in instructions:
+Type metadata is carried as `TypeId` references:
 
 ```
-# Current (string-based):
-IkVar instruction → index into ScopeTracker
-  → ScopeTracker.type_expectations[index] = "Int"  # string!
-  → runtime parses "Int" string every time
-
-# Target (descriptor-based):
-IkVar instruction 
-  → arg carries reference to TypeDesc or TypeId
-  → runtime validates directly against the type object
-  → no parsing, no string lookup
+IkVar / IkVarValue / IkDefineProp
+  → arg carries TypeId
+  → runtime resolves through CompilationUnit.type_descriptors
+  → validation runs against descriptor-derived runtime types
 ```
-
-The instruction itself carries the type information needed for validation. The VM doesn't need to look up strings or parse type expressions at runtime.
 
 #### Type Resolution Flow
 
@@ -206,21 +192,12 @@ Source: (class Foo ...) (var f: Foo (new Foo))
 3. VM validates instance against TypeDesc
 ```
 
-### What To Remove
+### What Still Matters
 
-The target architecture eliminates:
-
-- `ScopeTracker.type_expectations: seq[string]` — replaced by type objects in instructions
-- `__tc_binding_type` / `__tc_param_types` string properties on AST nodes — type checker produces TypeDesc directly
-- `parse_type_string()` at runtime — no string-based type parsing
-- String-based `validate_type(value, "Int")` — replaced by descriptor-based validation
-
-### What To Keep
-
-- `TypeExpr` in type_checker.nim — good compile-time representation, drives inference
-- `TypeDesc` in type_defs.nim — good runtime-compatible descriptor, just needs to become the single path
-- `is_compatible()` logic in runtime_types.nim — validation logic is fine, just needs type object inputs instead of strings
-- NaN-tag fast paths for built-in types — keep for performance
+- `TypeExpr` remains the compile-time inference model.
+- `TypeDesc` / `TypeId` are the runtime-facing metadata path.
+- `runtime_types.nim` still converts descriptors to display strings for diagnostics.
+- NaN-tag fast paths for built-in types still matter for runtime performance.
 
 ## Compiler Internals
 
@@ -273,7 +250,7 @@ Matcher = ref object
   kind: MatcherKind        # MkRoot, MkName, MkSplat, etc.
   name: Key                # Parameter name
   default_value: Value     # Default if not provided
-  type_name: string        # Type annotation (TO BE REPLACED with TypeDesc)
+  type_id: TypeId          # Type annotation descriptor id
   children: seq[Matcher]   # Sub-matchers for destructuring
 ```
 
@@ -283,13 +260,15 @@ The Matcher handles positional args, keyword args, defaults, splats, and destruc
 
 See `docs/generics-design.md` for the full design.
 
-**Colon syntax:** `fn first:A`, `class Stack:T` — type parameters attached to definition names.
+**Implemented now:** `fn first:A`, `method echo:T` — explicit type params attached to definition names.
 
-**Compiler handling:** When the compiler sees `first:A`:
+**Compiler/runtime handling:** When the compiler/runtime sees `first:A`:
 1. Split name on colons: `["first", "A"]`
 2. Base name = `first`, type params = `["A"]`
-3. Register `A` as a type variable in the type registry for this scope
-4. When `A` appears in param types or return type, it resolves to a type variable descriptor
+3. Register `A` as a type variable descriptor (`TdkVar`) for the matcher path
+4. Freshen generic type vars at each type-checker call site so the function stays polymorphic across calls
+
+**Deferred:** generic classes, bounds/constraints, and runtime reified generic class instances.
 
 ## GIR (Gene Intermediate Representation)
 
@@ -297,9 +276,9 @@ GIR is a binary serialization of CompilationUnit for caching. When a `.gene` fil
 
 **Cache invalidation:** Source hash comparison — if the source changed, GIR is regenerated.
 
-**Type descriptors in GIR:** Currently serialized alongside instructions. The target architecture should serialize TypeDesc objects as part of the GIR format so cached modules preserve type information.
+**Type descriptors in GIR:** serialized as part of the compilation unit, together with `type_aliases` and scope/matcher type ids.
 
-**Priority:** GIR serialization of types is deferred. Get the in-memory type object pipeline working first.
+**Current policy:** GIR is the cache format for the active descriptor-first pipeline. Cached modules preserve the same typing metadata as fresh compilation.
 
 ## Native Compilation
 
