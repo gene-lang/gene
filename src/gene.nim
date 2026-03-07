@@ -40,7 +40,7 @@ proc main(): int =
     return 0
   
   var cmd = args[0]
-  let command_args = args[1 .. ^1]
+  let command_args = if args.len > 1: args[1 .. ^1] else: @[]
   
   # Use safe lookup
   let handler = CommandMgr.lookup(cmd)

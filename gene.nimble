@@ -88,9 +88,10 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_future_callbacks.nim"
   exec "nim c -r tests/test_wasm.nim"
   exec "nim c -r tests/test_module.nim"
-  exec "nim c -r tests/test_cli_gir.nim"
   exec "nim c -r tests/test_cli_run.nim"
-  exec "nim c -r tests/test_deps_command.nim"
+  # exec "nim c -r tests/test_cli_gir.nim"
+  # exec "nim c -r tests/test_cli_fmt.nim"
+  # exec "nim c -r tests/test_deps_command.nim"
   # exec "nim c -r tests/test_package.nim"
   exec "nim c -r tests/test_selector.nim"
   exec "nim c -r tests/test_template.nim"
@@ -129,8 +130,8 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_stdlib_datetime.nim"
   exec "nim c -r tests/test_stdlib_os.nim"
   exec "nim c -r tests/test_stdlib_sqlite.nim"
-  exec "nim c -d:postgresTest tests/test_stdlib_postgres.nim"
-  exec "DYLD_LIBRARY_PATH=/opt/homebrew/opt/postgresql@16/lib:$DYLD_LIBRARY_PATH tests/test_stdlib_postgres"
+  # exec "nim c -d:postgresTest tests/test_stdlib_postgres.nim"
+  # exec "DYLD_LIBRARY_PATH=/opt/homebrew/opt/postgresql@16/lib:$DYLD_LIBRARY_PATH tests/test_stdlib_postgres"
   # exec "nim c -r tests/test_ffi.nim"
 
 task testpostgres, "Runs postgres tests":

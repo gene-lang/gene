@@ -1,11 +1,11 @@
-import os, parseopt
+import os, parseopt, terminal
 
 import ../gene/formatter
 import ./base
 
 const
   DEFAULT_COMMAND = "fmt"
-  COMMANDS = @[DEFAULT_COMMAND]
+  COMMANDS = @[DEFAULT_COMMAND, "format"]
 
 type
   FmtOptions = object
@@ -17,16 +17,17 @@ proc handle*(cmd: string, args: seq[string]): CommandResult
 
 proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
-  manager.add_help("fmt [--check] <file.gene> [...]: format Gene source files")
+  manager.add_help("fmt, format [--check] <file.gene> [...]: format Gene source files")
   manager.add_help("  --check: verify canonical formatting without modifying files")
 
 let short_no_val = {'h'}
 let long_no_val = @["help", "check"]
 
 let help_text = """
-Usage: gene fmt [options] <file.gene>...
+Usage: gene fmt|format [options] [<file.gene>...]
 
 Format Gene source files to canonical style based on examples/full.gene conventions.
+When no files are provided, the formatter reads source from stdin.
 
 Options:
   -h, --help      Show this help message
@@ -34,12 +35,16 @@ Options:
 
 Examples:
   gene fmt file.gene
+  gene format file.gene
   gene fmt --check file.gene
   gene fmt file.gene --check
+  cat file.gene | gene fmt
 """
 
 proc parse_args(args: seq[string]): tuple[options: FmtOptions, err: string] =
   var options: FmtOptions
+  if args.len == 0:
+    return (options, "")
 
   for kind, key, _ in get_opt(args, short_no_val, long_no_val):
     case kind
@@ -76,8 +81,31 @@ proc format_one_file(path: string, check_only: bool): CommandResult =
 
   success()
 
+proc format_stdin(check_only: bool): CommandResult =
+  let source = stdin.readAll()
+  if source.len == 0:
+    return failure("No input provided")
+
+  let formatted = format_source(source)
+  let normalized = normalize_newlines(source)
+
+  if check_only:
+    if formatted != normalized:
+      return failure("Stdin is not canonically formatted")
+    return success("Stdin is canonically formatted")
+
+  # Write directly so piped output preserves the formatter's exact newline behavior.
+  stdout.write(formatted)
+  success()
+
 proc handle*(cmd: string, args: seq[string]): CommandResult =
-  let parsed = parse_args(args)
+  let effective_args =
+    if args.len > 0 and args[0] == cmd:
+      if args.len > 1: args[1 .. ^1] else: @[]
+    else:
+      args
+
+  let parsed = parse_args(effective_args)
   let options = parsed.options
 
   if parsed.err.len > 0:
@@ -87,6 +115,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return success(help_text)
 
   if options.files.len == 0:
+    if not stdin.isatty():
+      return format_stdin(options.check)
     return failure("No input files provided")
 
   for path in options.files:
