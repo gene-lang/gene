@@ -31,10 +31,10 @@
         (println #"#{link/index}. #{link/text} - #{link/url}")
       ))
     )
-  else
+   else
     (println body)
   )
-catch *
+ catch *
   (println #"Failed to fetch #{url}: #{$ex/message}")
   (exit 1)
 )

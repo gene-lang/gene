@@ -1,5 +1,6 @@
 import unittest, os, osproc, streams
 import std/tempfiles
+import gene/formatter
 
 proc run_fmt_with_stdin(command: string, input: string): tuple[output: string, exit_code: int] =
   let gene_bin = absolutePath("bin/gene")
@@ -45,3 +46,7 @@ suite "Fmt CLI":
 
     check result.exit_code == 0
     check result.output == "(var x 1)\n(println x)"
+
+  test "canonical example source round-trips unchanged":
+    let source = readFile("examples/full.gene")
+    check format_source(source) == source

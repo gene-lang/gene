@@ -8,6 +8,10 @@ type
     code: string
     comment: string
 
+  IndentContext = object
+    raw_depth: int
+    indent: int
+
 proc normalize_newlines*(source: string): string =
   source.replace("\r\n", "\n").replace('\r', '\n')
 
@@ -96,16 +100,18 @@ proc starts_with_keyword(code: string, keyword: string): bool =
     return true
   code[keyword.len] in {' ', '\t', ')', ']', '}'}
 
-proc dedent_keyword_count(code: string): int =
+proc is_clause_keyword(code: string): bool =
   if starts_with_keyword(code, "elif"):
-    return 1
+    return true
   if starts_with_keyword(code, "else"):
-    return 1
+    return true
+  if starts_with_keyword(code, "when"):
+    return true
   if starts_with_keyword(code, "catch"):
-    return 1
+    return true
   if starts_with_keyword(code, "finally"):
-    return 1
-  0
+    return true
+  false
 
 proc update_depth(depth: var int, code: string) =
   var i = 0
@@ -167,7 +173,8 @@ proc is_comment_only(line: string): bool =
   line[i + 1] in {' ', '\t', '!', '#', '<'}
 
 proc format_lines(lines: seq[string]): seq[string] =
-  var depth = 0
+  var raw_depth = 0
+  var indent_stack: seq[IndentContext]
   var hang_collection_indent = -1
   var hang_collection_depth = -1
 
@@ -195,13 +202,15 @@ proc format_lines(lines: seq[string]): seq[string] =
       result.add(parts.comment)
       continue
 
-    let dedent = leading_close_count(code_trimmed) + dedent_keyword_count(code_trimmed)
-    var effective_depth = depth - dedent
-    if effective_depth < 0:
-      effective_depth = 0
+    let effective_depth = max(raw_depth - leading_close_count(code_trimmed), 0)
+    while indent_stack.len > 0 and indent_stack[^1].raw_depth > effective_depth:
+      indent_stack.setLen(indent_stack.len - 1)
 
-    var indent_count = effective_depth * INDENT_WIDTH
-    if hang_collection_indent >= 0 and depth >= hang_collection_depth:
+    var indent_count = if indent_stack.len > 0: indent_stack[^1].indent else: 0
+    if is_clause_keyword(code_trimmed) and indent_count > 0:
+      dec indent_count
+
+    if hang_collection_indent >= 0 and effective_depth >= hang_collection_depth:
       if not code_trimmed.startsWith("]") and not code_trimmed.startsWith(")"):
         indent_count = hang_collection_indent
 
@@ -217,8 +226,12 @@ proc format_lines(lines: seq[string]): seq[string] =
       out_line &= gap & parts.comment
 
     result.add(out_line)
-    update_depth(depth, code_trimmed)
-    if hang_collection_indent >= 0 and depth < hang_collection_depth:
+    let depth_before = raw_depth
+    update_depth(raw_depth, code_trimmed)
+    if raw_depth > depth_before:
+      indent_stack.add(IndentContext(raw_depth: raw_depth, indent: indent_count + INDENT_WIDTH))
+
+    if hang_collection_indent >= 0 and raw_depth < hang_collection_depth:
       hang_collection_indent = -1
       hang_collection_depth = -1
 
@@ -229,7 +242,7 @@ proc format_lines(lines: seq[string]): seq[string] =
         let after = if open_bracket + 1 < code_trimmed.len: code_trimmed[open_bracket + 1 ..< code_trimmed.len].strip() else: ""
         if after.len > 0:
           hang_collection_indent = indent_count + open_bracket + 1
-          hang_collection_depth = depth
+          hang_collection_depth = raw_depth
 
 proc format_source*(source: string): string =
   let normalized = normalize_newlines(source)
