@@ -6,6 +6,291 @@ import ./json
 
 proc init_collection_classes*(object_class: Class) =
   var r: ptr Reference
+
+  let array_iterator_class = new_class("ArrayIterator")
+  array_iterator_class.parent = object_class
+  array_iterator_class.def_native_method("to_s", object_to_s_method)
+  App.app.gene_ns.ns["ArrayIterator".to_key()] = (block:
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = array_iterator_class
+    cls_ref.to_ref_value())
+  App.app.global_ns.ns["ArrayIterator".to_key()] = App.app.gene_ns.ns["ArrayIterator".to_key()]
+
+  proc array_iterator_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                           arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("ArrayIterator.iter requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "ArrayIterator":
+      not_allowed("iter must be called on an ArrayIterator")
+    iter_val
+
+  proc array_iterator_has_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                               arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("ArrayIterator.has_next requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "ArrayIterator":
+      not_allowed("has_next must be called on an ArrayIterator")
+    if "array".to_key() notin instance_props(iter_val) or instance_props(iter_val)["array".to_key()].kind != VkArray:
+      return FALSE
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    (idx < array_data(instance_props(iter_val)["array".to_key()]).len).to_value()
+
+  proc array_iterator_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                           arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("ArrayIterator.next requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "ArrayIterator":
+      not_allowed("next must be called on an ArrayIterator")
+    if "array".to_key() notin instance_props(iter_val) or instance_props(iter_val)["array".to_key()].kind != VkArray:
+      return NOT_FOUND
+    let arr = instance_props(iter_val)["array".to_key()]
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    if idx < 0 or idx >= array_data(arr).len:
+      return NOT_FOUND
+    instance_props(iter_val)["index".to_key()] = (idx + 1).to_value()
+    array_data(arr)[idx]
+
+  proc array_iterator_next_pair(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("ArrayIterator.next_pair requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "ArrayIterator":
+      not_allowed("next_pair must be called on an ArrayIterator")
+    if "array".to_key() notin instance_props(iter_val) or instance_props(iter_val)["array".to_key()].kind != VkArray:
+      return NOT_FOUND
+    let arr = instance_props(iter_val)["array".to_key()]
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    if idx < 0 or idx >= array_data(arr).len:
+      return NOT_FOUND
+    instance_props(iter_val)["index".to_key()] = (idx + 1).to_value()
+    let pair = new_array_value()
+    array_data(pair).add(idx.to_value())
+    array_data(pair).add(array_data(arr)[idx])
+    pair
+
+  array_iterator_class.def_native_method("iter", array_iterator_iter)
+  array_iterator_class.def_native_method("has_next", array_iterator_has_next)
+  array_iterator_class.def_native_method("next", array_iterator_next)
+  array_iterator_class.def_native_method("next_pair", array_iterator_next_pair)
+
+  let map_iterator_class = new_class("MapIterator")
+  map_iterator_class.parent = object_class
+  map_iterator_class.def_native_method("to_s", object_to_s_method)
+  App.app.gene_ns.ns["MapIterator".to_key()] = (block:
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = map_iterator_class
+    cls_ref.to_ref_value())
+  App.app.global_ns.ns["MapIterator".to_key()] = App.app.gene_ns.ns["MapIterator".to_key()]
+
+  proc map_iterator_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                         arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("MapIterator.iter requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "MapIterator":
+      not_allowed("iter must be called on a MapIterator")
+    iter_val
+
+  proc map_iterator_has_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                             arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("MapIterator.has_next requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "MapIterator":
+      not_allowed("has_next must be called on a MapIterator")
+    if "pairs".to_key() notin instance_props(iter_val) or instance_props(iter_val)["pairs".to_key()].kind != VkArray:
+      return FALSE
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    (idx < array_data(instance_props(iter_val)["pairs".to_key()]).len).to_value()
+
+  proc map_iterator_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                         arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("MapIterator.next requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "MapIterator":
+      not_allowed("next must be called on a MapIterator")
+    if "pairs".to_key() notin instance_props(iter_val) or instance_props(iter_val)["pairs".to_key()].kind != VkArray:
+      return NOT_FOUND
+    let pairs_val = instance_props(iter_val)["pairs".to_key()]
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    if idx < 0 or idx >= array_data(pairs_val).len:
+      return NOT_FOUND
+    let pair = array_data(pairs_val)[idx]
+    instance_props(iter_val)["index".to_key()] = (idx + 1).to_value()
+    if pair.kind != VkArray or array_data(pair).len != 2:
+      return NOT_FOUND
+    array_data(pair)[1]
+
+  proc map_iterator_next_pair(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                              arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("MapIterator.next_pair requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "MapIterator":
+      not_allowed("next_pair must be called on a MapIterator")
+    if "pairs".to_key() notin instance_props(iter_val) or instance_props(iter_val)["pairs".to_key()].kind != VkArray:
+      return NOT_FOUND
+    let pairs_val = instance_props(iter_val)["pairs".to_key()]
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    if idx < 0 or idx >= array_data(pairs_val).len:
+      return NOT_FOUND
+    let pair = array_data(pairs_val)[idx]
+    instance_props(iter_val)["index".to_key()] = (idx + 1).to_value()
+    pair
+
+  map_iterator_class.def_native_method("iter", map_iterator_iter)
+  map_iterator_class.def_native_method("has_next", map_iterator_has_next)
+  map_iterator_class.def_native_method("next", map_iterator_next)
+  map_iterator_class.def_native_method("next_pair", map_iterator_next_pair)
+
+  let range_iterator_class = new_class("RangeIterator")
+  range_iterator_class.parent = object_class
+  range_iterator_class.def_native_method("to_s", object_to_s_method)
+  App.app.gene_ns.ns["RangeIterator".to_key()] = (block:
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = range_iterator_class
+    cls_ref.to_ref_value())
+  App.app.global_ns.ns["RangeIterator".to_key()] = App.app.gene_ns.ns["RangeIterator".to_key()]
+
+  proc range_value_at(iter_val: Value, idx: int): Value {.inline.} =
+    if "range".to_key() notin instance_props(iter_val) or instance_props(iter_val)["range".to_key()].kind != VkRange:
+      return NOT_FOUND
+    let range_val = instance_props(iter_val)["range".to_key()]
+    let start_val = range_val.ref.range_start.int64
+    let end_val = range_val.ref.range_end.int64
+    let step_val = if range_val.ref.range_step == NIL: 1'i64 else: range_val.ref.range_step.int64
+    if step_val == 0:
+      return NOT_FOUND
+    let current = start_val + (idx.int64 * step_val)
+    if step_val > 0:
+      if current > end_val:
+        return NOT_FOUND
+    else:
+      if current < end_val:
+        return NOT_FOUND
+    current.to_value()
+
+  proc range_iterator_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                           arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("RangeIterator.iter requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "RangeIterator":
+      not_allowed("iter must be called on a RangeIterator")
+    iter_val
+
+  proc range_iterator_has_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                               arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("RangeIterator.has_next requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "RangeIterator":
+      not_allowed("has_next must be called on a RangeIterator")
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    (range_value_at(iter_val, idx) != NOT_FOUND).to_value()
+
+  proc range_iterator_next(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                           arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("RangeIterator.next requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "RangeIterator":
+      not_allowed("next must be called on a RangeIterator")
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    let current = range_value_at(iter_val, idx)
+    if current == NOT_FOUND:
+      return NOT_FOUND
+    instance_props(iter_val)["index".to_key()] = (idx + 1).to_value()
+    current
+
+  proc range_iterator_next_pair(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("RangeIterator.next_pair requires self")
+    let iter_val = get_positional_arg(args, 0, has_keyword_args)
+    if iter_val.kind != VkInstance or iter_val.instance_class == nil or iter_val.instance_class.name != "RangeIterator":
+      not_allowed("next_pair must be called on a RangeIterator")
+    let idx =
+      if "index".to_key() in instance_props(iter_val) and instance_props(iter_val)["index".to_key()].kind == VkInt:
+        instance_props(iter_val)["index".to_key()].int64.int
+      else:
+        0
+    let current = range_value_at(iter_val, idx)
+    if current == NOT_FOUND:
+      return NOT_FOUND
+    instance_props(iter_val)["index".to_key()] = (idx + 1).to_value()
+    let pair = new_array_value()
+    array_data(pair).add(idx.to_value())
+    array_data(pair).add(current)
+    pair
+
+  range_iterator_class.def_native_method("iter", range_iterator_iter)
+  range_iterator_class.def_native_method("has_next", range_iterator_has_next)
+  range_iterator_class.def_native_method("next", range_iterator_next)
+  range_iterator_class.def_native_method("next_pair", range_iterator_next_pair)
+
+  let range_class = new_class("Range")
+  range_class.parent = object_class
+  range_class.def_native_method("to_s", object_to_s_method)
+  r = new_ref(VkClass)
+  r.class = range_class
+  App.app.range_class = r.to_ref_value()
+  App.app.gene_ns.ns["Range".to_key()] = App.app.range_class
+  App.app.global_ns.ns["Range".to_key()] = App.app.range_class
+
+  proc vm_range_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Range.iter requires self")
+    let range_val = get_positional_arg(args, 0, has_keyword_args)
+    if range_val.kind != VkRange:
+      not_allowed("iter must be called on a range")
+    let iterator_class_val = App.app.gene_ns.ns["RangeIterator".to_key()]
+    if iterator_class_val.kind != VkClass or iterator_class_val.ref.class == nil:
+      not_allowed("RangeIterator class is not initialized")
+    let iter_val = new_instance_value(iterator_class_val.ref.class)
+    instance_props(iter_val)["range".to_key()] = range_val
+    instance_props(iter_val)["index".to_key()] = 0.to_value()
+    iter_val
+
+  range_class.def_native_method("iter", vm_range_iter)
+
   let array_class = new_class("Array")
   array_class.parent = object_class
   array_class.def_native_method("to_s", object_to_s_method)
@@ -33,6 +318,22 @@ proc init_collection_classes*(object_class: Class) =
 
   array_class.def_native_method("size", vm_array_size, @[], App.app.int_class)
   array_class.def_native_method("length", vm_array_size, @[], App.app.int_class)
+
+  proc vm_array_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Array.iter requires self")
+    let arr = get_positional_arg(args, 0, has_keyword_args)
+    if arr.kind != VkArray:
+      not_allowed("iter must be called on an array")
+    let iterator_class_val = App.app.gene_ns.ns["ArrayIterator".to_key()]
+    if iterator_class_val.kind != VkClass or iterator_class_val.ref.class == nil:
+      not_allowed("ArrayIterator class is not initialized")
+    let iter_val = new_instance_value(iterator_class_val.ref.class)
+    instance_props(iter_val)["array".to_key()] = arr
+    instance_props(iter_val)["index".to_key()] = 0.to_value()
+    iter_val
+
+  array_class.def_native_method("iter", vm_array_iter)
 
   proc vm_array_first(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let arr = get_positional_arg(args, 0, has_keyword_args)
@@ -638,6 +939,28 @@ proc init_collection_classes*(object_class: Class) =
     map_data(map_val).len.to_value()
 
   map_class.def_native_method("size", vm_map_size, @[], App.app.int_class)
+
+  proc vm_map_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.iter requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("iter must be called on a map")
+    let iterator_class_val = App.app.gene_ns.ns["MapIterator".to_key()]
+    if iterator_class_val.kind != VkClass or iterator_class_val.ref.class == nil:
+      not_allowed("MapIterator class is not initialized")
+    let iter_val = new_instance_value(iterator_class_val.ref.class)
+    let snapshot = new_array_value()
+    for key, value in map_data(map_val):
+      let pair = new_array_value()
+      array_data(pair).add(cast[Value](key))
+      array_data(pair).add(value)
+      array_data(snapshot).add(pair)
+    instance_props(iter_val)["pairs".to_key()] = snapshot
+    instance_props(iter_val)["index".to_key()] = 0.to_value()
+    iter_val
+
+  map_class.def_native_method("iter", vm_map_iter)
 
   proc vm_map_keys(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:

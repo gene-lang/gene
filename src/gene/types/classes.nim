@@ -133,8 +133,8 @@ proc get_class*(val: Value): Class {.inline.} =
       return App.ref.app.gene_class.ref.class
     of VkRegex:
       return App.ref.app.regex_class.ref.class
-    # of VkRange:
-    #   return App.ref.app.range_class.ref.class
+    of VkRange:
+      return App.ref.app.range_class.ref.class
     # of VkDate:
     #   return App.ref.app.date_class.ref.class
     # of VkDateTime:

@@ -855,7 +855,8 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
     not_allowed("for expects at least 2 arguments (variable and collection)")
   
   let var_node = gene.children[0]
-  var index_name: string = ""
+  var pair_name: string = ""
+  var use_pair_iteration = false
   var value_pattern: Value = NIL
   case var_node.kind
   of VkSymbol:
@@ -863,8 +864,9 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   of VkArray:
     let items = array_data(var_node)
     if items.len == 2 and items[0].kind == VkSymbol:
-      # [index value] / [index pattern]
-      index_name = items[0].str
+      # [index value] / [key value] / [index pattern]
+      pair_name = items[0].str
+      use_pair_iteration = true
       if items[1].kind notin {VkSymbol, VkArray, VkMap}:
         not_allowed("for loop value binding must be a symbol or destructuring pattern")
       value_pattern = items[1]
@@ -884,27 +886,116 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   if value_pattern == NIL:
     not_allowed("for loop requires a value binding pattern")
   let collection = gene.children[2]
+  let iter_method = "iter".to_symbol_value()
+  let next_method = "next".to_symbol_value()
+  let next_pair_method = "next_pair".to_symbol_value()
+  let iterator_key = "$for_iterator".to_key()
+  let item_key = "$for_item".to_key()
+
+  proc bind_value_on_stack(pattern: Value) =
+    case pattern.kind
+    of VkSymbol:
+      let var_name = pattern.str
+      if var_name != "_":
+        let var_index = self.scope_tracker.next_index
+        self.scope_tracker.mappings[var_name.to_key()] = var_index
+        if self.declared_names.len > 0:
+          self.declared_names[^1][var_name.to_key()] = true
+        self.add_scope_start()
+        self.scope_tracker.next_index.inc()
+        self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+        self.emit(Instruction(kind: IkPop))
+      else:
+        self.emit(Instruction(kind: IkPop))
+    of VkArray:
+      let matcher = new_arg_matcher(pattern)
+      var target_indices = new_array_value()
+      var has_bindings = false
+
+      proc add_matcher_bindings(param: Matcher) =
+        var bind_name = ""
+        if cast[int64](param.name_key) != 0:
+          try:
+            bind_name = cast[Value](param.name_key).str
+          except CatchableError:
+            bind_name = ""
+
+        if bind_name.len > 0 and bind_name != "_":
+          let key = bind_name.to_key()
+          let var_index = self.scope_tracker.next_index
+          self.scope_tracker.mappings[key] = var_index
+          self.scope_tracker.next_index.inc()
+          if self.declared_names.len > 0:
+            self.declared_names[^1][key] = true
+          array_data(target_indices).add(var_index.to_value())
+          has_bindings = true
+
+        for child in param.children:
+          add_matcher_bindings(child)
+
+      for param in matcher.children:
+        add_matcher_bindings(param)
+
+      if has_bindings:
+        self.add_scope_start()
+
+      var payload = new_array_value()
+      array_data(payload).add(pattern)
+      array_data(payload).add(target_indices)
+      self.emit(Instruction(kind: IkVarDestructure, arg0: payload))
+    of VkMap:
+      self.emit(Instruction(kind: IkDup))
+      for key, value in map_data(pattern).pairs:
+        if value.kind != VkSymbol:
+          not_allowed("Unsupported map destructuring pattern: expected symbol bindings")
+
+        var bind_name = value.str
+        if bind_name.startsWith("^"):
+          if bind_name.len <= 1:
+            not_allowed("Unsupported map destructuring binding: '^' requires a name")
+          bind_name = bind_name[1..^1]
+
+        self.emit(Instruction(kind: IkDup))
+        self.emit(Instruction(kind: IkPushValue, arg0: key.to_value()))
+        self.emit(Instruction(kind: IkGetMemberOrNil))
+
+        if bind_name == "_":
+          self.emit(Instruction(kind: IkPop))
+          continue
+
+        let var_index = self.scope_tracker.next_index
+        self.scope_tracker.mappings[bind_name.to_key()] = var_index
+        if self.declared_names.len > 0:
+          self.declared_names[^1][bind_name.to_key()] = true
+        self.add_scope_start()
+        self.scope_tracker.next_index.inc()
+        self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+        self.emit(Instruction(kind: IkPop))
+
+      self.emit(Instruction(kind: IkPop))
+    else:
+      not_allowed("Unsupported for loop binding pattern")
   
   # Create a scope for the entire for loop to hold temporary variables
   self.start_scope()
   
-  # Store collection in a temporary variable
+  # Store iterator in a temporary variable
   self.compile(collection)
-  let collection_index = self.scope_tracker.next_index
-  self.scope_tracker.mappings["$for_collection".to_key()] = collection_index
+  self.emit(Instruction(kind: IkUnifiedMethodCall0, arg0: iter_method))
+  let iterator_index = self.scope_tracker.next_index
+  self.scope_tracker.mappings[iterator_key] = iterator_index
   self.add_scope_start()
   self.scope_tracker.next_index.inc()
-  self.emit(Instruction(kind: IkVar, arg0: collection_index.to_value()))
-  # Drop the pushed collection value; we only need it in scope
+  self.emit(Instruction(kind: IkVar, arg0: iterator_index.to_value()))
   self.emit(Instruction(kind: IkPop))
-  
-  # Store index in a temporary variable, initialized to 0
-  self.emit(Instruction(kind: IkPushValue, arg0: 0.to_value()))
-  let index_var = self.scope_tracker.next_index
-  self.scope_tracker.mappings["$for_index".to_key()] = index_var
+
+  # Store current loop item / pair in a temporary variable
+  self.emit(Instruction(kind: IkPushNil))
+  let item_index = self.scope_tracker.next_index
+  self.scope_tracker.mappings[item_key] = item_index
+  self.add_scope_start()
   self.scope_tracker.next_index.inc()
-  self.emit(Instruction(kind: IkVar, arg0: index_var.to_value()))
-  # Drop the pushed index initial value
+  self.emit(Instruction(kind: IkVar, arg0: item_index.to_value()))
   self.emit(Instruction(kind: IkPop))
   
   let start_label = new_label()
@@ -916,70 +1007,50 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   # Mark loop start
   self.emit(Instruction(kind: IkLoopStart, label: start_label))
   
-  # Check if index < collection.length
-  # Load index
-  self.emit(Instruction(kind: IkVarResolve, arg0: index_var.to_value()))
-  # Load collection
-  self.emit(Instruction(kind: IkVarResolve, arg0: collection_index.to_value()))
-  # Get length
-  self.emit(Instruction(kind: IkLen))
-  # Compare
-  self.emit(Instruction(kind: IkLt))
+  # Pull next loop value from the iterator and stop on NOT_FOUND.
+  self.emit(Instruction(kind: IkVarResolve, arg0: iterator_index.to_value()))
+  self.emit(Instruction(kind: if use_pair_iteration: IkUnifiedMethodCall0 else: IkUnifiedMethodCall0,
+    arg0: if use_pair_iteration: next_pair_method else: next_method))
+  self.emit(Instruction(kind: IkVarAssign, arg0: item_index.to_value()))
+  self.emit(Instruction(kind: IkPop))
+  self.emit(Instruction(kind: IkVarResolve, arg0: item_index.to_value()))
+  self.emit(Instruction(kind: IkPushValue, arg0: NOT_FOUND))
+  self.emit(Instruction(kind: IkNe))
   self.emit(Instruction(kind: IkJumpIfFalse, arg0: end_label.to_value()))
-  
+
   # Create scope for loop iteration
   self.start_scope()
-  
-  # Get current element: collection[index]
-  # Load collection
-  self.emit(Instruction(kind: IkVarResolve, arg0: collection_index.to_value()))
-  # Load index
-  self.emit(Instruction(kind: IkVarResolve, arg0: index_var.to_value()))
-  # Get element
-  self.emit(Instruction(kind: IkGetChildDynamic))
-  
-  # Store index in loop variable if requested
-  if index_name.len > 0 and index_name != "_":
-    self.emit(Instruction(kind: IkVarResolve, arg0: index_var.to_value()))
-    let idx_var = self.scope_tracker.next_index
-    self.scope_tracker.mappings[index_name.to_key()] = idx_var
-    self.add_scope_start()
-    self.scope_tracker.next_index.inc()
-    self.emit(Instruction(kind: IkVar, arg0: idx_var.to_value()))
-    self.emit(Instruction(kind: IkPop))
 
-  # Store element in loop variable/pattern
-  case value_pattern.kind
-  of VkSymbol:
-    let var_name = value_pattern.str
-    if var_name != "_":
-      let var_index = self.scope_tracker.next_index
-      self.scope_tracker.mappings[var_name.to_key()] = var_index
+  proc emit_temp_resolve(key: Key) =
+    let found = self.scope_tracker.locate(key)
+    if found.local_index < 0:
+      not_allowed("for loop temporary binding not found")
+    if found.parent_index == 0:
+      self.emit(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
+    else:
+      self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
+
+  if use_pair_iteration:
+    if pair_name.len > 0 and pair_name != "_":
+      emit_temp_resolve(item_key)
+      self.emit(Instruction(kind: IkPushValue, arg0: 0.to_value()))
+      self.emit(Instruction(kind: IkGetChildDynamic))
+      let pair_var_index = self.scope_tracker.next_index
+      self.scope_tracker.mappings[pair_name.to_key()] = pair_var_index
+      if self.declared_names.len > 0:
+        self.declared_names[^1][pair_name.to_key()] = true
       self.add_scope_start()
       self.scope_tracker.next_index.inc()
-      self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-      # Remove the element value that IkVar leaves on the stack
+      self.emit(Instruction(kind: IkVar, arg0: pair_var_index.to_value()))
       self.emit(Instruction(kind: IkPop))
-    else:
-      # Drop the element when the value is ignored
-      self.emit(Instruction(kind: IkPop))
-  of VkArray, VkMap:
-    # Reuse var-destructuring semantics for loop bindings.
-    let tmp_name = "__for_value".to_symbol_value()
-    let tmp_index = self.scope_tracker.next_index
-    self.scope_tracker.mappings[tmp_name.str.to_key()] = tmp_index
-    self.add_scope_start()
-    self.scope_tracker.next_index.inc()
-    self.emit(Instruction(kind: IkVar, arg0: tmp_index.to_value()))
-    self.emit(Instruction(kind: IkPop))
 
-    var bind_gene = new_gene("var".to_symbol_value())
-    bind_gene.children.add(value_pattern)
-    bind_gene.children.add(tmp_name)
-    self.compile_var(bind_gene)
-    self.emit(Instruction(kind: IkPop))
+    emit_temp_resolve(item_key)
+    self.emit(Instruction(kind: IkPushValue, arg0: 1.to_value()))
+    self.emit(Instruction(kind: IkGetChildDynamic))
+    bind_value_on_stack(value_pattern)
   else:
-    not_allowed("Unsupported for loop binding pattern")
+    emit_temp_resolve(item_key)
+    bind_value_on_stack(value_pattern)
   
   # Compile body (remaining children after 'in' and collection)
   if gene.children.len > 3:
@@ -994,15 +1065,6 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
   
   # End the iteration scope
   self.end_scope()
-  
-  # Increment index
-  # Load current index
-  self.emit(Instruction(kind: IkVarResolve, arg0: index_var.to_value()))
-  # Add 1
-  self.emit(Instruction(kind: IkPushValue, arg0: 1.to_value()))
-  self.emit(Instruction(kind: IkAdd))
-  # Store back
-  self.emit(Instruction(kind: IkVarAssign, arg0: index_var.to_value()))
   
   # Jump back to condition check
   self.emit(Instruction(kind: IkContinue, arg0: start_label.to_value()))

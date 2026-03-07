@@ -275,6 +275,8 @@ template get_value_class(val: Value): Class =
     safe_class_value(App.app.array_class)
   of VkMap:
     safe_class_value(App.app.map_class)
+  of VkRange:
+    safe_class_value(App.app.range_class)
   of VkGene:
     safe_class_value(App.app.gene_class)
   of VkDate:

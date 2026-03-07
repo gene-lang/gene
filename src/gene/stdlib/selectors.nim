@@ -59,6 +59,57 @@ proc init_selector_class*(object_class: Class) =
           map_data(r)[k] = v
       r
 
+    proc call_native_value_method(target: Value, method_name: string, call_args: seq[Value] = @[]): tuple[found: bool, value: Value] =
+      let class_val = value_class_value(target)
+      if class_val.kind != VkClass or class_val.ref.class == nil:
+        return (false, NIL)
+      let meth = class_val.ref.class.get_method(method_name)
+      if meth == nil or meth.callable.kind != VkNativeFn:
+        return (false, NIL)
+      var args = newSeq[Value](call_args.len + 1)
+      args[0] = target
+      for i, arg in call_args:
+        args[i + 1] = arg
+      (true, call_native_fn(meth.callable.ref.native_fn, vm, args))
+
+    proc parse_pair_value(pair_val: Value): (Key, Value) =
+      if pair_val.kind != VkArray:
+        not_allowed("Entry transform must return [key value], got " & $pair_val.kind)
+      let items = array_data(pair_val)
+      if items.len != 2:
+        not_allowed("Entry transform must return [key value]")
+      let key_val = items[0]
+      let key = case key_val.kind:
+        of VkString, VkSymbol: key_val.str.to_key()
+        of VkInt: ($key_val.int64).to_key()
+        else:
+          not_allowed("Entry key must be string/symbol/int, got " & $key_val.kind)
+          "".to_key()
+      (key, items[1])
+
+    proc expand_iterable_values(v: Value): seq[Value] =
+      let (iter_found, iter_val) = call_native_value_method(v, "iter")
+      if not iter_found:
+        return @[]
+      while true:
+        let (next_found, next_val) = call_native_value_method(iter_val, "next")
+        if not next_found or next_val == NOT_FOUND:
+          break
+        if next_val != VOID:
+          result.add(next_val)
+
+    proc expand_iterable_entries(v: Value): seq[(Key, Value)] =
+      let (iter_found, iter_val) = call_native_value_method(v, "iter")
+      if not iter_found:
+        return @[]
+      while true:
+        let (next_found, next_val) = call_native_value_method(iter_val, "next_pair")
+        if not next_found or next_val == NOT_FOUND:
+          break
+        let (key, value) = parse_pair_value(next_val)
+        if value != VOID:
+          result.add((key, value))
+
     proc expand_values(v: Value): seq[Value] =
       if v == VOID or v == NIL:
         return @[]
@@ -74,7 +125,7 @@ proc init_selector_class*(object_class: Class) =
           if child != VOID:
             result.add(child)
       else:
-        result = @[]
+        result = expand_iterable_values(v)
 
     proc expand_entries(v: Value): seq[(Key, Value)] =
       if v == VOID or v == NIL:
@@ -102,7 +153,7 @@ proc init_selector_class*(object_class: Class) =
           if item != VOID:
             result.add((k, item))
       else:
-        discard
+        result = expand_iterable_entries(v)
 
     proc apply_lookup(base: Value, seg: Value): Value =
       if base == VOID or base == NIL:
@@ -154,21 +205,6 @@ proc init_selector_class*(object_class: Class) =
       else:
         not_allowed("Invalid selector segment type: " & $seg.kind)
         return VOID
-
-    proc parse_pair_value(pair_val: Value): (Key, Value) =
-      if pair_val.kind != VkArray:
-        not_allowed("Entry transform must return [key value], got " & $pair_val.kind)
-      let items = array_data(pair_val)
-      if items.len != 2:
-        not_allowed("Entry transform must return [key value]")
-      let key_val = items[0]
-      let key = case key_val.kind:
-        of VkString, VkSymbol: key_val.str.to_key()
-        of VkInt: ($key_val.int64).to_key()
-        else:
-          not_allowed("Entry key must be string/symbol/int, got " & $key_val.kind)
-          "".to_key()
-      (key, items[1])
 
     for seg in selector_val.ref.selector_path:
       if seg.kind == VkSymbol and seg.str == "!":

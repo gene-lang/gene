@@ -446,6 +446,12 @@ catch *
 (var gen (counter* 3))
 (println "counter nexts =" [gen/.next gen/.next gen/.next gen/.next])
 
+(var counter_sum 0)
+(for x in (counter* 4)
+  (counter_sum += x)
+)
+(println "counter for-sum =" counter_sum)
+
 # Anonymous generator function
 (var make_squares
   (fn ^^generator [max]

@@ -279,6 +279,18 @@ test_vm """
   check array_data(r)[1] == "b".to_value()
 
 test_vm """
+  (fn users* []
+    (yield {^name "a"})
+    (yield {^name "b"}))
+
+  ((@ * name) (users*))
+""", proc(r: Value) =
+  check r.kind == VkArray
+  check array_data(r).len == 2
+  check array_data(r)[0] == "a".to_value()
+  check array_data(r)[1] == "b".to_value()
+
+test_vm """
   (var data {^a 1})
   ((@ * a) data)
 """, proc(r: Value) =
@@ -301,6 +313,17 @@ test_vm_error """
 test_vm """
   (var m {^a 1 ^b 2})
   ((@ ** (fn [k v] [k (v + 10)]) @@) m)
+""", proc(r: Value) =
+  check r.kind == VkMap
+  check map_data(r)["a".to_key()] == 11.to_value()
+  check map_data(r)["b".to_key()] == 12.to_value()
+
+test_vm """
+  (fn entries* []
+    (yield ["a" 1])
+    (yield ["b" 2]))
+
+  ((@ ** (fn [k v] [k (v + 10)]) @@) (entries*))
 """, proc(r: Value) =
   check r.kind == VkMap
   check map_data(r)["a".to_key()] == 11.to_value()

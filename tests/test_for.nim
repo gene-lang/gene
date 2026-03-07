@@ -3,8 +3,6 @@ import gene/types except Exception
 import ./helpers
 
 # Tests for for loop construct
-# Most for functionality is not yet implemented in our VM
-# These tests are commented out until those features are available:
 
 test_vm """
   (var sum 0)
@@ -40,3 +38,38 @@ test_vm """
   )
   sum
 """, 10
+
+test_vm """
+  (fn counter* [n]
+    (var i 0)
+    (while (i < n)
+      (yield i)
+      (i += 1)))
+
+  (var sum 0)
+  (for i in (counter* 4)
+    (sum += i)
+  )
+  sum
+""", 6
+
+test_vm """
+  (fn pairs* []
+    (yield [0 2])
+    (yield [1 3]))
+
+  (var sum 0)
+  (for [k v] in (pairs*)
+    (sum += k)
+    (sum += v)
+  )
+  sum
+""", 6
+
+test_vm """
+  (var sum 0)
+  (for [_ v] in {^a 1 ^b 2}
+    (sum += v)
+  )
+  sum
+""", 3

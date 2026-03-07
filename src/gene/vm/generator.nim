@@ -102,8 +102,26 @@ proc init_generator*() =
         gen.peeked_value = next_val
         return TRUE
 
+    proc generator_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+      if arg_count < 1:
+        raise new_exception(types.Exception, "Generator.iter requires a generator")
+      let gen_arg = get_positional_arg(args, 0, has_keyword_args)
+      if gen_arg.kind != VkGenerator:
+        raise new_exception(types.Exception, "iter can only be called on a Generator")
+      gen_arg
+
+    proc generator_next_pair(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+      let next_val = generator_next(vm, args, arg_count, has_keyword_args)
+      if next_val == NOT_FOUND:
+        return NOT_FOUND
+      if next_val.kind != VkArray or array_data(next_val).len != 2:
+        raise new_exception(types.Exception, "Generator.next_pair expects yielded [key value] arrays")
+      next_val
+
     # Add methods to generator class
+    generator_class.def_native_method("iter", generator_iter)
     generator_class.def_native_method("next", generator_next)
+    generator_class.def_native_method("next_pair", generator_next_pair)
     generator_class.def_native_method("has_next", generator_has_next)
 
     # Store in Application

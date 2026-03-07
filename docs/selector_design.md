@@ -1,5 +1,11 @@
 # Selector Design Document
 
+This document has two roles:
+- describe selector behavior that exists today
+- propose the next iteration model for selectors, generators, and `for`
+
+Anything under `Current Implementation` is intended to describe shipped behavior. Anything under `Proposal` / `Future Direction` / `Missing Features` is design work, not current runtime behavior.
+
 ## Overview
 
 Gene relies on a single `Value` type that can represent maps, arrays, genes, namespaces, classes, instances, and primitives. Selectors are the ergonomic layer that lets user code read, update, and delete arbitrarily nested structures without boilerplate. This document captures what exists today, what is missing, and the design direction needed to make selectors a first-class strength of the language.
@@ -55,7 +61,7 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
   ```
 
 - **Callable path segments (transform)**
-  A selector path can include a function segment (usually created with `fn`). The function receives the currently matched value and its return value is passed to the next segment. The return value is **not** automatically written back into the parent container; use `$set` (and future `$set`) for assignment-style updates. In-place mutation is still possible when the matched value is a mutable container.
+  A selector path can include a function segment (usually created with `fn`). The function receives the currently matched value and its return value is passed to the next segment. The return value is **not** automatically written back into the parent container; use `$set` (and future `$update` / mutation APIs) for assignment-style updates. In-place mutation is still possible when the matched value is a mutable container.
   ```gene
   (var data {^a 1})
   ((@ "a" (fn [item] (item + 1))) data)   # returns 2, does not change data/a
@@ -136,7 +142,7 @@ Missing values in selection-mode behave like "no match":
 - `void` is skipped when processing streams of values or pairs (it does not appear in collected output).
 - Use `/!` when you want to assert that at least one match exists (throws if the current value is `void` in value-mode, or if the current stream is empty in selection-mode).
 
-## Future Direction
+## Proposal: Future Direction
 
 Selectors are useful today, but they are still missing the pieces needed for full CSS/XPath-style querying. The next design layer should build on the existing `VkSelector` + `Selector.call` model rather than replace it.
 
@@ -152,7 +158,7 @@ Selectors are useful today, but they are still missing the pieces needed for ful
 
 The existing tests show that shorthand selectors and stream-style expansion are already part of the current surface area, not just future plans.
 
-## Gaps and Missing Features
+## Proposal: Gaps and Missing Features
 
 - **Range, slices, and list selectors**: Index ranges (`(0 .. 2)`), lists (`@ [0 1]`), and composite selectors are commented out in tests and lack compiler/VM support.
 - **Map key patterns and property lists**: Regex/prefix matches, selecting multiple keys at once, and retrieving keys/properties as collections are unimplemented.
@@ -161,19 +167,19 @@ The existing tests show that shorthand selectors and stream-style expansion are 
 - **Selector query API**: There is no separate `Selector.query` / match-first vs match-all API surface; everything routes through `Selector.call`.
 - **Higher-order selector operators**: There is no native `(map ...)`, `(filter ...)`, or `(reduce ...)` selector operator syntax. Current behavior relies on `*`, `**`, callable segments, and implicit stream mapping.
 - **Mutation breadth**: `$set` handles only direct property/index assignment. There is no support for appending, removing, or mutating collections returned by composite selectors.
-- **Multi-segment update/delete**: There is no generalized `selector_update`, `selector_delete`, or `$set`/`$del` API yet.
+- **Multi-segment update/delete**: Current `$set` is single-segment only. There is no generalized `selector_update`, `selector_delete`, `$update`, or `$del` API yet.
 - **Generator integration**: Selectors cannot consume generators lazily. The `*` operator requires a materialized array/gene; it should also pull from generators via the iteration protocol.
 - **`for` loop iteration protocol**: `for` currently uses index-based array access (`IkGetChildDynamic`). It cannot iterate over generators, maps (key-value), selector streams, or any user-defined iterable.
 
 ---
 
-## Unified Iteration Protocol
+## Proposal: Unified Iteration Protocol
 
 Generators, selectors, `for` loops, and future lazy sequences all need a shared iteration contract. Without one, each feature reinvents traversal and they cannot compose.
 
 ### The Protocol
 
-Any value that responds to `.iter` is **iterable**. Calling `.iter` returns an **iterator** — an object with:
+Proposal: any value that responds to `.iter` is **iterable**. Calling `.iter` returns an **iterator** — an object with:
 
 | Method | Returns | Meaning |
 |--------|---------|---------|
@@ -183,7 +189,7 @@ Any value that responds to `.iter` is **iterable**. Calling `.iter` returns an *
 
 `NOT_FOUND` is the exhaustion sentinel (already used by generators). `void` is a valid yielded value, not exhaustion.
 
-### Built-in Iterables
+### Proposed Built-in Iterables
 
 | Type | `.iter` behavior | `.next` yields | `.next_pair` yields |
 |------|-----------------|----------------|---------------------|
@@ -198,6 +204,8 @@ Any value that responds to `.iter` is **iterable**. Calling `.iter` returns an *
 | String | character iterator | characters | `[index char]` |
 
 ### Generator as Iterator
+
+Proposal, not current behavior:
 
 Generators already implement the right interface: `.next` returns values, `NOT_FOUND` signals exhaustion. A generator **is** its own iterator — calling `.iter` on a generator returns itself.
 
@@ -215,6 +223,8 @@ Generators already implement the right interface: `.next` returns values, `NOT_F
 ```
 
 ### `for` Loop Unification
+
+Proposal, not current behavior:
 
 The `for` loop compiles to the iteration protocol rather than hard-coded index access:
 
@@ -295,9 +305,11 @@ New VM instructions:
 
 For arrays and other indexed types, the VM can fast-path `IkGetIterator` to create an internal index-based iterator that avoids the overhead of method dispatch, keeping `for` loops over arrays as fast as today.
 
-### Selector ↔ Iterator Integration
+### Proposal: Selector ↔ Iterator Integration
 
 #### Selectors Consume Iterables
+
+Proposal, not current behavior:
 
 The `*` expansion operator should work on any iterable, not just arrays/genes:
 
@@ -319,6 +331,8 @@ Implementation: when `*` encounters a value that is not an array or gene, it cal
 
 #### `**` Expands Entry-Iterables
 
+Proposal, not current behavior:
+
 Similarly, `**` should call `.next_pair` on any iterable that supports it:
 
 ```gene
@@ -333,6 +347,8 @@ Similarly, `**` should call `.next_pair` on any iterable that supports it:
 ```
 
 #### Selectors Produce Iterators
+
+Proposal, not current behavior:
 
 Selector streams should be consumable as iterators, not just auto-collected:
 
@@ -350,7 +366,7 @@ Selector streams should be consumable as iterators, not just auto-collected:
     (@*/?active users)))  # ? is predicate filter (see below)
 ```
 
-### Generator ↔ Selector Composition Patterns
+### Proposal: Generator ↔ Selector Composition Patterns
 
 ```gene
 # Generator producing values, selector transforming them
@@ -375,7 +391,7 @@ Selector streams should be consumable as iterators, not just auto-collected:
 
 ---
 
-## Missing Features — Full Design
+## Proposal: Missing Features — Full Design
 
 ### 1. Range and Slice Selectors
 

@@ -6,9 +6,9 @@ Generator functions are pull-based producers. Unlike regular functions that retu
 
 Current semantics:
 - Exhaustion is reported with `NOT_FOUND`.
-- `void` is distinct from exhaustion. If a generator explicitly yields `void`, that is a real yielded value.
-- The public runtime API today is `.next` and `.has_next`.
-- Generators are currently a low-level lazy sequence primitive, not yet a full language-wide iteration protocol.
+- Ordinary yielded values are distinct from exhaustion. `nil` is a real yielded value, not exhaustion.
+- The public runtime API today is `.next`, `.has_next`, and `.iter`.
+- Generators now participate in the iteration protocol used by `for ... in` and selector expansion.
 
 Typical uses:
 - Lazy counters and ranges
@@ -65,30 +65,30 @@ Typical uses:
 (gen .next)  # NOT_FOUND
 ```
 
-### Exhaustion vs `void`
+### Exhaustion vs Yielded Values
 
-Generator exhaustion is `NOT_FOUND`, not `void`.
+Generator exhaustion is `NOT_FOUND`, not a normal yielded value.
 
 ```gene
 (fn values* []
   (yield 1)
-  (yield void)
+  (yield nil)
   (yield 3))
 
 (var g (values*))
 (g .next)  # 1
-(g .next)  # void
+(g .next)  # nil
 (g .next)  # 3
 (g .next)  # NOT_FOUND
 ```
 
 This distinction is intentional:
 - `NOT_FOUND` means there is no next value.
-- `void` means the generator produced a value whose content is `void`.
+- `nil` means the generator produced a value whose content is `nil`.
 
 ### Current Iteration Style
 
-Generators are currently meant to be consumed manually:
+Generators can be consumed manually:
 
 ```gene
 (var g (fibonacci* 5))
@@ -96,7 +96,13 @@ Generators are currently meant to be consumed manually:
   (println (g .next)))
 ```
 
-`for ... in` integration is not implemented yet, so generators should be treated as manual pull iterators for now.
+They also work directly with `for ... in`:
+
+```gene
+(var sum 0)
+(for x in (fibonacci* 4)
+  (sum += x))
+```
 
 ## Implementation Architecture
 
