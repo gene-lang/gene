@@ -72,6 +72,13 @@ cd example-projects/geneclaw
 GET /health
 ```
 
+**Inspect runtime config:**
+```
+GET /api/config
+```
+
+Returns the current GeneClaw config as a Gene map. Secret values are always redacted as `"hidden"`.
+
 **Send message:**
 ```
 POST /api/chat
