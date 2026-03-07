@@ -54,6 +54,14 @@
   HIDDEN_SECRET
 )
 
+(fn $ns/render_public_config_value [value]
+  (if (value is String)
+    (gene/json/stringify value)
+  else
+    (value .to_s)
+  )
+)
+
 (fn $ns/get_public_config []
   {
     ^port PORT
@@ -108,8 +116,46 @@
   }
 )
 
+(fn $ns/get_public_config_at_path [path]
+  (var current (get_public_config))
+  (var found true)
+  (var normalized_parts [])
+
+  (for part in ((path || "") .split "/")
+    (var key (part .trim))
+    (if_not key/.empty
+      (normalized_parts .add key)
+    )
+  )
+
+  (for key in normalized_parts
+    (if (current is Map)
+      (if (current .contains key)
+        (current = (current .get key))
+      else
+        (found = false)
+        (break)
+      )
+    else
+      (found = false)
+      (break)
+    )
+  )
+
+  {^found found ^value current}
+)
+
 (fn $ns/get_public_config_gene []
-  ((get_public_config) .to_s)
+  (render_public_config_value (get_public_config))
+)
+
+(fn $ns/get_public_config_gene_at_path [path]
+  (var result (get_public_config_at_path path))
+  (if result/found
+    (render_public_config_value result/value)
+  else
+    nil
+  )
 )
 
 # Log loaded configuration (redact secrets)

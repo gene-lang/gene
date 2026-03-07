@@ -79,6 +79,12 @@ GET /api/config
 
 Returns the current GeneClaw config as a Gene map. Secret values are always redacted as `"hidden"`.
 
+You can also fetch a nested value with a slash-delimited query path:
+```
+GET /api/config?path=llm/provider
+GET /api/config?path=slack/bot_token_configured
+```
+
 **Send message:**
 ```
 POST /api/chat

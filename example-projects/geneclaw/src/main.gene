@@ -3,7 +3,7 @@
 # GeneClaw - Tool-using Agent Platform
 # Entry point: HTTP server with Slack webhook and REST API
 
-(import PORT SLACK_SIGNING_SECRET SLACK_BOT_TOKEN SLACK_APP_TOKEN get_public_config_gene from "config")
+(import PORT SLACK_SIGNING_SECRET SLACK_BOT_TOKEN SLACK_APP_TOKEN get_public_config_gene get_public_config_at_path render_public_config_value from "config")
 (import init_db from "db")
 (import init_tools from "tools")
 (import run_agent from "agent")
@@ -95,7 +95,17 @@
 (fn handle_config [req]
   # REST endpoint: GET /api/config
   (log .trace "Config export request")
-  (gene_response 200 (get_public_config_gene))
+  (var config_path ((req/.params .get "path" "") .trim))
+  (if config_path/.empty
+    (gene_response 200 (get_public_config_gene))
+  else
+    (var path_result (get_public_config_at_path config_path))
+    (if path_result/found
+      (gene_response 200 (render_public_config_value path_result/value))
+    else
+      (gene_response 404 ({^error "Config path not found" ^path config_path} .to_s))
+    )
+  )
 )
 
 (fn handle_slack_event [req]
