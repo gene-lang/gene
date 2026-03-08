@@ -20,6 +20,28 @@ test_vm """
 """, 3
 
 test_vm """
+  ("a你" .byte_at 1)
+""", 228
+
+test_vm """
+  ("你" .bytes)
+""", proc(result: Value) =
+  check result.kind == VkBytes
+  check result.size == 3
+  check result[0] == 228.to_value()
+  check result[1] == 189.to_value()
+  check result[2] == 160.to_value()
+
+test_vm """
+  ("a你b" .byteslice 1 3)
+""", proc(result: Value) =
+  check result.kind == VkBytes
+  check result.size == 3
+  check result[0] == 228.to_value()
+  check result[1] == 189.to_value()
+  check result[2] == 160.to_value()
+
+test_vm """
   ("abc" .substr 1)
 """, "bc"
 
@@ -74,6 +96,14 @@ test_vm """
 """, 1
 
 test_vm """
+  ("a你b你" .index "你" 2)
+""", 3
+
+test_vm """
+  ("a你b你" .index #/你/ 2)
+""", 3
+
+test_vm """
   ("aba" .rindex "a")
 """, 2
 
@@ -86,8 +116,69 @@ test_vm """
 """, 3
 
 test_vm """
+  ("banana" .rindex "ana" 2)
+""", 1
+
+test_vm """
+  ("a你b你" .rindex #/你/ 2)
+""", 1
+
+test_vm """
   ("  abc  " .trim)
 """, "abc"
+
+test_vm """
+  ("  abc  " .lstrip)
+""", "abc  "
+
+test_vm """
+  ("  abc  " .rstrip)
+""", "  abc"
+
+test_vm """
+  ("abc" .empty?)
+""", false
+
+test_vm """
+  ("abc" .start_with? "ab")
+""", true
+
+test_vm """
+  ("abc" .end_with? "bc")
+""", true
+
+test_vm """
+  ("a你b" .include? "你")
+""", true
+
+test_vm """
+  ("a你b" .include? #/你/)
+""", true
+
+test_vm """
+  ("ÄBC" .downcase)
+""", "äbc"
+
+test_vm """
+  ("äBC" .capitalize)
+""", "Äbc"
+
+test_vm """
+  ("a你b" .reverse)
+""", "b你a"
+
+test_vm """
+  ("a你b" .chars)
+""", proc(result: Value) =
+  check result.kind == VkArray
+  check array_data(result).len == 3
+  check array_data(result)[0] == 'a'.to_value()
+  check array_data(result)[1] == "你".rune_at(0).to_value()
+  check array_data(result)[2] == 'b'.to_value()
+
+test_vm """
+  ("a你" .each_byte)
+""", @[97, 228, 189, 160]
 
 test_vm """
   ("abc" .starts_with "ab")

@@ -100,6 +100,7 @@ proc init_string_class*(object_class: Class) =
     (self_arg.str.len == 0).to_value()
 
   string_class.def_native_method("empty", string_empty)
+  string_class.def_native_method("empty?", string_empty)
 
   proc string_to_i(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -168,10 +169,44 @@ proc init_string_class*(object_class: Class) =
   proc string_to_lowercase(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     string_to_lower(vm, args, arg_count, has_keyword_args)
 
+  proc string_capitalize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.capitalize requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("capitalize must be called on a string")
+    if self_arg.str.len == 0:
+      return "".to_value()
+
+    let first = unicode.toUpper(utf8_char_str_at(self_arg.str, 0))
+    let rest =
+      if utf8_char_len(self_arg.str) > 1:
+        unicode.toLower(unicode.runeSubStr(self_arg.str, 1))
+      else:
+        ""
+    (first & rest).to_value()
+
+  proc string_reverse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.reverse requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("reverse must be called on a string")
+    let runes = self_arg.str.toRunes()
+    var buffer = newStringOfCap(self_arg.str.len)
+    if runes.len > 0:
+      for i in countdown(runes.len - 1, 0):
+        buffer.add(runes[i])
+    buffer.to_value()
+
   string_class.def_native_method("to_uppercase", string_to_uppercase)
   string_class.def_native_method("to_lowercase", string_to_lowercase)
   string_class.def_native_method("upper", to_upper_fn.native_fn, @[], string_class_value)
   string_class.def_native_method("lower", to_lower_fn.native_fn, @[], string_class_value)
+  string_class.def_native_method("upcase", to_upper_fn.native_fn, @[], string_class_value)
+  string_class.def_native_method("downcase", to_lower_fn.native_fn, @[], string_class_value)
+  string_class.def_native_method("capitalize", string_capitalize)
+  string_class.def_native_method("reverse", string_reverse)
 
   proc string_substr(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -245,37 +280,110 @@ proc init_string_class*(object_class: Class) =
 
   string_class.def_native_method("split", string_split)
 
+  proc normalize_search_start(s: string, raw_offset: int64): int {.inline, gcsafe.} =
+    let char_len = utf8_char_len(s)
+    var offset = raw_offset.int
+    if offset < 0:
+      offset = char_len + offset
+    if offset < 0:
+      0
+    elif offset > char_len:
+      char_len
+    else:
+      offset
+
+  proc normalize_search_limit(s: string, raw_offset: int64): int {.inline, gcsafe.} =
+    let char_len = utf8_char_len(s)
+    if char_len == 0:
+      return -1
+    var offset = raw_offset.int
+    if offset < 0:
+      offset = char_len + offset
+    if offset < 0:
+      return -1
+    min(offset, char_len - 1)
+
   proc string_index(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("String.index requires substring")
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("String.index requires a pattern")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       not_allowed("index must be called on a string")
-    let needle = get_positional_arg(args, 1, has_keyword_args)
-    if needle.kind != VkString:
-      not_allowed("index substring must be a string")
-    let pos = self_arg.str.find(needle.str)
-    if pos < 0:
-      (-1).to_value()
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    let start_char = if pos_count >= 3:
+      normalize_search_start(self_arg.str, get_positional_arg(args, 2, has_keyword_args).to_int())
     else:
-      utf8_char_pos_for_byte_offset(self_arg.str, pos).to_value()
+      0
+    let start_byte = utf8_byte_offset_for_char_pos(self_arg.str, start_char)
+    case pattern_val.kind
+    of VkString:
+      let pos = if pattern_val.str.len == 0:
+        start_byte
+      else:
+        self_arg.str.find(pattern_val.str, start_byte)
+      if pos < 0:
+        result = (-1).to_value()
+      else:
+        result = utf8_char_pos_for_byte_offset(self_arg.str, pos).to_value()
+    of VkRegex:
+      let (first, _) = regex_find_byte_bounds(self_arg.str, pattern_val, start_byte)
+      if first < 0:
+        result = (-1).to_value()
+      else:
+        result = utf8_char_pos_for_byte_offset(self_arg.str, first).to_value()
+    else:
+      not_allowed("String.index expects a Regexp or string pattern")
 
   string_class.def_native_method("index", string_index)
 
   proc string_rindex(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("String.rindex requires substring")
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("String.rindex requires a pattern")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       not_allowed("rindex must be called on a string")
-    let needle = get_positional_arg(args, 1, has_keyword_args)
-    if needle.kind != VkString:
-      not_allowed("rindex substring must be a string")
-    let pos = self_arg.str.rfind(needle.str)
-    if pos < 0:
-      (-1).to_value()
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    let char_len = utf8_char_len(self_arg.str)
+    let limit_char = if pos_count >= 3:
+      normalize_search_limit(self_arg.str, get_positional_arg(args, 2, has_keyword_args).to_int())
     else:
-      utf8_char_pos_for_byte_offset(self_arg.str, pos).to_value()
+      char_len - 1
+    if limit_char < 0:
+      return (-1).to_value()
+    case pattern_val.kind
+    of VkString:
+      if pattern_val.str.len == 0:
+        return min(limit_char + 1, char_len).to_value()
+      var search_byte = 0
+      var last_found = -1
+      while search_byte <= self_arg.str.len:
+        let pos = self_arg.str.find(pattern_val.str, search_byte)
+        if pos < 0:
+          break
+        let char_pos = utf8_char_pos_for_byte_offset(self_arg.str, pos)
+        if char_pos > limit_char:
+          break
+        last_found = char_pos
+        search_byte = pos + 1
+      result = last_found.to_value()
+    of VkRegex:
+      var search_byte = 0
+      var last_found = -1
+      while search_byte <= self_arg.str.len:
+        let (first, last) = regex_find_byte_bounds(self_arg.str, pattern_val, search_byte)
+        if first < 0:
+          break
+        let char_pos = utf8_char_pos_for_byte_offset(self_arg.str, first)
+        if char_pos > limit_char:
+          break
+        last_found = char_pos
+        discard last
+        search_byte = first + 1
+      result = last_found.to_value()
+    else:
+      not_allowed("String.rindex expects a Regexp or string pattern")
 
   string_class.def_native_method("rindex", string_rindex)
 
@@ -285,10 +393,29 @@ proc init_string_class*(object_class: Class) =
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       not_allowed("trim must be called on a string")
-    self_arg.str.strip().to_value()
+    unicode.strip(self_arg.str).to_value()
 
   string_class.def_native_method("trim", string_trim)
   string_class.def_native_method("strip", string_trim)
+
+  proc string_lstrip(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.lstrip requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("lstrip must be called on a string")
+    unicode.strip(self_arg.str, leading = true, trailing = false).to_value()
+
+  proc string_rstrip(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.rstrip requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("rstrip must be called on a string")
+    unicode.strip(self_arg.str, leading = false, trailing = true).to_value()
+
+  string_class.def_native_method("lstrip", string_lstrip)
+  string_class.def_native_method("rstrip", string_rstrip)
 
   proc string_starts_with(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -310,6 +437,8 @@ proc init_string_class*(object_class: Class) =
 
   string_class.def_native_method("starts_with", string_starts_with)
   string_class.def_native_method("ends_with", string_ends_with)
+  string_class.def_native_method("start_with?", string_starts_with)
+  string_class.def_native_method("end_with?", string_ends_with)
 
   proc string_char_at(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -324,6 +453,106 @@ proc init_string_class*(object_class: Class) =
     utf8_char_at(self_arg.str, idx).to_value()
 
   string_class.def_native_method("char_at", string_char_at)
+
+  proc string_byte_at(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.byte_at requires index")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let idx_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString or idx_val.kind != VkInt:
+      not_allowed("byte_at expects string and integer")
+    var idx = idx_val.int64.int
+    if idx < 0:
+      idx = self_arg.str.len + idx
+    if idx < 0 or idx >= self_arg.str.len:
+      not_allowed("byte_at index out of bounds")
+    self_arg.str[idx].ord.to_value()
+
+  string_class.def_native_method("byte_at", string_byte_at)
+
+  proc string_chars(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.chars requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("chars must be called on a string")
+    var chars = new_array_value()
+    for rune in self_arg.str.runes:
+      array_data(chars).add(rune.to_value())
+    chars
+
+  proc string_each_byte(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.each_byte requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("each_byte must be called on a string")
+    var values = new_array_value()
+    for ch in self_arg.str:
+      array_data(values).add(ch.ord.to_value())
+    values
+
+  proc string_bytes(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.bytes requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("bytes must be called on a string")
+    var data = newSeq[uint8](self_arg.str.len)
+    for i in 0..<self_arg.str.len:
+      data[i] = self_arg.str[i].ord.uint8
+    new_bytes_value(data)
+
+  proc string_byteslice(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("String.byteslice requires start index")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("byteslice must be called on a string")
+    let byte_len = self_arg.str.len
+    if byte_len == 0:
+      return new_bytes_value(newSeq[uint8]())
+
+    proc adjust(idx: int64; allowLen: bool): int =
+      var res = idx.int
+      if res < 0:
+        res = byte_len + res
+      if res < 0:
+        res = 0
+      if allowLen:
+        if res > byte_len:
+          res = byte_len
+      else:
+        if res >= byte_len:
+          res = byte_len - 1
+      res
+
+    let start_idx = adjust(get_positional_arg(args, 1, has_keyword_args).to_int(), true)
+    if start_idx >= byte_len:
+      return new_bytes_value(newSeq[uint8]())
+
+    let end_idx = if pos_count >= 3:
+      adjust(get_positional_arg(args, 2, has_keyword_args).to_int(), false)
+    else:
+      byte_len - 1
+    if end_idx < start_idx:
+      return new_bytes_value(newSeq[uint8]())
+
+    var data = newSeq[uint8](end_idx - start_idx + 1)
+    var target = 0
+    for i in start_idx..end_idx:
+      data[target] = self_arg.str[i].ord.uint8
+      target.inc()
+    new_bytes_value(data)
+
+  string_class.def_native_method("bytes", string_bytes)
+  string_class.def_native_method("to_bytes", string_bytes)
+  string_class.def_native_method("byteslice", string_byteslice)
+  string_class.def_native_method("byte_slice", string_byteslice)
+  string_class.def_native_method("chars", string_chars)
+  string_class.def_native_method("each_char", string_chars)
+  string_class.def_native_method("each_byte", string_each_byte)
 
   proc string_match(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -367,6 +596,7 @@ proc init_string_class*(object_class: Class) =
       not_allowed("String.contain expects a Regexp or string pattern")
 
   string_class.def_native_method("contain", string_contain)
+  string_class.def_native_method("include?", string_contain)
 
   proc string_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:

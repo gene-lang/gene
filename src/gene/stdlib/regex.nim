@@ -156,6 +156,14 @@ proc regex_find_bounds(input: string, regex_val: Value,
   captures = newSeq[string](regex_capture_count(capture_info))
   re.findBounds(input, regex_obj, captures, start)
 
+proc regex_find_byte_bounds*(input: string, regex_val: Value,
+                             start = 0): tuple[first, last: int] {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let capture_info = analyze_regex_captures(regex_val.ref.regex_pattern)
+  var captures: seq[string]
+  regex_find_bounds(input, regex_val, capture_info, captures, start)
+
 proc build_regex_match_value(input: string, capture_info: RegexCaptureInfo,
                              captures: seq[string], first: int, last: int): Value {.gcsafe.} =
   let end_pos = if last >= first: last + 1 else: first

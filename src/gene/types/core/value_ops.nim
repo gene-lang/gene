@@ -670,7 +670,7 @@ proc `[]`*(self: Value, i: int): Value =
             if i >= r.bytes_data.len:
               return NIL
             else:
-              return r.bytes_data[i].to_value()
+              return Value(raw: SMALL_INT_TAG or cast[uint64](r.bytes_data[i]))
           of VkRange:
             # Calculate the i-th element in the range
             let start_int = r.range_start.int64

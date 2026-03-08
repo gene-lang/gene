@@ -4,6 +4,11 @@
 # Expected: hello
 # Expected: helloworld
 # Expected: helloworld
+# Expected: Äbc
+# Expected: b你a
+# Expected: true
+# Expected: true
+# Expected: true
 # Expected: String method tests done
 
 (var original "hello")
@@ -14,4 +19,10 @@
 (var appended (original .append "world"))
 (println appended)
 (println original)
+(println ("äBC" .capitalize))
+(println ("a你b" .reverse))
+(println ("abc" .start_with? "ab"))
+(println ("a你b" .include? #/你/))
+(var chars ("a你b" .chars))
+(println (chars/1 == ("你" .char_at 0)))
 (println "String method tests done")

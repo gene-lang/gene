@@ -27,6 +27,9 @@ converter to_value*(v: int32): Value {.inline, noSideEffect.} =
   # int32 always fits in 48 bits
   result = Value(raw: SMALL_INT_TAG or (cast[uint64](v.int64) and PAYLOAD_MASK))
 
+converter to_value*(v: uint8): Value {.inline, noSideEffect.} =
+  result = Value(raw: SMALL_INT_TAG or v.uint64)
+
 converter to_value*(v: int64): Value {.inline.} =
   if v >= SMALL_INT_MIN and v <= SMALL_INT_MAX:
     # Fits in 48 bits - use NaN boxing
@@ -216,6 +219,11 @@ proc new_range_value*(start: Value, `end`: Value, step: Value): Value =
   r.range_start = start
   r.range_end = `end`
   r.range_step = step
+  result = r.to_ref_value()
+
+proc new_bytes_value*(data: openArray[uint8]): Value =
+  let r = new_ref(VkBytes)
+  r.bytes_data = @data
   result = r.to_ref_value()
 
 proc new_regex_value*(pattern: string, flags: uint8 = 0'u8, replacement: string = "", has_replacement: bool = false): Value =

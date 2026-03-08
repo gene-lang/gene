@@ -16,6 +16,13 @@ proc utf8_char_pos_for_byte_offset*(s: string, byte_offset: int): int {.gcsafe.}
     i += s.runeLenAt(i)
     result.inc()
 
+proc utf8_byte_offset_for_char_pos*(s: string, char_pos: int): int {.gcsafe.} =
+  if char_pos <= 0:
+    return 0
+
+  let bounded = min(char_pos, s.runeLen)
+  s.runeOffset(bounded)
+
 proc utf8_char_at*(s: string, pos: int): Rune {.inline, gcsafe.} =
   s.runeAtPos(pos)
 
