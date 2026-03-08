@@ -1,14 +1,16 @@
 # Regex + string helper tests
-# Expected: true
-# Expected: true
+# Expected: AB
+# Expected: a
 # Expected: a
 # Expected: a
 # Expected: a[1]b[2]
 # Expected: Regex method tests done
 
 (var r (new gene/Regexp ^^i "ab"))
-(println (r .match "AB"))
-(println (#/a/ .match "ba"))
+(var match1 (r .match "AB"))
+(println match1/value)
+(var match2 (#/a/ .match "ba"))
+(println match2/value)
 (println (#/a/ .find "ba"))
 (var m (#/(a)(b)/ .process "ab"))
 (println m/captures/0)

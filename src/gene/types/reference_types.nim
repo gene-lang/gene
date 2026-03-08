@@ -45,8 +45,11 @@ type
       of VkRegexMatch:
         regex_match_value*: string
         regex_match_captures*: seq[string]
+        regex_match_named_captures*: Table[Key, Value]
         regex_match_start*: int64
         regex_match_end*: int64
+        regex_match_pre*: string
+        regex_match_post*: string
       of VkRange:
         range_start*: Value
         range_end*: Value

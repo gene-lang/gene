@@ -31,7 +31,7 @@ proc extension_file_path(base: string): string =
 
 proc eval_with_import(ext_base: string, code: string): Value =
   VM.exec("""
-    (import add multiply concat strlen is_even greet from """" & ext_base & """" ^^native)
+    (import add multiply concat strlen is_even greet utf8_char from """" & ext_base & """" ^^native)
     """ & "\n" & code, "test_c_extension")
 
 suite "C Extension Support":
@@ -68,6 +68,7 @@ suite "C Extension Support":
   test "C extension - strlen function":
     let ext_base = extension_base_path()
     check eval_with_import(ext_base, """(strlen "Hello")""") == 5.to_value()
+    check eval_with_import(ext_base, """(strlen "你好")""") == 6.to_value()
 
   test "C extension - is_even function":
     let ext_base = extension_base_path()
@@ -79,3 +80,9 @@ suite "C Extension Support":
     let result = eval_with_import(ext_base, """(greet "Alice")""")
     check result.kind == VkString
     check result.str == "Hello, Alice!"
+
+  test "C extension - explicit-length UTF-8 string":
+    let ext_base = extension_base_path()
+    let result = eval_with_import(ext_base, "(utf8_char)")
+    check result.kind == VkString
+    check result.str == "你"

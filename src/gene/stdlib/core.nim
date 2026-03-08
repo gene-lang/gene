@@ -2818,7 +2818,10 @@ proc regex_process_match(input: string, regex_val: Value): Value {.gcsafe.} =
     return NIL
   let end_pos = if last >= first: last + 1 else: first
   let match_val = if last >= first: input[first .. last] else: ""
-  new_regex_match_value(match_val, captures, first.int64, end_pos.int64)
+  let pre_match = if first > 0: input[0 ..< first] else: ""
+  let post_match = if end_pos < input.len: input[end_pos .. ^1] else: ""
+  new_regex_match_value(match_val, captures, initTable[Key, Value](),
+                        first.int64, end_pos.int64, pre_match, post_match)
 
 proc regex_find_first(input: string, regex_val: Value): Value {.gcsafe.} =
   if regex_val.kind != VkRegex:

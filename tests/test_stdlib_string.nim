@@ -1,3 +1,4 @@
+import unicode
 import unittest
 import ./helpers
 import gene/types except Exception
@@ -11,6 +12,14 @@ test_vm """
 """, 3
 
 test_vm """
+  ("你从哪里来？" .size)
+""", 6
+
+test_vm """
+  ("你" .bytesize)
+""", 3
+
+test_vm """
   ("abc" .substr 1)
 """, "bc"
 
@@ -21,6 +30,10 @@ test_vm """
 test_vm """
   ("abc" .substr -2 -1)
 """, "bc"
+
+test_vm """
+  ("a你b" .substr 1 1)
+""", "你"
 
 test_vm """
   ("a:b:c" .split ":")
@@ -40,6 +53,15 @@ test_vm """
   check array_data(result)[1].str == "b:c"
 
 test_vm """
+  ("foo  bar\tbaz" .split #/\\s+/)
+""", proc(result: Value) =
+  check result.kind == VkArray
+  check array_data(result).len == 3
+  check array_data(result)[0].str == "foo"
+  check array_data(result)[1].str == "bar"
+  check array_data(result)[2].str == "baz"
+
+test_vm """
   ("abc" .index "b")
 """, 1
 
@@ -48,12 +70,20 @@ test_vm """
 """, -1
 
 test_vm """
+  ("a你b你" .index "你")
+""", 1
+
+test_vm """
   ("aba" .rindex "a")
 """, 2
 
 test_vm """
   ("abc" .rindex "x")
 """, -1
+
+test_vm """
+  ("a你b你" .rindex "你")
+""", 3
 
 test_vm """
   ("  abc  " .trim)
@@ -92,6 +122,10 @@ test_vm """
 """, "abc"
 
 test_vm """
+  ("ÄBC" .to_lowercase)
+""", "äbc"
+
+test_vm """
   ("42" .to_i)
 """, 42
 
@@ -106,6 +140,10 @@ test_vm_error """
 test_vm """
   ("abc" .char_at 1)
 """, 'b'
+
+test_vm """
+  ("你从哪里来？" .char_at 1)
+""", "从".rune_at(0)
 
 test_vm """
   ($ "a" "b" 1)

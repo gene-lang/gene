@@ -2,6 +2,7 @@
 # This module exports C-compatible functions for use by C extensions
 
 import ../types
+import ../text_utils
 
 # Export value conversion functions
 proc gene_to_value_int*(i: int64): Value {.exportc, dynlib.} =
@@ -16,7 +17,23 @@ proc gene_to_value_string*(s: cstring): Value {.exportc, dynlib.} =
   ## Convert C string to Gene Value
   if s == nil:
     return NIL
-  ($s).to_value()
+  let value = $s
+  if not utf8_valid(value):
+    return NIL
+  value.to_value()
+
+proc gene_to_value_string_n*(s: cstring, len: int64): Value {.exportc, dynlib.} =
+  ## Convert a length-delimited UTF-8 buffer to Gene Value
+  if s == nil or len < 0 or len > high(int).int64:
+    return NIL
+
+  let size = len.int
+  var value = newString(size)
+  if size > 0:
+    copyMem(addr(value[0]), s, size)
+  if not utf8_valid(value):
+    return NIL
+  value.to_value()
 
 proc gene_to_value_bool*(b: bool): Value {.exportc, dynlib.} =
   ## Convert C bool to Gene Value
@@ -44,11 +61,18 @@ proc gene_to_float*(v: Value): float64 {.exportc, dynlib.} =
       0.0
 
 proc gene_to_string*(v: Value): cstring {.exportc, dynlib.} =
-  ## Convert Gene Value to C string
-  if v.kind == VkString:
+  ## Convert Gene Value to a borrowed C string view
+  if v.kind == VkString and not utf8_has_nul(v.str):
     cstring(v.str)
   else:
     nil
+
+proc gene_string_len*(v: Value): int64 {.exportc, dynlib.} =
+  ## Return Gene string byte length
+  if v.kind == VkString:
+    v.str.len.int64
+  else:
+    0
 
 proc gene_to_bool*(v: Value): bool {.exportc, dynlib.} =
   ## Convert Gene Value to C bool
@@ -109,4 +133,3 @@ proc gene_raise_error*(message: cstring) {.exportc, dynlib, noreturn.} =
     raise new_exception(types.Exception, "Unknown error")
   else:
     raise new_exception(types.Exception, $message)
-

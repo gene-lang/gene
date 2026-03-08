@@ -1,6 +1,7 @@
-import strutils
+import strutils, unicode
 
 import ../types
+import ../text_utils
 import ./classes
 import ./regex
 
@@ -73,12 +74,22 @@ proc init_string_class*(object_class: Class) =
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "length can only be called on a string")
 
-    return self_arg.str.len.int64.to_value()
+    return utf8_char_len(self_arg.str).int64.to_value()
 
   var length_fn = new_ref(VkNativeFn)
   length_fn.native_fn = string_length
   string_class.def_native_method("length", length_fn.native_fn, @[], App.app.int_class)
   string_class.def_native_method("size", length_fn.native_fn, @[], App.app.int_class)
+
+  proc string_bytesize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("String.bytesize requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("bytesize must be called on a string")
+    utf8_byte_len(self_arg.str).int64.to_value()
+
+  string_class.def_native_method("bytesize", string_bytesize, @[], App.app.int_class)
 
   proc string_empty(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -130,7 +141,7 @@ proc init_string_class*(object_class: Class) =
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "to_upper can only be called on a string")
 
-    return self_arg.str.toUpperAscii().to_value()
+    return unicode.toUpper(self_arg.str).to_value()
 
   var to_upper_fn = new_ref(VkNativeFn)
   to_upper_fn.native_fn = string_to_upper
@@ -144,7 +155,7 @@ proc init_string_class*(object_class: Class) =
     if self_arg.kind != VkString:
       raise new_exception(types.Exception, "to_lower can only be called on a string")
 
-    return self_arg.str.toLowerAscii().to_value()
+    return unicode.toLower(self_arg.str).to_value()
 
   var to_lower_fn = new_ref(VkNativeFn)
   to_lower_fn.native_fn = string_to_lower
@@ -169,7 +180,7 @@ proc init_string_class*(object_class: Class) =
     if self_arg.kind != VkString:
       not_allowed("substr must be called on a string")
     let s = self_arg.str
-    let len = s.len
+    let len = utf8_char_len(s)
     if len == 0:
       return "".to_value()
 
@@ -193,13 +204,13 @@ proc init_string_class*(object_class: Class) =
       return "".to_value()
 
     if get_positional_count(arg_count, has_keyword_args) == 2:
-      return s[start_idx..^1].to_value()
+      return unicode.runeSubStr(s, start_idx).to_value()
 
     let end_idx64 = get_positional_arg(args, 2, has_keyword_args).to_int()
     var end_idx = adjust(end_idx64, false)
     if end_idx < start_idx:
       return "".to_value()
-    result = s[start_idx..end_idx].to_value()
+    result = unicode.runeSubStr(s, start_idx, end_idx - start_idx + 1).to_value()
 
   string_class.def_native_method("substr", string_substr)
 
@@ -210,19 +221,27 @@ proc init_string_class*(object_class: Class) =
     if self_arg.kind != VkString:
       not_allowed("split must be called on a string")
     let sep_arg = get_positional_arg(args, 1, has_keyword_args)
-    if sep_arg.kind != VkString:
-      not_allowed("split separator must be a string")
-    let sep = sep_arg.str
-    var parts: seq[string]
-    if get_positional_count(arg_count, has_keyword_args) >= 3:
-      let limit = max(1, get_positional_arg(args, 2, has_keyword_args).to_int().int)
-      parts = self_arg.str.split(sep, limit - 1)
+    case sep_arg.kind
+    of VkString:
+      let sep = sep_arg.str
+      var parts: seq[string]
+      if get_positional_count(arg_count, has_keyword_args) >= 3:
+        let limit = max(1, get_positional_arg(args, 2, has_keyword_args).to_int().int)
+        parts = self_arg.str.split(sep, limit - 1)
+      else:
+        parts = self_arg.str.split(sep)
+      var arr_ref = new_array_value()
+      for part in parts:
+        array_data(arr_ref).add(part.to_value())
+      result = arr_ref
+    of VkRegex:
+      let limit = if get_positional_count(arg_count, has_keyword_args) >= 3:
+        max(1, get_positional_arg(args, 2, has_keyword_args).to_int().int)
+      else:
+        0
+      result = regex_split_values(self_arg.str, sep_arg, limit)
     else:
-      parts = self_arg.str.split(sep)
-    var arr_ref = new_array_value()
-    for part in parts:
-      array_data(arr_ref).add(part.to_value())
-    arr_ref
+      not_allowed("split separator must be a string or Regexp")
 
   string_class.def_native_method("split", string_split)
 
@@ -236,7 +255,10 @@ proc init_string_class*(object_class: Class) =
     if needle.kind != VkString:
       not_allowed("index substring must be a string")
     let pos = self_arg.str.find(needle.str)
-    pos.to_value()
+    if pos < 0:
+      (-1).to_value()
+    else:
+      utf8_char_pos_for_byte_offset(self_arg.str, pos).to_value()
 
   string_class.def_native_method("index", string_index)
 
@@ -250,7 +272,10 @@ proc init_string_class*(object_class: Class) =
     if needle.kind != VkString:
       not_allowed("rindex substring must be a string")
     let pos = self_arg.str.rfind(needle.str)
-    pos.to_value()
+    if pos < 0:
+      (-1).to_value()
+    else:
+      utf8_char_pos_for_byte_offset(self_arg.str, pos).to_value()
 
   string_class.def_native_method("rindex", string_rindex)
 
@@ -263,6 +288,7 @@ proc init_string_class*(object_class: Class) =
     self_arg.str.strip().to_value()
 
   string_class.def_native_method("trim", string_trim)
+  string_class.def_native_method("strip", string_trim)
 
   proc string_starts_with(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -293,9 +319,9 @@ proc init_string_class*(object_class: Class) =
     if self_arg.kind != VkString or idx_val.kind != VkInt:
       not_allowed("char_at expects string and integer")
     let idx = idx_val.int64.int
-    if idx < 0 or idx >= self_arg.str.len:
+    if idx < 0 or idx >= utf8_char_len(self_arg.str):
       not_allowed("char_at index out of bounds")
-    self_arg.str[idx].to_value()
+    utf8_char_at(self_arg.str, idx).to_value()
 
   string_class.def_native_method("char_at", string_char_at)
 
@@ -308,9 +334,22 @@ proc init_string_class*(object_class: Class) =
       not_allowed("match must be called on a string")
     if pattern_val.kind != VkRegex:
       not_allowed("String.match requires a Regexp")
-    regex_match_bool(self_arg.str, pattern_val).to_value()
+    regex_process_match(self_arg.str, pattern_val)
 
   string_class.def_native_method("match", string_match)
+
+  proc string_match_predicate(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("String.match? requires a Regexp")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkString:
+      not_allowed("match? must be called on a string")
+    if pattern_val.kind != VkRegex:
+      not_allowed("String.match? requires a Regexp")
+    regex_match_bool(self_arg.str, pattern_val).to_value()
+
+  string_class.def_native_method("match?", string_match_predicate)
 
   proc string_contain(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -379,6 +418,11 @@ proc init_string_class*(object_class: Class) =
 
   string_class.def_native_method("find_all", string_find_all)
 
+  proc string_scan(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    string_find_all(vm, args, arg_count, has_keyword_args)
+
+  string_class.def_native_method("scan", string_scan)
+
   proc string_replace(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let pos_count = get_positional_count(arg_count, has_keyword_args)
     if pos_count < 2:
@@ -433,6 +477,15 @@ proc init_string_class*(object_class: Class) =
       not_allowed("String.replace_all expects a Regexp or string pattern")
 
   string_class.def_native_method("replace_all", string_replace_all)
+
+  proc string_sub(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    string_replace(vm, args, arg_count, has_keyword_args)
+
+  proc string_gsub(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    string_replace_all(vm, args, arg_count, has_keyword_args)
+
+  string_class.def_native_method("sub", string_sub)
+  string_class.def_native_method("gsub", string_gsub)
 
   proc gene_dollar(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let positional = get_positional_count(arg_count, has_keyword_args)

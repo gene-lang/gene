@@ -226,12 +226,16 @@ proc new_regex_value*(pattern: string, flags: uint8 = 0'u8, replacement: string 
   r.regex_has_replacement = has_replacement
   result = r.to_ref_value()
 
-proc new_regex_match_value*(value: string, captures: seq[string], start: int64, `end`: int64): Value =
+proc new_regex_match_value*(value: string, captures: seq[string], named_captures: Table[Key, Value],
+                            start: int64, `end`: int64, pre_match: string, post_match: string): Value =
   let r = new_ref(VkRegexMatch)
   r.regex_match_value = value
   r.regex_match_captures = captures
+  r.regex_match_named_captures = named_captures
   r.regex_match_start = start
   r.regex_match_end = `end`
+  r.regex_match_pre = pre_match
+  r.regex_match_post = post_match
   result = r.to_ref_value()
 
 proc new_date_value*(year: int, month: int, day: int): Value =

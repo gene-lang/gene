@@ -852,10 +852,16 @@ proc exec*(self: ptr VirtualMachine): Value =
               for item in value.ref.regex_match_captures:
                 array_data(caps).add(item.to_value())
               member = caps
+            of "named_captures":
+              member = new_map_value(value.ref.regex_match_named_captures)
             of "start":
               member = value.ref.regex_match_start.to_value()
             of "end":
               member = value.ref.regex_match_end.to_value()
+            of "pre_match":
+              member = value.ref.regex_match_pre.to_value()
+            of "post_match":
+              member = value.ref.regex_match_post.to_value()
             else:
               member = NIL
             retain(member)
@@ -1007,10 +1013,16 @@ proc exec*(self: ptr VirtualMachine): Value =
                 for item in target.ref.regex_match_captures:
                   array_data(caps).add(item.to_value())
                 member = caps
+              of "named_captures":
+                member = new_map_value(target.ref.regex_match_named_captures)
               of "start":
                 member = target.ref.regex_match_start.to_value()
               of "end":
                 member = target.ref.regex_match_end.to_value()
+              of "pre_match":
+                member = target.ref.regex_match_pre.to_value()
+              of "post_match":
+                member = target.ref.regex_match_post.to_value()
               else:
                 member = VOID
               retain(member)

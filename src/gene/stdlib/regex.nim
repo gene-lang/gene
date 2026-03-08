@@ -1,8 +1,11 @@
 import re, tables
 
 import ../types
+import ../text_utils
 
 type RegexCacheKey = tuple[pattern: string, flags: uint8]
+type RegexCaptureInfo = object
+  names: seq[string]
 
 var regex_cache {.threadvar.}: Table[RegexCacheKey, Regex]
 var regex_cache_initialized {.threadvar.}: bool
@@ -39,8 +42,7 @@ proc extract_regex(value: Value, pattern: var string, flags: var uint8) {.gcsafe
   else:
     not_allowed("Expected a regex or string pattern")
 
-proc count_regex_captures(pattern: string): int {.gcsafe.} =
-  var count = 0
+proc analyze_regex_captures(pattern: string): RegexCaptureInfo {.gcsafe.} =
   var escaped = false
   var in_class = false
   var i = 0
@@ -64,20 +66,50 @@ proc count_regex_captures(pattern: string): int {.gcsafe.} =
       inc i
       continue
     if ch == '(':
+      if result.names.len >= MaxSubpatterns:
+        inc i
+        continue
       if i + 1 < pattern.len and pattern[i + 1] == '?':
         if i + 2 < pattern.len and pattern[i + 2] == '<':
-          count.inc()
+          if i + 3 < pattern.len and pattern[i + 3] notin {'=', '!'}:
+            var j = i + 3
+            while j < pattern.len and pattern[j] != '>':
+              j.inc()
+            result.names.add(if j < pattern.len: pattern[i + 3 ..< j] else: "")
+            i = if j < pattern.len: j else: i
+        elif i + 2 < pattern.len and pattern[i + 2] == '\'':
+          var j = i + 3
+          while j < pattern.len and pattern[j] != '\'':
+            j.inc()
+          result.names.add(if j < pattern.len: pattern[i + 3 ..< j] else: "")
+          i = if j < pattern.len: j else: i
         elif i + 3 < pattern.len and pattern[i + 2] == 'P' and pattern[i + 3] == '<':
-          count.inc()
+          var j = i + 4
+          while j < pattern.len and pattern[j] != '>':
+            j.inc()
+          result.names.add(if j < pattern.len: pattern[i + 4 ..< j] else: "")
+          i = if j < pattern.len: j else: i
       else:
-        count.inc()
+        result.names.add("")
     inc i
-  if count > MaxSubpatterns:
-    result = MaxSubpatterns
-  else:
-    result = count
 
-proc apply_regex_replacement(replacement_str: string, captures: seq[string], full_match: string): string {.gcsafe.} =
+proc regex_capture_count(info: RegexCaptureInfo): int {.inline, gcsafe.} =
+  info.names.len
+
+proc build_named_capture_values(info: RegexCaptureInfo, captures: seq[string]): Table[Key, Value] {.gcsafe.} =
+  result = initTable[Key, Value]()
+  for i, name in info.names:
+    if name.len > 0 and i < captures.len:
+      result[name.to_key()] = captures[i].to_value()
+
+proc build_named_capture_strings(info: RegexCaptureInfo, captures: seq[string]): Table[string, string] {.gcsafe.} =
+  result = initTable[string, string]()
+  for i, name in info.names:
+    if name.len > 0 and i < captures.len:
+      result[name] = captures[i]
+
+proc apply_regex_replacement(replacement_str: string, captures: seq[string],
+                             named_captures: Table[string, string], full_match: string): string {.gcsafe.} =
   result = ""
   var i = 0
   while i < replacement_str.len:
@@ -99,11 +131,42 @@ proc apply_regex_replacement(replacement_str: string, captures: seq[string], ful
           result.add(captures[num - 1])
         i = j
         continue
+      if next in {'k', 'g'} and i + 2 < replacement_str.len and replacement_str[i + 2] in {'<', '\''}:
+        let close_delim = if replacement_str[i + 2] == '<': '>' else: '\''
+        var j = i + 3
+        while j < replacement_str.len and replacement_str[j] != close_delim:
+          j.inc()
+        if j < replacement_str.len:
+          let name = replacement_str[i + 3 ..< j]
+          if named_captures.hasKey(name):
+            result.add(named_captures[name])
+          i = j + 1
+          continue
       result.add('\\')
       i.inc()
       continue
     result.add(replacement_str[i])
     i.inc()
+
+proc regex_find_bounds(input: string, regex_val: Value,
+                       capture_info: RegexCaptureInfo,
+                       captures: var seq[string],
+                       start = 0): tuple[first, last: int] {.gcsafe.} =
+  let regex_obj = get_compiled_regex(regex_val.ref.regex_pattern, regex_val.ref.regex_flags)
+  captures = newSeq[string](regex_capture_count(capture_info))
+  re.findBounds(input, regex_obj, captures, start)
+
+proc build_regex_match_value(input: string, capture_info: RegexCaptureInfo,
+                             captures: seq[string], first: int, last: int): Value {.gcsafe.} =
+  let end_pos = if last >= first: last + 1 else: first
+  let match_val = if last >= first: input[first .. last] else: ""
+  let pre_match = if first > 0: input[0 ..< first] else: ""
+  let post_match = if end_pos < input.len: input[end_pos .. ^1] else: ""
+  let named_captures = build_named_capture_values(capture_info, captures)
+  let char_start = utf8_char_pos_for_byte_offset(input, first)
+  let char_end = utf8_char_pos_for_byte_offset(input, end_pos)
+  new_regex_match_value(match_val, captures, named_captures, char_start.int64,
+                        char_end.int64, pre_match, post_match)
 
 proc regex_match_bool*(input: string, regex_val: Value): bool {.gcsafe.} =
   if regex_val.kind != VkRegex:
@@ -114,27 +177,19 @@ proc regex_match_bool*(input: string, regex_val: Value): bool {.gcsafe.} =
 proc regex_process_match*(input: string, regex_val: Value): Value {.gcsafe.} =
   if regex_val.kind != VkRegex:
     not_allowed("Expected a Regexp")
-  let pattern = regex_val.ref.regex_pattern
-  let flags = regex_val.ref.regex_flags
-  let regex_obj = get_compiled_regex(pattern, flags)
-  let capture_count = count_regex_captures(pattern)
-  var captures = newSeq[string](capture_count)
-  let (first, last) = re.findBounds(input, regex_obj, captures)
+  let capture_info = analyze_regex_captures(regex_val.ref.regex_pattern)
+  var captures: seq[string]
+  let (first, last) = regex_find_bounds(input, regex_val, capture_info, captures)
   if first < 0:
     return NIL
-  let end_pos = if last >= first: last + 1 else: first
-  let match_val = if last >= first: input[first .. last] else: ""
-  new_regex_match_value(match_val, captures, first.int64, end_pos.int64)
+  build_regex_match_value(input, capture_info, captures, first, last)
 
 proc regex_find_first*(input: string, regex_val: Value): Value {.gcsafe.} =
   if regex_val.kind != VkRegex:
     not_allowed("Expected a Regexp")
-  let pattern = regex_val.ref.regex_pattern
-  let flags = regex_val.ref.regex_flags
-  let regex_obj = get_compiled_regex(pattern, flags)
-  let capture_count = count_regex_captures(pattern)
-  var captures = newSeq[string](capture_count)
-  let (first, last) = re.findBounds(input, regex_obj, captures)
+  let capture_info = analyze_regex_captures(regex_val.ref.regex_pattern)
+  var captures: seq[string]
+  let (first, last) = regex_find_bounds(input, regex_val, capture_info, captures)
   if first < 0:
     return NIL
   if last < first:
@@ -162,10 +217,12 @@ proc regex_replacement_from_args(regex_val: Value, replacement_override: Value):
   not_allowed("Replacement string is required")
   ""
 
-proc regex_replace_internal(input: string, regex_obj: Regex, replacement: string, capture_count: int, replace_all: bool): string =
+proc regex_replace_internal(input: string, regex_obj: Regex, replacement: string,
+                            capture_info: RegexCaptureInfo, replace_all: bool): string =
   var result_str = ""
   var search_pos = 0
-  var captures = newSeq[string](capture_count)
+  var captures = newSeq[string](regex_capture_count(capture_info))
+  let named_capture_count = regex_capture_count(capture_info)
   while search_pos <= input.len:
     if captures.len > 0:
       for i in 0..<captures.len:
@@ -176,13 +233,18 @@ proc regex_replace_internal(input: string, regex_obj: Regex, replacement: string
     if first > search_pos:
       result_str.add(input[search_pos ..< first])
     let match_val = if last >= first: input[first .. last] else: ""
-    result_str.add(apply_regex_replacement(replacement, captures, match_val))
+    let named_captures =
+      if named_capture_count > 0: build_named_capture_strings(capture_info, captures)
+      else: initTable[string, string]()
+    result_str.add(apply_regex_replacement(replacement, captures, named_captures, match_val))
     let next_pos = if last >= first: last + 1 else: first
     if not replace_all:
       if next_pos < input.len:
         result_str.add(input[next_pos .. ^1])
       return result_str
     if next_pos == search_pos:
+      if search_pos < input.len:
+        result_str.add(input[search_pos])
       search_pos = next_pos + 1
     else:
       search_pos = next_pos
@@ -198,8 +260,18 @@ proc regex_replace_value*(input: string, regex_val: Value,
   let flags = regex_val.ref.regex_flags
   let replacement = regex_replacement_from_args(regex_val, replacement_override)
   let regex_obj = get_compiled_regex(pattern, flags)
-  let capture_count = count_regex_captures(pattern)
-  regex_replace_internal(input, regex_obj, replacement, capture_count, replace_all).to_value()
+  let capture_info = analyze_regex_captures(pattern)
+  regex_replace_internal(input, regex_obj, replacement, capture_info, replace_all).to_value()
+
+proc regex_split_values*(input: string, regex_val: Value, limit = 0): Value {.gcsafe.} =
+  if regex_val.kind != VkRegex:
+    not_allowed("Expected a Regexp")
+  let regex_obj = get_compiled_regex(regex_val.ref.regex_pattern, regex_val.ref.regex_flags)
+  let maxsplit = if limit > 0: limit - 1 else: -1
+  var matches = new_array_value()
+  for part in re.split(input, regex_obj, maxsplit):
+    array_data(matches).add(part.to_value())
+  matches
 
 proc init_regex_class*(object_class: Class) =
   var r: ptr Reference
@@ -251,6 +323,15 @@ proc init_regex_class*(object_class: Class) =
     let input_val = get_positional_arg(args, 1, has_keyword_args)
     if self_arg.kind != VkRegex or input_val.kind != VkString:
       not_allowed("Regexp.match expects a Regexp and string")
+    regex_process_match(input_val.str, self_arg)
+
+  proc regexp_match_predicate(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Regexp.match? requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.match? expects a Regexp and string")
     regex_match_bool(input_val.str, self_arg).to_value()
 
   proc regexp_process(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -280,6 +361,20 @@ proc init_regex_class*(object_class: Class) =
       not_allowed("Regexp.find_all expects a Regexp and string")
     regex_find_all_values(input_val.str, self_arg)
 
+  proc regexp_split(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let pos_count = get_positional_count(arg_count, has_keyword_args)
+    if pos_count < 2:
+      not_allowed("Regexp.split requires an input string")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let input_val = get_positional_arg(args, 1, has_keyword_args)
+    if self_arg.kind != VkRegex or input_val.kind != VkString:
+      not_allowed("Regexp.split expects a Regexp and string")
+    let limit = if pos_count >= 3: max(1, get_positional_arg(args, 2, has_keyword_args).to_int().int) else: 0
+    regex_split_values(input_val.str, self_arg, limit)
+
+  proc regexp_scan(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    regexp_find_all(vm, args, arg_count, has_keyword_args)
+
   proc regexp_replace(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let pos_count = get_positional_count(arg_count, has_keyword_args)
     if pos_count < 2:
@@ -302,12 +397,23 @@ proc init_regex_class*(object_class: Class) =
     let replacement_val = if pos_count >= 3: get_positional_arg(args, 2, has_keyword_args) else: NIL
     regex_replace_value(input_val.str, self_arg, replacement_val, true)
 
+  proc regexp_sub(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    regexp_replace(vm, args, arg_count, has_keyword_args)
+
+  proc regexp_gsub(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    regexp_replace_all(vm, args, arg_count, has_keyword_args)
+
   regex_class.def_native_method("match", regexp_match)
+  regex_class.def_native_method("match?", regexp_match_predicate)
   regex_class.def_native_method("process", regexp_process)
   regex_class.def_native_method("find", regexp_find)
   regex_class.def_native_method("find_all", regexp_find_all)
+  regex_class.def_native_method("split", regexp_split)
+  regex_class.def_native_method("scan", regexp_scan)
   regex_class.def_native_method("replace", regexp_replace)
   regex_class.def_native_method("replace_all", regexp_replace_all)
+  regex_class.def_native_method("sub", regexp_sub)
+  regex_class.def_native_method("gsub", regexp_gsub)
 
   r = new_ref(VkClass)
   r.class = regex_class

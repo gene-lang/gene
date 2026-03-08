@@ -47,7 +47,7 @@ typedef uint64_t Key;
 
 /* ========== ABI Types ========== */
 
-#define GENE_EXT_ABI_VERSION 2u
+#define GENE_EXT_ABI_VERSION 3u
 
 typedef enum GeneExtStatus {
     GENE_EXT_OK = 0,
@@ -56,6 +56,8 @@ typedef enum GeneExtStatus {
 } GeneExtStatus;
 
 typedef void (*GeneHostLogFn)(int32_t level, const char* logger_name, const char* message);
+typedef void (*GeneHostSchedulerTickFn)(void* vm_user_data, void* callback_user_data);
+typedef int32_t (*GeneHostRegisterSchedulerCallbackFn)(GeneHostSchedulerTickFn callback, void* callback_user_data);
 
 /**
  * Host ABI passed to gene_init.
@@ -66,6 +68,7 @@ typedef struct GeneHostAbi {
     uint64_t app_value;            /* host App value */
     void* symbols_data;            /* host symbol table pointer */
     GeneHostLogFn log_message_fn;  /* optional host logging callback */
+    GeneHostRegisterSchedulerCallbackFn register_scheduler_callback_fn; /* optional scheduler registration hook */
     Namespace** result_namespace;  /* extension sets this to its namespace */
 } GeneHostAbi;
 
@@ -104,6 +107,12 @@ extern Value gene_to_value_float(double f);
 extern Value gene_to_value_string(const char* s);
 
 /**
+ * Convert a length-delimited UTF-8 buffer to Gene Value
+ * Returns NIL on NULL input, negative length, or invalid UTF-8
+ */
+extern Value gene_to_value_string_n(const char* s, int64_t len);
+
+/**
  * Convert C bool to Gene Value
  */
 extern Value gene_to_value_bool(bool b);
@@ -127,10 +136,16 @@ extern double gene_to_float(Value v);
 
 /**
  * Convert Gene Value to C string
- * Returns NULL if value is not a string
+ * Returns NULL if value is not a string or contains an embedded NUL byte
  * Note: Returned pointer is owned by Gene VM, do not free
  */
 extern const char* gene_to_string(Value v);
+
+/**
+ * Return the number of UTF-8 bytes in a Gene string
+ * Returns 0 if value is not a string
+ */
+extern int64_t gene_string_len(Value v);
 
 /**
  * Convert Gene Value to C bool

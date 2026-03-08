@@ -71,12 +71,16 @@ static Value c_strlen(VirtualMachine* vm, Value* args, int arg_count, bool has_k
     
     Value str_val = gene_get_arg(args, arg_count, has_keyword_args, 0);
     const char* str = gene_to_string(str_val);
+    int64_t len = gene_string_len(str_val);
     
-    if (str == NULL) {
+    if (str == NULL && len == 0) {
         gene_raise_error("strlen requires a string argument");
     }
     
-    return gene_to_value_int((int64_t)strlen(str));
+    if (str == NULL) {
+        gene_raise_error("strlen requires a CString-safe string");
+    }
+    return gene_to_value_int(len);
 }
 
 /**
@@ -117,6 +121,15 @@ static Value c_greet(VirtualMachine* vm, Value* args, int arg_count, bool has_ke
     return gene_to_value_string(buffer);
 }
 
+/**
+ * utf8_char - Build a Gene string from an explicit-length UTF-8 buffer
+ * Usage: (c_ext/utf8_char) => "你"
+ */
+static Value c_utf8_char(VirtualMachine* vm, Value* args, int arg_count, bool has_keyword_args) {
+    const char bytes[] = {(char)0xE4, (char)0xBD, (char)0xA0};
+    return gene_to_value_string_n(bytes, 3);
+}
+
 /* ========== Required Extension Exports ========== */
 
 /**
@@ -133,6 +146,7 @@ static Namespace* init(VirtualMachine* vm) {
     gene_namespace_set(ns, "strlen", gene_wrap_native_fn(c_strlen));
     gene_namespace_set(ns, "is_even", gene_wrap_native_fn(c_is_even));
     gene_namespace_set(ns, "greet", gene_wrap_native_fn(c_greet));
+    gene_namespace_set(ns, "utf8_char", gene_wrap_native_fn(c_utf8_char));
     
     return ns;
 }
