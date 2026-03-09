@@ -10,9 +10,11 @@ import ./stdlib/selectors
 import ./stdlib/gdat
 import ./stdlib/gene_meta
 import ./stdlib/aspects
+import ./serdes
 
 proc init_gene_namespace*() =
   stdlib_core.init_gene_namespace()
 
 proc init_stdlib*() =
   stdlib_core.init_stdlib()
+  init_serdes()

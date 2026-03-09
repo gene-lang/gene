@@ -32,6 +32,22 @@ proc resolve_dynamic_selector_prop(self: ptr VirtualMachine, prop: Value): Value
   else:
     prop
 
+proc call_native_with_gene_args(self: ptr VirtualMachine, native_fn: NativeFn, args_gene: Value): Value {.inline.} =
+  if args_gene.kind != VkGene:
+    return call_native_fn(native_fn, self, [])
+
+  if args_gene.gene.props.len == 0:
+    return call_native_fn(native_fn, self, args_gene.gene.children)
+
+  var native_args = newSeq[Value](args_gene.gene.children.len + 1)
+  var kw_map = new_map_value()
+  for k, v in args_gene.gene.props:
+    map_data(kw_map)[k] = v
+  native_args[0] = kw_map
+  for i, arg in args_gene.gene.children:
+    native_args[i + 1] = arg
+  call_native_fn(native_fn, self, native_args, true)
+
 proc exec*(self: ptr VirtualMachine): Value =
   let root_entry = self.exec_depth == 0
   self.exec_depth.inc()
@@ -1824,8 +1840,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               current.ref.frame.args = new_gene_value()
             current.ref.frame.args.gene.props[key] = value
           of VkNativeFrame:
-            # For native function calls, ignore property setting for now
-            discard
+            if current.ref.native_frame.args.kind != VkGene:
+              current.ref.native_frame.args = new_gene_value()
+            current.ref.native_frame.args.gene.props[key] = value
           else:
             not_allowed("Cannot set property on value of type: " & $current.kind)
         {.pop.}
@@ -2172,11 +2189,11 @@ proc exec*(self: ptr VirtualMachine): Value =
             case frame.kind:
               of NfFunction:
                 let f = frame.target.ref.native_fn
-                self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
+                self.frame.replace(self.call_native_with_gene_args(f, frame.args))
               of NfMethod:
                 # Native method call - invoke the native function with self as first arg
                 let f = frame.target.ref.native_fn
-                self.frame.replace(call_native_fn(f, self, frame.args.gene.children))
+                self.frame.replace(self.call_native_with_gene_args(f, frame.args))
               else:
                 not_allowed("Unsupported native frame kind: " & $frame.kind)
 
@@ -2193,7 +2210,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 discard
             elif value.kind == VkGene and value.gene.type.kind == VkNativeFn:
               let f = value.gene.type.ref.native_fn
-              self.frame.replace(call_native_fn(f, self, value.gene.children))
+              self.frame.replace(self.call_native_with_gene_args(f, value))
             elif value.kind == VkGene and value.gene.type.kind == VkNativeMacro:
               # Native macro receives unevaluated Gene value and caller frame
               let f = value.gene.type.ref.native_macro

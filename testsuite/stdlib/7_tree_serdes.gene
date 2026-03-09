@@ -1,0 +1,71 @@
+# Filesystem tree serializer tests
+# Expected: tree serdes testsuite ok
+
+(var root_inline "/tmp/gene_tree_serdes_testsuite_inline")
+(var value_inline {^name "alpha" ^items [1 2 3] ^nested {^ok true}})
+(gene/serdes/write_tree root_inline value_inline)
+(var loaded_inline (gene/serdes/read_tree root_inline))
+(assert (loaded_inline/name == "alpha"))
+(assert (loaded_inline/items/0 == 1))
+(assert (loaded_inline/items/2 == 3))
+(assert (loaded_inline/nested/ok == true))
+(assert (not (Dir/exists root_inline)))
+(assert ((gene/io/read #"#{root_inline}.gene") .length > 0))
+
+(var root_separate "/tmp/gene_tree_serdes_testsuite_root")
+(var value_separate {
+  ^alpha 1
+  ^nested {^beta 2}
+  ^arr ["x" "y" "z"]
+})
+(gene/serdes/write_tree root_separate value_separate ^separate [/*])
+(var loaded_separate (gene/serdes/read_tree root_separate))
+(assert (loaded_separate/alpha == 1))
+(assert (loaded_separate/nested/beta == 2))
+(assert (loaded_separate/arr/0 == "x"))
+(assert (loaded_separate/arr/2 == "z"))
+(assert (Dir/exists root_separate))
+(assert (not (Dir/exists #"#{root_separate}.gene")))
+(assert ((gene/io/read #"#{root_separate}/alpha.gene") .length > 0))
+(assert ((gene/io/read #"#{root_separate}/nested.gene") .length > 0))
+(assert ((gene/io/read #"#{root_separate}/arr.gene") .length > 0))
+
+(var root_nested "/tmp/gene_tree_serdes_testsuite_nested")
+(var value_nested {
+  ^a [{^x 1} {^x 2}]
+  ^b {^z 3}
+})
+(gene/serdes/write_tree root_nested value_nested ^separate [/a/*])
+(var loaded_nested (gene/serdes/read_tree root_nested))
+(assert (loaded_nested/a/0/x == 1))
+(assert (loaded_nested/a/1/x == 2))
+(assert (loaded_nested/b/z == 3))
+(assert (Dir/exists root_nested))
+(assert (Dir/exists #"#{root_nested}/a"))
+(assert ((gene/io/read #"#{root_nested}/a/__order__.gene") .length > 0))
+(assert ((gene/io/read #"#{root_nested}/b.gene") .length > 0))
+
+(var root_gene "/tmp/gene_tree_serdes_testsuite_gene")
+(var value_gene `(Widget ^title "hello" "first" {^count 2}))
+(gene/serdes/write_tree root_gene value_gene ^separate [/*])
+(var loaded_gene (gene/serdes/read_tree root_gene))
+(assert (loaded_gene/.type == `Widget))
+(assert (loaded_gene/.props/title == "hello"))
+(assert (loaded_gene/.children/0 == "first"))
+(assert (loaded_gene/.children/1/count == 2))
+(assert (Dir/exists root_gene))
+(assert (Dir/exists #"#{root_gene}/props"))
+(assert (Dir/exists #"#{root_gene}/children"))
+(assert ((gene/io/read #"#{root_gene}/genetype.gene") .length > 0))
+(assert ((gene/io/read #"#{root_gene}/props/title.gene") .length > 0))
+(assert ((gene/io/read #"#{root_gene}/children/__order__.gene") .length > 0))
+
+(var reserved_name_caught false)
+(try
+  (gene/serdes/write_tree "/tmp/gene_tree_serdes_testsuite_reserved" {^genetype 1} ^separate [/*])
+catch *
+  (reserved_name_caught = true)
+)
+(assert (reserved_name_caught == true))
+
+(println "tree serdes testsuite ok")

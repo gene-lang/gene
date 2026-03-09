@@ -1,5 +1,6 @@
-import tables, strutils, sets
+import tables, strutils, sets, os, algorithm, hashes
 import std/json
+import std/uri
 
 import ./types
 import ./parser
@@ -9,6 +10,9 @@ type
     references*: Table[string, Value]
     data*: Value
 
+  TreeWriteOptions = object
+    directory_nodes: HashSet[string]
+
 proc serialize*(self: Serialization, value: Value): Value {.gcsafe.}
 proc to_path*(self: Value): string {.gcsafe.}
 proc to_path*(self: Class): string {.gcsafe.}
@@ -16,6 +20,11 @@ proc is_literal_value*(v: Value): bool {.inline, gcsafe.}
 proc serialize_literal*(value: Value): Serialization {.gcsafe.}
 proc deserialize*(s: string): Value {.gcsafe.}
 proc deserialize_literal*(s: string): Value {.gcsafe.}
+proc to_s*(self: Serialization): string
+
+const
+  TreeGeneTypeName = "genetype"
+  TreeOrderName = "__order__"
 
 proc new_gene_ref(path: string): Value =
   # Create (gene/ref "path")
@@ -209,6 +218,326 @@ proc path_to_value*(path: string): Value =
 
 proc value_to_gene_str(self: Value): string
 
+proc key_to_string(k: Key): string =
+  let symbol_value = cast[Value](k)
+  let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
+  get_symbol(symbol_index.int)
+
+proc is_tree_structural(value: Value): bool {.inline.} =
+  value.kind in {VkMap, VkArray, VkGene}
+
+proc split_tree_selector_path(path: string): seq[string] =
+  if '\\' notin path:
+    return path.split('/')
+
+  result = @[]
+  var part = ""
+  var i = 0
+  while i < path.len:
+    if path[i] == '\\' and i + 1 < path.len and path[i + 1] == '/':
+      part.add('/')
+      i += 2
+    elif path[i] == '/':
+      result.add(part)
+      part = ""
+      inc(i)
+    else:
+      part.add(path[i])
+      inc(i)
+  result.add(part)
+
+proc encode_path_segment(segment: string): string =
+  encodeUrl(segment, usePlus = false)
+
+proc decode_path_segment(segment: string): string =
+  decodeUrl(segment, decodePlus = false)
+
+proc tree_path_key(segments: openArray[string]): string =
+  if segments.len == 0:
+    return "/"
+
+  var encoded: seq[string] = @[]
+  for segment in segments:
+    encoded.add(encode_path_segment(segment))
+  encoded.join("/")
+
+proc tree_path_display(segments: openArray[string]): string =
+  if segments.len == 0:
+    return "/"
+  "/" & segments.join("/")
+
+proc add_directory_node(options: var TreeWriteOptions, segments: openArray[string]) =
+  options.directory_nodes.incl(tree_path_key(segments))
+
+proc should_write_dir(options: TreeWriteOptions, segments: openArray[string]): bool =
+  options.directory_nodes.contains(tree_path_key(segments))
+
+proc parse_tree_selector(selector: Value): seq[string] =
+  var parts: seq[string]
+  case selector.kind
+  of VkComplexSymbol:
+    parts = selector.ref.csymbol
+  of VkSelector:
+    parts = @[""]
+    for segment in selector.ref.selector_path:
+      case segment.kind
+      of VkString, VkSymbol:
+        parts.add(segment.str)
+      of VkInt:
+        parts.add($segment.to_int())
+      else:
+        not_allowed("write_tree ^separate selectors only support string, symbol, and integer path segments")
+  of VkString, VkSymbol:
+    parts = split_tree_selector_path(selector.str)
+  else:
+    not_allowed("write_tree ^separate entries must be selectors, strings, or symbols")
+
+  if parts.len > 0 and parts[0] == "self":
+    parts[0] = ""
+
+  if parts.len < 2 or parts[0] != "" or parts[^1] != "*":
+    not_allowed("write_tree ^separate entries must be absolute child selectors ending with /*")
+
+  if parts.len == 2:
+    return @[]
+  parts[1 .. ^2]
+
+proc build_tree_write_options(separate_value: Value): TreeWriteOptions =
+  result.directory_nodes = initHashSet[string]()
+  if separate_value == NIL:
+    return
+  if separate_value.kind != VkArray:
+    not_allowed("write_tree ^separate expects an array")
+
+  for selector in array_data(separate_value):
+    let parent_segments = parse_tree_selector(selector)
+    for prefix_len in 0 .. parent_segments.len:
+      result.add_directory_node(parent_segments[0 ..< prefix_len])
+
+proc ensure_parent_dir(path: string) =
+  let parent = parentDir(path)
+  if parent.len > 0 and parent != ".":
+    createDir(parent)
+
+proc write_serialized_file(path: string, value: Value) =
+  ensure_parent_dir(path)
+  writeFile(path, serialize(value).to_s())
+
+proc read_serialized_file(path: string): Value =
+  deserialize(readFile(path))
+
+proc remove_tree_dir(path: string) =
+  if fileExists(path):
+    removeFile(path)
+    return
+  if not dirExists(path):
+    return
+
+  for kind, child in walkDir(path):
+    case kind
+    of pcFile, pcLinkToFile:
+      removeFile(child)
+    of pcDir:
+      remove_tree_dir(child)
+    of pcLinkToDir:
+      removeDir(child)
+    else:
+      discard
+  removeDir(path)
+
+proc remove_tree_base(path: string) =
+  let file_path = path & ".gene"
+  if fileExists(file_path):
+    removeFile(file_path)
+  if dirExists(path):
+    remove_tree_dir(path)
+
+proc write_tree_node(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false)
+proc write_tree_dir(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false)
+proc read_tree_path(path: string): Value
+proc read_tree_root_path(path: string): Value
+proc read_tree_dir(path: string): Value
+proc read_known_map_dir(path: string): Value
+proc read_array_dir(path: string): Value
+proc read_gene_dir(path: string): Value
+
+proc make_array_child_id(value: Value, used_ids: var Table[string, int]): string =
+  let base = toHex(cast[uint64](hash(serialize(value).to_s())), 12)
+  let next_count = used_ids.getOrDefault(base, 0) + 1
+  used_ids[base] = next_count
+  if next_count == 1:
+    base
+  else:
+    base & "-" & $next_count
+
+proc write_map_dir(path: string, map_value: Value, node_segments: seq[string], options: TreeWriteOptions, allow_root_markers: bool) =
+  createDir(path)
+  var keys: seq[string] = @[]
+  var key_values = initTable[string, Value]()
+  for k, v in map_data(map_value):
+    let key_name = key_to_string(k)
+    if not allow_root_markers and (key_name == TreeGeneTypeName or key_name == TreeOrderName):
+      not_allowed("Exploded generic map roots cannot use reserved entry name: " & key_name)
+    keys.add(key_name)
+    key_values[key_name] = v
+
+  keys.sort()
+  for key_name in keys:
+    let child = key_values[key_name]
+    let encoded = encode_path_segment(key_name)
+    let child_segments = node_segments & @[key_name]
+    write_tree_node(joinPath(path, encoded), child, child_segments, options, false)
+
+proc write_array_dir(path: string, array_value: Value, node_segments: seq[string], options: TreeWriteOptions) =
+  createDir(path)
+  var order = new_array_value()
+  var used_ids = initTable[string, int]()
+  for index, child in array_data(array_value):
+    let child_id = make_array_child_id(child, used_ids)
+    array_data(order).add(child_id.to_value())
+    let child_segments = node_segments & @[$index]
+    write_tree_node(joinPath(path, child_id), child, child_segments, options, false)
+  write_serialized_file(joinPath(path, TreeOrderName & ".gene"), order)
+
+proc write_gene_dir(path: string, gene_value: Value, node_segments: seq[string], options: TreeWriteOptions) =
+  createDir(path)
+  write_serialized_file(joinPath(path, TreeGeneTypeName & ".gene"), gene_value.gene.type)
+
+  if gene_value.gene.props.len > 0:
+    let props_path = joinPath(path, "props")
+    var props_value = new_map_value()
+    map_data(props_value) = initTable[Key, Value]()
+    for k, v in gene_value.gene.props:
+      map_data(props_value)[k] = v
+    write_map_dir(props_path, props_value, node_segments & @["props"], options, true)
+
+  if gene_value.gene.children.len > 0:
+    let children_path = joinPath(path, "children")
+    var children_value = new_array_value()
+    for child in gene_value.gene.children:
+      array_data(children_value).add(child)
+    write_array_dir(children_path, children_value, node_segments & @["children"], options)
+
+proc write_tree_node(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false) =
+  remove_tree_base(path)
+
+  if should_write_dir(options, node_segments):
+    if not is_tree_structural(value):
+      not_allowed("write_tree ^separate targets a non-structural value at " & tree_path_display(node_segments))
+    write_tree_dir(path, value, node_segments, options, known_map)
+  else:
+    write_serialized_file(path & ".gene", value)
+
+proc write_tree_dir(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false) =
+  case value.kind
+  of VkMap:
+    write_map_dir(path, value, node_segments, options, known_map)
+  of VkArray:
+    write_array_dir(path, value, node_segments, options)
+  of VkGene:
+    write_gene_dir(path, value, node_segments, options)
+  else:
+    not_allowed("Directory tree serialization requires a Map, Array, or Gene root")
+
+proc read_known_map_dir(path: string): Value =
+  result = new_map_value()
+  map_data(result) = initTable[Key, Value]()
+  var entries: seq[(PathComponent, string)] = @[]
+  for kind, entry in walkDir(path, relative = true):
+    entries.add((kind, entry))
+  entries.sort(proc(a, b: (PathComponent, string)): int = cmp(a[1], b[1]))
+
+  for (kind, entry) in entries:
+    case kind
+    of pcFile:
+      if not entry.endsWith(".gene"):
+        continue
+      let decoded = decode_path_segment(splitFile(entry).name)
+      map_data(result)[decoded.to_key()] = read_serialized_file(joinPath(path, entry))
+    of pcDir:
+      let decoded = decode_path_segment(entry)
+      map_data(result)[decoded.to_key()] = read_tree_path(joinPath(path, entry))
+    else:
+      discard
+
+proc read_array_dir(path: string): Value =
+  let order_path = joinPath(path, TreeOrderName & ".gene")
+  if not fileExists(order_path):
+    not_allowed("Exploded array is missing " & TreeOrderName & ".gene: " & path)
+
+  let order = read_serialized_file(order_path)
+  if order.kind != VkArray:
+    not_allowed(TreeOrderName & ".gene must contain an array of child ids")
+
+  result = new_array_value()
+  for item in array_data(order):
+    if item.kind != VkString:
+      not_allowed(TreeOrderName & ".gene child ids must be strings")
+    let child_id = item.str
+    let inline_path = joinPath(path, child_id & ".gene")
+    let dir_path = joinPath(path, child_id)
+    if fileExists(inline_path):
+      array_data(result).add(read_serialized_file(inline_path))
+    elif dirExists(dir_path):
+      array_data(result).add(read_tree_dir(dir_path))
+    else:
+      not_allowed("Missing exploded array child: " & child_id)
+
+proc read_gene_dir(path: string): Value =
+  let type_path = joinPath(path, TreeGeneTypeName & ".gene")
+  if not fileExists(type_path):
+    not_allowed("Exploded Gene value is missing " & TreeGeneTypeName & ".gene: " & path)
+
+  let gene = new_gene(read_serialized_file(type_path))
+
+  let props_path = joinPath(path, "props")
+  if dirExists(props_path):
+    let props_value = read_known_map_dir(props_path)
+    for k, v in map_data(props_value):
+      gene.props[k] = v
+
+  let children_path = joinPath(path, "children")
+  if dirExists(children_path):
+    let children_value = read_array_dir(children_path)
+    for child in array_data(children_value):
+      gene.children.add(child)
+
+  gene.to_gene_value()
+
+proc read_tree_dir(path: string): Value =
+  let type_path = joinPath(path, TreeGeneTypeName & ".gene")
+  if fileExists(type_path):
+    return read_gene_dir(path)
+
+  let order_path = joinPath(path, TreeOrderName & ".gene")
+  if fileExists(order_path):
+    return read_array_dir(path)
+
+  read_known_map_dir(path)
+
+proc read_tree_path(path: string): Value =
+  if fileExists(path):
+    return read_serialized_file(path)
+  if dirExists(path):
+    return read_tree_dir(path)
+  not_allowed("Filesystem tree path not found: " & path)
+
+proc read_tree_root_path(path: string): Value =
+  if path.endsWith(".gene"):
+    return read_tree_path(path)
+
+  let inline_path = path & ".gene"
+  let has_inline = fileExists(inline_path)
+  let has_dir = dirExists(path)
+
+  if has_inline and has_dir:
+    not_allowed("Filesystem tree root is ambiguous, both file and directory exist: " & path)
+  if has_inline:
+    return read_serialized_file(inline_path)
+  if has_dir:
+    return read_tree_dir(path)
+  read_tree_path(path)
+
 proc to_s*(self: Serialization): string =
   result = "(gene/serialization "
   result &= value_to_gene_str(self.data)
@@ -342,6 +671,75 @@ proc deserialize*(self: Serialization, value: Value): Value =
     return value
 
 # VM integration functions
+proc resolve_symbol_in_caller(caller_frame: Frame, name: string): Value =
+  let key = name.to_key()
+
+  if caller_frame != nil and caller_frame.scope != nil and caller_frame.scope.tracker != nil:
+    let found = caller_frame.scope.tracker.locate(key)
+    if found.local_index >= 0:
+      var scope = caller_frame.scope
+      var parent_index = found.parent_index
+      while parent_index > 0:
+        parent_index.dec()
+        scope = scope.parent
+      if scope != nil and found.local_index < scope.members.len:
+        return scope.members[found.local_index]
+
+  if caller_frame != nil and caller_frame.ns != nil:
+    let ns_value = caller_frame.ns[key]
+    if ns_value != NIL:
+      return ns_value
+
+  let global_value = App.app.global_ns.ref.ns.members.getOrDefault(key, NIL)
+  if global_value != NIL:
+    return global_value
+
+  App.app.gene_ns.ref.ns.members.getOrDefault(key, NIL)
+
+proc eval_in_caller_context(vm: ptr VirtualMachine, expr: Value, caller_frame: Frame): Value =
+  discard vm
+  case expr.kind
+  of VkString, VkInt, VkFloat, VkBool, VkNil, VkChar, VkComplexSymbol:
+    return expr
+  of VkSymbol:
+    let resolved = resolve_symbol_in_caller(caller_frame, expr.str)
+    if resolved == NIL:
+      not_allowed("Unknown symbol in caller context: " & expr.str)
+    return resolved
+  of VkArray:
+    result = new_array_value()
+    for item in array_data(expr):
+      array_data(result).add(eval_in_caller_context(vm, item, caller_frame))
+  of VkMap:
+    result = new_map_value()
+    for k, v in map_data(expr):
+      map_data(result)[k] = eval_in_caller_context(vm, v, caller_frame)
+  of VkGene:
+    let gene = new_gene(eval_in_caller_context(vm, expr.gene.type, caller_frame))
+    for k, v in expr.gene.props:
+      gene.props[k] = eval_in_caller_context(vm, v, caller_frame)
+    for child in expr.gene.children:
+      gene.children.add(eval_in_caller_context(vm, child, caller_frame))
+    return gene.to_gene_value()
+  of VkQuote:
+    return expr.ref.quote
+  else:
+    not_allowed("write_tree macro arguments must be literals or symbols")
+
+proc write_tree_root(path: string, value: Value, options: TreeWriteOptions) =
+  if path.endsWith(".gene"):
+    if options.directory_nodes.len > 0:
+      not_allowed("write_tree cannot use a .gene path when ^separate requires directories")
+    write_serialized_file(path, value)
+  else:
+    remove_tree_base(path)
+    if should_write_dir(options, @[]):
+      if not is_tree_structural(value):
+        not_allowed("write_tree ^separate targets a non-structural root value")
+      write_tree_dir(path, value, @[], options, false)
+    else:
+      write_serialized_file(path & ".gene", value)
+
 proc vm_serialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if arg_count != 1:
@@ -359,9 +757,45 @@ proc vm_deserialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
     let s = get_positional_arg(args, 0, has_keyword_args).str
     return deserialize(s)
 
+proc vm_write_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    when defined(gene_wasm):
+      not_allowed("write_tree is not supported in gene_wasm")
+    else:
+      if gene_value.kind != VkGene or gene_value.gene.children.len != 2:
+        not_allowed("write_tree expects 2 arguments")
+
+      let path_arg = eval_in_caller_context(vm, gene_value.gene.children[0], caller_frame)
+      if path_arg.kind != VkString:
+        not_allowed("write_tree expects a string path")
+
+      let value = eval_in_caller_context(vm, gene_value.gene.children[1], caller_frame)
+      let separate_value = gene_value.gene.props.getOrDefault("separate".to_key(), NIL)
+      let options = build_tree_write_options(separate_value)
+      write_tree_root(path_arg.str, value, options)
+      NIL
+
+proc vm_read_tree(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    when defined(gene_wasm):
+      not_allowed("read_tree is not supported in gene_wasm")
+    else:
+      if get_positional_count(arg_count, has_keyword_args) != 1:
+        not_allowed("read_tree expects 1 argument")
+
+      let path_arg = get_positional_arg(args, 0, has_keyword_args)
+      if path_arg.kind != VkString:
+        not_allowed("read_tree expects a string path")
+
+      read_tree_root_path(path_arg.str)
+
 # Initialize the serdes namespace
 proc init_serdes*() =
   let serdes_ns = new_namespace("serdes")
   serdes_ns["serialize".to_key()] = NativeFn(vm_serialize).to_value()
   serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize).to_value()
+  var write_tree_ref = new_ref(VkNativeMacro)
+  write_tree_ref.native_macro = vm_write_tree_macro
+  serdes_ns["write_tree".to_key()] = write_tree_ref.to_ref_value()
+  serdes_ns["read_tree".to_key()] = NativeFn(vm_read_tree).to_value()
   App.app.gene_ns.ref.ns["serdes".to_key()] = serdes_ns.to_value()
