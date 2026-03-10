@@ -53,6 +53,7 @@ proc tagged_gene_literal_to_value(payload: string): Value {.gcsafe.} =
 proc gene_value_to_literal(val: Value): string {.gcsafe.}
 
 proc gene_value_to_literal(val: Value): string {.gcsafe.} =
+  let val = if has_custom_materializer(val): materialize_custom(val) else: val
   case val.kind
   of VkNil:
     "nil"
@@ -105,6 +106,7 @@ proc tagged_string_value(val: Value): nim_json.JsonNode {.gcsafe.} =
 proc value_to_tagged_json_node(val: Value): nim_json.JsonNode {.gcsafe.}
 
 proc value_to_tagged_json_node(val: Value): nim_json.JsonNode {.gcsafe.} =
+  let val = if has_custom_materializer(val): materialize_custom(val) else: val
   case val.kind
   of VkNil:
     return nim_json.newJNull()
@@ -212,6 +214,7 @@ proc parse_tagged_json_string*(json_str: string): Value {.gcsafe.} =
     return parse_tagged_json_node(parsed)
 
 proc value_to_json*(val: Value): string {.gcsafe.} =
+  let val = if has_custom_materializer(val): materialize_custom(val) else: val
   case val.kind
   of VkNil:
     result = "null"

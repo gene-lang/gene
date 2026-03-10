@@ -113,6 +113,8 @@ proc init_selector_class*(object_class: Class) =
     proc expand_values(v: Value): seq[Value] =
       if v == VOID or v == NIL:
         return @[]
+      if has_custom_materializer(v):
+        return expand_values(materialize_custom(v))
       case v.kind:
       of VkArray:
         result = @[]
@@ -130,6 +132,8 @@ proc init_selector_class*(object_class: Class) =
     proc expand_entries(v: Value): seq[(Key, Value)] =
       if v == VOID or v == NIL:
         return @[]
+      if has_custom_materializer(v):
+        return expand_entries(materialize_custom(v))
       result = @[]
       case v.kind:
       of VkMap:
@@ -158,6 +162,8 @@ proc init_selector_class*(object_class: Class) =
     proc apply_lookup(base: Value, seg: Value): Value =
       if base == VOID or base == NIL:
         return VOID
+      if has_custom_materializer(base):
+        return apply_lookup(materialize_custom(base), seg)
 
       case seg.kind:
       of VkString, VkSymbol:

@@ -818,6 +818,13 @@ proc exec*(self: ptr VirtualMachine): Value =
           let symbol_name = get_symbol(symbol_index.int)
           not_allowed("Cannot access member '" & symbol_name & "' on nil value")
 
+        if has_custom_materializer(value):
+          value = materialize_custom(value)
+          if value.kind == VkNil:
+            let symbol_index = cast[uint64](name) and PAYLOAD_MASK
+            let symbol_name = get_symbol(symbol_index.int)
+            not_allowed("Cannot access member '" & symbol_name & "' on nil value")
+
         case value.kind:
           of VkNil:
             # Already handled above, but needed for exhaustive case
@@ -906,6 +913,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         if target == VOID or target == NIL:
           self.frame.push(VOID)
         else:
+          if has_custom_materializer(target):
+            target = materialize_custom(target)
+          if target == VOID or target == NIL:
+            self.frame.push(VOID)
+            continue
           case target.kind:
             of VkMap:
               let key = case prop.kind:
@@ -1086,6 +1098,12 @@ proc exec*(self: ptr VirtualMachine): Value =
           retain(default_val)
           self.frame.push(default_val)
         else:
+          if has_custom_materializer(target):
+            target = materialize_custom(target)
+          if target == VOID or target == NIL:
+            retain(default_val)
+            self.frame.push(default_val)
+            continue
           case target.kind:
             of VkMap:
               let key = case prop.kind:

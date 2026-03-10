@@ -12,10 +12,28 @@ proc new_custom_value*(custom_class: Class, data: CustomValue): Value =
   ref_val.custom_data = data
   ref_val.to_ref_value()
 
-proc get_custom_data*(val: Value, context: string = "Custom value expected"): CustomValue =
+proc get_custom_data*(val: Value, context: string = "Custom value expected"): CustomValue {.gcsafe.} =
   ## Retrieve the CustomValue payload from a VkCustom value.
   if val.kind != VkCustom:
     raise new_exception(type_defs.Exception, context)
   if val.ref.custom_data.is_nil:
     raise new_exception(type_defs.Exception, context & ": missing payload")
   val.ref.custom_data
+
+proc has_custom_materializer*(val: Value): bool {.inline, gcsafe.} =
+  if val.kind != VkCustom:
+    return false
+  let ref_data = val.ref
+  if cast[pointer](ref_data) == nil:
+    return false
+  let custom_data = ref_data.custom_data
+  if cast[pointer](custom_data) == nil:
+    return false
+  custom_data.materialize_hook != nil
+
+proc materialize_custom*(val: Value, context: string = "Custom value expected"): Value {.gcsafe.} =
+  ## Materialize a custom value when it provides a lazy/value hook.
+  let data = val.get_custom_data(context)
+  if data.materialize_hook == nil:
+    return val
+  data.materialize_hook(data)

@@ -13,6 +13,30 @@ type
   TreeWriteOptions = object
     directory_nodes: HashSet[string]
 
+  LazyTreeReadOptions = object
+    enabled: bool
+    lazy_nodes: HashSet[string]
+
+  FilesystemTreeReadStats* = object
+    serialized_file_reads*: int
+    dir_listings*: int
+
+  LazyTreeSourceKind = enum
+    LtsFile
+    LtsDirectory
+
+  LazyTreeValueData = ref object of CustomValue
+    path: string
+    source_kind: LazyTreeSourceKind
+    node_segments: seq[string]
+    options: LazyTreeReadOptions
+    materialized: Value
+    materialized_loaded: bool
+
+var
+  tree_read_stats {.threadvar.}: FilesystemTreeReadStats
+  lazy_tree_value_class {.threadvar.}: Class
+
 proc serialize*(self: Serialization, value: Value): Value {.gcsafe.}
 proc to_path*(self: Value): string {.gcsafe.}
 proc to_path*(self: Class): string {.gcsafe.}
@@ -22,11 +46,39 @@ proc deserialize*(s: string): Value {.gcsafe.}
 proc deserialize_literal*(s: string): Value {.gcsafe.}
 proc to_s*(self: Serialization): string
 
+proc read_tree_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
+
 const
   TreeGeneTypeName = "_genetype"
   TreeGenePropsName = "_geneprops"
   TreeGeneChildrenName = "_genechildren"
   TreeArrayName = "_genearray"
+
+proc reset_tree_read_stats*() =
+  tree_read_stats = FilesystemTreeReadStats()
+
+proc filesystem_tree_read_stats*(): FilesystemTreeReadStats =
+  tree_read_stats
+
+proc count_tree_serialized_file_read() {.inline, gcsafe.} =
+  tree_read_stats.serialized_file_reads.inc()
+
+proc count_tree_dir_listing() {.inline, gcsafe.} =
+  tree_read_stats.dir_listings.inc()
+
+proc is_lazy_tree_value*(value: Value): bool {.inline, gcsafe.} =
+  if value.kind != VkCustom:
+    return false
+  let ref_data = value.ref
+  if cast[pointer](ref_data) == nil:
+    return false
+  let custom_data = ref_data.custom_data
+  if cast[pointer](custom_data) == nil:
+    return false
+  custom_data of LazyTreeValueData
+
+proc materialize_lazy_tree_value*(value: Value): Value {.gcsafe.}
+proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.}
 
 proc new_gene_ref(path: string): Value =
   # Create (gene/ref "path")
@@ -42,6 +94,7 @@ proc serialize*(value: Value): Serialization =
   result.data = result.serialize(value)
 
 proc serialize*(self: Serialization, value: Value): Value =
+  let value = materialize_lazy_tree_value(value)
   case value.kind:
   of VkNil, VkBool, VkInt, VkFloat, VkChar:
     return value
@@ -228,7 +281,7 @@ proc key_to_string(k: Key): string =
 proc is_tree_structural(value: Value): bool {.inline.} =
   value.kind in {VkMap, VkArray, VkGene}
 
-proc split_tree_selector_path(path: string): seq[string] =
+proc split_tree_selector_path(path: string): seq[string] {.gcsafe.} =
   if '\\' notin path:
     return path.split('/')
 
@@ -254,7 +307,7 @@ proc encode_path_segment(segment: string): string =
 proc decode_path_segment(segment: string): string =
   decodeUrl(segment, decodePlus = false)
 
-proc tree_path_key(segments: openArray[string]): string =
+proc tree_path_key(segments: openArray[string]): string {.gcsafe.} =
   if segments.len == 0:
     return "/"
 
@@ -267,6 +320,100 @@ proc tree_path_display(segments: openArray[string]): string =
   if segments.len == 0:
     return "/"
   "/" & segments.join("/")
+
+proc has_lazy_requests(options: LazyTreeReadOptions): bool {.inline, gcsafe.} =
+  options.enabled and options.lazy_nodes.len > 0
+
+proc parse_lazy_selector(selector: Value): seq[string] {.gcsafe.} =
+  var parts: seq[string]
+  case selector.kind
+  of VkComplexSymbol:
+    parts = selector.ref.csymbol
+  of VkSelector:
+    parts = @[""]
+    for segment in selector.ref.selector_path:
+      case segment.kind
+      of VkString, VkSymbol:
+        parts.add(segment.str)
+      of VkInt:
+        parts.add($segment.to_int())
+      else:
+        not_allowed("read_tree ^lazy selectors only support string, symbol, and integer path segments")
+  of VkString, VkSymbol:
+    parts = split_tree_selector_path(selector.str)
+  else:
+    not_allowed("read_tree ^lazy entries must be selectors, strings, or symbols")
+
+  if parts.len > 0 and parts[0] == "self":
+    parts[0] = ""
+
+  if parts.len == 0 or parts[0] != "":
+    not_allowed("read_tree ^lazy entries must be absolute node selectors")
+
+  if parts.len == 1:
+    return @[]
+  parts[1 .. ^1]
+
+proc build_tree_read_options(lazy_value: Value): LazyTreeReadOptions {.gcsafe.} =
+  result.lazy_nodes = initHashSet[string]()
+  if lazy_value.kind == VkNil:
+    return
+  if lazy_value.kind != VkArray:
+    not_allowed("read_tree ^lazy expects an array")
+
+  result.enabled = true
+  for selector in array_data(lazy_value):
+    let segments = parse_lazy_selector(selector)
+    result.lazy_nodes.incl(tree_path_key(segments))
+
+proc materialize_lazy_tree_data(data: CustomValue): Value {.gcsafe.}
+
+proc make_lazy_tree_value(path: string, source_kind: LazyTreeSourceKind, node_segments: seq[string], options: LazyTreeReadOptions): Value {.gcsafe.} =
+  if lazy_tree_value_class.is_nil:
+    not_allowed("Lazy tree class is not initialized")
+  let data = LazyTreeValueData(
+    path: path,
+    source_kind: source_kind,
+    node_segments: node_segments,
+    options: options,
+    materialized: NIL,
+    materialized_loaded: false,
+  )
+  data.materialize_hook = materialize_lazy_tree_data
+  new_custom_value(lazy_tree_value_class, data)
+
+proc materialize_lazy_tree_value*(value: Value): Value {.gcsafe.} =
+  if not is_lazy_tree_value(value):
+    return value
+  let data = LazyTreeValueData(value.ref.custom_data)
+  if data.materialized_loaded:
+    return data.materialized
+  let materialized = data.materialize_hook(data)
+  if not data.materialized_loaded:
+    data.materialized = materialized
+    data.materialized_loaded = true
+  data.materialized
+
+proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.} =
+  let current = materialize_lazy_tree_value(value)
+  case current.kind
+  of VkArray:
+    result = new_array_value()
+    for item in array_data(current):
+      array_data(result).add(materialize_lazy_tree_deep(item))
+  of VkMap:
+    result = new_map_value()
+    for k, v in map_data(current):
+      map_data(result)[k] = materialize_lazy_tree_deep(v)
+  of VkGene:
+    let gene = new_gene(materialize_lazy_tree_deep(current.gene.type))
+    for k, v in current.gene.props:
+      gene.props[k] = materialize_lazy_tree_deep(v)
+    for child in current.gene.children:
+      gene.children.add(materialize_lazy_tree_deep(child))
+    result = gene.to_gene_value()
+  else:
+    result = current
 
 proc append_serialized_payload(result: var string, value: Value)
 
@@ -289,6 +436,7 @@ proc append_serialized_ref(result: var string, path: string) =
   result.add(")")
 
 proc append_serialized_payload(result: var string, value: Value) =
+  let value = materialize_lazy_tree_value(value)
   case value.kind:
   of VkNil:
     result.add("nil")
@@ -349,6 +497,7 @@ proc mix_tree_hash(result: var Hash, marker: string) {.inline.} =
   result = result !& hash(marker)
 
 proc tree_serialized_hash(value: Value): Hash =
+  let value = materialize_lazy_tree_value(value)
   var result_hash: Hash = 0
   case value.kind:
   of VkNil:
@@ -460,7 +609,8 @@ proc write_serialized_file(path: string, value: Value) =
   ensure_parent_dir(path)
   writeFile(path, value_to_serialized_text(value))
 
-proc read_serialized_file(path: string): Value =
+proc read_serialized_file(path: string): Value {.gcsafe.} =
+  count_tree_serialized_file_read()
   deserialize(readFile(path))
 
 proc remove_tree_dir(path: string) =
@@ -491,15 +641,14 @@ proc remove_tree_base(path: string) =
 
 proc write_tree_node(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false)
 proc write_tree_dir(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false)
-proc read_tree_path(path: string): Value
-proc read_tree_root_path(path: string): Value
-proc read_tree_dir(path: string): Value
-proc read_known_map_dir(path: string): Value
-proc read_array_dir(path: string): Value
-proc read_gene_dir(path: string): Value
-proc list_tree_dir_entries(path: string): seq[(PathComponent, string)]
-proc resolve_tree_named_child(path: string, child_name: string): Value
-proc can_decode_as_array_dir(path: string): bool
+proc read_tree_path(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
+proc read_tree_root_path(path: string, options: LazyTreeReadOptions): Value {.gcsafe.}
+proc read_known_map_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
+proc read_array_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
+proc read_gene_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
+proc list_tree_dir_entries(path: string): seq[(PathComponent, string)] {.gcsafe.}
+proc resolve_tree_named_child(path: string, child_name: string, child_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
+proc can_decode_as_array_dir(path: string): bool {.gcsafe.}
 
 proc make_array_child_id(value: Value, used_ids: var Table[string, int]): string =
   let base = "v" & toHex(cast[uint64](tree_serialized_hash(value)), 12)
@@ -562,6 +711,7 @@ proc write_gene_dir(path: string, gene_value: Value, node_segments: seq[string],
     write_array_dir(children_path, children_value, children_segments, options)
 
 proc write_tree_node(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false) =
+  let value = materialize_lazy_tree_deep(value)
   remove_tree_base(path)
 
   if should_write_dir(options, node_segments):
@@ -582,7 +732,30 @@ proc write_tree_dir(path: string, value: Value, node_segments: seq[string], opti
   else:
     not_allowed("Directory tree serialization requires a Map, Array, or Gene root")
 
-proc read_known_map_dir(path: string): Value =
+proc list_tree_dir_entries(path: string): seq[(PathComponent, string)] {.gcsafe.} =
+  count_tree_dir_listing()
+  for kind, entry in walkDir(path, relative = true):
+    result.add((kind, entry))
+  result.sort(proc(a, b: (PathComponent, string)): int = cmp(a[1], b[1]))
+
+proc resolve_tree_named_child(path: string, child_name: string, child_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.} =
+  let inline_path = joinPath(path, child_name & ".gene")
+  let dir_path = joinPath(path, child_name)
+  let has_inline = fileExists(inline_path)
+  let has_dir = dirExists(dir_path)
+  if has_inline and has_dir:
+    not_allowed("Filesystem tree child is ambiguous, both file and directory exist: " & joinPath(path, child_name))
+  if has_inline:
+    if shallow:
+      return make_lazy_tree_value(inline_path, LtsFile, child_segments, options)
+    return read_serialized_file(inline_path)
+  if has_dir:
+    if shallow:
+      return make_lazy_tree_value(dir_path, LtsDirectory, child_segments, options)
+    return read_tree_dir(dir_path, child_segments, options, false)
+  not_allowed("Filesystem tree child not found: " & joinPath(path, child_name))
+
+proc read_known_map_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.} =
   result = new_map_value()
   map_data(result) = initTable[Key, Value]()
   for (kind, entry) in list_tree_dir_entries(path):
@@ -591,32 +764,22 @@ proc read_known_map_dir(path: string): Value =
       if not entry.endsWith(".gene"):
         continue
       let decoded = decode_path_segment(splitFile(entry).name)
-      map_data(result)[decoded.to_key()] = read_serialized_file(joinPath(path, entry))
+      let child_segments = node_segments & @[decoded]
+      if shallow:
+        map_data(result)[decoded.to_key()] = make_lazy_tree_value(joinPath(path, entry), LtsFile, child_segments, options)
+      else:
+        map_data(result)[decoded.to_key()] = read_serialized_file(joinPath(path, entry))
     of pcDir:
       let decoded = decode_path_segment(entry)
-      map_data(result)[decoded.to_key()] = read_tree_path(joinPath(path, entry))
+      let child_segments = node_segments & @[decoded]
+      if shallow:
+        map_data(result)[decoded.to_key()] = make_lazy_tree_value(joinPath(path, entry), LtsDirectory, child_segments, options)
+      else:
+        map_data(result)[decoded.to_key()] = read_tree_dir(joinPath(path, entry), child_segments, options, false)
     else:
       discard
 
-proc list_tree_dir_entries(path: string): seq[(PathComponent, string)] =
-  for kind, entry in walkDir(path, relative = true):
-    result.add((kind, entry))
-  result.sort(proc(a, b: (PathComponent, string)): int = cmp(a[1], b[1]))
-
-proc resolve_tree_named_child(path: string, child_name: string): Value =
-  let inline_path = joinPath(path, child_name & ".gene")
-  let dir_path = joinPath(path, child_name)
-  let has_inline = fileExists(inline_path)
-  let has_dir = dirExists(dir_path)
-  if has_inline and has_dir:
-    not_allowed("Filesystem tree child is ambiguous, both file and directory exist: " & joinPath(path, child_name))
-  if has_inline:
-    return read_serialized_file(inline_path)
-  if has_dir:
-    return read_tree_dir(dir_path)
-  not_allowed("Filesystem tree child not found: " & joinPath(path, child_name))
-
-proc can_decode_as_array_dir(path: string): bool =
+proc can_decode_as_array_dir(path: string): bool {.gcsafe.} =
   let manifest_path = joinPath(path, TreeArrayName & ".gene")
   if not fileExists(manifest_path):
     return false
@@ -660,7 +823,7 @@ proc can_decode_as_array_dir(path: string): bool =
 
   true
 
-proc read_array_dir(path: string): Value =
+proc read_array_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.} =
   let order_path = joinPath(path, TreeArrayName & ".gene")
   if not fileExists(order_path):
     not_allowed("Exploded array is missing " & TreeArrayName & ".gene: " & path)
@@ -670,62 +833,78 @@ proc read_array_dir(path: string): Value =
     not_allowed(TreeArrayName & ".gene must contain an array of child ids")
 
   result = new_array_value()
-  for item in array_data(order):
+  for index, item in array_data(order):
     if item.kind != VkString:
       not_allowed(TreeArrayName & ".gene child ids must be strings")
     let child_id = item.str
     let inline_path = joinPath(path, child_id & ".gene")
     let dir_path = joinPath(path, child_id)
+    let child_segments = node_segments & @[$index]
     if fileExists(inline_path):
-      array_data(result).add(read_serialized_file(inline_path))
+      if shallow:
+        array_data(result).add(make_lazy_tree_value(inline_path, LtsFile, child_segments, options))
+      else:
+        array_data(result).add(read_serialized_file(inline_path))
     elif dirExists(dir_path):
-      array_data(result).add(read_tree_dir(dir_path))
+      if shallow:
+        array_data(result).add(make_lazy_tree_value(dir_path, LtsDirectory, child_segments, options))
+      else:
+        array_data(result).add(read_tree_dir(dir_path, child_segments, options, false))
     else:
       not_allowed("Missing exploded array child: " & child_id)
 
-proc read_gene_dir(path: string): Value =
+proc read_gene_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.} =
   let type_file_path = joinPath(path, TreeGeneTypeName & ".gene")
   let type_dir_path = joinPath(path, TreeGeneTypeName)
   if not fileExists(type_file_path) and not dirExists(type_dir_path):
     not_allowed("Exploded Gene value is missing " & TreeGeneTypeName & ": " & path)
 
-  let gene = new_gene(resolve_tree_named_child(path, TreeGeneTypeName))
+  let type_segments = node_segments & @[TreeGeneTypeName]
+  let gene = new_gene(resolve_tree_named_child(path, TreeGeneTypeName, type_segments, options, shallow))
 
   let props_path = joinPath(path, TreeGenePropsName)
   if dirExists(props_path):
-    let props_value = read_known_map_dir(props_path)
+    let props_segments = node_segments & @[TreeGenePropsName]
+    let props_value = read_known_map_dir(props_path, props_segments, options, shallow)
     for k, v in map_data(props_value):
       gene.props[k] = v
 
   let children_path = joinPath(path, TreeGeneChildrenName)
   if dirExists(children_path):
-    let children_value = read_array_dir(children_path)
+    let children_segments = node_segments & @[TreeGeneChildrenName]
+    let children_value = read_array_dir(children_path, children_segments, options, shallow)
     for child in array_data(children_value):
       gene.children.add(child)
 
   gene.to_gene_value()
 
-proc read_tree_dir(path: string): Value =
+proc read_tree_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.} =
   let type_file_path = joinPath(path, TreeGeneTypeName & ".gene")
   let type_dir_path = joinPath(path, TreeGeneTypeName)
   if fileExists(type_file_path) or dirExists(type_dir_path):
-    return read_gene_dir(path)
+    return read_gene_dir(path, node_segments, options, shallow)
 
   if can_decode_as_array_dir(path):
-    return read_array_dir(path)
+    return read_array_dir(path, node_segments, options, shallow)
 
-  read_known_map_dir(path)
+  read_known_map_dir(path, node_segments, options, shallow)
 
-proc read_tree_path(path: string): Value =
+proc read_tree_path(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.} =
   if fileExists(path):
+    if shallow:
+      return make_lazy_tree_value(path, LtsFile, node_segments, options)
     return read_serialized_file(path)
   if dirExists(path):
-    return read_tree_dir(path)
+    if shallow:
+      return make_lazy_tree_value(path, LtsDirectory, node_segments, options)
+    return read_tree_dir(path, node_segments, options, false)
   not_allowed("Filesystem tree path not found: " & path)
 
-proc read_tree_root_path(path: string): Value =
+proc read_tree_root_path(path: string, options: LazyTreeReadOptions): Value {.gcsafe.} =
   if path.endsWith(".gene"):
-    return read_tree_path(path)
+    if options.lazy_nodes.contains(tree_path_key(@[])):
+      return make_lazy_tree_value(path, LtsFile, @[], options)
+    return read_tree_path(path, @[], options, false)
 
   let inline_path = path & ".gene"
   let has_inline = fileExists(inline_path)
@@ -734,15 +913,32 @@ proc read_tree_root_path(path: string): Value =
   if has_inline and has_dir:
     not_allowed("Filesystem tree root is ambiguous, both file and directory exist: " & path)
   if has_inline:
+    if options.lazy_nodes.contains(tree_path_key(@[])):
+      return make_lazy_tree_value(inline_path, LtsFile, @[], options)
     return read_serialized_file(inline_path)
   if has_dir:
-    return read_tree_dir(path)
-  read_tree_path(path)
+    return read_tree_dir(path, @[], options, options.enabled)
+  read_tree_path(path, @[], options, false)
+
+proc materialize_lazy_tree_data(data: CustomValue): Value {.gcsafe.} =
+  let lazy_data = LazyTreeValueData(data)
+  if lazy_data.materialized_loaded:
+    return lazy_data.materialized
+
+  case lazy_data.source_kind
+  of LtsFile:
+    lazy_data.materialized = read_serialized_file(lazy_data.path)
+  of LtsDirectory:
+    lazy_data.materialized = read_tree_dir(lazy_data.path, lazy_data.node_segments, lazy_data.options, true)
+  lazy_data.materialized_loaded = true
+
+  lazy_data.materialized
 
 proc to_s*(self: Serialization): string =
   result = value_to_serialized_text(self.data)
 
 proc value_to_gene_str(self: Value): string =
+  let self = materialize_lazy_tree_value(self)
   case self.kind:
   of VkNil:
     result = "nil"
@@ -926,6 +1122,7 @@ proc eval_in_caller_context(vm: ptr VirtualMachine, expr: Value, caller_frame: F
     not_allowed("write_tree macro arguments must be literals or symbols")
 
 proc write_tree_root(path: string, value: Value, options: TreeWriteOptions) =
+  let value = materialize_lazy_tree_deep(value)
   if path.endsWith(".gene"):
     if options.directory_nodes.len > 0:
       not_allowed("write_tree cannot use a .gene path when ^separate requires directories")
@@ -939,12 +1136,159 @@ proc write_tree_root(path: string, value: Value, options: TreeWriteOptions) =
     else:
       write_serialized_file(path & ".gene", value)
 
+proc lazy_tree_class_ref(value: Value): Class {.gcsafe.} =
+  proc class_value_ref(class_value: Value): Class =
+    if class_value.kind == VkClass:
+      class_value.ref.class
+    else:
+      nil
+
+  case value.kind
+  of VkNil:
+    class_value_ref(App.app.nil_class)
+  of VkBool:
+    class_value_ref(App.app.bool_class)
+  of VkInt:
+    class_value_ref(App.app.int_class)
+  of VkFloat:
+    class_value_ref(App.app.float_class)
+  of VkChar:
+    class_value_ref(App.app.char_class)
+  of VkString:
+    class_value_ref(App.app.string_class)
+  of VkSymbol:
+    class_value_ref(App.app.symbol_class)
+  of VkComplexSymbol:
+    class_value_ref(App.app.complex_symbol_class)
+  of VkArray:
+    class_value_ref(App.app.array_class)
+  of VkMap:
+    class_value_ref(App.app.map_class)
+  of VkGene:
+    class_value_ref(App.app.gene_class)
+  of VkRegex:
+    class_value_ref(App.app.regex_class)
+  of VkDate:
+    class_value_ref(App.app.date_class)
+  of VkDateTime:
+    class_value_ref(App.app.datetime_class)
+  of VkSet:
+    class_value_ref(if App.app.set_class.kind == VkClass: App.app.set_class else: App.app.object_class)
+  of VkFuture:
+    class_value_ref(if App.app.future_class.kind == VkClass: App.app.future_class else: App.app.object_class)
+  of VkGenerator:
+    class_value_ref(if App.app.generator_class.kind == VkClass: App.app.generator_class else: App.app.object_class)
+  of VkNamespace:
+    class_value_ref(App.app.namespace_class)
+  of VkClass:
+    class_value_ref(App.app.class_class)
+  of VkInstance:
+    value.instance_class
+  of VkCustom:
+    value.ref.custom_class
+  of VkSelector:
+    class_value_ref(App.app.selector_class)
+  else:
+    class_value_ref(App.app.object_class)
+
+proc delegate_lazy_tree_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, method_name: string): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    not_allowed("Lazy tree method requires self")
+
+  let self_value = get_positional_arg(args, 0, has_keyword_args)
+  let actual = materialize_lazy_tree_value(self_value)
+  let actual_class = lazy_tree_class_ref(actual)
+  if actual_class == nil:
+    not_allowed("Lazy tree method dispatch requires a concrete class")
+
+  let meth = actual_class.get_method(method_name)
+  if meth == nil or meth.callable.kind notin {VkNativeFn, VkNativeMethod}:
+    not_allowed("Lazy tree method '" & method_name & "' is not available on " & $actual.kind)
+
+  var call_args = newSeq[Value](arg_count)
+  if has_keyword_args:
+    call_args[0] = args[0]
+    if arg_count > 1:
+      call_args[1] = actual
+    for i in 2..<arg_count:
+      call_args[i] = args[i]
+  else:
+    if arg_count > 0:
+      call_args[0] = actual
+    for i in 1..<arg_count:
+      call_args[i] = args[i]
+
+  case meth.callable.kind
+  of VkNativeFn:
+    return call_native_fn(meth.callable.ref.native_fn, vm, call_args, has_keyword_args)
+  of VkNativeMethod:
+    return call_native_fn(meth.callable.ref.native_method, vm, call_args, has_keyword_args)
+  else:
+    not_allowed("Lazy tree method '" & method_name & "' must be native")
+
+proc init_lazy_tree_value_class() =
+  if not lazy_tree_value_class.is_nil:
+    return
+
+  lazy_tree_value_class = new_class("LazyTreeValue", App.app.object_class.ref.class)
+
+  template def_lazy_delegate(method_name: string, proc_name: untyped) =
+    proc proc_name(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      delegate_lazy_tree_method(vm, args, arg_count, has_keyword_args, method_name)
+    lazy_tree_value_class.def_native_method(method_name, proc_name)
+
+  def_lazy_delegate("to_s", lazy_tree_to_s)
+  def_lazy_delegate("class", lazy_tree_class)
+  def_lazy_delegate("is", lazy_tree_is)
+  def_lazy_delegate("iter", lazy_tree_iter)
+  def_lazy_delegate("get", lazy_tree_get)
+  def_lazy_delegate("set", lazy_tree_set)
+  def_lazy_delegate("contains", lazy_tree_contains)
+  def_lazy_delegate("has", lazy_tree_has)
+  def_lazy_delegate("size", lazy_tree_size)
+  def_lazy_delegate("length", lazy_tree_length)
+  def_lazy_delegate("keys", lazy_tree_keys)
+  def_lazy_delegate("values", lazy_tree_values)
+  def_lazy_delegate("each", lazy_tree_each)
+  def_lazy_delegate("map", lazy_tree_map)
+  def_lazy_delegate("filter", lazy_tree_filter)
+  def_lazy_delegate("reduce", lazy_tree_reduce)
+  def_lazy_delegate("pairs", lazy_tree_pairs)
+  def_lazy_delegate("empty", lazy_tree_empty)
+  def_lazy_delegate("clear", lazy_tree_clear)
+  def_lazy_delegate("del", lazy_tree_del)
+  def_lazy_delegate("merge", lazy_tree_merge)
+  def_lazy_delegate("add", lazy_tree_add)
+  def_lazy_delegate("append", lazy_tree_append)
+  def_lazy_delegate("push", lazy_tree_push)
+  def_lazy_delegate("pop", lazy_tree_pop)
+  def_lazy_delegate("first", lazy_tree_first)
+  def_lazy_delegate("last", lazy_tree_last)
+  def_lazy_delegate("slice", lazy_tree_slice)
+  def_lazy_delegate("index_of", lazy_tree_index_of)
+  def_lazy_delegate("join", lazy_tree_join)
+  def_lazy_delegate("take", lazy_tree_take)
+  def_lazy_delegate("skip", lazy_tree_skip)
+  def_lazy_delegate("find", lazy_tree_find)
+  def_lazy_delegate("any", lazy_tree_any)
+  def_lazy_delegate("all", lazy_tree_all)
+  def_lazy_delegate("zip", lazy_tree_zip)
+  def_lazy_delegate("reverse", lazy_tree_reverse)
+  def_lazy_delegate("sort", lazy_tree_sort)
+  def_lazy_delegate("to_map", lazy_tree_to_map)
+  def_lazy_delegate("to_json", lazy_tree_to_json)
+  def_lazy_delegate("type", lazy_tree_type)
+  def_lazy_delegate("props", lazy_tree_props)
+  def_lazy_delegate("children", lazy_tree_children)
+  def_lazy_delegate("genetype", lazy_tree_genetype)
+  def_lazy_delegate("set_genetype", lazy_tree_set_genetype)
+
 proc vm_serialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if arg_count != 1:
       not_allowed("serialize expects 1 argument")
 
-    let value = get_positional_arg(args, 0, has_keyword_args)
+    let value = materialize_lazy_tree_deep(get_positional_arg(args, 0, has_keyword_args))
     return value_to_serialized_text(value).to_value()
 
 proc vm_deserialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -973,27 +1317,32 @@ proc vm_write_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame
       write_tree_root(path_arg.str, value, options)
       NIL
 
-proc vm_read_tree(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+proc vm_read_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     when defined(gene_wasm):
       not_allowed("read_tree is not supported in gene_wasm")
     else:
-      if get_positional_count(arg_count, has_keyword_args) != 1:
+      if gene_value.kind != VkGene or gene_value.gene.children.len != 1:
         not_allowed("read_tree expects 1 argument")
 
-      let path_arg = get_positional_arg(args, 0, has_keyword_args)
+      let path_arg = eval_in_caller_context(vm, gene_value.gene.children[0], caller_frame)
       if path_arg.kind != VkString:
         not_allowed("read_tree expects a string path")
 
-      read_tree_root_path(path_arg.str)
+      let lazy_value = gene_value.gene.props.getOrDefault("lazy".to_key(), NIL)
+      let options = build_tree_read_options(lazy_value)
+      read_tree_root_path(path_arg.str, options)
 
 # Initialize the serdes namespace
 proc init_serdes*() =
+  init_lazy_tree_value_class()
   let serdes_ns = new_namespace("serdes")
   serdes_ns["serialize".to_key()] = NativeFn(vm_serialize).to_value()
   serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize).to_value()
   var write_tree_ref = new_ref(VkNativeMacro)
   write_tree_ref.native_macro = vm_write_tree_macro
   serdes_ns["write_tree".to_key()] = write_tree_ref.to_ref_value()
-  serdes_ns["read_tree".to_key()] = NativeFn(vm_read_tree).to_value()
+  var read_tree_ref = new_ref(VkNativeMacro)
+  read_tree_ref.native_macro = vm_read_tree_macro
+  serdes_ns["read_tree".to_key()] = read_tree_ref.to_ref_value()
   App.app.gene_ns.ref.ns["serdes".to_key()] = serdes_ns.to_value()

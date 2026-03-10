@@ -1,6 +1,7 @@
 import os, unittest, strformat, tables, strutils
 
 import gene/types except Exception
+import gene/serdes
 import gene/vm
 
 import ./helpers
@@ -171,3 +172,154 @@ suite "filesystem tree serdes":
     check loaded.kind == VkMap
     check map_data(loaded)["_genearray".to_key()] == 1.to_value()
     check map_data(loaded)["plain".to_key()] == 2.to_value()
+
+  test "^lazy [/sessions] keeps separated subtrees unloaded until accessed":
+    init_all()
+    let root_path = fresh_path("lazy-sessions")
+    check VM.exec(fmt"""
+      (var value {{
+        ^meta "v1"
+        ^sessions {{
+          ^one {{^user "alice" ^count 1}}
+          ^two {{^user "bob" ^count 2}}
+        }}
+      }})
+      (gene/serdes/write_tree "{root_path}" value ^separate [/sessions/*])
+      true
+    """, "tree_serdes_lazy_sessions_write") == TRUE
+
+    reset_tree_read_stats()
+    let loaded = VM.exec(fmt"""(gene/serdes/read_tree "{root_path}" ^lazy [/sessions])""", "tree_serdes_lazy_sessions_read")
+    let initial_stats = filesystem_tree_read_stats()
+    check initial_stats.serialized_file_reads == 0
+    check initial_stats.dir_listings == 1
+    check loaded.kind == VkMap
+
+    let sessions_lazy = map_data(loaded)["sessions".to_key()]
+    check has_custom_materializer(sessions_lazy)
+
+    let sessions = materialize_lazy_tree_value(sessions_lazy)
+    let after_sessions = filesystem_tree_read_stats()
+    check after_sessions.serialized_file_reads == 0
+    check after_sessions.dir_listings == 2
+    check sessions.kind == VkMap
+    check has_custom_materializer(map_data(sessions)["one".to_key()])
+    check has_custom_materializer(map_data(sessions)["two".to_key()])
+
+    let one = materialize_lazy_tree_value(map_data(sessions)["one".to_key()])
+    let after_one = filesystem_tree_read_stats()
+    check after_one.serialized_file_reads == 1
+    check after_one.dir_listings == 2
+    check one.kind == VkMap
+    check map_data(one)["user".to_key()] == "alice".to_value()
+    check has_custom_materializer(map_data(sessions)["two".to_key()])
+
+  test "nested lazy selectors stay lazy after parent materialization":
+    init_all()
+    let root_path = fresh_path("lazy-nested")
+    check VM.exec(fmt"""
+      (var value {{
+        ^sessions {{
+          ^active {{^count 2}}
+          ^archive {{
+            ^jan {{^count 1}}
+          }}
+        }}
+      }})
+      (gene/serdes/write_tree "{root_path}" value ^separate [/sessions/* /sessions/archive/*])
+      true
+    """, "tree_serdes_lazy_nested_write") == TRUE
+
+    reset_tree_read_stats()
+    let loaded = VM.exec(fmt"""(gene/serdes/read_tree "{root_path}" ^lazy [/sessions /sessions/archive])""", "tree_serdes_lazy_nested_read")
+    let sessions = materialize_lazy_tree_value(map_data(loaded)["sessions".to_key()])
+    let after_sessions = filesystem_tree_read_stats()
+    check after_sessions.serialized_file_reads == 0
+    check after_sessions.dir_listings == 2
+    check sessions.kind == VkMap
+
+    let archive_lazy = map_data(sessions)["archive".to_key()]
+    check has_custom_materializer(archive_lazy)
+
+    let archive = materialize_lazy_tree_value(archive_lazy)
+    let after_archive = filesystem_tree_read_stats()
+    check after_archive.serialized_file_reads == 0
+    check after_archive.dir_listings == 3
+    check archive.kind == VkMap
+    check has_custom_materializer(map_data(archive)["jan".to_key()])
+
+  test "^lazy falls back to eager reads when the root is inline":
+    init_all()
+    let root_path = fresh_path("lazy-inline")
+    check VM.exec(fmt"""
+      (var value {{
+        ^meta "v1"
+        ^sessions {{
+          ^one {{^user "alice"}}
+        }}
+      }})
+      (gene/serdes/write_tree "{root_path}" value)
+      true
+    """, "tree_serdes_lazy_inline_write") == TRUE
+
+    reset_tree_read_stats()
+    let loaded = VM.exec(fmt"""(gene/serdes/read_tree "{root_path}" ^lazy [/sessions])""", "tree_serdes_lazy_inline_read")
+    let stats = filesystem_tree_read_stats()
+    check stats.serialized_file_reads == 1
+    check stats.dir_listings == 0
+    check loaded.kind == VkMap
+    check not has_custom_materializer(map_data(loaded)["sessions".to_key()])
+    check map_data(map_data(loaded)["sessions".to_key()])["one".to_key()].kind == VkMap
+
+  test "lazy nil children are memoized after the first materialization":
+    init_all()
+    let root_path = fresh_path("lazy-nil")
+    check VM.exec(fmt"""
+      (var value {{
+        ^sessions {{
+          ^empty nil
+        }}
+      }})
+      (gene/serdes/write_tree "{root_path}" value ^separate [/sessions/*])
+      true
+    """, "tree_serdes_lazy_nil_write") == TRUE
+
+    reset_tree_read_stats()
+    let loaded = VM.exec(fmt"""(gene/serdes/read_tree "{root_path}" ^lazy [/sessions])""", "tree_serdes_lazy_nil_read")
+    let sessions = materialize_lazy_tree_value(map_data(loaded)["sessions".to_key()])
+    let empty_lazy = map_data(sessions)["empty".to_key()]
+    check has_custom_materializer(empty_lazy)
+
+    discard materialize_lazy_tree_value(empty_lazy)
+    let after_first = filesystem_tree_read_stats()
+    discard materialize_lazy_tree_value(empty_lazy)
+    let after_second = filesystem_tree_read_stats()
+    check after_first.serialized_file_reads == 1
+    check after_second.serialized_file_reads == 1
+
+  test "write_tree materializes remaining lazy descendants before writing":
+    init_all()
+    let source_path = fresh_path("lazy-write-source")
+    let copy_path = fresh_path("lazy-write-copy")
+    check VM.exec(fmt"""
+      (var value {{
+        ^meta "v1"
+        ^sessions {{
+          ^one {{^user "alice"}}
+          ^two {{^user "bob"}}
+        }}
+      }})
+      (gene/serdes/write_tree "{source_path}" value ^separate [/sessions/*])
+      true
+    """, "tree_serdes_lazy_write_source") == TRUE
+
+    check VM.exec(fmt"""
+      (var loaded (gene/serdes/read_tree "{source_path}" ^lazy [/sessions]))
+      (assert (loaded/sessions/one/user == "alice"))
+      (gene/serdes/write_tree "{copy_path}" loaded ^separate [/sessions/*])
+      (var copied (gene/serdes/read_tree "{copy_path}"))
+      (assert (copied/meta == "v1"))
+      (assert (copied/sessions/one/user == "alice"))
+      (assert (copied/sessions/two/user == "bob"))
+      true
+    """, "tree_serdes_lazy_write_copy") == TRUE

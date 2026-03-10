@@ -214,63 +214,71 @@ proc to_ref_value*(v: ptr Reference): Value {.inline.} =
 # Forward declaration
 converter to_int*(v: Value): int64 {.inline, noSideEffect.}
 
-proc `==`*(a, b: Value): bool {.no_side_effect.} =
+proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
   if cast[uint64](a) == cast[uint64](b):
     return true
 
-  {.cast(gcsafe).}:
-    let u1 = cast[uint64](a)
-    let u2 = cast[uint64](b)
+  {.cast(noSideEffect).}:
+    {.cast(gcsafe).}:
+      let u1 = cast[uint64](a)
+      let u2 = cast[uint64](b)
 
-    # Check if both are strings and compare them
-    let tag1 = u1 and 0xFFFF_0000_0000_0000u64
-    let tag2 = u2 and 0xFFFF_0000_0000_0000u64
+      # Check if both are strings and compare them
+      let tag1 = u1 and 0xFFFF_0000_0000_0000u64
+      let tag2 = u2 and 0xFFFF_0000_0000_0000u64
 
-    # Int values can be represented as either 48-bit immediates or refs.
-    let a_is_int = tag1 == SMALL_INT_TAG or (tag1 == REF_TAG and a.ref.kind == VkInt)
-    let b_is_int = tag2 == SMALL_INT_TAG or (tag2 == REF_TAG and b.ref.kind == VkInt)
-    if a_is_int and b_is_int:
-      return a.to_int() == b.to_int()
+      if tag1 == REF_TAG and a.ref.kind == VkCustom and a.ref.custom_data != nil and
+         a.ref.custom_data.materialize_hook != nil:
+        return a.ref.custom_data.materialize_hook(a.ref.custom_data) == b
+      if tag2 == REF_TAG and b.ref.kind == VkCustom and b.ref.custom_data != nil and
+         b.ref.custom_data.materialize_hook != nil:
+        return a == b.ref.custom_data.materialize_hook(b.ref.custom_data)
 
-    # Both strings - compare their content
-    if tag1 == STRING_TAG and tag2 == STRING_TAG:
-      let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
-      let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+      # Int values can be represented as either 48-bit immediates or refs.
+      let a_is_int = tag1 == SMALL_INT_TAG or (tag1 == REF_TAG and a.ref.kind == VkInt)
+      let b_is_int = tag2 == SMALL_INT_TAG or (tag2 == REF_TAG and b.ref.kind == VkInt)
+      if a_is_int and b_is_int:
+        return a.to_int() == b.to_int()
 
-      # Handle empty string case
-      if str1.is_nil and str2.is_nil:
+      # Both strings - compare their content
+      if tag1 == STRING_TAG and tag2 == STRING_TAG:
+        let str1 = cast[ptr String](u1 and PAYLOAD_MASK)
+        let str2 = cast[ptr String](u2 and PAYLOAD_MASK)
+
+        # Handle empty string case
+        if str1.is_nil and str2.is_nil:
+          return true
+        elif str1.is_nil or str2.is_nil:
+          return false
+        else:
+          return str1.str == str2.str
+      # Maps compare structurally
+      elif tag1 == MAP_TAG and tag2 == MAP_TAG:
+        let map1 = map_ptr(a).map
+        let map2 = map_ptr(b).map
+        if map1.len != map2.len:
+          return false
+        for k, v in map1:
+          let other = map2.getOrDefault(k, NOT_FOUND)
+          if other == NOT_FOUND or v != other:
+            return false
         return true
-      elif str1.is_nil or str2.is_nil:
-        return false
-      else:
-        return str1.str == str2.str
-    # Maps compare structurally
-    elif tag1 == MAP_TAG and tag2 == MAP_TAG:
-      let map1 = map_ptr(a).map
-      let map2 = map_ptr(b).map
-      if map1.len != map2.len:
-        return false
-      for k, v in map1:
-        let other = map2.getOrDefault(k, NOT_FOUND)
-        if other == NOT_FOUND or v != other:
+      # Arrays compare structurally
+      elif tag1 == ARRAY_TAG and tag2 == ARRAY_TAG:
+        let arr1 = array_ptr(a).arr
+        let arr2 = array_ptr(b).arr
+        if arr1.len != arr2.len:
           return false
-      return true
-    # Arrays compare structurally
-    elif tag1 == ARRAY_TAG and tag2 == ARRAY_TAG:
-      let arr1 = array_ptr(a).arr
-      let arr2 = array_ptr(b).arr
-      if arr1.len != arr2.len:
-        return false
-      for i in 0 ..< arr1.len:
-        if arr1[i] != arr2[i]:
-          return false
-      return true
-    # Instances compare by identity
-    elif tag1 == INSTANCE_TAG and tag2 == INSTANCE_TAG:
-      return (u1 and PAYLOAD_MASK) == (u2 and PAYLOAD_MASK)
-    # Only references can be equal with different bit patterns
-    elif tag1 == REF_TAG and tag2 == REF_TAG:
-      return a.ref == b.ref
+        for i in 0 ..< arr1.len:
+          if arr1[i] != arr2[i]:
+            return false
+        return true
+      # Instances compare by identity
+      elif tag1 == INSTANCE_TAG and tag2 == INSTANCE_TAG:
+        return (u1 and PAYLOAD_MASK) == (u2 and PAYLOAD_MASK)
+      # Only references can be equal with different bit patterns
+      elif tag1 == REF_TAG and tag2 == REF_TAG:
+        return a.ref == b.ref
 
   # Default to false
   return false
@@ -498,7 +506,9 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
       of VkFuture:
         result = "<Future " & $self.ref.future.state & ">"
       of VkCustom:
-        if self.ref != nil and self.ref.custom_data != nil and (self.ref.custom_data of RuntimeTypeValueData):
+        if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
+          result = self.ref.custom_data.materialize_hook(self.ref.custom_data).str_no_quotes()
+        elif self.ref != nil and self.ref.custom_data != nil and (self.ref.custom_data of RuntimeTypeValueData):
           let payload = RuntimeTypeValueData(self.ref.custom_data)
           result = type_desc_to_string(payload.runtime_type.type_id, payload.type_descs)
         else:
@@ -583,7 +593,9 @@ proc `$`*(self: Value): string {.gcsafe.} =
       of VkFuture:
         result = "<Future " & $self.ref.future.state & ">"
       of VkCustom:
-        if self.ref != nil and self.ref.custom_data != nil and (self.ref.custom_data of RuntimeTypeValueData):
+        if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
+          result = $self.ref.custom_data.materialize_hook(self.ref.custom_data)
+        elif self.ref != nil and self.ref.custom_data != nil and (self.ref.custom_data of RuntimeTypeValueData):
           let payload = RuntimeTypeValueData(self.ref.custom_data)
           result = type_desc_to_string(payload.runtime_type.type_id, payload.type_descs)
         else:
@@ -659,6 +671,10 @@ proc `[]`*(self: Value, i: int): Value =
       of REF_TAG:
         let r = self.ref
         case r.kind:
+          of VkCustom:
+            if r.custom_data != nil and r.custom_data.materialize_hook != nil:
+              return r.custom_data.materialize_hook(r.custom_data)[i]
+            todo($r.kind)
           of VkString:
             var j = 0
             for rune in r.str.runes:
@@ -735,6 +751,10 @@ proc size*(self: Value): int =
       of REF_TAG:
         let r = self.ref
         case r.kind:
+          of VkCustom:
+            if r.custom_data != nil and r.custom_data.materialize_hook != nil:
+              return r.custom_data.materialize_hook(r.custom_data).size()
+            return 0
           of VkSet:
             return r.set.len
           of VkMap:

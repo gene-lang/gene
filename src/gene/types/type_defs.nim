@@ -18,6 +18,7 @@ type
     raw*: uint64
 
   CustomValue* = ref object of RootObj
+    materialize_hook*: proc(data: CustomValue): Value {.gcsafe.}
 
   EnumDef* = ref object
     name*: string

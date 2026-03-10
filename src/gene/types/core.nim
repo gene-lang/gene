@@ -54,7 +54,7 @@ const BIGGEST_INT =
 #################### Forward declarations #################
 # Value basics
 proc kind*(v: Value): ValueKind {.inline.}
-proc `==`*(a, b: Value): bool {.no_side_effect.}
+proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.}
 converter to_bool*(v: Value): bool {.inline.}
 proc `$`*(self: Value): string {.gcsafe.}
 proc `$`*(self: ptr Reference): string
