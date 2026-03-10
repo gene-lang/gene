@@ -1,5 +1,5 @@
 # GeneClaw Database Module
-# SQLite storage for memory events, agent runs, and audit logs
+# SQLite storage for agent runs, audit logs, schedules, and documents
 
 (import DB_PATH from "config")
 
@@ -31,18 +31,6 @@
       (DB = (genex/sqlite/open DB_PATH))
       (DB .exec "PRAGMA journal_mode=WAL")
       (log .debug "WAL journal mode enabled")
-
-      # Memory events table
-      (DB .exec "CREATE TABLE IF NOT EXISTS memory_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        workspace_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        meta_json TEXT DEFAULT '{}',
-        created_at_ms INTEGER NOT NULL
-      )")
-      (DB .exec "CREATE INDEX IF NOT EXISTS idx_mem_session ON memory_events(session_id, created_at_ms)")
 
       # Agent runs table
       (DB .exec "CREATE TABLE IF NOT EXISTS agent_runs (
@@ -129,51 +117,13 @@
       )")
       (DB .exec "CREATE INDEX IF NOT EXISTS idx_session_documents_session ON session_documents(session_id, created_at_ms)")
 
-      (log .info #"Database initialized: #{DB_PATH} (7 tables ready)")
+      (log .info #"Database initialized: #{DB_PATH} (6 tables ready)")
     catch *
       (log .error #"Failed to open SQLite: #{(error_text $ex)}")
       (DB = nil)
     )
   else
     (log .warn "genex/sqlite unavailable - memory will not persist")
-  )
-)
-
-# --- Memory operations ---
-
-(fn $ns/memory_append [workspace_id session_id role content meta]
-  (if_not DB then (return))
-  (var now gene/now/.call/.to_i)
-  (var meta_str (if meta then meta/.to_json else "{}"))
-  (log .debug #"memory_append session=#{session_id} role=#{role} content_len=#{content/.length}")
-  (try
-    (DB .exec "INSERT INTO memory_events (workspace_id, session_id, role, content, meta_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)"
-      workspace_id session_id role content meta_str now)
-  catch *
-    (log .error #"memory_append failed: #{(error_text $ex)}")
-  )
-)
-
-(fn $ns/memory_recent [session_id limit]
-  (if_not DB then (return []))
-  (try
-    (log .debug #"memory_recent session=#{session_id} limit=#{limit}")
-    # Avoid the nested LIMIT query shape here; on the current sqlite binding it can
-    # degrade into a float sentinel after prior writes on the same connection.
-    (var rows_desc (DB .query "SELECT role, content FROM memory_events WHERE session_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT ?" session_id limit))
-    (if_not rows_desc (return []))
-    (var rows (rows_desc .reverse))
-    (var entries [])
-    (var entry_count 0)
-    (for row in rows
-      (entries .append {^role row/0 ^content row/1})
-      (entry_count += 1)
-    )
-    (log .debug #"memory_recent returned #{entry_count} entries")
-    entries
-  catch *
-    (log .error #"memory_recent failed: #{(error_text $ex)}")
-    []
   )
 )
 

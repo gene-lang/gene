@@ -48,6 +48,14 @@ proc call_native_with_gene_args(self: ptr VirtualMachine, native_fn: NativeFn, a
     native_args[i + 1] = arg
   call_native_fn(native_fn, self, native_args, true)
 
+proc validate_instance_native_method_arity(meth: Method, positional_count: int, keyword_count = 0) {.inline.} =
+  if meth == nil or not meth.native_signature_known:
+    return
+  let expected = meth.native_param_types.len
+  if keyword_count > 0 or positional_count != expected:
+    not_allowed(meth.class.name & "." & meth.name & " expects " & $expected &
+                " arguments after self, got " & $positional_count)
+
 proc exec*(self: ptr VirtualMachine): Value =
   let root_entry = self.exec_depth == 0
   self.exec_depth.inc()
@@ -2943,6 +2951,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           name: name.str,
           callable: fn_value,
           class: class,
+          native_signature_known: false,
           native_param_types: @[],
           native_return_type: NIL,
         )
@@ -5447,6 +5456,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
             of VkNativeFn:
+              validate_instance_native_method_arity(meth, 0)
               # Method call with self as first argument
               let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
               self.frame.push(result)
@@ -5603,6 +5613,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
             of VkNativeFn:
+              validate_instance_native_method_arity(meth, 1)
               # Method call with self and one argument
               let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
               self.frame.push(result)
@@ -5769,6 +5780,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
             of VkNativeFn:
+              validate_instance_native_method_arity(meth, 2)
               # Method call with self and two arguments
               let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
               self.frame.push(result)
@@ -5872,6 +5884,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
             of VkNativeFn:
+              validate_instance_native_method_arity(meth, args.len)
               # Multi-argument method call with self as first argument
               var call_args = @[obj]
               call_args.add(args)
@@ -6014,6 +6027,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
             of VkNativeFn:
+              validate_instance_native_method_arity(meth, args.len, kw_pairs.len)
               # Method call with self as first argument plus keyword args
               let has_kw = kw_pairs.len > 0
               let offset = if has_kw: 1 else: 0

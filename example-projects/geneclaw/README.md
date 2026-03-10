@@ -15,7 +15,7 @@ Slack/REST → Router → Agent Orchestrator → LLM Provider (OpenAI / Anthropi
                         ↓      ↓       ↓       ↓        ↓
                      shell  read_file  http   get_time  browser_playwright
                                ↓
-                     SQLite (memory + audit)
+      GENECLAW_HOME (config + workspace) + SQLite (audit + documents + jobs)
 ```
 
 ## Files
@@ -26,8 +26,10 @@ Slack/REST → Router → Agent Orchestrator → LLM Provider (OpenAI / Anthropi
 - `src/tools.gene` - Tool registry/orchestration
 - `src/tools/*.gene` - Individual tool modules
 - `src/tools/*.mjs` - Playwright helper scripts
-- `src/config.gene` - Environment variable configuration
-- `src/db.gene` - SQLite schema, memory, audit log, run tracking
+- `src/config.gene` - Home-backed config loader and public config export
+- `src/home_store.gene` - `GENECLAW_HOME` bootstrap and interpolation helpers
+- `src/workspace_state.gene` - Serialized system prompt and session memory store
+- `src/db.gene` - SQLite schema for audit, runs, schedules, and documents
 
 ## Docs
 
@@ -47,21 +49,34 @@ cd example-projects/geneclaw
 
 ## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `GENECLAW_LLM_PROVIDER` | `openai` | Active LLM provider: `openai` or `anthropic` |
-| `OPENAI_API_KEY` | (empty = mock mode) | OpenAI API key |
-| `OPENAI_MODEL` | `gpt-5-mini` | Model to use |
-| `OPENAI_BASE_URL` | client default | Override OpenAI-compatible API base URL |
-| `OPENAI_TIMEOUT_MS` | `60000` | OpenAI request timeout |
-| `ANTHROPIC_API_KEY` | (empty) | Anthropic API key |
-| `ANTHROPIC_AUTH_TOKEN` | (empty) | Anthropic auth token / OAuth token |
-| `ANTHROPIC_MODEL` | `claude-3-5-sonnet-latest` | Anthropic model to use |
-| `ANTHROPIC_BASE_URL` | client default | Override Anthropic API base URL |
-| `ANTHROPIC_TIMEOUT_MS` | `60000` | Anthropic request timeout |
-| `SLACK_SIGNING_SECRET` | | Slack app signing secret |
-| `SLACK_BOT_TOKEN` | | Slack bot OAuth token |
-| `GENECLAW_WORKSPACE` | `$HOME/.geneclaw` | Filesystem tool root |
+GeneClaw now boots from `GENECLAW_HOME`.
+
+- `GENECLAW_HOME/config` stores non-sensitive runtime config as serialized Gene.
+- `GENECLAW_HOME/workspace` stores the system prompt and session memory as serialized Gene.
+- `GENECLAW_HOME/files`, `GENECLAW_HOME/documents`, and `GENECLAW_HOME/artifacts` are managed filesystem roots for tools and document staging.
+- The built-in repository instance uses `/Users/gcao/gene-workspace/gene-old/example-projects/geneclaw/home`.
+
+Non-sensitive config can use environment placeholders inside any string:
+
+```text
+{ENV:NAME:default value}
+```
+
+Every placeholder occurrence in a loaded string is expanded at runtime. Secrets remain environment-sourced and should not be committed to `GENECLAW_HOME/config`.
+
+Key bootstrap and secret environment variables:
+
+| Variable | Description |
+|---|---|
+| `GENECLAW_HOME` | Root directory for serialized config, workspace state, managed files, and SQLite |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token / OAuth token |
+| `SLACK_SIGNING_SECRET` | Slack app signing secret |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token |
+| `SLACK_APP_TOKEN` | Slack Socket Mode token |
+| `SLACK_AGENTX_TOKEN` | Slack token used by outbound `send_message` |
+| `BRAVE_API_KEY` | Brave Search API key |
 
 ## LLM providers
 
@@ -82,11 +97,13 @@ GET /health
 GET /api/config
 ```
 
-Returns the current GeneClaw config as a Gene map. Secret values are always redacted as `"hidden"`.
+Returns the current effective GeneClaw config as a Gene map. Secret values are always redacted as `"hidden"`.
 
 You can also fetch a nested value with a slash-delimited query path:
 ```
 GET /api/config?path=llm/provider
+GET /api/config?path=home/root
+GET /api/config?path=workspace/state_root
 GET /api/config?path=slack/bot_token_configured
 ```
 

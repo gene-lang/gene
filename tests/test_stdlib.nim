@@ -41,6 +41,26 @@ test_vm """
   (a 1 2)
 """, 3
 
+test "Zero-arg native methods reject extra arguments and require explicit grouping in infix comparisons":
+  init_all()
+
+  expect CatchableError:
+    discard VM.exec("""
+      (var a "abc")
+      (a .length 1)
+    """, "stdlib_native_method_extra_arg")
+
+  expect CatchableError:
+    discard VM.exec("""
+      (var a "abc")
+      (a .length > 0)
+    """, "stdlib_native_method_infix_ambiguous")
+
+  check VM.exec("""
+    (var a "abc")
+    ((a .length) > 0)
+  """, "stdlib_native_method_grouped_infix") == TRUE
+
 # putEnv("__GENE_TEST_ENV__", "gene_value")
 # delEnv("__GENE_TEST_MISSING__")
 # refresh_env_map()

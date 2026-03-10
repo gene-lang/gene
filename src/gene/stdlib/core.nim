@@ -3102,6 +3102,7 @@ proc class_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
   let m = Method(
      name: fn.name,
     callable: r.to_ref_value(),
+    native_signature_known: false,
     native_param_types: @[],
     native_return_type: NIL,
   )

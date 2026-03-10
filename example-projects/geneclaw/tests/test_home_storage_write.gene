@@ -1,0 +1,18 @@
+#!/usr/bin/env gene run
+
+(import build_session_id from "agent")
+(import memory_append memory_recent from "workspace_state")
+
+(var session_id (build_session_id "ws-home" "C-home" "1741553030.123456"))
+
+(memory_append "ws-home" session_id "user" "first" {^index 1})
+(memory_append "ws-home" session_id "assistant" "second" {^index 2})
+(memory_append "ws-home" session_id "user" "third" {^index 3})
+
+(var recent (memory_recent session_id 2))
+
+(assert (recent/.size == 2))
+(assert (recent/0/content == "second"))
+(assert (recent/1/content == "third"))
+
+(println "ok")

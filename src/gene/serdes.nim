@@ -23,8 +23,10 @@ proc deserialize_literal*(s: string): Value {.gcsafe.}
 proc to_s*(self: Serialization): string
 
 const
-  TreeGeneTypeName = "genetype"
-  TreeOrderName = "__order__"
+  TreeGeneTypeName = "_genetype"
+  TreeGenePropsName = "_geneprops"
+  TreeGeneChildrenName = "_genechildren"
+  TreeArrayName = "_genearray"
 
 proc new_gene_ref(path: string): Value =
   # Create (gene/ref "path")
@@ -266,6 +268,141 @@ proc tree_path_display(segments: openArray[string]): string =
     return "/"
   "/" & segments.join("/")
 
+proc append_serialized_payload(result: var string, value: Value)
+
+proc append_serialized_map(result: var string, values: Table[Key, Value]) =
+  result.add("{")
+  var first = true
+  for k, v in values:
+    if not first:
+      result.add(" ")
+    result.add("^")
+    result.add(key_to_string(k))
+    result.add(" ")
+    append_serialized_payload(result, v)
+    first = false
+  result.add("}")
+
+proc append_serialized_ref(result: var string, path: string) =
+  result.add("(gene/ref ")
+  result.add(json.escapeJson(path))
+  result.add(")")
+
+proc append_serialized_payload(result: var string, value: Value) =
+  case value.kind:
+  of VkNil:
+    result.add("nil")
+  of VkBool:
+    result.add(if value == TRUE: "true" else: "false")
+  of VkInt:
+    result.add($value.to_int())
+  of VkFloat:
+    result.add($value.to_float())
+  of VkChar:
+    result.add("'")
+    result.add($chr((value.raw and 0xFF).int))
+    result.add("'")
+  of VkString:
+    result.add(json.escapeJson(value.str))
+  of VkSymbol:
+    result.add(value.str)
+  of VkArray:
+    result.add("[")
+    for index, item in array_data(value):
+      if index > 0:
+        result.add(" ")
+      append_serialized_payload(result, item)
+    result.add("]")
+  of VkMap:
+    append_serialized_map(result, map_data(value))
+  of VkGene:
+    result.add("(")
+    append_serialized_payload(result, value.gene.type)
+    for k, v in value.gene.props:
+      result.add(" ^")
+      result.add(key_to_string(k))
+      result.add(" ")
+      append_serialized_payload(result, v)
+    for child in value.gene.children:
+      result.add(" ")
+      append_serialized_payload(result, child)
+    result.add(")")
+  of VkClass, VkFunction:
+    append_serialized_ref(result, value.to_path())
+  of VkInstance:
+    result.add("(gene/instance ")
+    append_serialized_ref(result, value.instance_class.to_path())
+    result.add(" ")
+    append_serialized_map(result, value.instance_props)
+    result.add(")")
+  else:
+    todo("serialize " & $value.kind)
+
+proc value_to_serialized_text(value: Value): string =
+  result = "(gene/serialization "
+  append_serialized_payload(result, value)
+  result.add(")")
+
+proc tree_serialized_hash(value: Value): Hash
+
+proc mix_tree_hash(result: var Hash, marker: string) {.inline.} =
+  result = result !& hash(marker)
+
+proc tree_serialized_hash(value: Value): Hash =
+  var result_hash: Hash = 0
+  case value.kind:
+  of VkNil:
+    result_hash.mix_tree_hash("nil")
+  of VkBool:
+    result_hash.mix_tree_hash(if value == TRUE: "true" else: "false")
+  of VkInt:
+    result_hash.mix_tree_hash("int")
+    result_hash = result_hash !& hash(value.to_int())
+  of VkFloat:
+    result_hash.mix_tree_hash("float")
+    result_hash = result_hash !& hash(value.to_float())
+  of VkChar:
+    result_hash.mix_tree_hash("char")
+    result_hash = result_hash !& hash((value.raw and 0xFF).int)
+  of VkString:
+    result_hash.mix_tree_hash("string")
+    result_hash = result_hash !& hash(value.str)
+  of VkSymbol:
+    result_hash.mix_tree_hash("symbol")
+    result_hash = result_hash !& hash(value.str)
+  of VkArray:
+    result_hash.mix_tree_hash("array")
+    for item in array_data(value):
+      result_hash = result_hash !& tree_serialized_hash(item)
+  of VkMap:
+    result_hash.mix_tree_hash("map")
+    for k, v in map_data(value):
+      result_hash = result_hash !& hash(key_to_string(k))
+      result_hash = result_hash !& tree_serialized_hash(v)
+  of VkGene:
+    result_hash.mix_tree_hash("gene")
+    result_hash = result_hash !& tree_serialized_hash(value.gene.type)
+    for k, v in value.gene.props:
+      result_hash = result_hash !& hash(key_to_string(k))
+      result_hash = result_hash !& tree_serialized_hash(v)
+    for child in value.gene.children:
+      result_hash = result_hash !& tree_serialized_hash(child)
+  of VkClass:
+    result_hash.mix_tree_hash("class")
+    result_hash = result_hash !& hash(value.to_path())
+  of VkFunction:
+    result_hash.mix_tree_hash("function")
+    result_hash = result_hash !& hash(value.to_path())
+  of VkInstance:
+    result_hash.mix_tree_hash("instance")
+    result_hash = result_hash !& hash(value.instance_class.to_path())
+    for k, v in value.instance_props:
+      result_hash = result_hash !& hash(key_to_string(k))
+      result_hash = result_hash !& tree_serialized_hash(v)
+  else:
+    todo("serialize " & $value.kind)
+  !$result_hash
+
 proc add_directory_node(options: var TreeWriteOptions, segments: openArray[string]) =
   options.directory_nodes.incl(tree_path_key(segments))
 
@@ -321,7 +458,7 @@ proc ensure_parent_dir(path: string) =
 
 proc write_serialized_file(path: string, value: Value) =
   ensure_parent_dir(path)
-  writeFile(path, serialize(value).to_s())
+  writeFile(path, value_to_serialized_text(value))
 
 proc read_serialized_file(path: string): Value =
   deserialize(readFile(path))
@@ -360,9 +497,12 @@ proc read_tree_dir(path: string): Value
 proc read_known_map_dir(path: string): Value
 proc read_array_dir(path: string): Value
 proc read_gene_dir(path: string): Value
+proc list_tree_dir_entries(path: string): seq[(PathComponent, string)]
+proc resolve_tree_named_child(path: string, child_name: string): Value
+proc can_decode_as_array_dir(path: string): bool
 
 proc make_array_child_id(value: Value, used_ids: var Table[string, int]): string =
-  let base = toHex(cast[uint64](hash(serialize(value).to_s())), 12)
+  let base = "v" & toHex(cast[uint64](tree_serialized_hash(value)), 12)
   let next_count = used_ids.getOrDefault(base, 0) + 1
   used_ids[base] = next_count
   if next_count == 1:
@@ -376,7 +516,7 @@ proc write_map_dir(path: string, map_value: Value, node_segments: seq[string], o
   var key_values = initTable[string, Value]()
   for k, v in map_data(map_value):
     let key_name = key_to_string(k)
-    if not allow_root_markers and (key_name == TreeGeneTypeName or key_name == TreeOrderName):
+    if not allow_root_markers and key_name == TreeGeneTypeName:
       not_allowed("Exploded generic map roots cannot use reserved entry name: " & key_name)
     keys.add(key_name)
     key_values[key_name] = v
@@ -397,26 +537,29 @@ proc write_array_dir(path: string, array_value: Value, node_segments: seq[string
     array_data(order).add(child_id.to_value())
     let child_segments = node_segments & @[$index]
     write_tree_node(joinPath(path, child_id), child, child_segments, options, false)
-  write_serialized_file(joinPath(path, TreeOrderName & ".gene"), order)
+  write_serialized_file(joinPath(path, TreeArrayName & ".gene"), order)
 
 proc write_gene_dir(path: string, gene_value: Value, node_segments: seq[string], options: TreeWriteOptions) =
   createDir(path)
-  write_serialized_file(joinPath(path, TreeGeneTypeName & ".gene"), gene_value.gene.type)
+  let type_segments = node_segments & @[TreeGeneTypeName]
+  write_tree_node(joinPath(path, TreeGeneTypeName), gene_value.gene.type, type_segments, options, false)
 
-  if gene_value.gene.props.len > 0:
-    let props_path = joinPath(path, "props")
+  let props_segments = node_segments & @[TreeGenePropsName]
+  if gene_value.gene.props.len > 0 or should_write_dir(options, props_segments):
+    let props_path = joinPath(path, TreeGenePropsName)
     var props_value = new_map_value()
     map_data(props_value) = initTable[Key, Value]()
     for k, v in gene_value.gene.props:
       map_data(props_value)[k] = v
-    write_map_dir(props_path, props_value, node_segments & @["props"], options, true)
+    write_map_dir(props_path, props_value, props_segments, options, true)
 
-  if gene_value.gene.children.len > 0:
-    let children_path = joinPath(path, "children")
+  let children_segments = node_segments & @[TreeGeneChildrenName]
+  if gene_value.gene.children.len > 0 or should_write_dir(options, children_segments):
+    let children_path = joinPath(path, TreeGeneChildrenName)
     var children_value = new_array_value()
     for child in gene_value.gene.children:
       array_data(children_value).add(child)
-    write_array_dir(children_path, children_value, node_segments & @["children"], options)
+    write_array_dir(children_path, children_value, children_segments, options)
 
 proc write_tree_node(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false) =
   remove_tree_base(path)
@@ -442,12 +585,7 @@ proc write_tree_dir(path: string, value: Value, node_segments: seq[string], opti
 proc read_known_map_dir(path: string): Value =
   result = new_map_value()
   map_data(result) = initTable[Key, Value]()
-  var entries: seq[(PathComponent, string)] = @[]
-  for kind, entry in walkDir(path, relative = true):
-    entries.add((kind, entry))
-  entries.sort(proc(a, b: (PathComponent, string)): int = cmp(a[1], b[1]))
-
-  for (kind, entry) in entries:
+  for (kind, entry) in list_tree_dir_entries(path):
     case kind
     of pcFile:
       if not entry.endsWith(".gene"):
@@ -460,19 +598,81 @@ proc read_known_map_dir(path: string): Value =
     else:
       discard
 
+proc list_tree_dir_entries(path: string): seq[(PathComponent, string)] =
+  for kind, entry in walkDir(path, relative = true):
+    result.add((kind, entry))
+  result.sort(proc(a, b: (PathComponent, string)): int = cmp(a[1], b[1]))
+
+proc resolve_tree_named_child(path: string, child_name: string): Value =
+  let inline_path = joinPath(path, child_name & ".gene")
+  let dir_path = joinPath(path, child_name)
+  let has_inline = fileExists(inline_path)
+  let has_dir = dirExists(dir_path)
+  if has_inline and has_dir:
+    not_allowed("Filesystem tree child is ambiguous, both file and directory exist: " & joinPath(path, child_name))
+  if has_inline:
+    return read_serialized_file(inline_path)
+  if has_dir:
+    return read_tree_dir(dir_path)
+  not_allowed("Filesystem tree child not found: " & joinPath(path, child_name))
+
+proc can_decode_as_array_dir(path: string): bool =
+  let manifest_path = joinPath(path, TreeArrayName & ".gene")
+  if not fileExists(manifest_path):
+    return false
+
+  let manifest = read_serialized_file(manifest_path)
+  if manifest.kind != VkArray:
+    return false
+
+  var child_ids = initHashSet[string]()
+  for item in array_data(manifest):
+    if item.kind != VkString:
+      return false
+    let child_id = item.str
+    if child_ids.contains(child_id):
+      return false
+    child_ids.incl(child_id)
+
+  for (kind, entry) in list_tree_dir_entries(path):
+    case kind
+    of pcFile:
+      if not entry.endsWith(".gene"):
+        continue
+      let entry_name = splitFile(entry).name
+      if entry_name == TreeArrayName:
+        continue
+      if not child_ids.contains(entry_name):
+        return false
+    of pcDir:
+      if not child_ids.contains(entry):
+        return false
+    else:
+      discard
+
+  for child_id in child_ids:
+    let inline_path = joinPath(path, child_id & ".gene")
+    let dir_path = joinPath(path, child_id)
+    let has_inline = fileExists(inline_path)
+    let has_dir = dirExists(dir_path)
+    if has_inline == has_dir:
+      return false
+
+  true
+
 proc read_array_dir(path: string): Value =
-  let order_path = joinPath(path, TreeOrderName & ".gene")
+  let order_path = joinPath(path, TreeArrayName & ".gene")
   if not fileExists(order_path):
-    not_allowed("Exploded array is missing " & TreeOrderName & ".gene: " & path)
+    not_allowed("Exploded array is missing " & TreeArrayName & ".gene: " & path)
 
   let order = read_serialized_file(order_path)
   if order.kind != VkArray:
-    not_allowed(TreeOrderName & ".gene must contain an array of child ids")
+    not_allowed(TreeArrayName & ".gene must contain an array of child ids")
 
   result = new_array_value()
   for item in array_data(order):
     if item.kind != VkString:
-      not_allowed(TreeOrderName & ".gene child ids must be strings")
+      not_allowed(TreeArrayName & ".gene child ids must be strings")
     let child_id = item.str
     let inline_path = joinPath(path, child_id & ".gene")
     let dir_path = joinPath(path, child_id)
@@ -484,19 +684,20 @@ proc read_array_dir(path: string): Value =
       not_allowed("Missing exploded array child: " & child_id)
 
 proc read_gene_dir(path: string): Value =
-  let type_path = joinPath(path, TreeGeneTypeName & ".gene")
-  if not fileExists(type_path):
-    not_allowed("Exploded Gene value is missing " & TreeGeneTypeName & ".gene: " & path)
+  let type_file_path = joinPath(path, TreeGeneTypeName & ".gene")
+  let type_dir_path = joinPath(path, TreeGeneTypeName)
+  if not fileExists(type_file_path) and not dirExists(type_dir_path):
+    not_allowed("Exploded Gene value is missing " & TreeGeneTypeName & ": " & path)
 
-  let gene = new_gene(read_serialized_file(type_path))
+  let gene = new_gene(resolve_tree_named_child(path, TreeGeneTypeName))
 
-  let props_path = joinPath(path, "props")
+  let props_path = joinPath(path, TreeGenePropsName)
   if dirExists(props_path):
     let props_value = read_known_map_dir(props_path)
     for k, v in map_data(props_value):
       gene.props[k] = v
 
-  let children_path = joinPath(path, "children")
+  let children_path = joinPath(path, TreeGeneChildrenName)
   if dirExists(children_path):
     let children_value = read_array_dir(children_path)
     for child in array_data(children_value):
@@ -505,12 +706,12 @@ proc read_gene_dir(path: string): Value =
   gene.to_gene_value()
 
 proc read_tree_dir(path: string): Value =
-  let type_path = joinPath(path, TreeGeneTypeName & ".gene")
-  if fileExists(type_path):
+  let type_file_path = joinPath(path, TreeGeneTypeName & ".gene")
+  let type_dir_path = joinPath(path, TreeGeneTypeName)
+  if fileExists(type_file_path) or dirExists(type_dir_path):
     return read_gene_dir(path)
 
-  let order_path = joinPath(path, TreeOrderName & ".gene")
-  if fileExists(order_path):
+  if can_decode_as_array_dir(path):
     return read_array_dir(path)
 
   read_known_map_dir(path)
@@ -539,9 +740,7 @@ proc read_tree_root_path(path: string): Value =
   read_tree_path(path)
 
 proc to_s*(self: Serialization): string =
-  result = "(gene/serialization "
-  result &= value_to_gene_str(self.data)
-  result &= ")"
+  result = value_to_serialized_text(self.data)
 
 proc value_to_gene_str(self: Value): string =
   case self.kind:
@@ -746,8 +945,7 @@ proc vm_serialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
       not_allowed("serialize expects 1 argument")
 
     let value = get_positional_arg(args, 0, has_keyword_args)
-    let ser = serialize(value)
-    return ser.to_s().to_value()
+    return value_to_serialized_text(value).to_value()
 
 proc vm_deserialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:

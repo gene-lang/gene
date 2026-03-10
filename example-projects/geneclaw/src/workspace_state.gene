@@ -1,0 +1,176 @@
+# GeneClaw serialized workspace state
+
+(import ensure_home_bootstrap HOME_WORKSPACE_PATH SESSIONS_PATH read_tree_or_default tree_exists? interpolate_value from "home_store")
+
+(var log (new genex/logging/Logger $ns))
+(var SESSION_CACHE {})
+(var SYSTEM_PROMPT_CACHE nil)
+
+(fn blank_string? [value]
+  (var text (if value (value .to_s) else ""))
+  ((text .length) == 0)
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn session_storage_id [session_id]
+  (var result ((session_id || "") .to_s))
+  (result = (result .replace_all "%" "%25"))
+  (result = (result .replace_all "/" "%2F"))
+  (result = (result .replace_all "\\" "%5C"))
+  (result = (result .replace_all ":" "%3A"))
+  (result = (result .replace_all " " "%20"))
+  (if (blank_string? result) "session" else result)
+)
+
+(fn split_session_id [session_id workspace_id = nil]
+  (var session_text ((session_id || "") .to_s))
+  (var parts (session_text .split ":"))
+  (var resolved_workspace (if workspace_id (workspace_id .to_s) "default"))
+  (var resolved_channel "general")
+  (var resolved_thread "")
+
+  (if (parts/.size >= 1)
+    (if_not (blank_string? parts/0)
+      (resolved_workspace = parts/0)
+    )
+  )
+  (if (parts/.size >= 2)
+    (if_not (blank_string? parts/1)
+      (resolved_channel = parts/1)
+    )
+  )
+  (if (parts/.size > 2)
+    (resolved_thread = ((parts .slice 2) .join ":"))
+  )
+
+  {^workspace_id resolved_workspace
+   ^channel_id resolved_channel
+   ^thread_id resolved_thread}
+)
+
+(fn session_path [session_id]
+  #"#{SESSIONS_PATH}/#{(session_storage_id session_id)}"
+)
+
+(fn build_default_session [session_id workspace_id = nil]
+  (var parsed (split_session_id session_id workspace_id))
+  {^session_id (session_id || "")
+   ^workspace_id parsed/workspace_id
+   ^channel_id parsed/channel_id
+   ^thread_id parsed/thread_id
+   ^updated_at_ms 0
+   ^memory []}
+)
+
+(fn normalize_session [session_id session workspace_id = nil]
+  (var normalized (ensure_map session))
+  (if_not normalized/session_id
+    (normalized/session_id = (session_id || ""))
+  )
+  (var parsed (split_session_id normalized/session_id workspace_id))
+  (if_not normalized/workspace_id
+    (normalized/workspace_id = parsed/workspace_id)
+  )
+  (if_not normalized/channel_id
+    (normalized/channel_id = parsed/channel_id)
+  )
+  (if_not normalized/thread_id
+    (normalized/thread_id = parsed/thread_id)
+  )
+  (normalized/memory = (ensure_array normalized/memory))
+  (if_not normalized/updated_at_ms
+    (normalized/updated_at_ms = 0)
+  )
+  normalized
+)
+
+(fn load_session_raw [session_id workspace_id = nil]
+  (ensure_home_bootstrap)
+  (var storage_id (session_storage_id session_id))
+  (if (SESSION_CACHE .contains storage_id)
+    (return (SESSION_CACHE .get storage_id))
+  )
+
+  (var path (session_path session_id))
+  (var session (if (tree_exists? path)
+    (gene/serdes/read_tree path)
+  else
+    (build_default_session session_id workspace_id)
+  ))
+  (session = (normalize_session session_id session workspace_id))
+  (SESSION_CACHE .set storage_id session)
+  session
+)
+
+(fn save_session_raw [session_id session]
+  (ensure_home_bootstrap)
+  (system/shell #"mkdir -p '#{SESSIONS_PATH}'")
+  (var path (session_path session_id))
+  (var normalized (normalize_session session_id session))
+  (gene/serdes/write_tree path normalized ^separate [/* /memory/*])
+  (SESSION_CACHE .set (session_storage_id session_id) normalized)
+  normalized
+)
+
+(fn load_system_prompt_raw []
+  (ensure_home_bootstrap)
+  (if (SYSTEM_PROMPT_CACHE != nil)
+    (return SYSTEM_PROMPT_CACHE)
+  )
+  (SYSTEM_PROMPT_CACHE = (read_tree_or_default #"#{HOME_WORKSPACE_PATH}/system_prompt" ""))
+  SYSTEM_PROMPT_CACHE
+)
+
+(fn $ns/get_system_prompt []
+  (var prompt (load_system_prompt_raw))
+  (var resolved (interpolate_value prompt))
+  (if (resolved is String)
+    resolved
+  else
+    ""
+  )
+)
+
+(fn $ns/memory_recent [session_id limit]
+  (if (limit <= 0)
+    (return [])
+  )
+  (var session (load_session_raw session_id))
+  (var entries (ensure_array session/memory))
+  (var recent (if (entries/.size > limit)
+    (entries .slice (entries/.size - limit))
+  else
+    entries
+  ))
+  (var result [])
+  (for entry in recent
+    (result .append (interpolate_value entry))
+  )
+  result
+)
+
+(fn $ns/memory_append [workspace_id session_id role content meta]
+  (var now gene/now/.call/.to_i)
+  (var session (load_session_raw session_id workspace_id))
+  (var entries (ensure_array session/memory))
+  (entries .append {
+    ^role role
+    ^content (if content content else "")
+    ^meta (if (meta is Map) meta else {})
+    ^created_at_ms now
+  })
+  (session/memory = entries)
+  (session/workspace_id = (if workspace_id then workspace_id else (session/workspace_id || "default")))
+  (session/updated_at_ms = now)
+  (save_session_raw session_id session)
+  (var content_text (if content (content .to_s) else ""))
+  (log .debug #"memory_append session=#{session_id} role=#{role} content_len=#{content_text/.length}")
+  nil
+)

@@ -1,0 +1,21 @@
+#!/usr/bin/env gene run
+
+(import build_session_id from "agent")
+(import build_openai_request from "llm_provider")
+(import memory_recent get_system_prompt from "workspace_state")
+
+(var session_id (build_session_id "ws-home" "C-home" "1741553030.123456"))
+(var history (memory_recent session_id 10))
+(var request (build_openai_request history "continue" [] []))
+
+(assert (history/.size == 3))
+(assert (history/0/role == "user"))
+(assert (history/0/content == "first"))
+(assert (history/1/role == "assistant"))
+(assert (history/1/content == "second"))
+(assert (history/2/role == "user"))
+(assert (history/2/content == "third"))
+(assert ((get_system_prompt) == "Prompt anthropic / gpt-5.1-mini / anthropic"))
+(assert (request/messages/0/content == "Prompt anthropic / gpt-5.1-mini / anthropic"))
+
+(println "ok")

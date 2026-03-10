@@ -1,45 +1,120 @@
-# GeneClaw Configuration
-# Environment variables and application settings
+# GeneClaw configuration
+# Non-sensitive config is loaded from GENECLAW_HOME/config.
+
+(import GENECLAW_HOME HOME_CONFIG_PATH HOME_WORKSPACE_PATH FILES_ROOT DOCUMENT_ROOT ARTIFACT_ROOT DB_PATH ensure_home_bootstrap load_home_config_raw interpolate_value from "home_store")
 
 (var $ns/log (new genex/logging/Logger $ns))
 
-($ns/PORT = (($env/PORT || "4090") .to_i))
-($ns/DB_PATH = "geneclaw.sqlite")
-# openai | anthropic
-($ns/LLM_PROVIDER = (($env/GENECLAW_LLM_PROVIDER || "openai") .to_s; .to_lower))
-($ns/OPENAI_API_KEY = ($env/OPENAI_API_KEY || ""))
-($ns/OPENAI_MODEL = ($env/OPENAI_MODEL || "gpt-5-mini"))
-($ns/OPENAI_BASE_URL = ($env/OPENAI_BASE_URL || $env/OPENAI_API_BASE || ""))
-($ns/OPENAI_TIMEOUT_MS = (($env/OPENAI_TIMEOUT_MS || "60000") .to_i))
-($ns/ANTHROPIC_API_KEY = ($env/ANTHROPIC_API_KEY || ""))
-($ns/ANTHROPIC_AUTH_TOKEN = ($env/ANTHROPIC_AUTH_TOKEN || $env/ANTHROPIC_OAUTH_TOKEN || ""))
-($ns/ANTHROPIC_MODEL = ($env/ANTHROPIC_MODEL || "claude-sonnet-4-6"))
-($ns/ANTHROPIC_BASE_URL = ($env/ANTHROPIC_BASE_URL || ""))
-($ns/ANTHROPIC_TIMEOUT_MS = (($env/ANTHROPIC_TIMEOUT_MS || "60000") .to_i))
-($ns/SLACK_SIGNING_SECRET = $env/SLACK_SIGNING_SECRET)
-($ns/SLACK_BOT_TOKEN = $env/SLACK_BOT_TOKEN)
-($ns/SLACK_APP_TOKEN = $env/SLACK_APP_TOKEN)
-($ns/BRAVE_API_KEY = $env/BRAVE_API_KEY)
-($ns/SLACK_AGENTX_TOKEN = $env/SLACK_AGENTX_TOKEN)
-($ns/MAX_STEPS = 16)
-($ns/MAX_TOOL_CALLS = 8)
+(fn blank_string? [value]
+  (var text (if value (value .to_s) else ""))
+  ((text .length) == 0)
+)
 
-# Workspace root for filesystem tool
-($ns/WORKSPACE_ROOT = ($env/GENECLAW_WORKSPACE || #"#{$env/HOME}/.geneclaw"))
-($ns/DOCUMENT_ROOT = ($env/GENECLAW_DOCUMENT_ROOT || #"#{WORKSPACE_ROOT}/documents"))
-($ns/ARTIFACT_ROOT = ($env/GENECLAW_ARTIFACT_ROOT || #"#{WORKSPACE_ROOT}/artifacts"))
-($ns/DOCUMENT_MAX_UPLOAD_BYTES = (($env/GENECLAW_DOCUMENT_MAX_UPLOAD_BYTES || "10485760") .to_i))
-($ns/DOCUMENT_MAX_INLINE_CHARS = (($env/GENECLAW_DOCUMENT_MAX_INLINE_CHARS || "4000") .to_i))
-($ns/IMAGE_MAX_COUNT = (($env/GENECLAW_IMAGE_MAX_COUNT || "4") .to_i))
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
 
-# Scheduler tick interval
-($ns/SCHEDULER_TICK_MS = (($env/GENECLAW_SCHEDULER_TICK_MS || "30000") .to_i))
+(fn get_path_value [root path default]
+  (var current root)
+  (var found true)
 
-# Hot-swap controls
-($ns/PAUSE_TIMEOUT_MS = (($env/GENECLAW_PAUSE_TIMEOUT_MS || "120000") .to_i))
-($ns/PAUSE_CHECK_INTERVAL_MS = (($env/GENECLAW_PAUSE_CHECK_INTERVAL_MS || "5000") .to_i))
-($ns/UPGRADE_HEALTH_ATTEMPTS = (($env/GENECLAW_UPGRADE_HEALTH_ATTEMPTS || "15") .to_i))
-($ns/UPGRADE_HEALTH_INTERVAL_MS = (($env/GENECLAW_UPGRADE_HEALTH_INTERVAL_MS || "2000") .to_i))
+  (for part in ((path || "") .split "/")
+    (var key (part .trim))
+    (if_not key/.empty
+      (if ((current is Map) && (current .contains key))
+        (current = (current .get key))
+      else
+        (found = false)
+        (break)
+      )
+    )
+  )
+
+  (if found current else default)
+)
+
+(fn config_string [root path default]
+  (var value (get_path_value root path default))
+  (if value
+    (value .to_s)
+  else
+    default
+  )
+)
+
+(fn config_int [root path default]
+  (var value (get_path_value root path default))
+  (if (value is Int)
+    value
+  else
+    (try
+      (var text ((if value (value .to_s) else (default .to_s)) .trim))
+      (if text/.empty
+        default
+      else
+        (text .to_i)
+      )
+    catch *
+      default
+    )
+  )
+)
+
+(ensure_home_bootstrap)
+
+(var RAW_HOME_CONFIG (load_home_config_raw))
+(var HOME_CONFIG (ensure_map (interpolate_value RAW_HOME_CONFIG)))
+(var HOME_ROOT GENECLAW_HOME)
+(var CONFIG_ROOT HOME_CONFIG_PATH)
+(var WORKSPACE_STATE_ROOT HOME_WORKSPACE_PATH)
+(var HOME_FILES_ROOT FILES_ROOT)
+(var HOME_DOCUMENT_ROOT DOCUMENT_ROOT)
+(var HOME_ARTIFACT_ROOT ARTIFACT_ROOT)
+(var HOME_DB_PATH DB_PATH)
+
+($ns/GENECLAW_HOME = HOME_ROOT)
+($ns/HOME_CONFIG_PATH = CONFIG_ROOT)
+($ns/HOME_WORKSPACE_PATH = WORKSPACE_STATE_ROOT)
+($ns/WORKSPACE_ROOT = HOME_FILES_ROOT)
+($ns/DOCUMENT_ROOT = HOME_DOCUMENT_ROOT)
+($ns/ARTIFACT_ROOT = HOME_ARTIFACT_ROOT)
+($ns/DB_PATH = HOME_DB_PATH)
+
+($ns/PORT = (($env .get "PORT" "4090") .to_i))
+
+($ns/LLM_PROVIDER = ((config_string HOME_CONFIG "llm/provider" "openai") .to_lower))
+($ns/THINKING_LEVEL = (config_string HOME_CONFIG "llm/thinking_level" "standard"))
+($ns/CONTEXT_SIZE = (config_int HOME_CONFIG "llm/context_size" 0))
+($ns/MAX_STEPS = (config_int HOME_CONFIG "llm/max_steps" 16))
+($ns/MAX_TOOL_CALLS = (config_int HOME_CONFIG "llm/max_tool_calls" 8))
+
+($ns/OPENAI_API_KEY = ($env .get "OPENAI_API_KEY" ""))
+($ns/OPENAI_MODEL = (config_string HOME_CONFIG "llm/openai/model" "gpt-5-mini"))
+($ns/OPENAI_BASE_URL = (config_string HOME_CONFIG "llm/openai/base_url" ""))
+($ns/OPENAI_TIMEOUT_MS = (config_int HOME_CONFIG "llm/openai/timeout_ms" 60000))
+
+($ns/ANTHROPIC_API_KEY = ($env .get "ANTHROPIC_API_KEY" ""))
+($ns/ANTHROPIC_AUTH_TOKEN = ($env .get "ANTHROPIC_AUTH_TOKEN" ($env .get "ANTHROPIC_OAUTH_TOKEN" "")))
+($ns/ANTHROPIC_MODEL = (config_string HOME_CONFIG "llm/anthropic/model" "claude-sonnet-4-6"))
+($ns/ANTHROPIC_BASE_URL = (config_string HOME_CONFIG "llm/anthropic/base_url" ""))
+($ns/ANTHROPIC_TIMEOUT_MS = (config_int HOME_CONFIG "llm/anthropic/timeout_ms" 60000))
+
+($ns/SLACK_SIGNING_SECRET = ($env .get "SLACK_SIGNING_SECRET" ""))
+($ns/SLACK_BOT_TOKEN = ($env .get "SLACK_BOT_TOKEN" ""))
+($ns/SLACK_APP_TOKEN = ($env .get "SLACK_APP_TOKEN" ""))
+($ns/BRAVE_API_KEY = ($env .get "BRAVE_API_KEY" ""))
+($ns/SLACK_AGENTX_TOKEN = ($env .get "SLACK_AGENTX_TOKEN" ""))
+
+($ns/DOCUMENT_MAX_UPLOAD_BYTES = (config_int HOME_CONFIG "documents/max_upload_bytes" 10485760))
+($ns/DOCUMENT_MAX_INLINE_CHARS = (config_int HOME_CONFIG "documents/max_inline_chars" 4000))
+($ns/IMAGE_MAX_COUNT = (config_int HOME_CONFIG "documents/max_image_count" 4))
+
+($ns/SCHEDULER_TICK_MS = (config_int HOME_CONFIG "scheduler/tick_ms" 30000))
+
+($ns/PAUSE_TIMEOUT_MS = (config_int HOME_CONFIG "hotswap/pause_timeout_ms" 120000))
+($ns/PAUSE_CHECK_INTERVAL_MS = (config_int HOME_CONFIG "hotswap/pause_check_interval_ms" 5000))
+($ns/UPGRADE_HEALTH_ATTEMPTS = (config_int HOME_CONFIG "hotswap/upgrade_health_attempts" 15))
+($ns/UPGRADE_HEALTH_INTERVAL_MS = (config_int HOME_CONFIG "hotswap/upgrade_health_interval_ms" 2000))
 
 ($ns/HIDDEN_SECRET = "hidden")
 
@@ -71,8 +146,15 @@
   {
     ^port PORT
     ^db_path DB_PATH
+    ^home {
+      ^root GENECLAW_HOME
+      ^config_root HOME_CONFIG_PATH
+      ^workspace_root HOME_WORKSPACE_PATH
+    }
     ^llm {
       ^provider LLM_PROVIDER
+      ^thinking_level THINKING_LEVEL
+      ^context_size CONTEXT_SIZE
       ^max_steps MAX_STEPS
       ^max_tool_calls MAX_TOOL_CALLS
       ^openai {
@@ -107,6 +189,7 @@
       ^brave_api_key_configured (secret_configured BRAVE_API_KEY)
     }
     ^workspace {
+      ^state_root HOME_WORKSPACE_PATH
       ^root WORKSPACE_ROOT
       ^document_root DOCUMENT_ROOT
       ^artifact_root ARTIFACT_ROOT
@@ -170,42 +253,47 @@
   )
 )
 
-# Log loaded configuration (redact secrets)
-(log .info #"PORT=#{PORT} DB_PATH=#{DB_PATH} LLM_PROVIDER=#{LLM_PROVIDER}")
+(log .info #"PORT=#{PORT} DB_PATH=#{DB_PATH}")
+(log .info #"GENECLAW_HOME=#{GENECLAW_HOME}")
+(log .info #"HOME_CONFIG_PATH=#{HOME_CONFIG_PATH} HOME_WORKSPACE_PATH=#{HOME_WORKSPACE_PATH}")
+(log .info #"WORKSPACE_ROOT=#{WORKSPACE_ROOT} DOCUMENT_ROOT=#{DOCUMENT_ROOT} ARTIFACT_ROOT=#{ARTIFACT_ROOT}")
+(log .info #"LLM_PROVIDER=#{LLM_PROVIDER} THINKING_LEVEL=#{THINKING_LEVEL} CONTEXT_SIZE=#{CONTEXT_SIZE}")
 (log .info #"MAX_STEPS=#{MAX_STEPS} MAX_TOOL_CALLS=#{MAX_TOOL_CALLS} SCHEDULER_TICK_MS=#{SCHEDULER_TICK_MS}")
 (log .info #"OPENAI_MODEL=#{OPENAI_MODEL} OPENAI_TIMEOUT_MS=#{OPENAI_TIMEOUT_MS}")
 (log .info #"ANTHROPIC_MODEL=#{ANTHROPIC_MODEL} ANTHROPIC_TIMEOUT_MS=#{ANTHROPIC_TIMEOUT_MS}")
-(log .info #"WORKSPACE_ROOT=#{WORKSPACE_ROOT}")
-(log .info #"DOCUMENT_ROOT=#{DOCUMENT_ROOT} ARTIFACT_ROOT=#{ARTIFACT_ROOT}")
 (log .info #"DOCUMENT_MAX_UPLOAD_BYTES=#{DOCUMENT_MAX_UPLOAD_BYTES} DOCUMENT_MAX_INLINE_CHARS=#{DOCUMENT_MAX_INLINE_CHARS} IMAGE_MAX_COUNT=#{IMAGE_MAX_COUNT}")
 (log .info #"PAUSE_TIMEOUT_MS=#{PAUSE_TIMEOUT_MS} PAUSE_CHECK_INTERVAL_MS=#{PAUSE_CHECK_INTERVAL_MS}")
 (log .info #"UPGRADE_HEALTH_ATTEMPTS=#{UPGRADE_HEALTH_ATTEMPTS} UPGRADE_HEALTH_INTERVAL_MS=#{UPGRADE_HEALTH_INTERVAL_MS}")
-(if OPENAI_BASE_URL/.empty
+(if (blank_string? OPENAI_BASE_URL)
   (log .info "OPENAI_BASE_URL not set; using client default")
 else
   (log .info #"OPENAI_BASE_URL=#{OPENAI_BASE_URL}")
 )
-(if ANTHROPIC_BASE_URL/.empty
+(if (blank_string? ANTHROPIC_BASE_URL)
   (log .info "ANTHROPIC_BASE_URL not set; using client default")
 else
   (log .info #"ANTHROPIC_BASE_URL=#{ANTHROPIC_BASE_URL}")
 )
-(if (OPENAI_API_KEY/.empty == false)
-  (log .info "OPENAI_API_KEY is set")
-else
+(if (blank_string? OPENAI_API_KEY)
   (log .warn "OPENAI_API_KEY not set - will run in mock mode")
+else
+  (log .info "OPENAI_API_KEY is set")
 )
-(if (ANTHROPIC_AUTH_TOKEN/.empty == false)
+(if (blank_string? ANTHROPIC_AUTH_TOKEN)
+  (if (blank_string? ANTHROPIC_API_KEY)
+    (log .warn "Anthropic credentials not set - Anthropic provider will run in mock mode")
+  else
+    (log .info "ANTHROPIC_API_KEY is set")
+  )
+else
   (log .info "ANTHROPIC_AUTH_TOKEN is set")
-elif (ANTHROPIC_API_KEY/.empty == false)
-  (log .info "ANTHROPIC_API_KEY is set")
-else
-  (log .warn "Anthropic credentials not set - Anthropic provider will run in mock mode")
 )
-(if SLACK_APP_TOKEN
-  (log .info "Slack Socket Mode enabled")
-elif SLACK_BOT_TOKEN
-  (log .info "Slack Webhook Mode enabled")
+(if (blank_string? SLACK_APP_TOKEN)
+  (if (blank_string? SLACK_BOT_TOKEN)
+    (log .debug "Slack integration not configured")
+  else
+    (log .info "Slack Webhook Mode enabled")
+  )
 else
-  (log .debug "Slack integration not configured")
+  (log .info "Slack Socket Mode enabled")
 )

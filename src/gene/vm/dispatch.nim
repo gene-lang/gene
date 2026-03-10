@@ -511,6 +511,15 @@ proc call_value_method(self: ptr VirtualMachine, value: Value, method_name: stri
     return false
   if value_class.runtime_type != nil:
     discard resolve_method(value_class.runtime_type, method_name.to_key())
+
+  proc validate_native_method_arity(meth: Method, positional_count: int, keyword_count: int) =
+    if not meth.native_signature_known:
+      return
+    let expected = meth.native_param_types.len
+    if keyword_count > 0 or positional_count != expected:
+      not_allowed(meth.class.name & "." & meth.name & " expects " & $expected &
+                  " arguments after self, got " & $positional_count)
+
   case meth.callable.kind:
   of VkFunction:
     let f = meth.callable.ref.fn
@@ -569,6 +578,7 @@ proc call_value_method(self: ptr VirtualMachine, value: Value, method_name: stri
     return true
 
   of VkNativeFn:
+    validate_native_method_arity(meth, args.len, kw_pairs.len)
     let has_kw = kw_pairs.len > 0
     var kw_map = new_map_value()
     if has_kw:
@@ -647,6 +657,7 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
         name: param_name,
         callable: interception.original,
         is_macro: false,
+        native_signature_known: false,
         native_param_types: @[],
         native_return_type: NIL
       )

@@ -2,12 +2,12 @@
 # Provider-agnostic tool calling: provider translation lives in llm_provider.gene
 
 (import MAX_STEPS MAX_TOOL_CALLS from "config")
-(import memory_append memory_recent from "db")
 (import run_complete from "db")
 (import invoke_tool build_tools_spec from "tools")
 (import is_paused check_pause_timeout get_pause_status from "hotswap_state")
 (import call_llm from "llm_provider")
 (import ingest_attachments build_prompt_text build_memory_user_text append_document_notices from "documents")
+(import memory_append memory_recent from "workspace_state")
 
 (var log (new genex/logging/Logger $ns))
 (var RUN_COUNTER 0)
@@ -110,7 +110,7 @@
 )
 
 (fn paused_memory_text [text attachment_count]
-  (if ((((text || "") .to_s) .length == 0) && (attachment_count > 0))
+  (if (((((text || "") .to_s) .length) == 0) && (attachment_count > 0))
     "[Uploaded documents]"
   elif (attachment_count > 0)
     #"#{text}\n\n[Attached documents]"

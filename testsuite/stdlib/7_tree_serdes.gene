@@ -10,7 +10,7 @@
 (assert (loaded_inline/items/2 == 3))
 (assert (loaded_inline/nested/ok == true))
 (assert (not (Dir/exists root_inline)))
-(assert ((gene/io/read #"#{root_inline}.gene") .length > 0))
+(assert (((gene/io/read #"#{root_inline}.gene") .length) > 0))
 
 (var root_separate "/tmp/gene_tree_serdes_testsuite_root")
 (var value_separate {
@@ -26,9 +26,9 @@
 (assert (loaded_separate/arr/2 == "z"))
 (assert (Dir/exists root_separate))
 (assert (not (Dir/exists #"#{root_separate}.gene")))
-(assert ((gene/io/read #"#{root_separate}/alpha.gene") .length > 0))
-(assert ((gene/io/read #"#{root_separate}/nested.gene") .length > 0))
-(assert ((gene/io/read #"#{root_separate}/arr.gene") .length > 0))
+(assert (((gene/io/read #"#{root_separate}/alpha.gene") .length) > 0))
+(assert (((gene/io/read #"#{root_separate}/nested.gene") .length) > 0))
+(assert (((gene/io/read #"#{root_separate}/arr.gene") .length) > 0))
 
 (var root_nested "/tmp/gene_tree_serdes_testsuite_nested")
 (var value_nested {
@@ -42,8 +42,8 @@
 (assert (loaded_nested/b/z == 3))
 (assert (Dir/exists root_nested))
 (assert (Dir/exists #"#{root_nested}/a"))
-(assert ((gene/io/read #"#{root_nested}/a/__order__.gene") .length > 0))
-(assert ((gene/io/read #"#{root_nested}/b.gene") .length > 0))
+(assert (((gene/io/read #"#{root_nested}/a/_genearray.gene") .length) > 0))
+(assert (((gene/io/read #"#{root_nested}/b.gene") .length) > 0))
 
 (var root_gene "/tmp/gene_tree_serdes_testsuite_gene")
 (var value_gene `(Widget ^title "hello" "first" {^count 2}))
@@ -54,18 +54,35 @@
 (assert (loaded_gene/.children/0 == "first"))
 (assert (loaded_gene/.children/1/count == 2))
 (assert (Dir/exists root_gene))
-(assert (Dir/exists #"#{root_gene}/props"))
-(assert (Dir/exists #"#{root_gene}/children"))
-(assert ((gene/io/read #"#{root_gene}/genetype.gene") .length > 0))
-(assert ((gene/io/read #"#{root_gene}/props/title.gene") .length > 0))
-(assert ((gene/io/read #"#{root_gene}/children/__order__.gene") .length > 0))
+(assert (Dir/exists #"#{root_gene}/_geneprops"))
+(assert (Dir/exists #"#{root_gene}/_genechildren"))
+(assert (((gene/io/read #"#{root_gene}/_genetype.gene") .length) > 0))
+(assert (((gene/io/read #"#{root_gene}/_geneprops/title.gene") .length) > 0))
+(assert (((gene/io/read #"#{root_gene}/_genechildren/_genearray.gene") .length) > 0))
+
+(var root_gene_type "/tmp/gene_tree_serdes_testsuite_gene_type")
+(var value_gene_type `({^kind "Widget"} ^title "hello"))
+(gene/serdes/write_tree root_gene_type value_gene_type ^separate [/_genetype/*])
+(var loaded_gene_type (gene/serdes/read_tree root_gene_type))
+(assert (loaded_gene_type/.type/kind == "Widget"))
+(assert (loaded_gene_type/.props/title == "hello"))
+(assert (Dir/exists root_gene_type))
+(assert (Dir/exists #"#{root_gene_type}/_genetype"))
+(assert (((gene/io/read #"#{root_gene_type}/_genetype/kind.gene") .length) > 0))
 
 (var reserved_name_caught false)
 (try
-  (gene/serdes/write_tree "/tmp/gene_tree_serdes_testsuite_reserved" {^genetype 1} ^separate [/*])
+  (gene/serdes/write_tree "/tmp/gene_tree_serdes_testsuite_reserved" {^_genetype 1} ^separate [/*])
 catch *
   (reserved_name_caught = true)
 )
 (assert (reserved_name_caught == true))
+
+(var root_array_marker_map "/tmp/gene_tree_serdes_testsuite_array_marker_map")
+(var value_array_marker_map {^_genearray 1 ^plain 2})
+(gene/serdes/write_tree root_array_marker_map value_array_marker_map ^separate [/*])
+(var loaded_array_marker_map (gene/serdes/read_tree root_array_marker_map))
+(assert (loaded_array_marker_map/_genearray == 1))
+(assert (loaded_array_marker_map/plain == 2))
 
 (println "tree serdes testsuite ok")

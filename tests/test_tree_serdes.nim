@@ -99,12 +99,12 @@ suite "filesystem tree serdes":
     check dirExists(root_path)
     check fileExists(joinPath(root_path, "b.gene"))
     check dirExists(joinPath(root_path, "a"))
-    check fileExists(joinPath(root_path, "a", "__order__.gene"))
+    check fileExists(joinPath(root_path, "a", "_genearray.gene"))
     check not fileExists(joinPath(root_path, "a", "0.gene"))
     check not fileExists(joinPath(root_path, "a", "1.gene"))
     check file_count(joinPath(root_path, "a")) == 3
 
-  test "separated Gene values use genetype.gene with props and children directories":
+  test "separated Gene values use _genetype.gene with _geneprops and _genechildren directories":
     init_all()
     let root_path = fresh_path("gene-node")
     let code = fmt"""
@@ -115,11 +115,11 @@ suite "filesystem tree serdes":
     let loaded = VM.exec(code, "tree_serdes_gene_node")
     check dirExists(root_path)
     check not fileExists(root_path & ".gene")
-    check fileExists(joinPath(root_path, "genetype.gene"))
-    check dirExists(joinPath(root_path, "props"))
-    check dirExists(joinPath(root_path, "children"))
-    check fileExists(joinPath(root_path, "props", "title.gene"))
-    check fileExists(joinPath(root_path, "children", "__order__.gene"))
+    check fileExists(joinPath(root_path, "_genetype.gene"))
+    check dirExists(joinPath(root_path, "_geneprops"))
+    check dirExists(joinPath(root_path, "_genechildren"))
+    check fileExists(joinPath(root_path, "_geneprops", "title.gene"))
+    check fileExists(joinPath(root_path, "_genechildren", "_genearray.gene"))
     check loaded.gene_type == new_gene_symbol("Widget")
     let props = loaded.gene_props
     check props["title"] == "hello".to_value()
@@ -128,16 +128,46 @@ suite "filesystem tree serdes":
     check children[0] == "first".to_value()
     check children[1] == new_map_value({"count".to_key(): 2.to_value()}.to_table())
 
-  test "generic exploded map roots reject reserved marker names":
+  test "^separate can target _genetype as a synthetic child subtree":
+    init_all()
+    let root_path = fresh_path("gene-type-separated")
+    let code = fmt"""
+      (var value `({{^kind "Widget"}} ^title "hello"))
+      (gene/serdes/write_tree "{root_path}" value ^separate [/_genetype/*])
+      (gene/serdes/read_tree "{root_path}")
+    """
+    let loaded = VM.exec(code, "tree_serdes_gene_type_separated")
+    check dirExists(root_path)
+    check dirExists(joinPath(root_path, "_genetype"))
+    check fileExists(joinPath(root_path, "_genetype", "kind.gene"))
+    check not fileExists(joinPath(root_path, "_genetype.gene"))
+    check loaded.gene_type.kind == VkMap
+    check map_data(loaded.gene_type)["kind".to_key()] == "Widget".to_value()
+    let props = loaded.gene_props
+    check props["title"] == "hello".to_value()
+
+  test "empty exploded directory decodes as an empty map":
+    init_all()
+    let root_path = fresh_path("empty-map")
+    createDir(root_path)
+    let loaded = VM.exec(fmt"""(gene/serdes/read_tree "{root_path}")""", "tree_serdes_empty_map")
+    check loaded.kind == VkMap
+    check map_data(loaded).len == 0
+
+  test "generic exploded map roots reject only the reserved _genetype marker":
     init_all()
     let genetype_path = fresh_path("reserved-genetype")
     expect CatchableError:
       discard VM.exec(fmt"""
-        (gene/serdes/write_tree "{genetype_path}" {{^genetype 1}} ^separate [/*])
+        (gene/serdes/write_tree "{genetype_path}" {{^_genetype 1}} ^separate [/*])
       """, "tree_serdes_reserved_genetype")
 
-    let order_path = fresh_path("reserved-order")
-    expect CatchableError:
-      discard VM.exec(fmt"""
-        (gene/serdes/write_tree "{order_path}" {{^__order__ 1}} ^separate [/*])
-      """, "tree_serdes_reserved_order")
+    let array_marker_path = fresh_path("reserved-array-marker")
+    let loaded = VM.exec(fmt"""
+      (var value {{^_genearray 1 ^plain 2}})
+      (gene/serdes/write_tree "{array_marker_path}" value ^separate [/*])
+      (gene/serdes/read_tree "{array_marker_path}")
+    """, "tree_serdes_reserved_array_marker")
+    check loaded.kind == VkMap
+    check map_data(loaded)["_genearray".to_key()] == 1.to_value()
+    check map_data(loaded)["plain".to_key()] == 2.to_value()

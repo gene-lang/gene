@@ -1,0 +1,205 @@
+# GeneClaw home bootstrap and serialized storage helpers
+
+(fn blank_string? [value]
+  (var text (if value (value .to_s) else ""))
+  ((text .length) == 0)
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+($ns/DEFAULT_GENECLAW_HOME = "/Users/gcao/gene-workspace/gene-old/example-projects/geneclaw/home")
+($ns/GENECLAW_HOME = ($env .get "GENECLAW_HOME" DEFAULT_GENECLAW_HOME))
+($ns/HOME_CONFIG_PATH = #"#{GENECLAW_HOME}/config")
+($ns/HOME_WORKSPACE_PATH = #"#{GENECLAW_HOME}/workspace")
+($ns/FILES_ROOT = #"#{GENECLAW_HOME}/files")
+($ns/DOCUMENT_ROOT = #"#{GENECLAW_HOME}/documents")
+($ns/ARTIFACT_ROOT = #"#{GENECLAW_HOME}/artifacts")
+($ns/DB_PATH = #"#{GENECLAW_HOME}/geneclaw.sqlite")
+($ns/SESSIONS_PATH = #"#{HOME_WORKSPACE_PATH}/sessions")
+($ns/BOOTSTRAPPED = false)
+
+(fn default_system_prompt []
+  "You are GeneClaw, a capable AI agent. You can use tools to complete tasks. After receiving a tool result, provide a natural response. For general conversation, respond normally without tool calls."
+)
+
+(fn $ns/default_home_config []
+  {
+    ^llm {
+      ^provider "{ENV:GENECLAW_LLM_PROVIDER:openai}"
+      ^thinking_level "{ENV:GENECLAW_THINKING_LEVEL:standard}"
+      ^context_size "{ENV:GENECLAW_CONTEXT_SIZE:0}"
+      ^max_steps "{ENV:GENECLAW_MAX_STEPS:16}"
+      ^max_tool_calls "{ENV:GENECLAW_MAX_TOOL_CALLS:8}"
+      ^openai {
+        ^model "{ENV:OPENAI_MODEL:gpt-5-mini}"
+        ^base_url "{ENV:OPENAI_BASE_URL:}"
+        ^timeout_ms "{ENV:OPENAI_TIMEOUT_MS:60000}"
+      }
+      ^anthropic {
+        ^model "{ENV:ANTHROPIC_MODEL:claude-sonnet-4-6}"
+        ^base_url "{ENV:ANTHROPIC_BASE_URL:}"
+        ^timeout_ms "{ENV:ANTHROPIC_TIMEOUT_MS:60000}"
+      }
+    }
+    ^documents {
+      ^max_upload_bytes "{ENV:GENECLAW_DOCUMENT_MAX_UPLOAD_BYTES:10485760}"
+      ^max_inline_chars "{ENV:GENECLAW_DOCUMENT_MAX_INLINE_CHARS:4000}"
+      ^max_image_count "{ENV:GENECLAW_IMAGE_MAX_COUNT:4}"
+    }
+    ^scheduler {
+      ^tick_ms "{ENV:GENECLAW_SCHEDULER_TICK_MS:30000}"
+    }
+    ^hotswap {
+      ^pause_timeout_ms "{ENV:GENECLAW_PAUSE_TIMEOUT_MS:120000}"
+      ^pause_check_interval_ms "{ENV:GENECLAW_PAUSE_CHECK_INTERVAL_MS:5000}"
+      ^upgrade_health_attempts "{ENV:GENECLAW_UPGRADE_HEALTH_ATTEMPTS:15}"
+      ^upgrade_health_interval_ms "{ENV:GENECLAW_UPGRADE_HEALTH_INTERVAL_MS:2000}"
+    }
+  }
+)
+
+(fn $ns/default_workspace_state []
+  {
+    ^system_prompt (default_system_prompt)
+    ^sessions {}
+  }
+)
+
+(fn $ns/tree_exists? [path]
+  (var base ((path || "") .to_s))
+  (if (blank_string? base)
+    false
+  elif (Dir/exists base)
+    true
+  else
+    (try
+      (var probe (system/shell #"test -f '#{base}.gene'"))
+      (probe/exit_code == 0)
+    catch *
+      false
+    )
+  )
+)
+
+(fn write_default_home_config []
+  (gene/serdes/write_tree HOME_CONFIG_PATH (default_home_config)
+    ^separate [/* /llm/* /llm/openai/* /llm/anthropic/* /documents/* /scheduler/* /hotswap/*]
+  )
+)
+
+(fn write_default_workspace_state []
+  (gene/serdes/write_tree HOME_WORKSPACE_PATH (default_workspace_state)
+    ^separate [/* /sessions/* /sessions/*/memory/*]
+  )
+)
+
+(fn ensure_workspace_root []
+  (if_not (tree_exists? HOME_WORKSPACE_PATH)
+    (write_default_workspace_state)
+    (return)
+  )
+  (if_not (tree_exists? #"#{HOME_WORKSPACE_PATH}/system_prompt")
+    (gene/serdes/write_tree #"#{HOME_WORKSPACE_PATH}/system_prompt" (default_system_prompt))
+  )
+  (if_not (Dir/exists SESSIONS_PATH)
+    (system/shell #"mkdir -p '#{SESSIONS_PATH}'")
+  )
+)
+
+(fn $ns/ensure_home_bootstrap []
+  (if BOOTSTRAPPED
+    (return true)
+  )
+
+  (system/shell #"mkdir -p '#{GENECLAW_HOME}' '#{FILES_ROOT}' '#{DOCUMENT_ROOT}' '#{ARTIFACT_ROOT}'")
+
+  (if_not (tree_exists? HOME_CONFIG_PATH)
+    (write_default_home_config)
+  )
+  (ensure_workspace_root)
+
+  (BOOTSTRAPPED = true)
+  true
+)
+
+(fn $ns/read_tree_or_default [path fallback]
+  (ensure_home_bootstrap)
+  (if (tree_exists? path)
+    (gene/serdes/read_tree path)
+  else
+    fallback
+  )
+)
+
+(fn interpolate_env_string [value]
+  (var remaining ((value || "") .to_s))
+  (var result "")
+
+  (loop
+    (var open_idx (remaining .index "{ENV:"))
+    (if (open_idx < 0)
+      (result = #"#{result}#{remaining}")
+      (break)
+    )
+
+    (if (open_idx > 0)
+      (result = #"#{result}#{(remaining .substr 0 (open_idx - 1))}")
+    )
+
+    (var after_open (remaining .substr (open_idx + 5)))
+    (var colon_idx (after_open .index ":"))
+    (if (colon_idx <= 0)
+      (result = #"#{result}{ENV:#{after_open}")
+      (break)
+    )
+
+    (var env_name (after_open .substr 0 (colon_idx - 1)))
+    (var after_name (after_open .substr (colon_idx + 1)))
+    (var close_idx (after_name .index "}"))
+    (if (close_idx < 0)
+      (result = #"#{result}{ENV:#{after_open}")
+      (break)
+    )
+
+    (var default_text (if (close_idx > 0) (after_name .substr 0 (close_idx - 1)) else ""))
+    (var after_name_length (after_name .length))
+    (result = #"#{result}#{(($env .get env_name default_text) .to_s)}")
+    (remaining = (if ((close_idx + 1) < after_name_length)
+      (after_name .substr (close_idx + 1))
+    else
+      ""
+    ))
+  )
+
+  result
+)
+
+(fn $ns/interpolate_value [value]
+  (if (value is String)
+    (interpolate_env_string value)
+  elif (value is Array)
+    (var items [])
+    (for item in value
+      (items .append (interpolate_value item))
+    )
+    items
+  elif (value is Map)
+    (var result {})
+    (value .each (fn [k v]
+      (result .set k (interpolate_value v))
+    ))
+    result
+  else
+    value
+  )
+)
+
+(fn $ns/load_home_config_raw []
+  (ensure_map (read_tree_or_default HOME_CONFIG_PATH (default_home_config)))
+)

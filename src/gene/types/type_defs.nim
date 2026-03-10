@@ -457,6 +457,7 @@ type
     callable*: Value
     # public*: bool
     is_macro*: bool
+    native_signature_known*: bool
     native_param_types*: seq[(string, Value)]  # (param_name, class_value) for native methods
     native_return_type*: Value                  # class value; NIL means Any
 

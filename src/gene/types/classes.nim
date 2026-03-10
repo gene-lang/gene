@@ -208,13 +208,25 @@ proc def_native_method*(self: Class, name: string, f: NativeFn,
     class: self,
     name: name,
     callable: r.to_ref_value(),
+    native_signature_known: true,
     native_param_types: native_params,
     native_return_type: returns,
   )
   self.version.inc()
 
 proc def_native_method*(self: Class, name: string, f: NativeFn) =
-  self.def_native_method(name, f, @[], NIL)
+  let r = new_ref(VkNativeFn)
+  r.native_fn = f
+  var native_params: seq[(string, Value)]
+  self.methods[name.to_key()] = Method(
+    class: self,
+    name: name,
+    callable: r.to_ref_value(),
+    native_signature_known: false,
+    native_param_types: native_params,
+    native_return_type: NIL,
+  )
+  self.version.inc()
 
 proc def_member*(self: Class, name: string, value: Value) =
   self.members[name.to_key()] = value
@@ -246,6 +258,7 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
     name: name,
     callable: r.to_ref_value(),
     is_macro: true,
+    native_signature_known: false,
     native_param_types: @[],
     native_return_type: NIL,
   )
@@ -264,6 +277,7 @@ proc new_method*(class: Class, name: string, fn: Function): Method =
     class: class,
     name: name,
     callable: r.to_ref_value(),
+    native_signature_known: false,
     native_param_types: @[],
     native_return_type: NIL,
   )
@@ -274,6 +288,7 @@ proc clone*(self: Method): Method =
     name: self.name,
     callable: self.callable,
     is_macro: self.is_macro,
+    native_signature_known: self.native_signature_known,
     native_param_types: self.native_param_types,
     native_return_type: self.native_return_type,
   )
