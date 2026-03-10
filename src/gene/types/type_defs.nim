@@ -41,6 +41,19 @@ type
     failure_callbacks*: seq[Value]  # Failure callback functions
     nim_future*: Future[Value]  # Underlying Nim async future (nil for sync futures)
 
+  PubSubSubscription* = ref object
+    id*: int
+    event_key*: string
+    callback*: Value
+    active*: bool
+
+  PubSubEvent* = ref object
+    event_type*: Value
+    event_key*: string
+    payload*: Value
+    has_payload*: bool
+    combine*: bool
+
   GeneratorState* = enum
     GsPending            # Not yet started
     GsRunning            # Currently executing
@@ -980,6 +993,13 @@ type
     event_loop_counter*: int  # Counter for periodic event loop polling (poll every N instructions)
     poll_enabled*: bool       # Set when async/thread work is pending; skip polling otherwise
     pending_futures*: seq[FutureObj]  # List of futures with pending Nim futures
+    pending_pubsub_events*: seq[PubSubEvent]
+    pubsub_payloadless_index*: Table[string, int]
+    pubsub_combinable_index*: Table[string, seq[int]]
+    pubsub_subscriptions*: Table[int, PubSubSubscription]
+    pubsub_subscribers_by_event*: Table[string, seq[int]]
+    next_pubsub_subscription_id*: int
+    pubsub_draining*: bool
     # Thread support
     thread_futures*: Table[int, FutureObj]  # Map message_id -> future for spawn_return
     message_callbacks*: seq[Value]  # List of callbacks for incoming messages

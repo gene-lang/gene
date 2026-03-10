@@ -3,17 +3,17 @@
 ## Included from vm.nim — shares its scope.
 
 proc drain_pending_futures(self: ptr VirtualMachine) =
-  if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+  if self.pending_futures.len == 0 and self.thread_futures.len == 0 and self.pending_pubsub_events.len == 0:
     return
   var max_iterations = 100
   var iteration = 0
-  while (self.pending_futures.len > 0 or self.thread_futures.len > 0) and iteration < max_iterations:
+  while (self.pending_futures.len > 0 or self.thread_futures.len > 0 or self.pending_pubsub_events.len > 0) and iteration < max_iterations:
     iteration.inc()
     self.event_loop_counter = EVENT_LOOP_POLL_INTERVAL
     self.poll_enabled = true
     self.poll_event_loop()
 
-    if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+    if self.pending_futures.len == 0 and self.thread_futures.len == 0 and self.pending_pubsub_events.len == 0:
       break
 
 proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: Value): bool =
@@ -123,7 +123,7 @@ proc detach_future_tracking*(self: ptr VirtualMachine, future_obj: FutureObj) =
   for message_id in remove_ids:
     self.thread_futures.del(message_id)
 
-  if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+  if self.pending_futures.len == 0 and self.thread_futures.len == 0 and self.pending_pubsub_events.len == 0:
     self.poll_enabled = false
 
 proc poll_event_loop*(self: ptr VirtualMachine) =
@@ -212,5 +212,7 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
 
       i.inc()
 
-    if self.pending_futures.len == 0 and self.thread_futures.len == 0:
+    self.drain_pending_pubsub_events()
+
+    if self.pending_futures.len == 0 and self.thread_futures.len == 0 and self.pending_pubsub_events.len == 0:
       self.poll_enabled = false

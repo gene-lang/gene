@@ -50,6 +50,7 @@ include ./vm/core_helpers
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread
+import ./vm/pubsub
 
 # Forward declarations needed by vm/async and vm/native
 proc exec*(self: ptr VirtualMachine): Value

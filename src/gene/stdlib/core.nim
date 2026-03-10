@@ -8,6 +8,7 @@ import ../parser
 import ../compiler
 import ../repl_session
 import ../vm/thread
+import ../vm/pubsub as vm_pubsub
 import ../logging_core
 import ../wasm_host_abi
 import ./math as stdlib_math
@@ -2509,6 +2510,7 @@ proc core_run_forever*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
   while vm.scheduler_running:
     # Check if there's pending work
     let has_pending_work = vm.pending_futures.len > 0 or
+                           vm.pending_pubsub_events.len > 0 or
                            vm.thread_futures.len > 0 or
                            scheduler_callbacks_len() > 0
 
@@ -4164,6 +4166,8 @@ proc init_stdlib*() =
   global_ns["$tap".to_key()] = core_tap.to_value()
   global_ns["$if_main".to_key()] = core_if_main.to_value()
   global_ns["$repl".to_key()] = NativeFn(core_repl).to_value()
+
+  vm_pubsub.init_pubsub_namespace()
   
   stdlib_aspects.init_aspect_support()
 
