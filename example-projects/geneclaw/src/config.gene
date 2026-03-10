@@ -1,7 +1,7 @@
 # GeneClaw configuration
 # Non-sensitive config is loaded from GENECLAW_HOME/config.
 
-(import GENECLAW_HOME HOME_CONFIG_PATH HOME_WORKSPACE_PATH FILES_ROOT DOCUMENT_ROOT ARTIFACT_ROOT DB_PATH ensure_home_bootstrap load_home_config_raw interpolate_value from "home_store")
+(import GENECLAW_HOME HOME_CONFIG_PATH HOME_WORKSPACE_PATH FILES_ROOT DOCUMENT_ROOT ARTIFACT_ROOT ensure_home_bootstrap load_home_config_raw interpolate_value from "home_store")
 (import CONFIG_SCHEMA from "config_schema")
 (import blank_string? ensure_map lookup_path set_path_value resolve_config_from_schema build_public_config_from_schema secret_configured:helper_secret_configured redact_secret:helper_redact_secret render_public_config_value:helper_render_public_config_value from "config_helpers")
 
@@ -18,7 +18,6 @@
 (var HOME_FILES_ROOT FILES_ROOT)
 (var HOME_DOCUMENT_ROOT DOCUMENT_ROOT)
 (var HOME_ARTIFACT_ROOT ARTIFACT_ROOT)
-(var HOME_DB_PATH DB_PATH)
 
 ($ns/GENECLAW_HOME = HOME_ROOT)
 ($ns/HOME_CONFIG_PATH = CONFIG_ROOT)
@@ -26,7 +25,6 @@
 ($ns/WORKSPACE_ROOT = HOME_FILES_ROOT)
 ($ns/DOCUMENT_ROOT = HOME_DOCUMENT_ROOT)
 ($ns/ARTIFACT_ROOT = HOME_ARTIFACT_ROOT)
-($ns/DB_PATH = HOME_DB_PATH)
 
 ($ns/PORT = EFFECTIVE_CONFIG/port)
 
@@ -80,7 +78,6 @@
 
 (fn build_runtime_public_config []
   (var public_config (build_public_config_from_schema CONFIG_SCHEMA EFFECTIVE_CONFIG))
-  (set_path_value public_config "db_path" DB_PATH)
   (set_path_value public_config "home/root" GENECLAW_HOME)
   (set_path_value public_config "home/config_root" HOME_CONFIG_PATH)
   (set_path_value public_config "home/workspace_root" HOME_WORKSPACE_PATH)
@@ -112,7 +109,7 @@
   )
 )
 
-(log .info #"HOME root=#{GENECLAW_HOME} config=#{HOME_CONFIG_PATH} workspace=#{HOME_WORKSPACE_PATH} db=#{DB_PATH}")
+(log .info #"HOME root=#{GENECLAW_HOME} config=#{HOME_CONFIG_PATH} workspace=#{HOME_WORKSPACE_PATH}")
 (log .info #"LLM provider=#{LLM_PROVIDER} thinking=#{THINKING_LEVEL} context=#{CONTEXT_SIZE} steps=#{MAX_STEPS} tool_calls=#{MAX_TOOL_CALLS}")
 (log .info #"OpenAI model=#{OPENAI_MODEL} timeout_ms=#{OPENAI_TIMEOUT_MS} configured=#{(secret_configured OPENAI_API_KEY)}")
 (log .info #"Anthropic model=#{ANTHROPIC_MODEL} timeout_ms=#{ANTHROPIC_TIMEOUT_MS} configured=#{((secret_configured ANTHROPIC_API_KEY) || (secret_configured ANTHROPIC_AUTH_TOKEN))}")

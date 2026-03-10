@@ -10,9 +10,15 @@
 ($ns/FILES_ROOT = #"#{GENECLAW_HOME}/files")
 ($ns/DOCUMENT_ROOT = #"#{GENECLAW_HOME}/documents")
 ($ns/ARTIFACT_ROOT = #"#{GENECLAW_HOME}/artifacts")
-($ns/DB_PATH = #"#{GENECLAW_HOME}/geneclaw.sqlite")
 ($ns/SESSIONS_PATH = #"#{HOME_WORKSPACE_PATH}/sessions")
+($ns/RUNS_PATH = #"#{HOME_WORKSPACE_PATH}/runs")
+($ns/AUDIT_PATH = #"#{HOME_WORKSPACE_PATH}/audit")
+($ns/SCHEDULER_PATH = #"#{HOME_WORKSPACE_PATH}/scheduler")
+($ns/JOBS_PATH = #"#{SCHEDULER_PATH}/jobs")
+($ns/WORKSPACE_DOCUMENTS_PATH = #"#{HOME_WORKSPACE_PATH}/documents")
 ($ns/BOOTSTRAPPED = false)
+($ns/WORKSPACE_TREE = nil)
+($ns/DIRTY_PATHS = {})
 
 (fn default_system_prompt []
   "You are GeneClaw, a capable AI agent. You can use tools to complete tasks. After receiving a tool result, provide a natural response. For general conversation, respond normally without tool calls."
@@ -22,6 +28,10 @@
   {
     ^system_prompt (default_system_prompt)
     ^sessions {}
+    ^runs {}
+    ^audit {}
+    ^scheduler {^jobs {}}
+    ^documents {}
   }
 )
 
@@ -49,21 +59,35 @@
 
 (fn write_default_workspace_state []
   (gene/serdes/write_tree HOME_WORKSPACE_PATH (default_workspace_state)
-    ^separate [/* /sessions/* /sessions/*/memory/*]
+    ^separate [
+      /*
+      /sessions/*
+      /sessions/*/memory/*
+      /runs/*
+      /audit/*
+      /audit/*/*
+      /scheduler/*
+      /scheduler/jobs/*
+      /documents/*
+      /documents/*/chunks/*
+    ]
   )
+)
+
+(fn ensure_workspace_dirs []
+  (system/shell #"mkdir -p '#{SESSIONS_PATH}' '#{RUNS_PATH}' '#{AUDIT_PATH}' '#{JOBS_PATH}' '#{WORKSPACE_DOCUMENTS_PATH}'")
 )
 
 (fn ensure_workspace_root []
   (if_not (tree_exists? HOME_WORKSPACE_PATH)
     (write_default_workspace_state)
+    (ensure_workspace_dirs)
     (return)
   )
   (if_not (tree_exists? #"#{HOME_WORKSPACE_PATH}/system_prompt")
     (gene/serdes/write_tree #"#{HOME_WORKSPACE_PATH}/system_prompt" (default_system_prompt))
   )
-  (if_not (Dir/exists SESSIONS_PATH)
-    (system/shell #"mkdir -p '#{SESSIONS_PATH}'")
-  )
+  (ensure_workspace_dirs)
 )
 
 (fn $ns/ensure_home_bootstrap []
@@ -89,6 +113,123 @@
   else
     fallback
   )
+)
+
+(fn ensure_workspace_map_child [container key]
+  (var existing (if container (container .get key nil) else nil))
+  (if existing
+    existing
+  else
+    (container .set key {})
+    (container .get key {})
+  )
+)
+
+(fn ensure_workspace_scheduler_jobs [root]
+  (var scheduler (ensure_workspace_map_child root "scheduler"))
+  (ensure_workspace_map_child scheduler "jobs")
+)
+
+(fn ensure_workspace_tree_shape [root]
+  (ensure_workspace_map_child root "sessions")
+  (ensure_workspace_map_child root "runs")
+  (ensure_workspace_map_child root "audit")
+  (ensure_workspace_scheduler_jobs root)
+  (ensure_workspace_map_child root "documents")
+  (if_not root/system_prompt
+    (root/system_prompt = (default_system_prompt))
+  )
+  root
+)
+
+(fn load_workspace_tree []
+  (gene/serdes/read_tree HOME_WORKSPACE_PATH
+    ^lazy [/sessions /runs /audit /documents /scheduler /scheduler/jobs]
+  )
+)
+
+(fn $ns/ensure_workspace_tree_loaded []
+  (ensure_home_bootstrap)
+  (if (WORKSPACE_TREE == nil)
+    (WORKSPACE_TREE = (ensure_workspace_tree_shape (load_workspace_tree)))
+  )
+  WORKSPACE_TREE
+)
+
+(fn $ns/workspace_tree []
+  (ensure_workspace_tree_loaded)
+)
+
+(fn $ns/workspace_sessions []
+  (ensure_workspace_map_child (workspace_tree) "sessions")
+)
+
+(fn $ns/workspace_runs []
+  (ensure_workspace_map_child (workspace_tree) "runs")
+)
+
+(fn $ns/workspace_audit []
+  (ensure_workspace_map_child (workspace_tree) "audit")
+)
+
+(fn $ns/workspace_scheduler []
+  (ensure_workspace_map_child (workspace_tree) "scheduler")
+)
+
+(fn $ns/workspace_jobs []
+  (ensure_workspace_scheduler_jobs (workspace_tree))
+)
+
+(fn $ns/workspace_documents []
+  (ensure_workspace_map_child (workspace_tree) "documents")
+)
+
+(fn dirty_key [relative_path]
+  ((relative_path || "") .to_s)
+)
+
+(fn $ns/mark_workspace_dirty [relative_path]
+  (DIRTY_PATHS .set (dirty_key relative_path) true)
+  relative_path
+)
+
+(fn $ns/clear_workspace_dirty [relative_path]
+  (DIRTY_PATHS .set (dirty_key relative_path) false)
+  relative_path
+)
+
+(fn $ns/list_workspace_dirty_paths []
+  (var paths [])
+  (DIRTY_PATHS .each (fn [path dirty]
+    (if dirty
+      (paths .append path)
+    )
+  ))
+  paths
+)
+
+(fn $ns/write_workspace_tree_subpath [relative_path value]
+  (ensure_home_bootstrap)
+  (var path #"#{HOME_WORKSPACE_PATH}/#{((relative_path || "") .to_s)}")
+  (gene/serdes/write_tree path value)
+  (clear_workspace_dirty relative_path)
+  value
+)
+
+(fn $ns/write_session_tree_subpath [relative_path value]
+  (ensure_home_bootstrap)
+  (var path #"#{HOME_WORKSPACE_PATH}/#{((relative_path || "") .to_s)}")
+  (gene/serdes/write_tree path value ^separate [/* /memory/*])
+  (clear_workspace_dirty relative_path)
+  value
+)
+
+(fn $ns/write_document_tree_subpath [relative_path value]
+  (ensure_home_bootstrap)
+  (var path #"#{HOME_WORKSPACE_PATH}/#{((relative_path || "") .to_s)}")
+  (gene/serdes/write_tree path value ^separate [/* /chunks/*])
+  (clear_workspace_dirty relative_path)
+  value
 )
 
 (fn interpolate_env_string [value]

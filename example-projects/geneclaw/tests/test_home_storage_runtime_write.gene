@@ -1,0 +1,59 @@
+#!/usr/bin/env gene run
+
+(import HOME_WORKSPACE_PATH tree_exists? from "home_store")
+(import build_session_id from "agent")
+(import session_document_refs from "workspace_state")
+(import run_create run_complete audit_log job_create job_get job_list_all job_list_due job_mark_running job_mark_failed job_update_state job_update_next_run job_mark_completed document_save document_list_for_session from "db")
+
+(var runtime_session_id (build_session_id "ws-home" "C-runtime" "thread-runtime"))
+
+(run_create "run-home-1" "ws-home" "u-home")
+(run_complete "run-home-1" "completed" nil)
+(audit_log "run-home-1" "ws-home" "get_time" "success" {^timezone "UTC"} {^result "2026-03-10T12:00:00Z"} 12)
+
+(job_create "job-home-1" "ws-home" "u-home" "C-runtime" "" "once" "hello" 0 "" 123456 {^kind "test"})
+(var created_job (job_get "job-home-1"))
+(var listed_jobs (job_list_all "ws-home"))
+(var due_jobs (job_list_due 123456))
+(assert (created_job/job_id == "job-home-1"))
+(assert (created_job/next_run_ms == 123456))
+(assert (listed_jobs/.size == 1))
+(assert (due_jobs/.size == 1))
+
+(job_mark_running "job-home-1")
+(job_mark_failed "job-home-1" "boom")
+(job_update_state "job-home-1" "active")
+(job_update_next_run "job-home-1" 234567)
+(job_mark_completed "job-home-1")
+
+(var doc_record {
+  ^document_id "doc-home-1"
+  ^workspace_id "ws-home"
+  ^session_id runtime_session_id
+  ^source "test"
+  ^source_ref "source-1"
+  ^filename "note.txt"
+  ^mime_type "text/plain"
+  ^byte_size 5
+  ^sha256 "abc123"
+  ^local_path "/tmp/note.txt"
+  ^extracted_text "hello"
+  ^status "extracted"
+  ^error ""
+  ^meta {^kind "test"}
+})
+(var doc_chunks [{^chunk_index 0 ^text "hello" ^meta {}}])
+(var saved_doc (document_save doc_record doc_chunks "inbound"))
+
+(assert (saved_doc/document_id == "doc-home-1"))
+(assert (tree_exists? #"#{HOME_WORKSPACE_PATH}/runs/run-home-1"))
+(assert (tree_exists? #"#{HOME_WORKSPACE_PATH}/scheduler/jobs/job-home-1"))
+(assert (tree_exists? #"#{HOME_WORKSPACE_PATH}/documents/doc-home-1"))
+
+(var listed_docs (document_list_for_session runtime_session_id))
+(var session_refs (session_document_refs runtime_session_id))
+(assert (listed_docs/.size == 1))
+(assert (listed_docs/0/document_id == "doc-home-1"))
+(assert (session_refs/.size == 1))
+
+(println "ok")

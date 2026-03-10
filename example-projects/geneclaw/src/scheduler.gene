@@ -1,5 +1,5 @@
 # GeneClaw Scheduler
-# Polls DB for due jobs, dispatches them asynchronously, reports to Slack.
+# Polls filesystem-backed job records for due work, dispatches them asynchronously, reports to Slack.
 
 (import SCHEDULER_TICK_MS SLACK_BOT_TOKEN from "config")
 (import job_list_due job_mark_running job_mark_completed job_mark_failed job_update_next_run job_update_state from "db")

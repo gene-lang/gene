@@ -2,12 +2,12 @@
 # Provider-agnostic tool calling: provider translation lives in llm_provider.gene
 
 (import MAX_STEPS MAX_TOOL_CALLS from "config")
-(import run_complete from "db")
+(import run_create run_complete from "db")
 (import invoke_tool build_tools_spec from "tools")
 (import is_paused check_pause_timeout get_pause_status from "hotswap_state")
 (import call_llm from "llm_provider")
 (import ingest_attachments build_prompt_text build_memory_user_text append_document_notices from "documents")
-(import memory_append memory_recent from "workspace_state")
+(import load_session save_session session_append_memory memory_recent_from_session from "workspace_state")
 
 (var log (new genex/logging/Logger $ns))
 (var RUN_COUNTER 0)
@@ -138,50 +138,70 @@
   )
   (log .debug #"Input text: #{text}")
 
-  # If paused, do not execute LLM/tool pipeline.
-  (check_pause_timeout)
-  (if (is_paused)
-    (var pause_status (get_pause_status))
-    (var paused_response "GeneClaw is paused for self-upgrade. Please retry shortly.")
-    (memory_append workspace_id session_id "user" (paused_memory_text text attachment_count) {^user_id user_id ^attachments attachment_count})
-    (memory_append workspace_id session_id "assistant" paused_response {^run_id run_id ^paused true})
-    (run_complete run_id "paused" nil)
-    (log .warn #"#{run_id} skipped: paused reason=#{pause_status/pause_reason}")
-    (return {^run_id run_id ^response paused_response ^steps 0 ^tool_calls 0 ^paused true ^pause_status pause_status})
+  (run_create run_id workspace_id user_id)
+  (var session (load_session session_id workspace_id))
+
+  (try
+    # If paused, do not execute LLM/tool pipeline.
+    (check_pause_timeout)
+    (if (is_paused)
+      (var pause_status (get_pause_status))
+      (var paused_response "GeneClaw is paused for self-upgrade. Please retry shortly.")
+      (session_append_memory workspace_id session "user" (paused_memory_text text attachment_count) {^user_id user_id ^attachments attachment_count})
+      (session_append_memory workspace_id session "assistant" paused_response {^run_id run_id ^paused true})
+      (save_session session_id session)
+      (run_complete run_id "paused" nil)
+      (log .warn #"#{run_id} skipped: paused reason=#{pause_status/pause_reason}")
+      (return {^run_id run_id ^response paused_response ^steps 0 ^tool_calls 0 ^paused true ^pause_status pause_status})
+    )
+
+    # Load conversation history
+    (var history (memory_recent_from_session session 20))
+    (log .info #"Loaded #{history/.size} history entries for session #{session_id}")
+
+    (var ingest (ingest_attachments session_id input))
+    (if (attachment_count > 0)
+      (log .info #"#{run_id} ingested #{attachment_count} attachment(s), usable=#{ingest/usable_count}, images=#{(if (ingest/image_attachments is Array) ingest/image_attachments/.size else 0)}")
+    )
+    (var prompt_text (build_prompt_text text ingest))
+    (var memory_text (build_memory_user_text text ingest))
+    (log .debug #"#{run_id} prepared prompt_len=#{prompt_text/.length} memory_len=#{memory_text/.length}")
+
+    # Record user message in memory; flush when the turn completes.
+    (session_append_memory workspace_id session "user" memory_text {
+      ^user_id user_id
+      ^attachments attachment_count
+      ^usable_attachments (ingest/usable_count || 0)
+      ^image_attachments (if (ingest/image_attachments is Array) ingest/image_attachments/.size else 0)
+    })
+    (log .debug #"#{run_id} staged user memory entry")
+
+    (var tools_spec (build_tools_spec))
+    (log .debug #"#{run_id} built tools spec count=#{tools_spec/.size}")
+    (var phase (execute_agent_steps run_id workspace_id user_id channel_id thread_id session_id history prompt_text tools_spec (ingest/image_attachments || [])))
+    (var final_response (append_document_notices phase/response (ingest/notices || [])))
+    (var step phase/steps)
+    (var tool_call_count phase/tool_calls)
+
+    # Record agent response and persist the changed session subtree once.
+    (session_append_memory workspace_id session "assistant" final_response {^run_id run_id})
+    (save_session session_id session)
+    (run_complete run_id "completed" nil)
+
+    (log .info #"=== Agent run completed: #{run_id} steps=#{step} tool_calls=#{tool_call_count} response_len=#{final_response/.length} ===")
+
+    {^run_id run_id ^response final_response ^steps step ^tool_calls tool_call_count}
+  catch *
+    (log .error #"#{run_id} agent run failed: #{$ex/message}")
+    (var updated_at_ms (if (session/updated_at_ms == nil) 0 else session/updated_at_ms))
+    (var memory_count (if session/memory session/memory/.size else 0))
+    (var document_count (if session/documents session/documents/.size else 0))
+    (if ((updated_at_ms > 0) || (memory_count > 0) || (document_count > 0))
+      (save_session session_id session)
+    )
+    (run_complete run_id "failed" $ex/message)
+    (throw $ex/message)
   )
-
-  # Load conversation history
-  (var history (memory_recent session_id 20))
-  (log .info #"Loaded #{history/.size} history entries for session #{session_id}")
-
-  (var ingest (ingest_attachments session_id input))
-  (if (attachment_count > 0)
-    (log .info #"#{run_id} ingested #{attachment_count} attachment(s), usable=#{ingest/usable_count}, images=#{(if (ingest/image_attachments is Array) ingest/image_attachments/.size else 0)}")
-  )
-  (var prompt_text (build_prompt_text text ingest))
-  (var memory_text (build_memory_user_text text ingest))
-
-  # Record user message
-  (memory_append workspace_id session_id "user" memory_text {
-    ^user_id user_id
-    ^attachments attachment_count
-    ^usable_attachments (ingest/usable_count || 0)
-    ^image_attachments (if (ingest/image_attachments is Array) ingest/image_attachments/.size else 0)
-  })
-
-  (var tools_spec (build_tools_spec))
-  (var phase (execute_agent_steps run_id workspace_id user_id channel_id thread_id session_id history prompt_text tools_spec (ingest/image_attachments || [])))
-  (var final_response (append_document_notices phase/response (ingest/notices || [])))
-  (var step phase/steps)
-  (var tool_call_count phase/tool_calls)
-
-  # Record agent response
-  (memory_append workspace_id session_id "assistant" final_response {^run_id run_id})
-  (run_complete run_id "completed" nil)
-
-  (log .info #"=== Agent run completed: #{run_id} steps=#{step} tool_calls=#{tool_call_count} response_len=#{final_response/.length} ===")
-
-  {^run_id run_id ^response final_response ^steps step ^tool_calls tool_call_count}
 )
 
 (fn $ns/run_agent [workspace_id user_id channel_id text thread_id = ""]

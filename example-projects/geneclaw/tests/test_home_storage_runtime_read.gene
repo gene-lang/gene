@@ -1,0 +1,43 @@
+#!/usr/bin/env gene run
+
+(import HOME_WORKSPACE_PATH tree_exists? from "home_store")
+(import build_session_id from "agent")
+(import load_session session_document_refs memory_append memory_recent from "workspace_state")
+(import job_get job_list_all job_list_due document_list_for_session from "db")
+
+(var runtime_session_id (build_session_id "ws-home" "C-runtime" "thread-runtime"))
+(var history_session_id (build_session_id "ws-home" "C-home" "1741553030.123456"))
+(var loaded_job (job_get "job-home-1"))
+(var listed_jobs (job_list_all "ws-home"))
+(var due_jobs (job_list_due 200000))
+(var listed_docs (document_list_for_session runtime_session_id))
+(var session_refs (session_document_refs runtime_session_id))
+(var session (load_session runtime_session_id))
+
+(assert (loaded_job/job_id == "job-home-1"))
+(assert (loaded_job/state == "active"))
+(assert (loaded_job/next_run_ms == 234567))
+(assert (loaded_job/retry_count == 0))
+(assert (listed_jobs/.size == 1))
+(assert (due_jobs/.size == 0))
+
+(assert (listed_docs/.size == 1))
+(assert (listed_docs/0/filename == "note.txt"))
+(assert (listed_docs/0/role == "inbound"))
+(assert (session_refs/.size == 1))
+(assert (session_refs/0/storage_path == "documents/doc-home-1"))
+(assert (session/documents/.size == 1))
+
+(memory_append "ws-home" history_session_id "user" "after-restart" {^source "runtime-read"})
+(var recent_after_append (memory_recent history_session_id 10))
+(assert (recent_after_append/.size == 4))
+(assert (recent_after_append/3/content == "after-restart"))
+
+(assert (tree_exists? #"#{HOME_WORKSPACE_PATH}/runs/run-home-1"))
+(assert (tree_exists? #"#{HOME_WORKSPACE_PATH}/scheduler/jobs/job-home-1"))
+(assert (tree_exists? #"#{HOME_WORKSPACE_PATH}/documents/doc-home-1"))
+
+(var audit_check (system/shell #"find '#{HOME_WORKSPACE_PATH}/audit' -name 'audit-*.gene' | grep -q 'audit-'"))
+(assert (audit_check/exit_code == 0))
+
+(println "ok")

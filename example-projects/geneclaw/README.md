@@ -4,7 +4,7 @@ A tool-using AI agent platform built entirely in Gene.
 
 ## What it does
 
-GeneClaw receives commands (via REST API or Slack webhook), runs a bounded agent loop that can call tools, and returns the result. All tool calls are audit-logged to SQLite.
+GeneClaw receives commands (via REST API or Slack webhook), runs a bounded agent loop that can call tools, and returns the result. Tool audit, run tracking, schedules, document metadata, and session state are persisted under `GENECLAW_HOME/workspace` as serialized Gene files.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Slack/REST → Router → Agent Orchestrator → LLM Provider (OpenAI / Anthropi
                         ↓      ↓       ↓       ↓        ↓
                      shell  read_file  http   get_time  browser_playwright
                                ↓
-      GENECLAW_HOME (config + workspace) + SQLite (audit + documents + jobs)
+      GENECLAW_HOME (config + workspace filesystem tree)
 ```
 
 ## Files
@@ -29,7 +29,7 @@ Slack/REST → Router → Agent Orchestrator → LLM Provider (OpenAI / Anthropi
 - `src/config.gene` - Home-backed config loader and public config export
 - `src/home_store.gene` - `GENECLAW_HOME` bootstrap and interpolation helpers
 - `src/workspace_state.gene` - Serialized system prompt and session memory store
-- `src/db.gene` - SQLite schema for audit, runs, schedules, and documents
+- `src/db.gene` - filesystem-backed storage for audit, runs, schedules, and documents
 
 ## Docs
 
@@ -68,7 +68,7 @@ Key bootstrap and secret environment variables:
 
 | Variable | Description |
 |---|---|
-| `GENECLAW_HOME` | Root directory for serialized config, workspace state, managed files, and SQLite |
+| `GENECLAW_HOME` | Root directory for serialized config, workspace state, and managed files |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token / OAuth token |

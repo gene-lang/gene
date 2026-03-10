@@ -607,7 +607,11 @@ proc ensure_parent_dir(path: string) =
 
 proc write_serialized_file(path: string, value: Value) =
   ensure_parent_dir(path)
-  writeFile(path, value_to_serialized_text(value))
+  let temp_path = path & ".tmp"
+  if fileExists(temp_path):
+    removeFile(temp_path)
+  writeFile(temp_path, value_to_serialized_text(value))
+  moveFile(temp_path, path)
 
 proc read_serialized_file(path: string): Value {.gcsafe.} =
   count_tree_serialized_file_read()

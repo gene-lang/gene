@@ -56,4 +56,6 @@ run_test() {
 run_test tests/test_config_schema_helpers.gene
 run_test tests/test_home_storage_config.gene
 run_test tests/test_home_storage_write.gene
+run_test tests/test_home_storage_runtime_write.gene
 run_test tests/test_home_storage_read.gene
+run_test tests/test_home_storage_runtime_read.gene

@@ -1,368 +1,481 @@
-# GeneClaw Database Module
-# SQLite storage for agent runs, audit logs, schedules, and documents
+# GeneClaw durable runtime storage
+# Filesystem-backed records for runs, audit events, schedules, and documents.
 
-(import DB_PATH from "config")
+(import HOME_WORKSPACE_PATH ensure_workspace_tree_loaded workspace_runs workspace_audit workspace_jobs workspace_documents mark_workspace_dirty write_workspace_tree_subpath write_document_tree_subpath from "home_store")
+(import blank_string? ensure_array from "config_helpers")
+(import session_add_document_ref session_document_refs from "workspace_state")
 
 (var log (new genex/logging/Logger $ns))
-(var DB)
+(var AUDIT_COUNTER 0)
 
-(fn $ns/get_db [] DB)
+(fn $ns/get_db [] nil)
 
-(fn error_text [err]
-  (try
-    (if (err is Map)
-      (if (err .contains "message")
-        ((err .get "message") .to_s)
-      else
-        (err .to_s)
-      )
-    else
-      (err .to_s)
-    )
-  catch *
-    "<unprintable error>"
+(fn pad2 [value]
+  (if (value < 10)
+    #"0#{value}"
+  else
+    (value .to_s)
   )
 )
 
-(fn $ns/init_db []
-  (if genex/sqlite
-    (try
-      (log .info #"Opening database: #{DB_PATH}")
-      (DB = (genex/sqlite/open DB_PATH))
-      (DB .exec "PRAGMA journal_mode=WAL")
-      (log .debug "WAL journal mode enabled")
+(fn today_audit_key []
+  (var now gene/now/.call)
+  #"#{now/.year}-#{(pad2 now/.month)}-#{(pad2 now/.day)}"
+)
 
-      # Agent runs table
-      (DB .exec "CREATE TABLE IF NOT EXISTS agent_runs (
-        run_id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'queued',
-        started_at_ms INTEGER,
-        ended_at_ms INTEGER,
-        error TEXT DEFAULT ''
-      )")
+(fn record_int [record key]
+  (var value (if (record && (record .contains key)) (record .get key 0) else 0))
+  (if value value else 0)
+)
 
-      # Tool audit log
-      (DB .exec "CREATE TABLE IF NOT EXISTS tool_audit (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        workspace_id TEXT NOT NULL,
-        tool_name TEXT NOT NULL,
-        status TEXT NOT NULL,
-        args_json TEXT DEFAULT '{}',
-        result_json TEXT DEFAULT '{}',
-        duration_ms INTEGER DEFAULT 0,
-        created_at_ms INTEGER NOT NULL
-      )")
-      (DB .exec "CREATE INDEX IF NOT EXISTS idx_audit_run ON tool_audit(run_id)")
-
-      # Scheduled jobs table
-      (DB .exec "CREATE TABLE IF NOT EXISTS scheduled_jobs (
-        job_id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        channel_id TEXT NOT NULL DEFAULT '',
-        thread_ts TEXT DEFAULT '',
-        schedule_type TEXT NOT NULL,
-        text TEXT NOT NULL,
-        interval_ms INTEGER DEFAULT 0,
-        cron_expr TEXT DEFAULT '',
-        next_run_ms INTEGER NOT NULL,
-        state TEXT NOT NULL DEFAULT 'active',
-        retry_count INTEGER DEFAULT 0,
-        max_retries INTEGER DEFAULT 3,
-        backoff_ms INTEGER DEFAULT 5000,
-        last_error TEXT DEFAULT '',
-        last_run_ms INTEGER DEFAULT 0,
-        meta_json TEXT DEFAULT '{}',
-        created_at_ms INTEGER NOT NULL
-      )")
-      (DB .exec "CREATE INDEX IF NOT EXISTS idx_sched_due ON scheduled_jobs(state, next_run_ms)")
-
-      # Documents table
-      (DB .exec "CREATE TABLE IF NOT EXISTS documents (
-        document_id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        source TEXT NOT NULL,
-        source_ref TEXT DEFAULT '',
-        filename TEXT NOT NULL,
-        mime_type TEXT DEFAULT '',
-        byte_size INTEGER DEFAULT 0,
-        sha256 TEXT DEFAULT '',
-        local_path TEXT DEFAULT '',
-        extracted_text TEXT DEFAULT '',
-        status TEXT NOT NULL,
-        error TEXT DEFAULT '',
-        meta_json TEXT DEFAULT '{}',
-        created_at_ms INTEGER NOT NULL
-      )")
-      (DB .exec "CREATE INDEX IF NOT EXISTS idx_documents_session ON documents(session_id, created_at_ms)")
-
-      (DB .exec "CREATE TABLE IF NOT EXISTS document_chunks (
-        document_id TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        text TEXT NOT NULL,
-        meta_json TEXT DEFAULT '{}',
-        PRIMARY KEY (document_id, chunk_index)
-      )")
-
-      (DB .exec "CREATE TABLE IF NOT EXISTS session_documents (
-        session_id TEXT NOT NULL,
-        document_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        created_at_ms INTEGER NOT NULL,
-        PRIMARY KEY (session_id, document_id, role)
-      )")
-      (DB .exec "CREATE INDEX IF NOT EXISTS idx_session_documents_session ON session_documents(session_id, created_at_ms)")
-
-      (log .info #"Database initialized: #{DB_PATH} (6 tables ready)")
-    catch *
-      (log .error #"Failed to open SQLite: #{(error_text $ex)}")
-      (DB = nil)
-    )
+(fn record_value [record key fallback]
+  (if record
+    (record .get key fallback)
   else
-    (log .warn "genex/sqlite unavailable - memory will not persist")
+    fallback
   )
+)
+
+(fn record_text [record key fallback = ""]
+  (var value (record_value record key fallback))
+  (if (value == nil) fallback else value)
+)
+
+(fn record_number [record key fallback = 0]
+  (var value (record_value record key fallback))
+  (if (value == nil) fallback else value)
+)
+
+(fn record_collection [record key fallback]
+  (var value (record_value record key fallback))
+  (if (value == nil) fallback else value)
+)
+
+(fn sort_records_by_key [records key descending = false]
+  (var items [])
+  (for item in records
+    (items .append item)
+  )
+
+  (var i 0)
+  (while (i < items/.size)
+    (var best i)
+    (var j (i + 1))
+    (while (j < items/.size)
+      (var candidate_value (record_int (items/j) key))
+      (var best_value (record_int (items/best) key))
+      (if (if descending (candidate_value > best_value) else (candidate_value < best_value))
+        (best = j)
+      )
+      (j += 1)
+    )
+    (if (best != i)
+      (var tmp items/i)
+      (items/i = items/best)
+      (items/best = tmp)
+    )
+    (i += 1)
+  )
+
+  items
+)
+
+(fn normalize_run_record [run_id record]
+  (var source (if record record else {}))
+  (var source_run_id (record_text source "run_id" ""))
+  {
+    ^run_id (if (blank_string? (source_run_id .to_s)) run_id else source_run_id)
+    ^workspace_id (record_text source "workspace_id" "")
+    ^user_id (record_text source "user_id" "")
+    ^state (record_text source "state" "queued")
+    ^started_at_ms (record_number source "started_at_ms" 0)
+    ^ended_at_ms (record_number source "ended_at_ms" 0)
+    ^error (record_text source "error" "")
+  }
+)
+
+(fn save_run_record [run_id record]
+  (var runs (workspace_runs))
+  (var normalized (normalize_run_record run_id record))
+  (runs .set run_id normalized)
+  (mark_workspace_dirty #"runs/#{run_id}")
+  (write_workspace_tree_subpath #"runs/#{run_id}" normalized)
+)
+
+(fn load_run_record [run_id]
+  (var runs (workspace_runs))
+  (if (runs .contains run_id)
+    (normalize_run_record run_id (runs .get run_id))
+  else
+    nil
+  )
+)
+
+(fn normalize_job [job]
+  (var source (if job job else {}))
+  {
+    ^job_id (record_text source "job_id" "")
+    ^workspace_id (record_text source "workspace_id" "default")
+    ^user_id (record_text source "user_id" "anonymous")
+    ^channel_id (record_text source "channel_id" "")
+    ^thread_ts (record_text source "thread_ts" "")
+    ^schedule_type (record_text source "schedule_type" "once")
+    ^text (record_text source "text" "")
+    ^interval_ms (record_number source "interval_ms" 0)
+    ^cron_expr (record_text source "cron_expr" "")
+    ^next_run_ms (record_number source "next_run_ms" 0)
+    ^state (record_text source "state" "active")
+    ^retry_count (record_number source "retry_count" 0)
+    ^max_retries (record_number source "max_retries" 3)
+    ^backoff_ms (record_number source "backoff_ms" 5000)
+    ^last_error (record_text source "last_error" "")
+    ^last_run_ms (record_number source "last_run_ms" 0)
+    ^meta_json (record_collection source "meta_json" {})
+    ^created_at_ms (record_number source "created_at_ms" 0)
+  }
+)
+
+(fn save_job_record [job_id job]
+  (var jobs (workspace_jobs))
+  (var normalized (normalize_job job))
+  (normalized/job_id = job_id)
+  (jobs .set job_id normalized)
+  (mark_workspace_dirty #"scheduler/jobs/#{job_id}")
+  (write_workspace_tree_subpath #"scheduler/jobs/#{job_id}" normalized)
+)
+
+(fn load_job_record [job_id]
+  (var jobs (workspace_jobs))
+  (if (jobs .contains job_id)
+    (normalize_job (jobs .get job_id))
+  else
+    nil
+  )
+)
+
+(fn normalize_document_entry [record chunks role]
+  (var source (if record record else {}))
+  (var now gene/now/.call/.to_i)
+  {
+    ^document_id (record_text source "document_id" "")
+    ^workspace_id (record_text source "workspace_id" "default")
+    ^session_id (record_text source "session_id" "")
+    ^source (record_text source "source" "")
+    ^source_ref (record_text source "source_ref" "")
+    ^filename (record_text source "filename" "")
+    ^mime_type (record_text source "mime_type" "")
+    ^byte_size (record_number source "byte_size" 0)
+    ^sha256 (record_text source "sha256" "")
+    ^local_path (record_text source "local_path" "")
+    ^extracted_text (record_text source "extracted_text" "")
+    ^status (record_text source "status" "failed")
+    ^error (record_text source "error" "")
+    ^meta (record_collection source "meta" {})
+    ^role (if role then role else (record_text source "role" "inbound"))
+    ^chunks (if chunks chunks else (record_collection source "chunks" []))
+    ^created_at_ms (record_number source "created_at_ms" now)
+  }
+)
+
+(fn save_document_entry [document_id entry]
+  (var documents (workspace_documents))
+  (var normalized (normalize_document_entry entry (record_collection entry "chunks" []) (record_text entry "role" "inbound")))
+  (documents .set document_id normalized)
+  (mark_workspace_dirty #"documents/#{document_id}")
+  (write_document_tree_subpath #"documents/#{document_id}" normalized)
+)
+
+(fn load_document_entry [document_id]
+  (var documents (workspace_documents))
+  (if_not (documents .contains document_id)
+    (return nil)
+  )
+
+  (var raw_entry (documents .get document_id))
+  (var chunks (record_collection raw_entry "chunks" []))
+  (var role (record_text raw_entry "role" "inbound"))
+  (normalize_document_entry raw_entry chunks role)
+)
+
+(fn document_ref_from_entry [entry]
+  (var document_id (record_text entry "document_id" ""))
+  {^document_id document_id
+   ^storage_path #"documents/#{document_id}"
+   ^local_path (record_text entry "local_path" "")
+   ^filename (record_text entry "filename" "")
+   ^mime_type (record_text entry "mime_type" "")
+   ^byte_size (record_number entry "byte_size" 0)
+   ^status (record_text entry "status" "")
+   ^error (record_text entry "error" "")
+   ^role (record_text entry "role" "inbound")
+   ^created_at_ms (record_number entry "created_at_ms" 0)}
+)
+
+(fn document_summary_from_entry [entry role = nil]
+  {^document_id (record_text entry "document_id" "")
+   ^filename (record_text entry "filename" "")
+   ^mime_type (record_text entry "mime_type" "")
+   ^byte_size (record_number entry "byte_size" 0)
+   ^status (record_text entry "status" "")
+   ^error (record_text entry "error" "")
+   ^source (record_text entry "source" "")
+   ^source_ref (record_text entry "source_ref" "")
+   ^local_path (record_text entry "local_path" "")
+   ^created_at_ms (record_number entry "created_at_ms" 0)
+   ^role (if role then role else (record_text entry "role" "inbound"))}
+)
+
+(fn document_summary_from_ref [document_ref]
+  {^document_id (record_text document_ref "document_id" "")
+   ^filename (record_text document_ref "filename" "")
+   ^mime_type (record_text document_ref "mime_type" "")
+   ^byte_size (record_number document_ref "byte_size" 0)
+   ^status (record_text document_ref "status" "")
+   ^error (record_text document_ref "error" "")
+   ^source ""
+   ^source_ref ""
+   ^local_path (record_text document_ref "local_path" "")
+   ^created_at_ms (record_number document_ref "created_at_ms" 0)
+   ^role (record_text document_ref "role" "inbound")}
+)
+
+(fn next_audit_event_id [timestamp_ms]
+  (AUDIT_COUNTER += 1)
+  #"audit-#{timestamp_ms}-#{AUDIT_COUNTER}"
+)
+
+(fn $ns/init_db []
+  (ensure_workspace_tree_loaded)
+  (log .info #"Workspace storage initialized at #{HOME_WORKSPACE_PATH}")
 )
 
 # --- Audit operations ---
 
 (fn $ns/audit_log [run_id workspace_id tool_name status args_json result_json duration_ms]
-  (if_not DB then (return))
+  (ensure_workspace_tree_loaded)
   (var now gene/now/.call/.to_i)
-  (log .debug #"audit_log run=#{run_id} tool=#{tool_name} status=#{status} duration=#{duration_ms}ms")
-  (try
-    (DB .exec "INSERT INTO tool_audit (run_id, workspace_id, tool_name, status, args_json, result_json, duration_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      run_id workspace_id tool_name status
-      (if args_json then args_json/.to_json else "{}")
-      (if result_json then result_json/.to_json else "{}")
-      duration_ms now)
-  catch *
-    (log .error #"audit_log failed: #{(error_text $ex)}")
+  (var day_key (today_audit_key))
+  (var event_id (next_audit_event_id now))
+  (var audit_days (workspace_audit))
+  (var day_audit (if (audit_days .contains day_key) (audit_days .get day_key) else {}))
+  (var event {
+    ^event_id event_id
+    ^run_id run_id
+    ^workspace_id workspace_id
+    ^tool_name tool_name
+    ^status status
+    ^args_json (if args_json then args_json else {})
+    ^result_json (if result_json then result_json else {})
+    ^duration_ms duration_ms
+    ^created_at_ms now
+  })
+  (if_not (audit_days .contains day_key)
+    (audit_days .set day_key day_audit)
   )
+  (day_audit .set event_id event)
+  (log .debug #"audit_log run=#{run_id} tool=#{tool_name} status=#{status} duration=#{duration_ms}ms")
+  (mark_workspace_dirty #"audit/#{day_key}/#{event_id}")
+  (write_workspace_tree_subpath #"audit/#{day_key}/#{event_id}" event)
 )
 
 # --- Run tracking ---
 
 (fn $ns/run_create [run_id workspace_id user_id]
-  (if_not DB then (return))
   (var now gene/now/.call/.to_i)
   (log .info #"run_create run=#{run_id} workspace=#{workspace_id} user=#{user_id}")
-  (try
-    (DB .exec "INSERT INTO agent_runs (run_id, workspace_id, user_id, state, started_at_ms) VALUES (?, ?, ?, 'running', ?)"
-      run_id workspace_id user_id now)
-  catch *
-    (log .error #"run_create failed: #{(error_text $ex)}")
-  )
+  (save_run_record run_id {
+    ^run_id run_id
+    ^workspace_id workspace_id
+    ^user_id user_id
+    ^state "running"
+    ^started_at_ms now
+    ^ended_at_ms 0
+    ^error ""
+  })
 )
 
 (fn $ns/run_complete [run_id state error]
-  (if_not DB then (return))
   (var now gene/now/.call/.to_i)
-
+  (var run (if (load_run_record run_id) (load_run_record run_id) {^run_id run_id}))
+  (run/state = state)
+  (run/ended_at_ms = now)
+  (run/error = (if error then error else ""))
   (if error
     (log .warn #"run_complete run=#{run_id} state=#{state} error=#{error}")
   else
     (log .info #"run_complete run=#{run_id} state=#{state}")
   )
-  (try
-    (DB .exec "UPDATE agent_runs SET state = ?, ended_at_ms = ?, error = ? WHERE run_id = ?"
-      state now (if error then error else "") run_id)
-  catch *
-    (log .error #"run_complete failed: #{(error_text $ex)}")
-  )
+  (save_run_record run_id run)
 )
 
 # --- Document storage ---
 
 (fn $ns/document_save [record chunks role]
-  (if_not DB then (return))
-  (var now gene/now/.call/.to_i)
-  (var meta_str (if record/meta then record/meta/.to_json else "{}"))
-  (var chunk_list (if (chunks is Array) chunks else []))
-  (log .info #"document_save id=#{record/document_id} session=#{record/session_id} status=#{record/status} chunks=#{chunk_list/.size}")
-  (try
-    (DB .exec "INSERT OR REPLACE INTO documents (document_id, workspace_id, session_id, source, source_ref, filename, mime_type, byte_size, sha256, local_path, extracted_text, status, error, meta_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      record/document_id
-      record/workspace_id
-      record/session_id
-      record/source
-      (record/source_ref || "")
-      record/filename
-      (record/mime_type || "")
-      (record/byte_size || 0)
-      (record/sha256 || "")
-      (record/local_path || "")
-      (record/extracted_text || "")
-      record/status
-      (record/error || "")
-      meta_str
-      now)
-
-    (DB .exec "DELETE FROM document_chunks WHERE document_id = ?" record/document_id)
-    (for chunk in chunk_list
-      (DB .exec "INSERT INTO document_chunks (document_id, chunk_index, text, meta_json) VALUES (?, ?, ?, ?)"
-        record/document_id
-        (chunk/chunk_index || 0)
-        (chunk/text || "")
-        (if chunk/meta then chunk/meta/.to_json else "{}"))
-    )
-
-    (DB .exec "INSERT OR REPLACE INTO session_documents (session_id, document_id, role, created_at_ms) VALUES (?, ?, ?, ?)"
-      record/session_id record/document_id (role || "inbound") now)
-  catch *
-    (log .error #"document_save failed: #{(error_text $ex)}")
+  (var normalized (normalize_document_entry record (ensure_array chunks) role))
+  (var chunk_count (if normalized/chunks normalized/chunks/.size else 0))
+  (log .info #"document_save id=#{normalized/document_id} session=#{normalized/session_id} status=#{normalized/status} chunks=#{chunk_count}")
+  (save_document_entry normalized/document_id normalized)
+  (if ((blank_string? normalized/session_id) == false)
+    (session_add_document_ref normalized/workspace_id normalized/session_id (document_ref_from_entry normalized))
   )
+  normalized
 )
 
 (fn $ns/document_list_for_session [session_id]
-  (if_not DB then (return []))
-  (try
-    (var rows (DB .query "SELECT d.document_id, d.filename, d.mime_type, d.byte_size, d.status, d.error, d.source, d.source_ref, d.local_path, d.created_at_ms, sd.role FROM documents d JOIN session_documents sd ON sd.document_id = d.document_id WHERE sd.session_id = ? ORDER BY d.created_at_ms ASC" session_id))
-    (if_not rows (return []))
-    (var result [])
-    (for r in rows
-      (result .append {
-        ^document_id r/0
-        ^filename r/1
-        ^mime_type r/2
-        ^byte_size r/3
-        ^status r/4
-        ^error r/5
-        ^source r/6
-        ^source_ref r/7
-        ^local_path r/8
-        ^created_at_ms r/9
-        ^role r/10
-      })
-    )
-    result
-  catch *
-    (log .error #"document_list_for_session failed: #{(error_text $ex)}")
-    []
+  (var refs (session_document_refs session_id))
+  (if (refs/.size == 0)
+    (return [])
   )
+  (var result [])
+  (for ref in refs
+    (var doc_id (ref/document_id || ""))
+    (var entry nil)
+    (if_not (blank_string? doc_id)
+      (entry = (load_document_entry doc_id))
+    )
+    (if entry
+      (result .append (document_summary_from_entry entry (ref/role || entry/role || "inbound")))
+    else
+      (result .append (document_summary_from_ref ref))
+    )
+  )
+  (sort_records_by_key result "created_at_ms")
 )
 
 # --- Scheduled job operations ---
 
 (fn $ns/job_create [job_id workspace_id user_id channel_id thread_ts
                      schedule_type text interval_ms cron_expr next_run_ms meta]
-  (if_not DB then (return))
   (var now gene/now/.call/.to_i)
-  (var meta_str (if meta then meta/.to_json else "{}"))
+  (var job {
+    ^job_id job_id
+    ^workspace_id workspace_id
+    ^user_id user_id
+    ^channel_id channel_id
+    ^thread_ts thread_ts
+    ^schedule_type schedule_type
+    ^text text
+    ^interval_ms interval_ms
+    ^cron_expr cron_expr
+    ^next_run_ms next_run_ms
+    ^state "active"
+    ^retry_count 0
+    ^max_retries 3
+    ^backoff_ms 5000
+    ^last_error ""
+    ^last_run_ms 0
+    ^meta_json (if (meta is Map) meta else {})
+    ^created_at_ms now
+  })
   (log .info #"job_create #{job_id} type=#{schedule_type} next=#{next_run_ms}")
-  (try
-    (DB .exec "INSERT INTO scheduled_jobs (job_id, workspace_id, user_id, channel_id, thread_ts, schedule_type, text, interval_ms, cron_expr, next_run_ms, state, meta_json, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)"
-      job_id workspace_id user_id channel_id thread_ts
-      schedule_type text interval_ms cron_expr next_run_ms meta_str now)
-  catch *
-    (log .error #"job_create failed: #{(error_text $ex)}")
-  )
+  (save_job_record job_id job)
 )
 
 (fn $ns/job_get [job_id]
-  (if_not DB then (return nil))
-  (try
-    (var rows (DB .query "SELECT job_id, workspace_id, user_id, channel_id, thread_ts, schedule_type, text, interval_ms, cron_expr, next_run_ms, state, retry_count, last_error, last_run_ms, meta_json, created_at_ms FROM scheduled_jobs WHERE job_id = ?" job_id))
-    (if_not rows (return nil))
-    (if (rows/.size == 0) (return nil))
-    (var r rows/0)
-    {^job_id r/0 ^workspace_id r/1 ^user_id r/2 ^channel_id r/3
-     ^thread_ts r/4 ^schedule_type r/5 ^text r/6 ^interval_ms r/7
-     ^cron_expr r/8 ^next_run_ms r/9 ^state r/10 ^retry_count r/11
-     ^last_error r/12 ^last_run_ms r/13 ^meta_json r/14 ^created_at_ms r/15}
-  catch *
-    (log .error #"job_get failed: #{(error_text $ex)}")
-    nil
-  )
+  (load_job_record job_id)
 )
 
 (fn $ns/job_list_all [workspace_id]
-  (if_not DB then (return []))
-  (try
-    (var rows (DB .query "SELECT job_id, schedule_type, text, state, next_run_ms, cron_expr, interval_ms, last_run_ms, last_error FROM scheduled_jobs WHERE workspace_id = ? ORDER BY created_at_ms DESC" workspace_id))
-    (if_not rows (return []))
-    (var result [])
-    (for r in rows
-      (result .append {^job_id r/0 ^schedule_type r/1 ^text r/2 ^state r/3
-                        ^next_run_ms r/4 ^cron_expr r/5 ^interval_ms r/6
-                        ^last_run_ms r/7 ^last_error r/8})
+  (var jobs (workspace_jobs))
+  (var result [])
+  (jobs .each (fn [_job_id job]
+    (var normalized (normalize_job job))
+    (if (normalized/workspace_id == workspace_id)
+      (result .append {
+        ^job_id normalized/job_id
+        ^schedule_type normalized/schedule_type
+        ^text normalized/text
+        ^state normalized/state
+        ^next_run_ms normalized/next_run_ms
+        ^cron_expr normalized/cron_expr
+        ^interval_ms normalized/interval_ms
+        ^last_run_ms normalized/last_run_ms
+        ^last_error normalized/last_error
+        ^created_at_ms normalized/created_at_ms
+      })
     )
-    result
-  catch *
-    (log .error #"job_list_all failed: #{(error_text $ex)}")
-    []
-  )
+  ))
+  (sort_records_by_key result "created_at_ms" true)
 )
 
 (fn $ns/job_list_due [now_ms]
-  (if_not DB then (return []))
-  (try
-    (var rows (DB .query "SELECT job_id, workspace_id, user_id, channel_id, thread_ts, schedule_type, text, interval_ms, cron_expr, next_run_ms FROM scheduled_jobs WHERE state = 'active' AND next_run_ms <= ? ORDER BY next_run_ms ASC" now_ms))
-    (if_not rows (return []))
-    (var result [])
-    (for r in rows
-      (result .append {^job_id r/0 ^workspace_id r/1 ^user_id r/2
-                        ^channel_id r/3 ^thread_ts r/4 ^schedule_type r/5
-                        ^text r/6 ^interval_ms r/7 ^cron_expr r/8
-                        ^next_run_ms r/9})
+  (var jobs (workspace_jobs))
+  (var result [])
+  (jobs .each (fn [_job_id job]
+    (var normalized (normalize_job job))
+    (if ((normalized/state == "active") && (normalized/next_run_ms <= now_ms))
+      (result .append {
+        ^job_id normalized/job_id
+        ^workspace_id normalized/workspace_id
+        ^user_id normalized/user_id
+        ^channel_id normalized/channel_id
+        ^thread_ts normalized/thread_ts
+        ^schedule_type normalized/schedule_type
+        ^text normalized/text
+        ^interval_ms normalized/interval_ms
+        ^cron_expr normalized/cron_expr
+        ^next_run_ms normalized/next_run_ms
+      })
     )
-    result
-  catch *
-    (log .error #"job_list_due failed: #{(error_text $ex)}")
-    []
+  ))
+  (sort_records_by_key result "next_run_ms")
+)
+
+(fn save_job_if_present [job_id update_fn]
+  (var job (load_job_record job_id))
+  (if_not job
+    (return nil)
   )
+  (update_fn job)
+  (save_job_record job_id job)
 )
 
 (fn $ns/job_update_state [job_id new_state]
-  (if_not DB then (return))
   (log .debug #"job_update_state #{job_id} -> #{new_state}")
-  (try
-    (DB .exec "UPDATE scheduled_jobs SET state = ? WHERE job_id = ?" new_state job_id)
-  catch *
-    (log .error #"job_update_state failed: #{(error_text $ex)}")
-  )
+  (save_job_if_present job_id (fn [job]
+    (job/state = new_state)
+  ))
 )
 
 (fn $ns/job_update_next_run [job_id next_run_ms]
-  (if_not DB then (return))
   (log .debug #"job_update_next_run #{job_id} -> #{next_run_ms}")
-  (try
-    (DB .exec "UPDATE scheduled_jobs SET next_run_ms = ? WHERE job_id = ?" next_run_ms job_id)
-  catch *
-    (log .error #"job_update_next_run failed: #{(error_text $ex)}")
-  )
+  (save_job_if_present job_id (fn [job]
+    (job/next_run_ms = next_run_ms)
+  ))
 )
 
 (fn $ns/job_mark_running [job_id]
-  (if_not DB then (return))
   (var now gene/now/.call/.to_i)
-  (try
-    (DB .exec "UPDATE scheduled_jobs SET state = 'running', last_run_ms = ? WHERE job_id = ?" now job_id)
-  catch *
-    (log .error #"job_mark_running failed: #{(error_text $ex)}")
-  )
+  (save_job_if_present job_id (fn [job]
+    (job/state = "running")
+    (job/last_run_ms = now)
+  ))
 )
 
 (fn $ns/job_mark_completed [job_id]
-  (if_not DB then (return))
-  (try
-    (DB .exec "UPDATE scheduled_jobs SET state = 'active', retry_count = 0, last_error = '' WHERE job_id = ?" job_id)
-  catch *
-    (log .error #"job_mark_completed failed: #{(error_text $ex)}")
-  )
+  (save_job_if_present job_id (fn [job]
+    (job/state = "active")
+    (job/retry_count = 0)
+    (job/last_error = "")
+  ))
 )
 
 (fn $ns/job_mark_failed [job_id error_msg]
-  (if_not DB then (return))
   (var now gene/now/.call/.to_i)
   (log .warn #"job_mark_failed #{job_id}: #{error_msg}")
-  (try
-    (DB .exec "UPDATE scheduled_jobs SET retry_count = retry_count + 1, last_error = ?, last_run_ms = ?, state = CASE WHEN retry_count + 1 > max_retries THEN 'dead_letter' ELSE 'active' END, next_run_ms = CASE WHEN retry_count + 1 > max_retries THEN next_run_ms ELSE ? + backoff_ms END WHERE job_id = ?"
-      error_msg now now job_id)
-  catch *
-    (log .error #"job_mark_failed failed: #{(error_text $ex)}")
-  )
+  (save_job_if_present job_id (fn [job]
+    (var current_retry (if (job/retry_count == nil) 0 else job/retry_count))
+    (var max_retries (if (job/max_retries == nil) 3 else job/max_retries))
+    (var backoff_ms (if (job/backoff_ms == nil) 5000 else job/backoff_ms))
+    (var next_retry (current_retry + 1))
+    (job/retry_count = next_retry)
+    (job/last_error = error_msg)
+    (job/last_run_ms = now)
+    (if (next_retry > max_retries)
+      (job/state = "dead_letter")
+    else
+      (job/state = "active")
+      (job/next_run_ms = (now + backoff_ms))
+    )
+  ))
 )

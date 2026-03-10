@@ -1,19 +1,19 @@
 #!/usr/bin/env gene run
 
-(import GENECLAW_HOME HOME_WORKSPACE_PATH WORKSPACE_ROOT DOCUMENT_ROOT ARTIFACT_ROOT DB_PATH LLM_PROVIDER OPENAI_MODEL ANTHROPIC_AUTH_TOKEN MAX_STEPS DOCUMENT_MAX_INLINE_CHARS get_public_config get_public_config_at_path from "config")
+(import GENECLAW_HOME HOME_WORKSPACE_PATH WORKSPACE_ROOT DOCUMENT_ROOT ARTIFACT_ROOT LLM_PROVIDER OPENAI_MODEL ANTHROPIC_AUTH_TOKEN MAX_STEPS DOCUMENT_MAX_INLINE_CHARS get_public_config get_public_config_at_path from "config")
 (import get_system_prompt from "workspace_state")
 
 (var expected_home ($env .get "GENECLAW_HOME" ""))
 (var public_config (get_public_config))
 (var provider_result (get_public_config_at_path "llm/provider"))
 (var state_root_result (get_public_config_at_path "workspace/state_root"))
+(var db_path_result (get_public_config_at_path "db_path"))
 
 (assert (GENECLAW_HOME == expected_home))
 (assert (HOME_WORKSPACE_PATH == #"#{GENECLAW_HOME}/workspace"))
 (assert (WORKSPACE_ROOT == #"#{GENECLAW_HOME}/files"))
 (assert (DOCUMENT_ROOT == #"#{GENECLAW_HOME}/documents"))
 (assert (ARTIFACT_ROOT == #"#{GENECLAW_HOME}/artifacts"))
-(assert (DB_PATH == #"#{GENECLAW_HOME}/geneclaw.sqlite"))
 
 (assert (LLM_PROVIDER == "anthropic"))
 (assert (OPENAI_MODEL == "gpt-5.1-mini"))
@@ -27,6 +27,7 @@
 (assert (provider_result/value == "anthropic"))
 (assert (state_root_result/found == true))
 (assert (state_root_result/value == #"#{expected_home}/workspace"))
+(assert (db_path_result/found == false))
 (assert ((get_system_prompt) == "Prompt anthropic / gpt-5.1-mini / anthropic"))
 
 (println "ok")
