@@ -71,6 +71,11 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
     let csym = gene.type.ref.csymbol
     # Check if this is a method access (second part starts with ".")
     if csym.len >= 2 and csym[1].starts_with("."):
+      if csym[1].startsWith(".<"):
+        if gene.children.len > 0 or gene.props.len > 0:
+          not_allowed("Dynamic method sugar only supports zero-argument calls; use (obj . expr args...)")
+        self.compile(gene.type)
+        return
       # This is a method call - compile it specially
       # The object will be on the stack after compiling the type
       # We need to ensure it's passed as the first argument
@@ -156,6 +161,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       
       # Compile the property
       self.compile(gene.children[1])
+      self.emit(Instruction(kind: IkValidateSelectorSegment))
       
       # If there's a default value, compile it
       if gene.children.len == 3:
@@ -183,6 +189,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
         if DEBUG:
           echo "DEBUG: Property is symbolic: ", prop_name
         self.emit(Instruction(kind: IkPushValue, arg0: prop_name.to_symbol_value()))
+      self.emit(Instruction(kind: IkValidateSelectorSegment))
       
       # Check for default value (second child of gene)
       if gene.children.len == 2:

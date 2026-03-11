@@ -121,6 +121,30 @@ test_vm """
   x/a
 """, VOID
 
+test_vm """
+  (var key "name")
+  (var data {^name "Ada"})
+  data/<key>
+""", "Ada"
+
+test_vm """
+  (var state {^selected "name"})
+  (var data {^user {^name "Ada"}})
+  data/user/<state/selected>
+""", "Ada"
+
+test_vm """
+  (var idx 1)
+  (var data {^users [{^name "Ada"} {^name "Bob"}]})
+  data/users/<idx>/name
+""", "Bob"
+
+test_vm_error """
+  (var key nil)
+  (var data {^name "Ada"})
+  data/<key>
+"""
+
 test_vm_error """
   (var x {})
   x/a/!
@@ -249,6 +273,29 @@ test_vm """
   (var data {^users [{^name "Alice"} {^name "Bob"}]})
   (data .@ "users" 1 "name")
 """, "Bob"
+
+test_vm """
+  (var method_name "size")
+  (var xs [1 2 3])
+  xs/.<method_name>
+""", 3
+
+test_vm """
+  (class Greeter
+    (method speak _ "hi"))
+  (var g (new Greeter))
+  (var method_name "speak")
+  g/.<method_name>
+""", "hi"
+
+test_vm """
+  (class Multiplier
+    (method scale [n factor]
+      (n * factor)))
+  (var m (new Multiplier))
+  (var method_name "scale")
+  (m . method_name 6 7)
+""", 42
 
 test_vm """
   (var data [[10 11] [20 21]])

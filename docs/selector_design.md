@@ -25,6 +25,9 @@ Gene relies on a single `Value` type that can represent maps, arrays, genes, nam
 - **Path access via infix `/`**
   Examples: `m/x`, `arr/0`, `arr/-1`. The compiler rewrites these into prefix calls that emit `IkGetMemberOrNil`. Array indices accept positive and negative integers. Other keys are coerced to strings/symbols before lookup.
 
+- **Dynamic path segments via `<>`**
+  Examples: `data/<key>`, `data/users/<idx>/name`, `obj/.<method_name>`. The `<>` form resolves a slash-path fragment at runtime and uses the result as a single dynamic selector segment. The inner fragment is limited to symbol/path forms such as `key` or `state/selected`; arbitrary expressions still use the explicit forms `(target ./ expr [default])` and `(obj . expr args...)`.
+
 - **Strict not-found assertion `/!`**
   `.../!` throws if the current selector value is `void` (missing). This can appear mid-path (`a/!/b`) or at the end (`a/b/!`).
 

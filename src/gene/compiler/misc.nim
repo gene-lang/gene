@@ -210,6 +210,7 @@ proc compile_selector(self: Compiler, gene: ptr Gene) =
 
   # Compile the property/index
   self.compile(gene.children[1])
+  self.emit(Instruction(kind: IkValidateSelectorSegment))
 
   # If there's a default value, compile it
   if gene.children.len == 3:

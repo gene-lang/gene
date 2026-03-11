@@ -56,6 +56,20 @@ proc validate_instance_native_method_arity(meth: Method, positional_count: int, 
     not_allowed(meth.class.name & "." & meth.name & " expects " & $expected &
                 " arguments after self, got " & $positional_count)
 
+proc require_dynamic_method_name(value: Value): string {.inline.} =
+  case value.kind
+  of VkSymbol, VkString:
+    value.str
+  of VkNil:
+    not_allowed("Dynamic method name cannot be nil")
+    ""
+  of VkVoid:
+    not_allowed("Dynamic method name cannot be void")
+    ""
+  else:
+    not_allowed("Dynamic method name must be string or symbol, got " & $value.kind)
+    ""
+
 proc exec*(self: ptr VirtualMachine): Value =
   let root_entry = self.exec_depth == 0
   self.exec_depth.inc()
@@ -1252,6 +1266,18 @@ proc exec*(self: ptr VirtualMachine): Value =
           not_allowed("Selector matched but value is nil")
         elif value == PLACEHOLDER:
           not_allowed("Selector matched but value is a placeholder")
+
+      of IkValidateSelectorSegment:
+        let value = self.frame.current()
+        case value.kind
+        of VkString, VkSymbol, VkInt:
+          discard
+        of VkNil:
+          not_allowed("Dynamic selector segment cannot be nil")
+        of VkVoid:
+          not_allowed("Dynamic selector segment cannot be void")
+        else:
+          not_allowed("Dynamic selector segment must resolve to string, symbol, or int, got " & $value.kind)
 
       of IkCreateSelector:
         let count = inst.arg1
@@ -6085,13 +6111,24 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         # Pop method name (evaluated expression result)
         let method_name_val = self.frame.pop()
-        let method_name = case method_name_val.kind
-          of VkSymbol: method_name_val.str
-          of VkString: method_name_val.str
-          else: $method_name_val  # Try to convert to string
+        let method_name = require_dynamic_method_name(method_name_val)
 
         # Pop object
         let obj = self.frame.pop()
+
+        if obj.kind == VkSuper:
+          let saved_frame = self.frame
+          if call_super_method(self, obj, method_name, args, @[]):
+            if self.frame == saved_frame:
+              self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
+        if obj.kind notin {VkInstance, VkCustom}:
+          if call_value_method(self, obj, method_name, args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6107,8 +6144,13 @@ proc exec*(self: ptr VirtualMachine): Value =
               if f.body_compiled == nil:
                 f.compile()
 
-              var scope = new_scope(f.scope_tracker, f.parent_scope)
-              if not f.matcher.is_empty():
+              var scope: Scope
+              if f.matcher.is_empty():
+                scope = f.parent_scope
+                if scope != nil:
+                  scope.ref_count.inc()
+              else:
+                scope = new_scope(f.scope_tracker, f.parent_scope)
                 var all_args = newSeq[Value](args.len + 1)
                 all_args[0] = obj
                 for i, arg in args:
@@ -6135,6 +6177,18 @@ proc exec*(self: ptr VirtualMachine): Value =
                 args_gene.gene.children.add(arg)
               new_frame.args = args_gene
 
+              if f.async:
+                self.exception_handlers.add(ExceptionHandler(
+                  catch_pc: CATCH_PC_ASYNC_FUNCTION,
+                  finally_pc: -1,
+                  frame: self.frame,
+                  scope: self.frame.scope,
+                  cu: self.cu,
+                  saved_value: NIL,
+                  has_saved_value: false,
+                  in_finally: false
+                ))
+
               self.frame = new_frame
               self.cu = f.body_compiled
               self.pc = 0
@@ -6142,6 +6196,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
             of VkNativeFn:
+              validate_instance_native_method_arity(meth, args.len)
               var native_args = newSeq[Value](args.len + 1)
               native_args[0] = obj
               for i, arg in args:

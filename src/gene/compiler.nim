@@ -101,6 +101,52 @@ proc selector_segment_from_part*(part: string): Value =
   except ValueError:
     return part.to_value()
 
+proc path_fragment_value(fragment: string): Value =
+  if fragment.len == 0:
+    not_allowed("Dynamic selector path fragment cannot be empty")
+  if '/' in fragment:
+    return fragment.split('/').to_complex_symbol()
+  fragment.to_symbol_value()
+
+proc parse_dynamic_path_span(parts: openArray[string], start: int): tuple[
+  matched: bool, is_method: bool, expr: Value, next_index: int] =
+  if start < 0 or start >= parts.len:
+    return
+
+  let first = parts[start]
+  var current = ""
+
+  if first.startsWith(".<"):
+    result.is_method = true
+    current = first[2..^1]
+  elif first.startsWith("<"):
+    current = first[1..^1]
+  else:
+    return
+
+  var fragment_parts: seq[string] = @[]
+  var idx = start
+
+  while true:
+    if current.len == 0:
+      not_allowed("Dynamic selector path segment cannot be empty")
+
+    if current.endsWith(">"):
+      let trimmed = current[0..^2]
+      if trimmed.len == 0:
+        not_allowed("Dynamic selector path segment cannot be empty")
+      fragment_parts.add(trimmed)
+      result.matched = true
+      result.expr = path_fragment_value(fragment_parts.join("/"))
+      result.next_index = idx + 1
+      return
+
+    fragment_parts.add(current)
+    idx.inc()
+    if idx >= parts.len:
+      not_allowed("Unterminated dynamic selector path segment")
+    current = parts[idx]
+
 #################### Trace Helpers #################
 
 proc current_trace(self: Compiler): SourceTrace =
@@ -344,13 +390,30 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
         self.emit(Instruction(kind: IkSelf))
       else:
         self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
-    for s in r.csymbol[1..^1]:
+    var i = 1
+    while i < r.csymbol.len:
+      let s = r.csymbol[i]
+      let dynamic_span = parse_dynamic_path_span(r.csymbol, i)
+      if dynamic_span.matched:
+        if dynamic_span.is_method:
+          if self.method_access_mode == MamReference:
+            not_allowed("Dynamic method sugar cannot be used as a method reference; use (obj . expr args...)")
+          self.compile(dynamic_span.expr)
+          self.emit(Instruction(kind: IkDynamicMethodCall, arg1: 0))
+        else:
+          self.compile(dynamic_span.expr)
+          self.emit(Instruction(kind: IkValidateSelectorSegment))
+          self.emit(Instruction(kind: IkGetMemberOrNil))
+        i = dynamic_span.next_index
+        continue
+
       if s == "!":
         self.emit(Instruction(kind: IkAssertValue))
+        i.inc()
         continue
-      let (is_int, i) = to_int(s)
+      let (is_int, idx) = to_int(s)
       if is_int:
-        self.emit(Instruction(kind: IkPushValue, arg0: i.to_value()))
+        self.emit(Instruction(kind: IkPushValue, arg0: idx.to_value()))
         self.emit(Instruction(kind: IkGetMemberOrNil))
       elif s.starts_with("."):
         let method_value = s[1..^1].to_symbol_value()
@@ -368,6 +431,7 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
       else:
         self.emit(Instruction(kind: IkPushValue, arg0: s.to_symbol_value()))
         self.emit(Instruction(kind: IkGetMemberOrNil))
+      i.inc()
 
 proc compile_symbol(self: Compiler, input: Value) =
   if self.quote_level > 0:

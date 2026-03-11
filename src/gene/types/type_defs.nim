@@ -840,6 +840,7 @@ type
 
     # Selector helpers
     IkAssertValue  # Throw if top-of-stack is not a regular value (void/nil/placeholder)
+    IkValidateSelectorSegment # Throw unless top-of-stack is string/symbol/int
     IkCreateSelector # Build selector from N segments on stack (arg1 = count)
     IkSetMemberDynamic # Set member using key/index from stack
 

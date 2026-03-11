@@ -2478,6 +2478,9 @@ proc check_complex_symbol(self: TypeChecker, sym: Value): TypeExpr =
   let parts = sym.ref.csymbol
   if parts.len == 0:
     return ANY_TYPE
+  for part in parts:
+    if part.startsWith("<") or part.startsWith(".<"):
+      return ANY_TYPE
   var base_name = parts[0]
   if base_name == "":
     base_name = "self"
@@ -2570,8 +2573,19 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
       let op = gene.children[0].str
       if op in ["=", "+", "-", "*", "/", "%", "++", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=", "?", "is"]:
         return self.check_infix(gene)
+      if op == ".":
+        discard self.check_expr(gene.`type`)
+        if gene.children.len > 1:
+          for child in gene.children[1..^1]:
+            discard self.check_expr(child)
+        for _, value in gene.props:
+          discard self.check_expr(value)
+        return ANY_TYPE
       if gene.children[0].str.startsWith("."):
         let method_name = gene.children[0].str[1..^1]
+        if method_name.startsWith("<"):
+          discard self.check_expr(gene.`type`)
+          return ANY_TYPE
         let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
         return self.check_method_call(self.check_expr(gene.`type`), method_name, args, gene.props, "method " & method_name)
 
