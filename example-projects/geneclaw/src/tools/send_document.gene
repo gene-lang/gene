@@ -3,14 +3,10 @@
 (import CONFIG WORKSPACE_ROOT ARTIFACT_ROOT from "config")
 (import select_send_document_path record_outbound_document from "documents")
 
-(fn blank_string? [value]
-  (var text (if value (value .to_s) else ""))
-  ((text .length) == 0)
-)
 
 (fn file_exists? [path]
   (var target ((path || "") .to_s))
-  (if (blank_string? target)
+  (if target/.empty?
     false
   else
     (try
@@ -44,10 +40,10 @@
       (var workspace_id (((ctx .get "workspace_id" "default") || "default") .to_s))
       (var session_id (((ctx .get "session_id" "") || "") .to_s))
 
-      (if (blank_string? path)
+      (if path/.empty?
         (return {^ok false ^error "Missing path"})
       )
-      (if (blank_string? channel_id)
+      (if channel_id/.empty?
         (return {^ok false ^error "Missing channel_id"})
       )
       (if_not CONFIG/slack/bot_token
@@ -79,10 +75,10 @@
         (var uploaded_permalink ((upload/permalink || "") .to_s))
         (var uploaded_byte_size (upload/byte_size || 0))
 
-        (if (blank_string? uploaded_file_id)
+        (if uploaded_file_id/.empty?
           (throw "Slack upload returned no file_id")
         )
-        (if (blank_string? uploaded_real_path)
+        (if uploaded_real_path/.empty?
           (throw "Slack upload returned no real_path")
         )
 

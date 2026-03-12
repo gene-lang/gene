@@ -1,6 +1,6 @@
 # GeneClaw home bootstrap and storage helpers
 
-(import blank_string? ensure_map build_bootstrap_config_tree from "config_helpers")
+(import ensure_map build_bootstrap_config_tree from "config_helpers")
 (import CONFIG_SCHEMA CONFIG_BOOTSTRAP_SEPARATE from "config_schema")
 
 ($ns/DEFAULT_GENECLAW_HOME = "/Users/gcao/gene-workspace/gene-old/example-projects/geneclaw/home")
@@ -28,7 +28,7 @@
 
 (fn $ns/file_exists? [path]
   (var target ((path || "") .to_s))
-  (if (blank_string? target)
+  (if target/.empty?
     false
   else
     (try
@@ -42,7 +42,7 @@
 
 (fn $ns/tree_exists? [path]
   (var base ((path || "") .to_s))
-  (if (blank_string? base)
+  (if base/.empty?
     false
   elif (Dir/exists base)
     true
@@ -60,7 +60,7 @@
   (result = (result .replace_all "\\" "%5C"))
   (result = (result .replace_all ":" "%3A"))
   (result = (result .replace_all " " "%20"))
-  (if (blank_string? result) fallback else result)
+  (if result/.empty? fallback else result)
 )
 
 (fn write_default_home_config []
@@ -193,7 +193,7 @@
   else
     ""
   ))
-  (if_not (blank_string? parent)
+  (if parent/.not_empty?
     (system/shell #"mkdir -p '#{parent}'")
   )
 )

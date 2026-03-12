@@ -1,14 +1,10 @@
 # GeneClaw tool: browser_playwright
 # Uses Playwright protocol via a local Node helper.
 
-(fn blank_string? [value]
-  (var text (if value (value .to_s) else ""))
-  ((text .length) == 0)
-)
 
 (fn ensure_parent_dir [path]
   (var target ((path || "") .to_s))
-  (if (blank_string? target)
+  (if target/.empty?
     (return nil)
   )
   (var parts (target .split "/"))
@@ -16,7 +12,7 @@
     (return nil)
   )
   (var parent ((parts .slice 0 (parts/.size - 1)) .join "/"))
-  (if_not (blank_string? parent)
+  (if parent/.not_empty?
     (system/shell #"mkdir -p '#{parent}'")
   )
 )
@@ -32,7 +28,7 @@
 
 (fn $ns/resolve_browser_output_path [path artifact_root]
   (var requested ((path || "") .to_s))
-  (if (blank_string? requested)
+  (if requested/.empty?
     #"#{artifact_root}/geneclaw-shot-#{gene/now/.call/.to_i}.png"
   elif (requested .starts_with "/")
     requested

@@ -1,8 +1,8 @@
 # Shared config schema helpers for GeneClaw
 
+# DEPRECATED: use value/.empty? instead
 (fn $ns/blank_string? [value]
-  (var text (if value (value .to_s) else ""))
-  ((text .length) == 0)
+  value/.empty?
 )
 
 (fn $ns/ensure_map [value]
@@ -83,7 +83,7 @@
 
   (for part in (((path || "") .to_s) .split "/")
     (var key (part .trim))
-    (if_not key/.empty
+    (if key/.not_empty?
       (parts .append key)
     )
   )
@@ -151,7 +151,7 @@
   else
     (try
       (var text ((if (value == nil) (default_text default) else (value .to_s)) .trim))
-      (if (blank_string? text)
+      (if text/.empty?
         default
       else
         (text .to_i)
@@ -279,7 +279,7 @@
       )
     else
       (do
-        (var child_path (if (blank_string? current_path)
+        (var child_path (if current_path/.empty?
           #"/#{key}"
         else
           #"#{current_path}/#{key}"
@@ -292,7 +292,7 @@
   ))
 
   (if has_cfg
-    (paths .append (if (blank_string? current_path) "/*" else #"#{current_path}/*"))
+    (paths .append (if current_path/.empty? "/*" else #"#{current_path}/*"))
   )
 
   has_cfg
@@ -310,7 +310,7 @@
   (if (value == nil)
     false
   else
-    (if ((value .to_s) .empty)
+    (if ((value .to_s) .empty?)
       false
     else
       true

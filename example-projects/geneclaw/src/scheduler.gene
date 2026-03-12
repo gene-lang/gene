@@ -1,7 +1,7 @@
 # GeneClaw Scheduler
 # Polls filesystem-backed job records for due work, dispatches them asynchronously, reports to Slack.
 
-(import SCHEDULER_TICK_MS SLACK_BOT_TOKEN from "config")
+(import CONFIG from "config")
 (import job_list_due job_mark_running job_mark_completed job_mark_failed job_update_next_run job_update_state from "db")
 (import compute_cron_next from "cron")
 (import run_agent from "agent")
@@ -23,14 +23,14 @@
     (var result (run_agent job/workspace_id job/user_id job/channel_id job/text (job/thread_ts || "")))
 
     # Report to Slack channel/thread if configured
-    (if (SLACK_BOT_TOKEN && job/channel_id)
+    (if (CONFIG/slack/bot_token && job/channel_id)
       (var reply (build_post_message_payload job/channel_id #"[Scheduled: #{job_id}] #{result/response}" (job/thread_ts || "")))
       (try
         (await (http_post "https://slack.com/api/chat.postMessage"
           reply/.to_json
           {
             ^Content-Type "application/json; charset=utf-8"
-            ^Authorization #"Bearer #{SLACK_BOT_TOKEN}"
+            ^Authorization #"Bearer #{CONFIG/slack/bot_token}"
           }))
         (log .info #"Slack report sent for job #{job_id}")
       catch *
@@ -96,9 +96,9 @@
 # Start — chain sleep_async callbacks inside run_forever
 # ------------------------------------------------------------------
 (fn $ns/start_scheduler []
-  (log .info #"Scheduler started (tick every #{SCHEDULER_TICK_MS}ms)")
+  (log .info #"Scheduler started (tick every #{CONFIG/scheduler/tick_ms}ms)")
   (fn tick_loop []
-    (var f (gene/sleep_async SCHEDULER_TICK_MS))
+    (var f (gene/sleep_async CONFIG/scheduler/tick_ms))
     (f .on_success (fn [_]
       (try
         (scheduler_tick)

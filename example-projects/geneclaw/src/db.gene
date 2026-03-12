@@ -2,7 +2,7 @@
 # Filesystem-backed records for runs, audit events, schedules, and documents.
 
 (import GENECLAW_HOME JOBS_PATH RUNS_PATH ensure_home_bootstrap job_path run_path append_log_entry list_dir_paths path_key read_record write_record_tree read_document_record write_document_record document_record_relative_path from "home_store")
-(import blank_string? ensure_array ensure_map from "config_helpers")
+(import ensure_array ensure_map from "config_helpers")
 (import session_add_document_ref session_document_refs from "workspace_state")
 
 (var log (new genex/logging/Logger $ns))
@@ -104,7 +104,7 @@
   (var source (if record record else {}))
   (var source_run_id (record_text source "run_id" ""))
   {
-    ^run_id (if (blank_string? (source_run_id .to_s)) run_id else source_run_id)
+    ^run_id (if (source_run_id .to_s)/.empty? run_id else source_run_id)
     ^workspace_id (record_text source "workspace_id" "")
     ^user_id (record_text source "user_id" "")
     ^state (record_text source "state" "queued")
@@ -174,7 +174,7 @@
   (var session_id (record_text source "session_id" ""))
   (var document_id (record_text source "document_id" ""))
   (var storage_path (record_text source "storage_path" ""))
-  (if (blank_string? storage_path)
+  (if storage_path/.empty?
     (storage_path = (document_record_relative_path session_id document_id resolved_role))
   )
   {
@@ -266,7 +266,7 @@
   (var result [])
   (for path in (list_dir_paths JOBS_PATH)
     (var job_id (path_key path))
-    (if_not (blank_string? job_id)
+    (if job_id/.not_empty?
       (var record (load_job_record job_id))
       (if record
         (result .append record)
@@ -340,7 +340,7 @@
   (var chunk_count (if normalized/chunks normalized/chunks/.size else 0))
   (log .info #"document_save id=#{normalized/document_id} session=#{normalized/session_id} status=#{normalized/status} chunks=#{chunk_count}")
   (save_document_entry normalized)
-  (if ((blank_string? normalized/session_id) == false)
+  (if normalized/session_id/.not_empty?
     (session_add_document_ref normalized/workspace_id normalized/session_id (document_ref_from_entry normalized))
   )
   normalized
@@ -355,7 +355,7 @@
   (for ref in refs
     (var storage_path (record_text ref "storage_path" ""))
     (var entry nil)
-    (if_not (blank_string? storage_path)
+    (if storage_path/.not_empty?
       (entry = (load_document_entry storage_path))
     )
     (if entry

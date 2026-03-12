@@ -28,16 +28,11 @@
 # Tool registry: name -> {^description ^params ^handler}
 (var TOOLS {})
 
-(fn blank_string? [value]
-  (var text (if value (value .to_s) else ""))
-  ((text .length) == 0)
-)
-
 (fn tool_result_success? [result]
   (if (result is Map)
     (if (result .contains "ok")
       (result/ok != false)
-    elif ((result .contains "error") && ((blank_string? (result .get "error" "")) == false))
+    elif ((result .contains "error") && (result .get "error" "")/.not_empty?)
       false
     else
       true
@@ -48,7 +43,7 @@
 )
 
 (fn tool_result_error [result fallback = "Tool returned an error"]
-  (if ((result is Map) && ((blank_string? (result .get "error" "")) == false))
+  (if ((result is Map) && (result .get "error" "")/.not_empty?)
     ((result .get "error" fallback) .to_s)
   else
     fallback

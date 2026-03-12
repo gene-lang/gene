@@ -12,7 +12,7 @@
      ^required ["url"]}
     (fn [args]
       (var url args/url)
-      (if url/.empty
+      (if url/.empty?
         (return {^error "Missing url"})
       )
       (log .debug #"http_get: #{url}")
