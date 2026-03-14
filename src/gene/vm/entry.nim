@@ -36,6 +36,7 @@ proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
 
   let result = self.exec()
   let init_result = self.maybe_run_module_init()
+  tag_namespace_serialization_origins(ns, module_name)
   if init_result.ran:
     return init_result.value
   return result
@@ -68,6 +69,7 @@ proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value
 
   let result = self.exec()
   let init_result = self.maybe_run_module_init()
+  tag_namespace_serialization_origins(ns, module_name)
   if init_result.ran:
     return init_result.value
   return result

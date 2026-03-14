@@ -23,11 +23,15 @@ type
   EnumDef* = ref object
     name*: string
     members*: Table[string, EnumMember]
+    module_path*: string
+    internal_path*: string
 
   EnumMember* = ref object
     parent*: Value  # The enum this member belongs to
     name*: string
     value*: int
+    module_path*: string
+    internal_path*: string
 
   FutureState* = enum
     FsPending
@@ -445,6 +449,8 @@ type
     parent*: Namespace
     stop_inheritance*: bool  # When set to true, stop looking up for members from parent namespaces
     name*: string
+    module_path*: string
+    internal_path*: string
     members*: Table[Key, Value]
     on_member_missing*: seq[Value]
     version*: uint64  # Incremented on any mutation for cache invalidation
@@ -452,6 +458,8 @@ type
   Class* = ref object
     parent*: Class
     name*: string
+    module_path*: string
+    internal_path*: string
     constructor*: Value
     runtime_type*: RtTypeObj
     methods*: Table[Key, Method]
@@ -512,6 +520,8 @@ type
     is_generator*: bool  # True for generator functions
     is_macro_like*: bool  # True for macro-like functions (defined with (fn f!))
     name*: string
+    module_path*: string
+    internal_path*: string
     intent*: string
     ns*: Namespace  # the namespace of the module wherein this is defined.
     scope_tracker*: ScopeTracker  # the root scope tracker of the function

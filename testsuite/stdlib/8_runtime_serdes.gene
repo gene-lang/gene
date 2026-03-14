@@ -1,0 +1,68 @@
+# Runtime serialization / deserialization tests
+# Expected: runtime serdes testsuite ok
+
+(import ExportedThing:Thing make_exported:factory DEFAULT_THING:shared Status:State from "serdes_objects")
+
+(var class_ser (gene/serdes/serialize Thing))
+(assert ((class_ser .index "ClassRef") >= 0))
+(assert ((class_ser .index "^module") >= 0))
+(assert ((class_ser .index "^path") >= 0))
+(assert ((class_ser .index "ExportedThing") >= 0))
+(assert ((class_ser .index "\"Thing\"") == -1))
+(assert ((gene/serdes/serialize (gene/serdes/deserialize class_ser)) == class_ser))
+
+(var fn_ser (gene/serdes/serialize factory))
+(assert ((fn_ser .index "FunctionRef") >= 0))
+(assert ((fn_ser .index "make_exported") >= 0))
+(assert ((fn_ser .index "\"factory\"") == -1))
+(var fn_round (gene/serdes/deserialize fn_ser))
+(var fn_product (fn_round))
+(assert (fn_product/name == "from_fn"))
+(assert ((gene/serdes/serialize fn_round) == fn_ser))
+
+(var enum_ser (gene/serdes/serialize State/ok))
+(assert ((enum_ser .index "EnumRef") >= 0))
+(assert ((enum_ser .index "Status/ok") >= 0))
+(var enum_round (gene/serdes/deserialize enum_ser))
+(assert ((gene/serdes/serialize enum_round) == enum_ser))
+
+(var named_ser (gene/serdes/serialize shared))
+(assert ((named_ser .index "InstanceRef") >= 0))
+(var named_round (gene/serdes/deserialize named_ser))
+(named_round/name = "shared")
+(assert (shared/name == "shared"))
+(shared/name = "default")
+(assert ((gene/serdes/serialize named_round) == named_ser))
+
+(var anon (new Thing "hammer"))
+(var anon_ser (gene/serdes/serialize anon))
+(assert ((anon_ser .index "(Instance ") >= 0))
+(assert ((anon_ser .index "ClassRef") >= 0))
+(var anon_round (gene/serdes/deserialize anon_ser))
+(assert (anon_round/name == "hammer"))
+(assert (anon_round/restored == true))
+(var anon_round_ser (gene/serdes/serialize anon_round))
+(assert ((anon_round_ser .index "^restored true") >= 0))
+(assert ((gene/serdes/serialize (gene/serdes/deserialize anon_round_ser)) == anon_round_ser))
+(anon_round/name = "wrench")
+(assert (anon/name == "hammer"))
+(assert (anon_round/name == "wrench"))
+
+(var closure_caught false)
+(try
+  (gene/serdes/serialize (fn [x] x))
+catch *
+  (closure_caught = true)
+)
+(assert (closure_caught == true))
+
+(var future_caught false)
+(try
+  (var pending (spawn ^^return 1))
+  (gene/serdes/serialize pending)
+catch *
+  (future_caught = true)
+)
+(assert (future_caught == true))
+
+(println "runtime serdes testsuite ok")

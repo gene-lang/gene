@@ -3409,77 +3409,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         let (module_path, imports, module_ns, is_native, handled) = self.handle_import(import_gene.gene)
 
         if not handled:
-          # If module is not cached, we need to execute it
-          if not ModuleCache.hasKey(module_path):
-            if is_native:
-              # Load native extension
-              when not defined(noExtensions):
-                let ext_ns = load_extension(self, module_path)
-                ModuleCache[module_path] = ext_ns
-
-                # Import requested symbols
-                self.import_items(ext_ns, imports)
-              else:
-                not_allowed("Native extensions are not supported in this build")
-            else:
-              # Cycle detection
-              if ModuleLoadState.getOrDefault(module_path, false):
-                var cycle: seq[string] = @[]
-                var start = -1
-                for i, entry in ModuleLoadStack:
-                  if entry == module_path:
-                    start = i
-                    break
-                if start >= 0:
-                  cycle = ModuleLoadStack[start..^1] & @[module_path]
-                else:
-                  cycle = ModuleLoadStack & @[module_path]
-                not_allowed("[GENE.MODULE.CYCLE] Cyclic import detected: " & cycle.join(" -> "))
-
-              ModuleLoadState[module_path] = true
-              ModuleLoadStack.add(module_path)
-
-              # Compile the module
-              try:
-                let cu = compile_module(module_path)
-
-                # Save current state
-                let saved_cu = self.cu
-                let saved_frame = self.frame
-                let saved_pc = self.pc
-
-                # Create a new frame for module execution
-                self.frame = new_frame()
-                self.frame.ns = module_ns
-                # Module namespace is now passed as argument, not stored as self
-                let args_gene = new_gene(NIL)
-                args_gene.children.add(module_ns.to_value())
-                self.frame.args = args_gene.to_gene_value()
-
-                # Execute the module
-                self.cu = cu
-                discard self.exec()
-                discard self.run_module_init(module_ns)
-
-                # Restore the original state
-                self.cu = saved_cu
-                self.frame = saved_frame
-                self.pc = saved_pc
-
-                # Cache the module
-                ModuleCache[module_path] = module_ns
-
-                # Import requested symbols
-                self.import_items(module_ns, imports)
-              finally:
-                if ModuleLoadState.hasKey(module_path):
-                  ModuleLoadState.del(module_path)
-                if ModuleLoadStack.len > 0 and ModuleLoadStack[^1] == module_path:
-                  ModuleLoadStack.setLen(ModuleLoadStack.len - 1)
-          else:
-            # Module already cached - import requested symbols
-            let cached_ns = ModuleCache[module_path]
-            self.import_items(cached_ns, imports)
+          let loaded_ns = self.ensure_runtime_module_loaded(module_path, module_ns, is_native)
+          self.import_items(loaded_ns, imports)
 
         self.frame.push(NIL)
 

@@ -10,6 +10,20 @@ type
     references*: Table[string, Value]
     data*: Value
 
+  SerializationRefKind* = enum
+    SrkNamespace
+    SrkClass
+    SrkFunction
+    SrkEnum
+    SrkInstance
+
+  SerializationOrigin* = object
+    module_path*: string
+    internal_path*: string
+    kind*: SerializationRefKind
+
+  SerdesModuleLoaderHook* = proc(module_path: string): Namespace {.nimcall.}
+
   TreeWriteOptions = object
     directory_nodes: HashSet[string]
 
@@ -36,6 +50,14 @@ type
 var
   tree_read_stats {.threadvar.}: FilesystemTreeReadStats
   lazy_tree_value_class {.threadvar.}: Class
+  # Cache serialization origins per thread by raw Value identity.
+  #
+  # Using value.raw is appropriate for Gene's NaN-boxed Value model: the same
+  # runtime object is normally observed through the same raw payload, and the
+  # canonical origin is also stamped onto the underlying object when available.
+  value_origin_registry {.threadvar.}: Table[uint64, SerializationOrigin]
+  value_origin_registry_ready {.threadvar.}: bool
+  serdes_module_loader_hook*: SerdesModuleLoaderHook
 
 proc serialize*(self: Serialization, value: Value): Value {.gcsafe.}
 proc to_path*(self: Value): string {.gcsafe.}
@@ -45,6 +67,12 @@ proc serialize_literal*(value: Value): Serialization {.gcsafe.}
 proc deserialize*(s: string): Value {.gcsafe.}
 proc deserialize_literal*(s: string): Value {.gcsafe.}
 proc to_s*(self: Serialization): string
+proc path_to_value*(path: string): Value {.gcsafe.}
+proc tag_namespace_serialization_origins*(ns: Namespace, module_path: string, prefix = "") {.gcsafe.}
+proc tag_stdlib_serialization_origins*() {.gcsafe.}
+proc set_serdes_module_loader_hook*(hook: SerdesModuleLoaderHook) {.inline.}
+
+proc key_to_string(k: Key): string {.inline, gcsafe.}
 
 proc read_tree_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
 
@@ -79,12 +107,541 @@ proc is_lazy_tree_value*(value: Value): bool {.inline, gcsafe.} =
 
 proc materialize_lazy_tree_value*(value: Value): Value {.gcsafe.}
 proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.}
+proc find_live_origin(target: Value): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.}
+proc class_to_value(self: Class): Value {.inline, gcsafe.}
+proc namespace_runtime_module_path(ns: Namespace): string {.gcsafe.}
+proc simple_member_origin(ns: Namespace, name: string, target: Value,
+                          kind: SerializationRefKind): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.}
 
-proc new_gene_ref(path: string): Value =
-  # Create (gene/ref "path")
+proc set_serdes_module_loader_hook*(hook: SerdesModuleLoaderHook) {.inline.} =
+  serdes_module_loader_hook = hook
+
+proc ensure_value_origin_registry() {.inline, gcsafe.} =
+  if not value_origin_registry_ready:
+    value_origin_registry = initTable[uint64, SerializationOrigin]()
+    value_origin_registry_ready = true
+
+proc ref_kind_name(kind: SerializationRefKind): string {.inline.} =
+  case kind:
+  of SrkNamespace: "NamespaceRef"
+  of SrkClass: "ClassRef"
+  of SrkFunction: "FunctionRef"
+  of SrkEnum: "EnumRef"
+  of SrkInstance: "InstanceRef"
+
+proc make_origin(kind: SerializationRefKind, module_path, internal_path: string): SerializationOrigin {.inline.} =
+  SerializationOrigin(
+    module_path: module_path,
+    internal_path: internal_path,
+    kind: kind,
+  )
+
+proc join_origin_path(prefix, name: string): string {.inline.} =
+  if prefix.len == 0:
+    return name
+  prefix & "/" & name
+
+proc new_typed_ref(kind: SerializationRefKind, internal_path: string, module_path = ""): Value =
+  let gene = new_gene(ref_kind_name(kind).to_symbol_value())
+  gene.props["path".to_key()] = internal_path.to_value()
+  if module_path.len > 0:
+    gene.props["module".to_key()] = module_path.to_value()
+  gene.to_gene_value()
+
+proc new_serialized_instance(class_ref: Value, props: Value): Value =
+  let gene = new_gene("Instance".to_symbol_value())
+  gene.children.add(class_ref)
+  gene.children.add(props)
+  gene.to_gene_value()
+
+proc new_legacy_gene_ref(path: string): Value =
   let gene = new_gene("gene/ref".to_symbol_value())
   gene.children.add(path.to_value())
   gene.to_gene_value()
+
+proc new_legacy_gene_instance(class_ref: Value, props: Value): Value =
+  let gene = new_gene("gene/instance".to_symbol_value())
+  gene.children.add(class_ref)
+  gene.children.add(props)
+  gene.to_gene_value()
+
+proc should_skip_origin_member(name: string): bool {.inline.} =
+  name.len == 0 or name.startsWith("__") or name == "gene" or name == "genex"
+
+proc namespace_has_explicit_exports(ns: Namespace): bool {.inline, gcsafe.} =
+  if ns == nil:
+    return false
+  let exports_val = ns.members.getOrDefault("__exports__".to_key(), NIL)
+  exports_val != NIL and exports_val.kind == VkMap
+
+proc namespace_path_is_exported(ns: Namespace, path: string): bool {.gcsafe.} =
+  if ns == nil:
+    return false
+  let exports_val = ns.members.getOrDefault("__exports__".to_key(), NIL)
+  if exports_val == NIL or exports_val.kind != VkMap:
+    return true
+  let exports_map = map_data(exports_val)
+  if exports_map.hasKey(path.to_key()):
+    return true
+  let parts = path.split("/")
+  if parts.len > 1:
+    var prefix = ""
+    for i in 0..<parts.len - 1:
+      prefix = join_origin_path(prefix, parts[i])
+      if exports_map.hasKey(prefix.to_key()):
+        return true
+  false
+
+proc register_value_origin(value: Value, origin: SerializationOrigin) {.gcsafe.} =
+  ensure_value_origin_registry()
+  value_origin_registry[value.raw] = origin
+
+proc assign_value_origin(value: Value, origin: SerializationOrigin) {.gcsafe.} =
+  register_value_origin(value, origin)
+  case value.kind:
+  of VkNamespace:
+    if value.ref.ns != nil:
+      value.ref.ns.module_path = origin.module_path
+      value.ref.ns.internal_path = origin.internal_path
+  of VkClass:
+    if value.ref.class != nil:
+      value.ref.class.module_path = origin.module_path
+      value.ref.class.internal_path = origin.internal_path
+  of VkFunction:
+    if value.ref.fn != nil:
+      value.ref.fn.module_path = origin.module_path
+      value.ref.fn.internal_path = origin.internal_path
+  of VkEnum:
+    if value.ref.enum_def != nil:
+      value.ref.enum_def.module_path = origin.module_path
+      value.ref.enum_def.internal_path = origin.internal_path
+      for member_name, member in value.ref.enum_def.members:
+        if member != nil:
+          let member_origin = make_origin(SrkEnum, origin.module_path,
+            join_origin_path(origin.internal_path, member_name))
+          member.module_path = member_origin.module_path
+          member.internal_path = member_origin.internal_path
+          register_value_origin(member.to_value(), member_origin)
+  of VkEnumMember:
+    if value.ref.enum_member != nil:
+      value.ref.enum_member.module_path = origin.module_path
+      value.ref.enum_member.internal_path = origin.internal_path
+  of VkInstance:
+    let data = instance_ptr(value)
+    if data != nil:
+      data.module_path = origin.module_path
+      data.internal_path = origin.internal_path
+  else:
+    discard
+
+proc lookup_class_origin(self: Class): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.} =
+  if self != nil and self.internal_path.len > 0:
+    return (true, make_origin(SrkClass, self.module_path, self.internal_path))
+  if self != nil and self.name.len > 0:
+    let target = class_to_value(self)
+    if VM != nil and VM.frame != nil and VM.frame.ns != nil:
+      let current = simple_member_origin(VM.frame.ns, self.name, target, SrkClass)
+      if current.found:
+        self.module_path = current.origin.module_path
+        self.internal_path = current.origin.internal_path
+        return current
+    if App != NIL and App.kind == VkApplication and App.app.global_ns.kind == VkNamespace:
+      let global = simple_member_origin(App.app.global_ns.ref.ns, self.name, target, SrkClass)
+      if global.found:
+        self.module_path = global.origin.module_path
+        self.internal_path = global.origin.internal_path
+        return global
+  if self != nil:
+    let live = find_live_origin(class_to_value(self))
+    if live.found:
+      self.module_path = live.origin.module_path
+      self.internal_path = live.origin.internal_path
+      return (true, make_origin(SrkClass, self.module_path, self.internal_path))
+  (false, SerializationOrigin())
+
+proc namespace_runtime_module_path(ns: Namespace): string {.gcsafe.} =
+  if ns == nil:
+    return ""
+  let module_name = ns.members.getOrDefault("__module_name__".to_key(), NIL)
+  if module_name.kind in {VkString, VkSymbol}:
+    return module_name.str
+  ns.module_path
+
+proc simple_member_origin(ns: Namespace, name: string, target: Value,
+                          kind: SerializationRefKind): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.} =
+  if ns == nil or name.len == 0:
+    return (false, SerializationOrigin())
+  let member = ns.members.getOrDefault(name.to_key(), NIL)
+  if member == NIL:
+    return (false, SerializationOrigin())
+  case kind:
+  of SrkClass:
+    if member.kind == VkClass and target.kind == VkClass and member.ref.class == target.ref.class:
+      return (true, make_origin(kind, namespace_runtime_module_path(ns), name))
+  of SrkFunction:
+    if member.kind == target.kind and member.raw == target.raw:
+      return (true, make_origin(kind, namespace_runtime_module_path(ns), name))
+    if member.kind == VkFunction and target.kind == VkFunction and member.ref.fn == target.ref.fn:
+      return (true, make_origin(kind, namespace_runtime_module_path(ns), name))
+  else:
+    discard
+  (false, SerializationOrigin())
+
+proc find_live_origin_in_namespace(ns: Namespace, target: Value, module_path: string,
+                                   prefix: string, seen: var HashSet[pointer]): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.} =
+  if ns == nil:
+    return (false, SerializationOrigin())
+  let key = cast[pointer](ns)
+  if seen.contains(key):
+    return (false, SerializationOrigin())
+  seen.incl(key)
+
+  for member_key, member_value in ns.members:
+    let name = key_to_string(member_key)
+    if should_skip_origin_member(name):
+      continue
+    let path = join_origin_path(prefix, name)
+
+    case target.kind:
+    of VkNamespace:
+      if member_value.kind == VkNamespace and member_value.ref.ns == target.ref.ns:
+        return (true, make_origin(SrkNamespace, module_path, path))
+    of VkClass:
+      if member_value.kind == VkClass and member_value.ref.class == target.ref.class:
+        return (true, make_origin(SrkClass, module_path, path))
+    of VkFunction:
+      if member_value.kind == VkFunction and member_value.ref.fn == target.ref.fn:
+        return (true, make_origin(SrkFunction, module_path, path))
+    of VkNativeFn, VkNativeMacro:
+      if member_value.raw == target.raw:
+        return (true, make_origin(SrkFunction, module_path, path))
+    of VkEnum:
+      if member_value.kind == VkEnum and member_value.ref.enum_def == target.ref.enum_def:
+        return (true, make_origin(SrkEnum, module_path, path))
+    of VkEnumMember:
+      if member_value.kind == VkEnum:
+        for member_name, enum_member in member_value.ref.enum_def.members:
+          if enum_member == target.ref.enum_member:
+            return (true, make_origin(SrkEnum, module_path, join_origin_path(path, member_name)))
+    of VkInstance:
+      if member_value.raw == target.raw:
+        return (true, make_origin(SrkInstance, module_path, path))
+    else:
+      discard
+
+    if member_value.kind == VkNamespace:
+      let nested = find_live_origin_in_namespace(member_value.ref.ns, target, module_path, path, seen)
+      if nested.found:
+        return nested
+    elif member_value.kind == VkClass and member_value.ref.class != nil and member_value.ref.class.ns != nil:
+      let nested = find_live_origin_in_namespace(member_value.ref.class.ns, target, module_path, path, seen)
+      if nested.found:
+        return nested
+
+  (false, SerializationOrigin())
+
+proc find_live_origin(target: Value): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.} =
+  # Last-resort canonicalization for already-live values.
+  # This is intentionally only attempted after direct object fields and the
+  # per-thread origin registry miss, because it walks reachable namespaces.
+  var seen: HashSet[pointer]
+  if VM != nil and VM.frame != nil and VM.frame.ns != nil:
+    let live = find_live_origin_in_namespace(VM.frame.ns, target,
+      namespace_runtime_module_path(VM.frame.ns), "", seen)
+    if live.found:
+      return live
+  if App != NIL and App.kind == VkApplication:
+    if App.app.global_ns.kind == VkNamespace:
+      let global_live = find_live_origin_in_namespace(App.app.global_ns.ref.ns, target, "", "", seen)
+      if global_live.found:
+        return global_live
+    if App.app.gene_ns.kind == VkNamespace:
+      let gene_live = find_live_origin_in_namespace(App.app.gene_ns.ref.ns, target, "", "gene", seen)
+      if gene_live.found:
+        return gene_live
+    if App.app.genex_ns.kind == VkNamespace:
+      let genex_live = find_live_origin_in_namespace(App.app.genex_ns.ref.ns, target, "", "genex", seen)
+      if genex_live.found:
+        return genex_live
+  (false, SerializationOrigin())
+
+proc lookup_value_origin(value: Value): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.} =
+  case value.kind:
+  of VkNamespace:
+    if value.ref.ns != nil and value.ref.ns.internal_path.len > 0:
+      return (true, make_origin(SrkNamespace, value.ref.ns.module_path, value.ref.ns.internal_path))
+  of VkClass:
+    return lookup_class_origin(value.ref.class)
+  of VkFunction:
+    if value.ref.fn != nil and value.ref.fn.internal_path.len > 0:
+      return (true, make_origin(SrkFunction, value.ref.fn.module_path, value.ref.fn.internal_path))
+    if value.ref.fn != nil and value.ref.fn.name.len > 0:
+      if value.ref.fn.ns != nil and value.ref.fn.ns.module_path.len > 0:
+        value.ref.fn.module_path = value.ref.fn.ns.module_path
+        value.ref.fn.internal_path = join_origin_path(value.ref.fn.ns.internal_path, value.ref.fn.name)
+        return (true, make_origin(SrkFunction, value.ref.fn.module_path, value.ref.fn.internal_path))
+      if value.ref.fn.ns != nil:
+        let direct = simple_member_origin(value.ref.fn.ns, value.ref.fn.name, value, SrkFunction)
+        if direct.found:
+          value.ref.fn.module_path = direct.origin.module_path
+          value.ref.fn.internal_path = direct.origin.internal_path
+          return direct
+      if VM != nil and VM.frame != nil and VM.frame.ns != nil:
+        let current = simple_member_origin(VM.frame.ns, value.ref.fn.name, value, SrkFunction)
+        if current.found:
+          value.ref.fn.module_path = current.origin.module_path
+          value.ref.fn.internal_path = current.origin.internal_path
+          return current
+  of VkEnum:
+    if value.ref.enum_def != nil and value.ref.enum_def.internal_path.len > 0:
+      return (true, make_origin(SrkEnum, value.ref.enum_def.module_path, value.ref.enum_def.internal_path))
+  of VkEnumMember:
+    if value.ref.enum_member != nil and value.ref.enum_member.internal_path.len > 0:
+      return (true, make_origin(SrkEnum, value.ref.enum_member.module_path, value.ref.enum_member.internal_path))
+  of VkInstance:
+    let data = instance_ptr(value)
+    if data != nil and data.internal_path.len > 0:
+      return (true, make_origin(SrkInstance, data.module_path, data.internal_path))
+  else:
+    discard
+
+  ensure_value_origin_registry()
+  if value_origin_registry.hasKey(value.raw):
+    return (true, value_origin_registry[value.raw])
+
+  let live = find_live_origin(value)
+  if live.found:
+    assign_value_origin(value, live.origin)
+    return live
+  (false, SerializationOrigin())
+
+proc not_serializable(value: Value, detail = "") {.noreturn, gcsafe.} =
+  var msg = "Value of kind " & $value.kind & " is not serializable"
+  if detail.len > 0:
+    msg &= ": " & detail
+  not_allowed(msg)
+
+proc typed_ref_for_value(value: Value): Value {.gcsafe.} =
+  let (found, origin) = lookup_value_origin(value)
+  if not found or origin.internal_path.len == 0:
+    not_serializable(value, "no canonical module/path origin")
+  new_typed_ref(origin.kind, origin.internal_path, origin.module_path)
+
+proc typed_ref_for_class(self: Class): Value {.gcsafe.} =
+  let (found, origin) = lookup_class_origin(self)
+  if not found or origin.internal_path.len == 0:
+    not_allowed("Class '" & (if self == nil: "<nil>" else: self.name) &
+      "' is not serializable: no canonical module/path origin")
+  new_typed_ref(SrkClass, origin.internal_path, origin.module_path)
+
+proc class_to_value(self: Class): Value {.inline, gcsafe.} =
+  let r = new_ref(VkClass)
+  r.class = self
+  r.to_ref_value()
+
+proc resolve_from_namespace(ns: Namespace, path: string): Value {.gcsafe.} =
+  if ns == nil or path.len == 0:
+    return NIL
+  let parts = path.split("/")
+  if parts.len == 0:
+    return NIL
+
+  var current_ns = ns
+  var i = 0
+  while i < parts.len:
+    let part = parts[i]
+    if part.len == 0:
+      i.inc()
+      continue
+    let key = part.to_key()
+    if current_ns == nil or not current_ns.members.hasKey(key):
+      return NIL
+    let current = current_ns.members[key]
+    if i == parts.len - 1:
+      return current
+    case current.kind:
+    of VkNamespace:
+      current_ns = current.ref.ns
+    of VkClass:
+      if current.ref.class == nil:
+        return NIL
+      if i == parts.len - 2:
+        let member = current.ref.class.get_member(parts[i + 1].to_key())
+        if member != NIL:
+          return member
+      if current.ref.class.ns == nil:
+        return NIL
+      current_ns = current.ref.class.ns
+    of VkEnum:
+      if i == parts.len - 2 and current.ref.enum_def.members.hasKey(parts[i + 1]):
+        return current.ref.enum_def.members[parts[i + 1]].to_value()
+      return NIL
+    else:
+      return NIL
+    i.inc()
+  NIL
+
+proc current_module_namespace(module_path: string): Namespace {.gcsafe.} =
+  if module_path.len == 0 or VM == nil or VM.frame == nil or VM.frame.ns == nil:
+    return nil
+  let module_name = VM.frame.ns.members.getOrDefault("__module_name__".to_key(), NIL)
+  if module_name.kind in {VkString, VkSymbol} and module_name.str == module_path:
+    return VM.frame.ns
+  nil
+
+proc ensure_module_namespace(module_path: string): Namespace {.gcsafe.} =
+  if module_path.len == 0:
+    return nil
+  let current_ns = current_module_namespace(module_path)
+  if current_ns != nil:
+    return current_ns
+  if not serdes_module_loader_hook.isNil:
+    {.cast(gcsafe).}:
+      return serdes_module_loader_hook(module_path)
+  nil
+
+proc resolve_named_reference(module_path, path: string): Value {.gcsafe.} =
+  if path.len == 0:
+    not_allowed("Serialization reference is missing ^path")
+
+  if module_path.len > 0:
+    let module_ns = ensure_module_namespace(module_path)
+    if module_ns == nil:
+      not_allowed("Module '" & module_path & "' is not available for deserialization")
+    let resolved = resolve_from_namespace(module_ns, path)
+    if resolved != NIL:
+      return resolved
+    not_allowed("Serialized reference not found in module '" & module_path & "': " & path)
+
+  result = path_to_value(path)
+  if result == NIL:
+    not_allowed("Serialized reference not found: " & path)
+
+proc parse_typed_ref(gene: ptr Gene): tuple[module_path: string, path: string] {.gcsafe.} =
+  let path_value = gene.props.getOrDefault("path".to_key(), NIL)
+  if path_value.kind notin {VkString, VkSymbol}:
+    not_allowed("Serialized reference expects string/symbol ^path")
+  result.path = path_value.str
+
+  let module_value = gene.props.getOrDefault("module".to_key(), NIL)
+  if module_value != NIL:
+    if module_value.kind notin {VkString, VkSymbol}:
+      not_allowed("Serialized reference expects string/symbol ^module")
+    result.module_path = module_value.str
+
+proc resolve_typed_ref(gene: ptr Gene): Value {.gcsafe.} =
+  let parsed = parse_typed_ref(gene)
+  resolve_named_reference(parsed.module_path, parsed.path)
+
+proc find_deserialize_hook(cls: Class): Value =
+  if cls == nil:
+    return NIL
+  for name in [".deserialize", "deserialize"]:
+    let meth = cls.get_method(name)
+    if meth != nil:
+      return meth.callable
+  return NIL
+
+proc invoke_deserialize_hook(cls: Class, state: Value): tuple[handled: bool, value: Value] {.gcsafe.} =
+  let hook = find_deserialize_hook(cls)
+  if hook == NIL:
+    return (false, NIL)
+
+  let class_val = class_to_value(cls)
+  case hook.kind:
+  of VkFunction, VkBlock:
+    if VM == nil:
+      not_allowed("Deserialization hook requires an active VM")
+    {.cast(gcsafe).}:
+      return (true, vm_exec_callable(VM, hook, @[class_val, state]))
+  of VkNativeFn:
+    return (true, call_native_fn(hook.ref.native_fn, VM, [class_val, state]))
+  else:
+    not_allowed("Deserialize hook must be a function or native function")
+
+proc has_direct_value_origin(value: Value): tuple[has_origin: bool, origin: SerializationOrigin] {.gcsafe.} =
+  case value.kind:
+  of VkNamespace:
+    if value.ref.ns != nil and value.ref.ns.internal_path.len > 0:
+      return (true, make_origin(SrkNamespace, value.ref.ns.module_path, value.ref.ns.internal_path))
+  of VkClass:
+    if value.ref.class != nil and value.ref.class.internal_path.len > 0:
+      return (true, make_origin(SrkClass, value.ref.class.module_path, value.ref.class.internal_path))
+  of VkFunction:
+    if value.ref.fn != nil and value.ref.fn.internal_path.len > 0:
+      return (true, make_origin(SrkFunction, value.ref.fn.module_path, value.ref.fn.internal_path))
+  of VkEnum:
+    if value.ref.enum_def != nil and value.ref.enum_def.internal_path.len > 0:
+      return (true, make_origin(SrkEnum, value.ref.enum_def.module_path, value.ref.enum_def.internal_path))
+  of VkEnumMember:
+    if value.ref.enum_member != nil and value.ref.enum_member.internal_path.len > 0:
+      return (true, make_origin(SrkEnum, value.ref.enum_member.module_path, value.ref.enum_member.internal_path))
+  of VkInstance:
+    let data = instance_ptr(value)
+    if data != nil and data.internal_path.len > 0:
+      return (true, make_origin(SrkInstance, data.module_path, data.internal_path))
+  else:
+    discard
+  (false, SerializationOrigin())
+
+proc tag_value_origin(value: Value, module_path, internal_path: string) {.gcsafe.} =
+  if value == NIL or internal_path.len == 0:
+    return
+  let existing = has_direct_value_origin(value)
+  if existing.has_origin:
+    register_value_origin(value, existing.origin)
+    return
+  let kind = case value.kind:
+    of VkNamespace: SrkNamespace
+    of VkClass: SrkClass
+    of VkFunction, VkNativeFn, VkNativeMacro: SrkFunction
+    of VkEnum, VkEnumMember: SrkEnum
+    of VkInstance: SrkInstance
+    else: return
+  assign_value_origin(value, make_origin(kind, module_path, internal_path))
+
+proc tag_namespace_serialization_origins*(ns: Namespace, module_path: string, prefix = "") =
+  if ns == nil:
+    return
+
+  var seen: HashSet[pointer]
+  let export_root = ns
+
+  proc walk(current: Namespace, current_prefix: string, tag_self: bool) =
+    if current == nil:
+      return
+    let ns_key = cast[pointer](current)
+    if seen.contains(ns_key):
+      return
+    seen.incl(ns_key)
+
+    if tag_self and current_prefix.len > 0:
+      tag_value_origin(current.to_value(), module_path, current_prefix)
+
+    for key, value in current.members:
+      let name = key_to_string(key)
+      if should_skip_origin_member(name):
+        continue
+      let path = join_origin_path(current_prefix, name)
+      if not namespace_path_is_exported(export_root, path):
+        continue
+      tag_value_origin(value, module_path, path)
+      if value.kind == VkNamespace:
+        walk(value.ref.ns, path, true)
+      elif value.kind == VkClass and value.ref.class != nil and value.ref.class.ns != nil:
+        walk(value.ref.class.ns, path, false)
+
+  walk(ns, prefix, prefix.len > 0)
+
+proc tag_stdlib_serialization_origins*() =
+  if App == NIL or App.kind != VkApplication:
+    return
+  if App.app.global_ns.kind == VkNamespace:
+    tag_namespace_serialization_origins(App.app.global_ns.ref.ns, "", "")
+  if App.app.gene_ns.kind == VkNamespace:
+    tag_namespace_serialization_origins(App.app.gene_ns.ref.ns, "", "gene")
+  if App.app.genex_ns.kind == VkNamespace:
+    tag_namespace_serialization_origins(App.app.genex_ns.ref.ns, "", "genex")
 
 # Serialize a value into a form that can be stored and later deserialized
 proc serialize*(value: Value): Serialization =
@@ -118,24 +675,21 @@ proc serialize*(self: Serialization, value: Value): Value =
     for child in value.gene.children:
       gene.children.add(self.serialize(child))
     return gene.to_gene_value()
-  of VkClass:
-    return new_gene_ref(value.to_path())
-  of VkFunction:
-    return new_gene_ref(value.to_path())
+  of VkNamespace, VkClass, VkFunction, VkNativeFn, VkNativeMacro, VkEnum, VkEnumMember:
+    return typed_ref_for_value(value)
   of VkInstance:
-    # Create (gene/instance <class-ref> {props})
-    let gene = new_gene("gene/instance".to_symbol_value())
-    gene.children.add(new_gene_ref(value.instance_class.to_path()))
-    
+    let (named, _) = lookup_value_origin(value)
+    if named:
+      return typed_ref_for_value(value)
+
     let props = new_map_value()
     map_data(props) = initTable[Key, Value]()
     for k, v in value.instance_props:
       map_data(props)[k] = self.serialize(v)
-    gene.children.add(props)
-    
-    return gene.to_gene_value()
+
+    return new_serialized_instance(typed_ref_for_class(value.instance_class), props)
   else:
-    todo("serialize " & $value.kind)
+    not_serializable(value)
 
 # Fast literal checker: primitives, strings/symbols, arrays/maps/genes with literal children
 proc is_literal_value*(v: Value): bool {.inline, gcsafe.} =
@@ -196,84 +750,49 @@ proc deserialize_literal*(s: string): Value {.gcsafe.} =
   deserialize(s)
 
 proc to_path*(self: Class): string =
-  # For now, just return the class name
-  # In the future, we can build a full path
-  return self.name
+  let (found, origin) = lookup_class_origin(self)
+  if not found:
+    not_allowed("Class '" & (if self == nil: "<nil>" else: self.name) & "' has no canonical serialization path")
+  origin.internal_path
 
 # A path looks like
 # Class C => "pkgP:modM:nsN/C" or just "nsN/C" or "C"
 proc to_path*(self: Value): string =
-  case self.kind:
-  of VkClass:
-    return self.ref.class.to_path()
-  of VkFunction:
-    # For now, just return the function name
-    # TODO: Handle namespaced functions properly
-    return self.ref.fn.name
-  else:
-    not_allowed("to_path " & $self.kind)
+  let (found, origin) = lookup_value_origin(self)
+  if not found:
+    not_allowed("Value of kind " & $self.kind & " has no canonical serialization path")
+  origin.internal_path
 
 proc path_to_value*(path: string): Value =
-  # Check if it's a namespaced path (e.g., "n/f")
-  if "/" in path:
-    let parts = path.split("/")
-    if parts.len >= 2:
-      # Handle nested namespace paths
-      var current_ns: Namespace = nil
-      var search_namespaces: seq[Namespace] = @[]
-      
-      # Add namespaces to search
-      if App.app.global_ns.kind == VkNamespace:
-        search_namespaces.add(App.app.global_ns.ref.ns)
-      if VM != nil and VM.frame != nil and VM.frame.ns != nil:
-        search_namespaces.add(VM.frame.ns)
-      
-      # Find the first namespace in the path
-      let first_key = parts[0].to_key()
-      for ns in search_namespaces:
-        if ns.members.has_key(first_key):
-          let ns_val = ns.members[first_key]
-          if ns_val.kind == VkNamespace:
-            current_ns = ns_val.ref.ns
-            break
-      
-      if current_ns != nil:
-        # Navigate through nested namespaces
-        for i in 1..<parts.len-1:
-          let key = parts[i].to_key()
-          if current_ns.members.has_key(key):
-            let val = current_ns.members[key]
-            if val.kind == VkNamespace:
-              current_ns = val.ref.ns
-            else:
-              # Not a namespace, can't continue
-              break
-          else:
-            # Key not found
-            current_ns = nil
-            break
-        
-        # Look for the final item
-        if current_ns != nil:
-          let final_key = parts[^1].to_key()
-          if current_ns.members.has_key(final_key):
-            return current_ns.members[final_key]
-  
-  # Look in global namespace first
-  let key = path.to_key()
-  if App.app.global_ns.kind == VkNamespace and App.app.global_ns.ref.ns.members.has_key(key):
-    return App.app.global_ns.ref.ns.members[key]
-  
-  # Also check if VM is running and has a current frame
+  if App != NIL and App.kind == VkApplication:
+    if path == "gene":
+      return App.app.gene_ns
+    if path == "genex":
+      return App.app.genex_ns
+    if path.startsWith("gene/") and App.app.gene_ns.kind == VkNamespace:
+      let resolved = resolve_from_namespace(App.app.gene_ns.ref.ns, path["gene/".len .. ^1])
+      if resolved != NIL:
+        return resolved
+    if path.startsWith("genex/") and App.app.genex_ns.kind == VkNamespace:
+      let resolved = resolve_from_namespace(App.app.genex_ns.ref.ns, path["genex/".len .. ^1])
+      if resolved != NIL:
+        return resolved
+
   if VM != nil and VM.frame != nil and VM.frame.ns != nil:
-    if VM.frame.ns.members.has_key(key):
-      return VM.frame.ns.members[key]
-  
+    let resolved = resolve_from_namespace(VM.frame.ns, path)
+    if resolved != NIL:
+      return resolved
+
+  if App != NIL and App.kind == VkApplication and App.app.global_ns.kind == VkNamespace:
+    let resolved = resolve_from_namespace(App.app.global_ns.ref.ns, path)
+    if resolved != NIL:
+      return resolved
+
   not_allowed("path_to_value: not found: " & path)
 
 proc value_to_gene_str(self: Value): string
 
-proc key_to_string(k: Key): string =
+proc key_to_string(k: Key): string {.inline, gcsafe.} =
   let symbol_value = cast[Value](k)
   let symbol_index = cast[uint64](symbol_value) and PAYLOAD_MASK
   get_symbol(symbol_index.int)
@@ -415,81 +934,11 @@ proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.} =
   else:
     result = current
 
-proc append_serialized_payload(result: var string, value: Value)
-
-proc append_serialized_map(result: var string, values: Table[Key, Value]) =
-  result.add("{")
-  var first = true
-  for k, v in values:
-    if not first:
-      result.add(" ")
-    result.add("^")
-    result.add(key_to_string(k))
-    result.add(" ")
-    append_serialized_payload(result, v)
-    first = false
-  result.add("}")
-
-proc append_serialized_ref(result: var string, path: string) =
-  result.add("(gene/ref ")
-  result.add(json.escapeJson(path))
-  result.add(")")
-
-proc append_serialized_payload(result: var string, value: Value) =
-  let value = materialize_lazy_tree_value(value)
-  case value.kind:
-  of VkNil:
-    result.add("nil")
-  of VkBool:
-    result.add(if value == TRUE: "true" else: "false")
-  of VkInt:
-    result.add($value.to_int())
-  of VkFloat:
-    result.add($value.to_float())
-  of VkChar:
-    result.add("'")
-    result.add($chr((value.raw and 0xFF).int))
-    result.add("'")
-  of VkString:
-    result.add(json.escapeJson(value.str))
-  of VkSymbol:
-    result.add(value.str)
-  of VkArray:
-    result.add("[")
-    for index, item in array_data(value):
-      if index > 0:
-        result.add(" ")
-      append_serialized_payload(result, item)
-    result.add("]")
-  of VkMap:
-    append_serialized_map(result, map_data(value))
-  of VkGene:
-    result.add("(")
-    append_serialized_payload(result, value.gene.type)
-    for k, v in value.gene.props:
-      result.add(" ^")
-      result.add(key_to_string(k))
-      result.add(" ")
-      append_serialized_payload(result, v)
-    for child in value.gene.children:
-      result.add(" ")
-      append_serialized_payload(result, child)
-    result.add(")")
-  of VkClass, VkFunction:
-    append_serialized_ref(result, value.to_path())
-  of VkInstance:
-    result.add("(gene/instance ")
-    append_serialized_ref(result, value.instance_class.to_path())
-    result.add(" ")
-    append_serialized_map(result, value.instance_props)
-    result.add(")")
-  else:
-    todo("serialize " & $value.kind)
+proc payload_to_serialized_text(payload: Value): string =
+  "(gene/serialization " & value_to_gene_str(payload) & ")"
 
 proc value_to_serialized_text(value: Value): string =
-  result = "(gene/serialization "
-  append_serialized_payload(result, value)
-  result.add(")")
+  payload_to_serialized_text(serialize(value).data)
 
 proc tree_serialized_hash(value: Value): Hash
 
@@ -536,20 +985,25 @@ proc tree_serialized_hash(value: Value): Hash =
       result_hash = result_hash !& tree_serialized_hash(v)
     for child in value.gene.children:
       result_hash = result_hash !& tree_serialized_hash(child)
-  of VkClass:
-    result_hash.mix_tree_hash("class")
-    result_hash = result_hash !& hash(value.to_path())
-  of VkFunction:
-    result_hash.mix_tree_hash("function")
-    result_hash = result_hash !& hash(value.to_path())
+  of VkNamespace, VkClass, VkFunction, VkNativeFn, VkNativeMacro, VkEnum, VkEnumMember:
+    let (_, origin) = lookup_value_origin(value)
+    let typed_ref = typed_ref_for_value(value)
+    result_hash.mix_tree_hash(ref_kind_name(origin.kind))
+    result_hash = result_hash !& hash(value_to_gene_str(typed_ref))
   of VkInstance:
-    result_hash.mix_tree_hash("instance")
-    result_hash = result_hash !& hash(value.instance_class.to_path())
-    for k, v in value.instance_props:
-      result_hash = result_hash !& hash(key_to_string(k))
-      result_hash = result_hash !& tree_serialized_hash(v)
+    let (named, _) = lookup_value_origin(value)
+    if named:
+      let typed_ref = typed_ref_for_value(value)
+      result_hash.mix_tree_hash("InstanceRef")
+      result_hash = result_hash !& hash(value_to_gene_str(typed_ref))
+    else:
+      result_hash.mix_tree_hash("Instance")
+      result_hash = result_hash !& hash(value_to_gene_str(typed_ref_for_class(value.instance_class)))
+      for k, v in value.instance_props:
+        result_hash = result_hash !& hash(key_to_string(k))
+        result_hash = result_hash !& tree_serialized_hash(v)
   else:
-    todo("serialize " & $value.kind)
+    not_serializable(value)
   !$result_hash
 
 proc add_directory_node(options: var TreeWriteOptions, segments: openArray[string]) =
@@ -939,7 +1393,7 @@ proc materialize_lazy_tree_data(data: CustomValue): Value {.gcsafe.} =
   lazy_data.materialized
 
 proc to_s*(self: Serialization): string =
-  result = value_to_serialized_text(self.data)
+  result = payload_to_serialized_text(self.data)
 
 proc value_to_gene_str(self: Value): string =
   let self = materialize_lazy_tree_value(self)
@@ -1013,52 +1467,68 @@ proc deserialize*(s: string): Value =
 proc deserialize*(self: Serialization, value: Value): Value =
   case value.kind:
   of VkGene:
-    # Check if it's a special gene type
     var type_str: string
     if value.gene.type.kind == VkSymbol:
       type_str = value.gene.type.str
     elif value.gene.type.kind == VkComplexSymbol:
       type_str = value.gene.type.ref.csymbol.join("/")
     else:
-      # Regular gene - deserialize recursively
       let gene = new_gene(self.deserialize(value.gene.type))
       for k, v in value.gene.props:
         gene.props[k] = self.deserialize(v)
       for child in value.gene.children:
         gene.children.add(self.deserialize(child))
       return gene.to_gene_value()
-    
-    # Handle special gene types
+
     case type_str:
     of "gene/serialization":
       if value.gene.children.len > 0:
         return self.deserialize(value.gene.children[0])
       else:
         return NIL
+    of "NamespaceRef", "ClassRef", "FunctionRef", "EnumRef", "InstanceRef":
+      return resolve_typed_ref(value.gene)
     of "gene/ref":
       if value.gene.children.len > 0:
         return self.deref(value.gene.children[0].str)
       else:
         return NIL
-    of "gene/instance":
-        if value.gene.children.len >= 2:
-          var class_ref = self.deserialize(value.gene.children[0])
-          if class_ref.kind != VkClass:
-            not_allowed("gene/instance expects class reference")
-          
-          var instance = new_instance_value(class_ref.ref.class)
-          
-          # Deserialize properties
-          let props = value.gene.children[1]
-          if props.kind == VkMap:
-            for k, v in map_data(props):
-              instance_props(instance)[k] = self.deserialize(v)
-          
-          return instance
+    of "Instance":
+      if value.gene.children.len < 2:
+        return NIL
+
+      let class_ref = self.deserialize(value.gene.children[0])
+      if class_ref.kind != VkClass:
+        not_allowed("Instance expects a class reference")
+
+      let props = value.gene.children[1]
+      let state =
+        if props.kind == VkMap:
+          var mapped = new_map_value()
+          map_data(mapped) = initTable[Key, Value]()
+          for k, v in map_data(props):
+            map_data(mapped)[k] = self.deserialize(v)
+          mapped
         else:
-          return NIL
+          not_allowed("Instance expects a map state payload")
+          NIL
+
+      let hook_result = invoke_deserialize_hook(class_ref.ref.class, state)
+      if hook_result.handled:
+        return hook_result.value
+
+      let instance = new_instance_value(class_ref.ref.class)
+      for k, v in map_data(state):
+        instance_props(instance)[k] = v
+      return instance
+    of "gene/instance":
+      if value.gene.children.len >= 2:
+        let legacy = new_gene("Instance".to_symbol_value())
+        legacy.children.add(self.deserialize(value.gene.children[0]))
+        legacy.children.add(value.gene.children[1])
+        return self.deserialize(legacy.to_gene_value())
+      return NIL
     else:
-      # Regular gene - deserialize recursively
       let gene = new_gene(self.deserialize(value.gene.type))
       for k, v in value.gene.props:
         gene.props[k] = self.deserialize(v)
@@ -1066,7 +1536,6 @@ proc deserialize*(self: Serialization, value: Value): Value =
         gene.children.add(self.deserialize(child))
       return gene.to_gene_value()
   else:
-    # Simple values serialize to themselves
     return value
 
 # VM integration functions
@@ -1340,6 +1809,7 @@ proc vm_read_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame:
 # Initialize the serdes namespace
 proc init_serdes*() =
   init_lazy_tree_value_class()
+  tag_stdlib_serialization_origins()
   let serdes_ns = new_namespace("serdes")
   serdes_ns["serialize".to_key()] = NativeFn(vm_serialize).to_value()
   serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize).to_value()
@@ -1350,3 +1820,6 @@ proc init_serdes*() =
   read_tree_ref.native_macro = vm_read_tree_macro
   serdes_ns["read_tree".to_key()] = read_tree_ref.to_ref_value()
   App.app.gene_ns.ref.ns["serdes".to_key()] = serdes_ns.to_value()
+  # Retag gene after attaching gene/serdes so that the new namespace itself
+  # also gets a canonical stdlib path.
+  tag_namespace_serialization_origins(App.app.gene_ns.ref.ns, "", "gene")

@@ -212,3 +212,5 @@ type
     ref_count*: int
     instance_class*: Class
     instance_props*: Table[Key, Value]
+    module_path*: string
+    internal_path*: string

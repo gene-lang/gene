@@ -86,6 +86,9 @@ include ./vm/runtime_helpers
 set_vm_exec_callable_hook(exec_callable)
 set_vm_exec_callable_with_self_hook(exec_callable_with_self)
 set_vm_poll_event_loop_hook(poll_event_loop)
+set_serdes_module_loader_hook(proc(module_path: string): Namespace {.nimcall.} =
+  ensure_runtime_module_loaded(VM, module_path)
+)
 
 include "./stdlib"
 

@@ -1,0 +1,21 @@
+# Source module for serialization testsuite coverage
+
+(class ExportedThing
+  (ctor [name]
+    (/name = name)
+    (/restored = false)
+  )
+  (method deserialize [v]
+    (var inst (new ExportedThing (v .get "name")))
+    (inst/restored = true)
+    inst
+  )
+)
+
+(fn make_exported [] (new ExportedThing "from_fn"))
+
+(var DEFAULT_THING (new ExportedThing "default"))
+
+(enum Status ok error)
+
+(export ExportedThing make_exported DEFAULT_THING Status)

@@ -26,6 +26,98 @@ proc namespace_from_value(container: Value): Namespace =
   else:
     not_allowed("Class container must be a namespace or class, got " & $container.kind)
 
+proc init_module_namespace(module_ns: Namespace, module_path: string, compiled = false) =
+  if module_ns == nil:
+    return
+  module_ns.members["__is_main__".to_key()] = FALSE
+  module_ns.members["__module_name__".to_key()] = module_path.to_value()
+  module_ns.members["gene".to_key()] = App.app.gene_ns
+  module_ns.members["genex".to_key()] = App.app.genex_ns
+  if compiled:
+    module_ns.members["__compiled__".to_key()] = TRUE
+  bind_module_package_context(module_ns, module_path)
+
+proc ensure_runtime_module_loaded*(self: ptr VirtualMachine, module_path: string,
+                                   prepared_ns: Namespace = nil,
+                                   is_native = false): Namespace =
+  if module_path.len == 0:
+    return nil
+
+  if self != nil and self.frame != nil and self.frame.ns != nil:
+    let module_name = self.frame.ns.members.getOrDefault("__module_name__".to_key(), NIL)
+    if module_name.kind in {VkString, VkSymbol} and module_name.str == module_path:
+      tag_namespace_serialization_origins(self.frame.ns, module_path)
+      return self.frame.ns
+
+  if ModuleCache.hasKey(module_path):
+    let cached = ModuleCache[module_path]
+    tag_namespace_serialization_origins(cached, module_path)
+    return cached
+
+  if is_native:
+    when not defined(noExtensions):
+      let ext_ns = load_extension(self, module_path)
+      if ext_ns == nil:
+        not_allowed("[GENE.EXT.INIT_FAILED] Extension did not publish namespace: " & module_path)
+      ModuleCache[module_path] = ext_ns
+      tag_namespace_serialization_origins(ext_ns, module_path)
+      return ext_ns
+    else:
+      not_allowed("Native extensions are not supported in this build")
+
+  if ModuleLoadState.getOrDefault(module_path, false):
+    var cycle: seq[string] = @[]
+    var start = -1
+    for i, entry in ModuleLoadStack:
+      if entry == module_path:
+        start = i
+        break
+    if start >= 0:
+      cycle = ModuleLoadStack[start..^1] & @[module_path]
+    else:
+      cycle = ModuleLoadStack & @[module_path]
+    not_allowed("[GENE.MODULE.CYCLE] Cyclic import detected: " & cycle.join(" -> "))
+
+  let module_ns =
+    if prepared_ns != nil:
+      prepared_ns
+    else:
+      let created = new_namespace(App.app.global_ns.ref.ns, module_path)
+      init_module_namespace(created, module_path, module_path.endsWith(".gir"))
+      created
+
+  ModuleLoadState[module_path] = true
+  ModuleLoadStack.add(module_path)
+  let saved_cu = self.cu
+  let saved_frame = self.frame
+  let saved_pc = self.pc
+  var vm_state_switched = false
+  try:
+    let cu = compile_module(module_path)
+
+    self.frame = new_frame()
+    self.frame.ns = module_ns
+    let args_gene = new_gene(NIL)
+    args_gene.children.add(module_ns.to_value())
+    self.frame.args = args_gene.to_gene_value()
+    vm_state_switched = true
+
+    self.cu = cu
+    discard self.exec()
+    discard self.run_module_init(module_ns)
+
+    ModuleCache[module_path] = module_ns
+    tag_namespace_serialization_origins(module_ns, module_path)
+    return module_ns
+  finally:
+    if vm_state_switched:
+      self.cu = saved_cu
+      self.frame = saved_frame
+      self.pc = saved_pc
+    if ModuleLoadState.hasKey(module_path):
+      ModuleLoadState.del(module_path)
+    if ModuleLoadStack.len > 0 and ModuleLoadStack[^1] == module_path:
+      ModuleLoadStack.setLen(ModuleLoadStack.len - 1)
 
 proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran: bool, value: Value] =
   if module_ns == nil:
