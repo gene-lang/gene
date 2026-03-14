@@ -138,6 +138,14 @@ proc array_ptr*(v: Value): ptr ArrayObj {.inline.} =
 template array_data*(v: Value): var seq[Value] =
   array_ptr(v).arr
 
+proc array_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
+  let u = cast[uint64](v)
+  ((u and 0xFFFF_0000_0000_0000u64) == ARRAY_TAG) and cast[ptr ArrayObj](u and PAYLOAD_MASK).frozen
+
+proc ensure_mutable_array*(v: Value, op_name = "mutate"): void {.inline.} =
+  if array_is_frozen(v):
+    not_allowed("Cannot " & op_name & " immutable array")
+
 proc map_ptr*(v: Value): ptr MapObj {.inline.} =
   let u = cast[uint64](v)
   if (u and 0xFFFF_0000_0000_0000u64) != MAP_TAG:
@@ -459,7 +467,7 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
       of VkRatio:
         result = $self.ref.ratio_num & "/" & $self.ref.ratio_denom
       of VkArray:
-        result = "["
+        result = if array_is_frozen(self): "#[" else: "["
         for i, v in array_data(self):
           if i > 0:
             result &= " "
@@ -546,7 +554,7 @@ proc `$`*(self: Value): string {.gcsafe.} =
       of VkRatio:
         result = $self.ref.ratio_num & "/" & $self.ref.ratio_denom
       of VkArray:
-        result = "["
+        result = if array_is_frozen(self): "#[" else: "["
         for i, v in array_data(self):
           if i > 0:
             result &= " "

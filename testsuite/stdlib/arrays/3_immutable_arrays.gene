@@ -1,0 +1,24 @@
+# Immutable array literal tests
+# Expected: #[1 2]
+# Expected: immutable array tests ok
+
+(var xs #[1 2])
+(println xs)
+
+(var add_caught false)
+(try
+  (xs .add 3)
+catch *
+  (add_caught = true)
+)
+(assert (add_caught == true))
+
+(var assign_caught false)
+(try
+  (xs/0 = 9)
+catch *
+  (assign_caught = true)
+)
+(assert (assign_caught == true))
+
+(println "immutable array tests ok")

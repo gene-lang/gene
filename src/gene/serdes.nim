@@ -658,7 +658,7 @@ proc serialize*(self: Serialization, value: Value): Value =
   of VkString, VkSymbol:
     return value
   of VkArray:
-    var arr_val = new_array_value()
+    var arr_val = new_array_value(@[], frozen = array_is_frozen(value))
     for item in array_data(value):
       array_data(arr_val).add(self.serialize(item))
     return arr_val
@@ -917,7 +917,7 @@ proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.} =
   let current = materialize_lazy_tree_value(value)
   case current.kind
   of VkArray:
-    result = new_array_value()
+    result = new_array_value(@[], frozen = array_is_frozen(current))
     for item in array_data(current):
       array_data(result).add(materialize_lazy_tree_deep(item))
   of VkMap:
@@ -1414,7 +1414,7 @@ proc value_to_gene_str(self: Value): string =
   of VkSymbol:
     result = self.str
   of VkArray:
-    result = "["
+    result = if array_is_frozen(self): "#[" else: "["
     for i, v in array_data(self):
       if i > 0:
         result &= " "
@@ -1575,7 +1575,7 @@ proc eval_in_caller_context(vm: ptr VirtualMachine, expr: Value, caller_frame: F
       not_allowed("Unknown symbol in caller context: " & expr.str)
     return resolved
   of VkArray:
-    result = new_array_value()
+    result = new_array_value(@[], frozen = array_is_frozen(expr))
     for item in array_data(expr):
       array_data(result).add(eval_in_caller_context(vm, item, caller_frame))
   of VkMap:

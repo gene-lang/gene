@@ -335,7 +335,7 @@ proc eval_comptime_expr(expr: Value, env: var ComptimeEnv): ComptimeResult =
     else:
       result = eval_comptime_expr(expr.ref.unquote, env)
   of VkArray:
-    let out_val = new_array_value()
+    let out_val = new_array_value(@[], frozen = array_is_frozen(expr))
     for item in array_data(expr):
       let r = eval_comptime_expr(item, env)
       merge_emitted(result.emitted, r.emitted)

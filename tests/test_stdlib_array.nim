@@ -1,7 +1,9 @@
 import unittest
+import strutils
 import std/tables
 import ./helpers
 import gene/types except Exception
+import gene/vm
 
 test_vm """
   ([1 2] .size)
@@ -122,3 +124,36 @@ test_vm """
   let xs = array_data(result)[1]
   check xs.kind == VkArray
   check array_data(xs).len == 2
+
+suite "Immutable array guards":
+  init_all()
+
+  test "add rejects immutable arrays":
+    var raised = false
+    try:
+      discard VM.exec("(var xs #[1 2]) (xs .add 3)", "immutable_array_add.gene")
+    except CatchableError as e:
+      raised = true
+      check e.msg.contains("immutable array")
+      check e.msg.contains("append to")
+    check raised
+
+  test "push rejects immutable arrays":
+    var raised = false
+    try:
+      discard VM.exec("(var xs #[1 2]) (xs .push 3)", "immutable_array_push.gene")
+    except CatchableError as e:
+      raised = true
+      check e.msg.contains("immutable array")
+      check e.msg.contains("push to")
+    check raised
+
+  test "index assignment rejects immutable arrays":
+    var raised = false
+    try:
+      discard VM.exec("(var xs #[1 2]) (xs/0 = 9)", "immutable_array_assign.gene")
+    except CatchableError as e:
+      raised = true
+      check e.msg.contains("immutable array")
+      check e.msg.contains("set item on")
+    check raised

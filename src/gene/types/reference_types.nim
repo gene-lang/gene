@@ -202,6 +202,7 @@ type
 
   ArrayObj* = object
     ref_count*: int
+    frozen*: bool
     arr*: seq[Value]
 
   MapObj* = object

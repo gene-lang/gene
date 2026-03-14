@@ -453,6 +453,38 @@ suite "GIR CLI":
     check saw_fn_info
     removeFile(gir_path)
 
+  test "cached GIR preserves immutable array runtime semantics":
+    let code = """
+      (var xs #[1 2])
+      (var caught false)
+      (try
+        (xs .add 3)
+      catch *
+        (caught = true)
+      )
+      (assert (caught == true))
+    """
+    let source_path = absolutePath("tmp/gir_immutable_array_literal.gene")
+    createDir(parentDir(source_path))
+    writeFile(source_path, code)
+    let gir_path = gir.get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let gene_bin = absolutePath("bin/gene")
+    let first = execCmdEx(gene_bin & " run " & source_path)
+    check first.exitCode == 0
+    check fileExists(gir_path)
+
+    let second = execCmdEx(gene_bin & " run " & source_path)
+    check second.exitCode == 0
+
   test "runtime validation accepts descriptor-backed type ids":
     let type_descs = @[TypeDesc(kind: TdkNamed, name: "Int")]
 

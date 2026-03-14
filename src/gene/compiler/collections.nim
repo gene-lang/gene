@@ -32,7 +32,7 @@ proc compile_array(self: Compiler, input: Value) =
     i += 1
 
   # Collect all elements from call base into array
-  self.emit(Instruction(kind: IkArrayEnd))
+  self.emit(Instruction(kind: IkArrayEnd, arg1: if array_is_frozen(input): 1 else: 0))
 
 proc compile_stream(self: Compiler, input: Value, allow_vmstmt_last = false) =
   # For simple streams (used by if/elif/else branches), just compile the children directly

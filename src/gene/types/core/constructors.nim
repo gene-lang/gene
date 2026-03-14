@@ -130,13 +130,26 @@ proc to_complex_symbol*(parts: seq[string]): Value {.inline.} =
 
 #################### Array #######################
 
-proc new_array_value*(v: varargs[Value]): Value =
+proc new_array_value_impl(values: openArray[Value], frozen: bool): Value {.inline.} =
   let r = cast[ptr ArrayObj](alloc0(sizeof(ArrayObj)))
   r.ref_count = 1
-  r.arr = @v
+  r.frozen = frozen
+  r.arr = @values
   let ptr_addr = cast[uint64](r)
   assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Array pointer too large for NaN boxing"
   result = cast[Value](ARRAY_TAG or ptr_addr)
+
+proc new_array_value*(v: varargs[Value]): Value =
+  new_array_value_impl(v, false)
+
+proc new_array_value*(values: seq[Value], frozen: bool): Value =
+  new_array_value_impl(values, frozen)
+
+proc new_frozen_array_value*(v: varargs[Value]): Value =
+  new_array_value_impl(v, true)
+
+proc new_frozen_array_value*(values: seq[Value]): Value =
+  new_array_value_impl(values, true)
 
 proc len*(self: Value): int =
   case self.kind

@@ -870,6 +870,7 @@ proc init_collection_classes(object_class: Class) =
     let arr = get_positional_arg(args, 0, has_keyword_args)
     let value = if arg_count > 1: get_positional_arg(args, 1, has_keyword_args) else: NIL
     if arr.kind == VkArray:
+      ensure_mutable_array(arr, "append to")
       array_data(arr).add(value)
     return arr
 
@@ -918,6 +919,7 @@ proc init_collection_classes(object_class: Class) =
     if idx < 0 or idx >= len:
       not_allowed("set index out of bounds")
     let value = get_positional_arg(args, 2, has_keyword_args)
+    ensure_mutable_array(arr, "set item on")
     array_data(arr)[idx] = value
     arr
 
@@ -937,6 +939,7 @@ proc init_collection_classes(object_class: Class) =
     var idx = normalize_index(len, index_val.int64)
     if idx < 0 or idx >= len:
       not_allowed("del index out of bounds")
+    ensure_mutable_array(arr, "delete from")
     let removed = arr_data[idx]
     arr_data.delete(idx)
     removed

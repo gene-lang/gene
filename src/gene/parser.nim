@@ -1043,13 +1043,9 @@ proc read_array(self: var Parser): Value {.gcsafe.} =
   array_data(r) = self.read_delimited_list(']', true).list
   result = r
 
-proc read_stream(self: var Parser): Value {.gcsafe.} =
-  let r = new_ref(VkStream)
+proc read_frozen_array(self: var Parser): Value {.gcsafe.} =
   let list_result = self.read_delimited_list(']', true)
-  r.stream = list_result.list
-  r.stream_index = 0
-  r.stream_ended = false
-  result = r.to_ref_value()
+  result = new_array_value(list_result.list, frozen = true)
 
 proc is_regex_terminator(ch: char): bool {.inline.} =
   ch == '\0' or ch in {' ', '\t', '\c', '\L', ')', ']', '}', ';', ','}
@@ -1246,7 +1242,7 @@ proc init_macro_array() =
   macros['}'] = read_unmatched_delimiter
 
 proc init_dispatch_macro_array() =
-  dispatch_macros['['] = read_stream
+  dispatch_macros['['] = read_frozen_array
   dispatch_macros['/'] = read_regex
   dispatch_macros['@'] = read_decorator
   dispatch_macros['"'] = read_string_interpolation

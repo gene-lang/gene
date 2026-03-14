@@ -4,7 +4,7 @@ import ./types
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 19'u32
+  GIR_VERSION* = 20'u32
   COMPILER_VERSION = "0.1.3"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   
@@ -338,6 +338,7 @@ proc write_value(stream: Stream, v: Value) =
       stream.write_string(part)
   of VkArray:
     let items = array_data(v)
+    stream.write(if array_is_frozen(v): 1'u8 else: 0'u8)
     stream.write(items.len.uint32)
     for item in items:
       write_value(stream, item)
@@ -405,8 +406,9 @@ proc read_value(stream: Stream): Value =
       parts.add(stream.read_string())
     result = parts.to_complex_symbol()
   of VkArray:
+    let frozen = stream.readUint8() == 1'u8
     let count = stream.readUint32()
-    result = new_array_value()
+    result = new_array_value(@[], frozen = frozen)
     for _ in 0..<count:
       array_data(result).add(read_value(stream))
   of VkMap:

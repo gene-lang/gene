@@ -813,6 +813,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           let arr_len = array_data(target).len.int64
           if idx < 0 or idx >= arr_len:
             not_allowed("Array index out of bounds: " & $idx & " (len=" & $arr_len & ")")
+          ensure_mutable_array(target, "set item on")
           array_data(target)[idx.int] = value
         else:
           not_allowed("Cannot set member on value of type: " & $target.kind)
@@ -1301,6 +1302,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             let arr_len = array_data(target).len.int64
             if i < 0 or i >= arr_len:
               not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
+            ensure_mutable_array(target, "set item on")
             array_data(target)[i] = new_value
           of VkGene:
             let children_len = target.gene.children.len.int64
@@ -1558,9 +1560,10 @@ proc exec*(self: ptr VirtualMachine): Value =
         # Collect all elements from call base into array
         let base = self.frame.collection_bases.pop()
         let count = int(self.frame.stack_index) - int(base)
+        let frozen = inst.arg1 != 0
 
         # Create array with exact capacity
-        let arr = new_array_value()
+        let arr = new_array_value(@[], frozen = frozen)
         if count > 0:
           array_data(arr).setLen(count)
           # Copy elements from stack
