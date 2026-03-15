@@ -1,0 +1,41 @@
+# Immutable map literal tests
+# Expected: #{^a 1}
+# Expected: immutable map testsuite ok
+
+(var m #{^a 1})
+(assert ((m .immutable?) == true))
+(println m)
+
+(var set_caught false)
+(try
+  (m .set "a" 2)
+catch *
+  (set_caught = true)
+)
+(assert (set_caught == true))
+
+(var assign_caught false)
+(try
+  (m/a = 2)
+catch *
+  (assign_caught = true)
+)
+(assert (assign_caught == true))
+
+(var del_caught false)
+(try
+  (m .del "a")
+catch *
+  (del_caught = true)
+)
+(assert (del_caught == true))
+
+(var clear_caught false)
+(try
+  (m .clear)
+catch *
+  (clear_caught = true)
+)
+(assert (clear_caught == true))
+
+(println "immutable map testsuite ok")

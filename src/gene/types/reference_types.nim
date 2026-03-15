@@ -207,6 +207,7 @@ type
 
   MapObj* = object
     ref_count*: int
+    frozen*: bool
     map*: Table[Key, Value]
 
   InstanceObj* = object

@@ -663,7 +663,7 @@ proc serialize*(self: Serialization, value: Value): Value =
       array_data(arr_val).add(self.serialize(item))
     return arr_val
   of VkMap:
-    let map = new_map_value()
+    let map = new_map_value(map_is_frozen(value))
     map_data(map) = initTable[Key, Value]()
     for k, v in map_data(value):
       map_data(map)[k] = self.serialize(v)
@@ -921,7 +921,7 @@ proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.} =
     for item in array_data(current):
       array_data(result).add(materialize_lazy_tree_deep(item))
   of VkMap:
-    result = new_map_value()
+    result = new_map_value(map_is_frozen(current))
     for k, v in map_data(current):
       map_data(result)[k] = materialize_lazy_tree_deep(v)
   of VkGene:
@@ -1421,7 +1421,7 @@ proc value_to_gene_str(self: Value): string =
       result &= value_to_gene_str(v)
     result &= "]"
   of VkMap:
-    result = "{"
+    result = if map_is_frozen(self): "#{" else: "{"
     var first = true
     for k, v in map_data(self):
       if not first:
@@ -1579,7 +1579,7 @@ proc eval_in_caller_context(vm: ptr VirtualMachine, expr: Value, caller_frame: F
     for item in array_data(expr):
       array_data(result).add(eval_in_caller_context(vm, item, caller_frame))
   of VkMap:
-    result = new_map_value()
+    result = new_map_value(map_is_frozen(expr))
     for k, v in map_data(expr):
       map_data(result)[k] = eval_in_caller_context(vm, v, caller_frame)
   of VkGene:

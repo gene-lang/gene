@@ -939,10 +939,21 @@ proc init_collection_classes*(object_class: Class) =
       not_allowed("Map.set key must be a string or symbol")
 
     let value = get_positional_arg(args, 2, has_keyword_args)
+    ensure_mutable_map(map, "set item on")
     map_data(map)[key] = value
     return map
 
   map_class.def_native_method("set", vm_map_set)
+
+  proc vm_map_immutable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.immutable? requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("immutable? must be called on a map")
+    map_is_frozen(map_val).to_value()
+
+  map_class.def_native_method("immutable?", vm_map_immutable, @[], App.app.bool_class)
 
   map_class.def_native_method("contains", vm_map_contains)
   map_class.def_native_method("has", vm_map_contains, @[("key", NIL)], App.app.bool_class)
@@ -1112,6 +1123,7 @@ proc init_collection_classes*(object_class: Class) =
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
       not_allowed("del must be called on a map")
+    ensure_mutable_map(map_val, "delete from")
     var last_removed = NIL
     for i in 1..<pos_count:
       let key_val = get_positional_arg(args, i, has_keyword_args)
@@ -1134,6 +1146,7 @@ proc init_collection_classes*(object_class: Class) =
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
       not_allowed("merge must be called on a map")
+    ensure_mutable_map(map_val, "merge into")
     let other = get_positional_arg(args, 1, has_keyword_args)
     if other.kind == VkMap:
       for key, value in map_data(other):
@@ -1171,6 +1184,7 @@ proc init_collection_classes*(object_class: Class) =
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
       not_allowed("clear must be called on a map")
+    ensure_mutable_map(map_val, "clear")
     map_data(map_val).clear()
     map_val
 

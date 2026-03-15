@@ -1038,6 +1038,11 @@ proc read_map(self: var Parser): Value {.gcsafe.} =
   map_data(r) = self.read_map(MkMap)
   result = r
 
+proc read_frozen_map(self: var Parser): Value {.gcsafe.} =
+  let r = new_frozen_map_value()
+  map_data(r) = self.read_map(MkMap)
+  result = r
+
 proc read_array(self: var Parser): Value {.gcsafe.} =
   var r = new_array_value()
   array_data(r) = self.read_delimited_list(']', true).list
@@ -1243,6 +1248,7 @@ proc init_macro_array() =
 
 proc init_dispatch_macro_array() =
   dispatch_macros['['] = read_frozen_array
+  dispatch_macros['{'] = read_frozen_map
   dispatch_macros['/'] = read_regex
   dispatch_macros['@'] = read_decorator
   dispatch_macros['"'] = read_string_interpolation

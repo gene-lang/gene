@@ -342,7 +342,7 @@ proc eval_comptime_expr(expr: Value, env: var ComptimeEnv): ComptimeResult =
       array_data(out_val).add(r.value)
     result.value = out_val
   of VkMap:
-    let out_val = new_map_value()
+    let out_val = new_map_value(map_is_frozen(expr))
     for k, v in map_data(expr):
       let r = eval_comptime_expr(v, env)
       merge_emitted(result.emitted, r.emitted)

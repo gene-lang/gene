@@ -260,7 +260,7 @@ proc render_template(self: ptr VirtualMachine, tpl: Value): Value =
 
     of VkArray:
       # Recursively render array elements
-      var new_arr = new_array_value()
+      var new_arr = new_array_value(@[], frozen = array_is_frozen(tpl))
       for item in array_data(tpl):
         let rendered = self.render_template(item)
         # Skip NIL values that come from %_ (unquote discard)
@@ -272,7 +272,7 @@ proc render_template(self: ptr VirtualMachine, tpl: Value): Value =
 
     of VkMap:
       # Recursively render map values
-      let new_map = new_map_value()
+      let new_map = new_map_value(map_is_frozen(tpl))
       for k, v in map_data(tpl):
         map_data(new_map)[k] = self.render_template(v)
       return new_map

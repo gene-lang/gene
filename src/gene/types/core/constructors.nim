@@ -189,21 +189,26 @@ proc new_set_value*(): Value =
 
 #################### Map #########################
 
-proc new_map_value*(): Value =
+proc new_map_value_impl(map: Table[Key, Value], frozen: bool): Value {.inline.} =
   let r = cast[ptr MapObj](alloc0(sizeof(MapObj)))
   r.ref_count = 1
-  r.map = initTable[Key, Value]()
-  let ptr_addr = cast[uint64](r)
-  assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Map pointer too large for NaN boxing"
-  result = cast[Value](MAP_TAG or ptr_addr)
-
-proc new_map_value*(map: Table[Key, Value]): Value =
-  let r = cast[ptr MapObj](alloc0(sizeof(MapObj)))
-  r.ref_count = 1
+  r.frozen = frozen
   r.map = map
   let ptr_addr = cast[uint64](r)
   assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Map pointer too large for NaN boxing"
   result = cast[Value](MAP_TAG or ptr_addr)
+
+proc new_map_value*(frozen = false): Value =
+  new_map_value_impl(initTable[Key, Value](), frozen)
+
+proc new_map_value*(map: Table[Key, Value], frozen = false): Value =
+  new_map_value_impl(map, frozen)
+
+proc new_frozen_map_value*(): Value =
+  new_map_value_impl(initTable[Key, Value](), true)
+
+proc new_frozen_map_value*(map: Table[Key, Value]): Value =
+  new_map_value_impl(map, true)
 
 #################### Instance ####################
 

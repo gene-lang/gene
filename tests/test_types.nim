@@ -86,3 +86,9 @@ test "Array":
   let a = new_array_value(1)
   check a[0] == 1
   check a[1] == NIL
+
+test "Set display is unsupported":
+  let s = new_set_value()
+  check s.kind == VkSet
+  check s.str_no_quotes() == "unsupported"
+  check $s == "unsupported"

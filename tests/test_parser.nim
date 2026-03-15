@@ -177,6 +177,29 @@ test_parser "#[1 2 3 4 5 6 7 8 9 10]", proc(r: Value) =
 
 test_parser_error "#[1 2"
 
+test_parser "#{}", proc(r: Value) =
+  check r.kind == VkMap
+  check map_data(r).len == 0
+  check map_is_frozen(r)
+
+test_parser "#{^a 1 ^b true}", proc(r: Value) =
+  check r.kind == VkMap
+  check map_data(r).len == 2
+  check map_data(r)["a".to_key()] == 1.to_value()
+  check map_data(r)["b".to_key()] == TRUE
+  check map_is_frozen(r)
+
+test_parser "#{^outer #{^inner 1}}", proc(r: Value) =
+  check r.kind == VkMap
+  check map_is_frozen(r)
+  let inner = map_data(r)["outer".to_key()]
+  check inner.kind == VkMap
+  check map_is_frozen(inner)
+  check map_data(inner)["inner".to_key()] == 1.to_value()
+
+test_parser_error "#{1 2}"
+test_parser_error "#{^a 1"
+
 test_parser ",a", to_symbol_value("a")
 test_parser "a,", to_symbol_value("a")
 

@@ -1116,10 +1116,21 @@ proc init_collection_classes(object_class: Class) =
       not_allowed("Map.set key must be a string or symbol")
 
     let value = get_positional_arg(args, 2, has_keyword_args)
+    ensure_mutable_map(map, "set item on")
     map_data(map)[key] = value
     return map
 
   map_class.def_native_method("set", vm_map_set)
+  
+  proc vm_map_immutable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Map.immutable? requires self")
+    let map_val = get_positional_arg(args, 0, has_keyword_args)
+    if map_val.kind != VkMap:
+      not_allowed("immutable? must be called on a map")
+    map_is_frozen(map_val).to_value()
+
+  map_class.def_native_method("immutable?", vm_map_immutable)
 
   map_class.def_native_method("contains", vm_map_contains)
 

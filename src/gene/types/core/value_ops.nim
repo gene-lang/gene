@@ -155,6 +155,14 @@ proc map_ptr*(v: Value): ptr MapObj {.inline.} =
 template map_data*(v: Value): var Table[Key, Value] =
   map_ptr(v).map
 
+proc map_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
+  let u = cast[uint64](v)
+  ((u and 0xFFFF_0000_0000_0000u64) == MAP_TAG) and cast[ptr MapObj](u and PAYLOAD_MASK).frozen
+
+proc ensure_mutable_map*(v: Value, op_name = "mutate"): void {.inline.} =
+  if map_is_frozen(v):
+    not_allowed("Cannot " & op_name & " immutable map")
+
 proc instance_ptr*(v: Value): ptr InstanceObj {.inline.} =
   let u = cast[uint64](v)
   when defined(release):
@@ -474,16 +482,9 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
           result &= v.str_no_quotes()
         result &= "]"
       of VkSet:
-        result = "#{"
-        var first = true
-        for v in self.ref.set:
-          if not first:
-            result &= " "
-          result &= v.str_no_quotes()
-          first = false
-        result &= "}"
+        result = "unsupported"
       of VkMap:
-        result = "{"
+        result = if map_is_frozen(self): "#{" else: "{"
         var first = true
         for k, v in map_data(self):
           if not first:
@@ -561,16 +562,9 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result &= $v
         result &= "]"
       of VkSet:
-        result = "#{"
-        var first = true
-        for v in self.ref.set:
-          if not first:
-            result &= " "
-          result &= $v
-          first = false
-        result &= "}"
+        result = "unsupported"
       of VkMap:
-        result = "{"
+        result = if map_is_frozen(self): "#{" else: "{"
         var first = true
         for k, v in map_data(self):
           if not first:

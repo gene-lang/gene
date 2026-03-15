@@ -29,6 +29,18 @@ test_serdes """
   {^a 1}
 """, new_map_value({"a".to_key(): new_gene_int(1)}.to_table())
 
+test "Serdes: frozen maps preserve immutable flag":
+  init_all()
+  init_serdes()
+  let value = VM.exec("#{^a 1}", "serdes_frozen_map_source")
+  check value.kind == VkMap
+  check map_is_frozen(value)
+  let serialized = serialize(value).to_s()
+  let roundtripped = deserialize(serialized)
+  check roundtripped.kind == VkMap
+  check map_is_frozen(roundtripped)
+  check map_data(roundtripped)["a".to_key()] == 1.to_value()
+
 test_serdes """
   `(a ^a 2 3 4)
 """, proc(r: Value) =

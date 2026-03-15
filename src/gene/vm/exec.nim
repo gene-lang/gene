@@ -737,6 +737,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             let symbol_name = get_symbol(symbol_index.int)
             not_allowed("Cannot set member '" & symbol_name & "' on nil (namespace or object doesn't exist)")
           of VkMap:
+            ensure_mutable_map(target, "set item on")
             map_data(target)[name] = value
           of VkGene:
             target.gene.props[name] = value
@@ -785,6 +786,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               "".to_key()
           case target.kind:
             of VkMap:
+              ensure_mutable_map(target, "set item on")
               map_data(target)[key] = value
             of VkNamespace:
               target.ref.ns[key] = value
@@ -1632,7 +1634,9 @@ proc exec*(self: ptr VirtualMachine): Value =
           else:
             not_allowed("... can only spread maps in map context, got " & $value.kind)
       of IkMapEnd:
-        discard
+        let current = self.frame.current()
+        if current.kind == VkMap:
+          map_ptr(current).frozen = inst.arg1 != 0
 
       of IkGeneStart:
         self.frame.push(new_gene_value())

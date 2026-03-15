@@ -80,7 +80,7 @@ proc compile_map(self: Compiler, input: Value) =
       # Normal key-value pair
       self.compile(v)
       self.emit(Instruction(kind: IkMapSetProp, arg0: k))
-  self.emit(Instruction(kind: IkMapEnd))
+  self.emit(Instruction(kind: IkMapEnd, arg1: if map_is_frozen(input): 1 else: 0))
 
 proc compile_range(self: Compiler, gene: ptr Gene) =
   # (range start end) or (range start end step)
