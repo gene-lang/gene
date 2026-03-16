@@ -111,6 +111,8 @@ Not user-facing. The runtime may fuse chained transforms (`map → filter → ta
 ## Examples
 
 ```gene
+# These examples are for demo only. The final syntax is not defined yet.
+
 # Sum of first 100 squares
 (-> (stream/range 1)
     (stream/map (fn [x] (* x x)))

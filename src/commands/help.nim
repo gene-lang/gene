@@ -23,6 +23,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   output &= "  parse    Parse Gene code and output AST\n"
   output &= "  compile  Compile Gene code and output bytecode\n"
   output &= "  gir      Show instructions from a GIR file\n"
+  output &= "  view     Browse a Gene file in a terminal viewer\n"
   output &= "  deps     Manage package dependencies\n"
   output &= "  lsp      Start Language Server Protocol server\n"
   output &= "  run-examples  Run function examples declared in source\n"
@@ -35,6 +36,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   output &= "  gene format file.gene   # Same as gene fmt\n"
   output &= "  gene repl               # Start interactive mode\n"
   output &= "  gene parse file.gene    # Parse and show AST\n"
+  output &= "  gene view log.gene      # Browse a large Gene file interactively\n"
   output &= "  gene deps install       # Install dependencies\n"
   output &= "  gene run-examples file.gene  # Run ^examples in a file\n"
   
