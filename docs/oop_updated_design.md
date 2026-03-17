@@ -268,6 +268,7 @@ This means `Nil < Object` could define `on_method_missing` at the Nil level with
 - Metaclasses / subclassing Class — use macros instead
 - Namespace members on classes — belong in module system
 - AOP on the class model — use functions/macros/decorators
+- Pseudo-macros in OOP (`ctor!`, `method!`) — the `!` suffix and `$caller_eval` are powerful for standalone functions, but combining them with inheritance, `super`, dynamic dispatch, and `on_method_missing` creates too much complexity. If macro-like behavior is needed at the class level, wrap it in a standalone `fn!` that constructs or manipulates objects.
 
 ### Deferred
 - `on_method_missing` naming (`fallback`?) — revisit after more usage
