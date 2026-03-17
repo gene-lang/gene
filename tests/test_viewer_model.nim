@@ -2,6 +2,7 @@ import os, strutils, unittest
 
 import gene/viewer/app
 import gene/viewer/curses_backend
+import gene/viewer/editor
 import gene/viewer/model
 
 suite "Terminal Gene Viewer Model":
@@ -143,3 +144,26 @@ suite "Terminal Gene Viewer Model":
     check state.handle_key(VkPageUp, 5)
     check state.selected_path() == "/5"
     check state.current_frame().scroll == 5
+
+  test "selected location tracks the focused node start offset":
+    let source = "(root\n  ^meta {^name \"demo\"}\n  [10 20]\n)\n"
+    let doc = open_viewer_document_from_source(source, "location.gene")
+    let state = new_viewer_state(doc)
+
+    check state.selected_location() == ViewerSourceLocation(line: 1, column: 2)
+
+    state.move_selection(2, 10)
+    check state.selected_path() == "/0"
+    check state.selected_location() == ViewerSourceLocation(line: 3, column: 3)
+
+  test "editor command parsing and launch args preserve editor flags":
+    let editor = parse_editor_command("nvim -u NONE")
+    check editor.command == "nvim"
+    check editor.args == @["-u", "NONE"]
+    check editor_launch_args(editor, "tmp/sample.gene", 12, 7) ==
+      @["-u", "NONE", "+call cursor(12,7)", "tmp/sample.gene"]
+
+  test "generic editors open the file without vim cursor commands":
+    let editor = EditorCommand(command: "nano", args: @["--view"])
+    check editor_launch_args(editor, "tmp/sample.gene", 4, 2) ==
+      @["--view", "tmp/sample.gene"]

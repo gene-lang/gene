@@ -7,6 +7,7 @@ suite "View CLI":
     let result = view_command.handle("view", @["--help"])
     check result.success
     check result.output.contains("Usage: gene view <file>")
+    check result.output.contains("F2")
     check result.output.contains("F5")
 
   test "view rejects missing file":

@@ -35,6 +35,10 @@ type
     stop*: int
     text*: string
 
+  ViewerSourceLocation* = object
+    line*: int
+    column*: int
+
   ViewerDocument* = ref object
     file_path*: string
     source*: string
@@ -74,6 +78,7 @@ proc selected_entry*(state: ViewerState): ptr ViewerEntry
 proc selected_path_segments*(state: ViewerState): seq[ViewerPathSegment]
 proc selected_path*(state: ViewerState): string
 proc current_summary*(state: ViewerState): string
+proc selected_location*(state: ViewerState): ViewerSourceLocation
 proc classify_node*(node: ViewerNode): ViewerColorKind
 proc classify_entry*(entry: ViewerEntry): ViewerColorKind
 proc current_color*(state: ViewerState): ViewerColorKind
@@ -659,6 +664,39 @@ proc current_summary*(state: ViewerState): string =
   if selected != nil:
     return selected.summary
   collapse_preview(state.current_frame().node.span_text())
+
+proc location_for_offset(source: string, offset: int): ViewerSourceLocation =
+  let stop_at = max_int(0, min_int(source.len, offset))
+  result = ViewerSourceLocation(line: 1, column: 1)
+  var pos = 0
+  while pos < stop_at:
+    case source[pos]
+    of '\n':
+      inc(result.line)
+      result.column = 1
+      inc(pos)
+    of '\r':
+      inc(result.line)
+      result.column = 1
+      if pos + 1 < stop_at and source[pos + 1] == '\n':
+        pos += 2
+      else:
+        inc(pos)
+    else:
+      inc(result.column)
+      inc(pos)
+
+proc selected_location*(state: ViewerState): ViewerSourceLocation =
+  let selected = state.selected_entry()
+  let node =
+    if selected != nil:
+      selected[].node
+    else:
+      state.current_frame().node
+
+  if node.span.synthetic:
+    return ViewerSourceLocation(line: 1, column: 1)
+  location_for_offset(state.doc.source, node.span.start)
 
 proc classify_node*(node: ViewerNode): ViewerColorKind =
   case node.kind

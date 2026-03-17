@@ -2,8 +2,9 @@ import strutils
 
 import ./model
 import ./curses_backend
+import ./editor
 
-const FooterLegend = "F1 Help  F5 Reload  F10 Quit"
+const FooterLegend = "F1 Help  F2 Edit  F5 Reload  F10 Quit"
 
 func entry_is_container(entry: ViewerEntry): bool =
   entry.node.kind in {VnkSequence, VnkArray, VnkMap, VnkGene}
@@ -42,6 +43,7 @@ proc draw_help(height, width: int) =
     "Page Up/Down: move one screen",
     "Arrow Right or Enter: enter selected container",
     "Arrow Left: return to parent container",
+    "F2: open file in external editor",
     "F5: reload file from disk",
     "F10: quit viewer",
     "? or F1: toggle this help"
@@ -92,6 +94,32 @@ proc render(state: ViewerState) =
   draw_footer(state, height, width)
   present()
 
+proc edit_current(state: ViewerState, session: var CursesSession) =
+  let location = state.selected_location()
+  close_session(session)
+
+  var exit_code = 0
+  var launch_error = ""
+  try:
+    exit_code = launch_external_editor(state.doc.file_path, location.line, location.column)
+  except CatchableError as e:
+    launch_error = e.msg
+
+  session = open_session()
+
+  if launch_error.len > 0:
+    state.status = "edit failed: " & launch_error
+    return
+
+  try:
+    state.reload()
+    if exit_code == 0:
+      state.status = "edited and reloaded"
+    else:
+      state.status = "editor exited with status " & $exit_code & "; reloaded"
+  except CatchableError as e:
+    state.status = "reload failed: " & e.msg
+
 proc handle_key*(state: ViewerState, key: ViewerKey, body_height: int): bool =
   case key
   of VkUp:
@@ -109,6 +137,8 @@ proc handle_key*(state: ViewerState, key: ViewerKey, body_height: int): bool =
   of VkF1, VkHelp:
     state.show_help = not state.show_help
     state.status = ""
+  of VkF2:
+    discard
   of VkF5:
     state.reload()
   of VkF10, VkQuit:
@@ -125,6 +155,9 @@ proc run_viewer*(doc: ViewerDocument) =
   let state = new_viewer_state(doc)
   render(state)
   while true:
-    if not state.handle_key(read_key(), max(1, terminal_height() - 5)):
+    let key = read_key()
+    if key == VkF2:
+      edit_current(state, session)
+    elif not state.handle_key(key, max(1, terminal_height() - 5)):
       break
     render(state)

@@ -27,6 +27,7 @@ type
     VkRight
     VkEnter
     VkF1
+    VkF2
     VkF5
     VkF10
     VkResize
@@ -210,6 +211,8 @@ proc read_key*(): ViewerKey =
     VkResize
   of NcKeyF0 + 1:
     VkF1
+  of NcKeyF0 + 2:
+    VkF2
   of NcKeyF0 + 5:
     VkF5
   of NcKeyF0 + 10:

@@ -16,6 +16,7 @@ Navigation:
   Right arrow or Enter  Enter selected container
   Left arrow            Return to parent container
   F1                    Toggle help
+  F2                    Open file in external editor
   F5                    Reload file from disk
   F10                   Quit viewer
 
