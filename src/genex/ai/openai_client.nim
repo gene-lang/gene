@@ -113,10 +113,14 @@ proc cloneConfigWithBaseUrl(config: OpenAIConfig, base_url: string): OpenAIConfi
 # Config building with precedence: options > env > defaults
 proc buildOpenAIConfig*(options: JsonNode = newJNull()): OpenAIConfig =
   let opts = if options.kind != JNull: options else: %*{}
+  let has_api_key = opts.hasKey("api_key")
+  let has_auth_token = opts.hasKey("auth_token")
 
   result = OpenAIConfig(
-    api_key: if opts.hasKey("api_key"): opts["api_key"].getStr(getEnvVar("OPENAI_API_KEY")) else: getEnvVar("OPENAI_API_KEY"),
-    auth_token: if opts.hasKey("auth_token"): opts["auth_token"].getStr(getEnvVar("OPENAI_AUTH_TOKEN", getEnvVar("OPENAI_OAUTH_TOKEN"))) else: getEnvVar("OPENAI_AUTH_TOKEN", getEnvVar("OPENAI_OAUTH_TOKEN")),
+    api_key: if has_api_key: opts["api_key"].getStr(getEnvVar("OPENAI_API_KEY")) else: getEnvVar("OPENAI_API_KEY"),
+    auth_token: if has_auth_token: opts["auth_token"].getStr(getEnvVar("OPENAI_AUTH_TOKEN", getEnvVar("OPENAI_OAUTH_TOKEN")))
+                elif has_api_key: ""
+                else: getEnvVar("OPENAI_AUTH_TOKEN", getEnvVar("OPENAI_OAUTH_TOKEN")),
     account_id: if opts.hasKey("account_id"): opts["account_id"].getStr(getEnvVar("OPENAI_ACCOUNT_ID", getEnvVar("CHATGPT_ACCOUNT_ID"))) else: getEnvVar("OPENAI_ACCOUNT_ID", getEnvVar("CHATGPT_ACCOUNT_ID")),
     base_url: if opts.hasKey("base_url"): opts["base_url"].getStr(getEnvVar("OPENAI_BASE_URL", DEFAULT_BASE_URL)) else: getEnvVar("OPENAI_BASE_URL", DEFAULT_BASE_URL),
     model: if opts.hasKey("model"): opts["model"].getStr("gpt-3.5-turbo") else: "gpt-3.5-turbo",
@@ -166,17 +170,19 @@ proc to_http_method(http_method: string): HttpMethod =
   of "OPTIONS": HttpOptions
   else: HttpPost
 
-proc request_async(url: string, http_method: HttpMethod, body: string, headers: HttpHeaders): Future[AsyncResponse] {.async.} =
+proc request_async(url: string, http_method: HttpMethod, body: string, headers: HttpHeaders): Future[tuple[client: AsyncHttpClient, response: AsyncResponse]] {.async.} =
   let ai_debug = getEnvVar("GENE_AI_DEBUG", "") == "1"
   if ai_debug:
     echo "[genex/ai] request_async start ", $http_method, " ", url
-  var client = newAsyncHttpClient()
+  let client = newAsyncHttpClient()
   try:
-    return await client.request(url, httpMethod = http_method, body = body, headers = headers)
-  finally:
+    let response = await client.request(url, httpMethod = http_method, body = body, headers = headers)
+    return (client: client, response: response)
+  except:
     if ai_debug:
       echo "[genex/ai] request_async close client"
     client.close()
+    raise
 
 proc extractRequestId(headers: HttpHeaders): string =
   for key in ["x-request-id", "x-oai-request-id"]:
@@ -274,23 +280,31 @@ proc performRequest*(config: OpenAIConfig, httpMethod: string, endpoint: string,
         status: -1,
         provider_error: "timeout"
       )
-    let response = request_future.read()
-    if ai_debug:
-      echo "[genex/ai] response received status=", response.status
+    let request_result = request_future.read()
+    let client = request_result.client
+    let response = request_result.response
+    var response_body = ""
+    try:
+      if ai_debug:
+        echo "[genex/ai] response received status=", response.status
 
-    let body_future = response.body()
-    if ai_debug:
-      echo "[genex/ai] waiting body future"
-    let body_done = waitFor(body_future.withTimeout(config.timeout_ms))
-    if ai_debug:
-      echo "[genex/ai] body_done=", $body_done
-    if not body_done:
-      raise OpenAIError(
-        msg: "Network error: response body timed out after " & $config.timeout_ms & "ms",
-        status: -1,
-        provider_error: "timeout"
-      )
-    let response_body = body_future.read()
+      let body_future = response.body()
+      if ai_debug:
+        echo "[genex/ai] waiting body future"
+      let body_done = waitFor(body_future.withTimeout(config.timeout_ms))
+      if ai_debug:
+        echo "[genex/ai] body_done=", $body_done
+      if not body_done:
+        raise OpenAIError(
+          msg: "Network error: response body timed out after " & $config.timeout_ms & "ms",
+          status: -1,
+          provider_error: "timeout"
+        )
+      response_body = body_future.read()
+    finally:
+      if ai_debug:
+        echo "[genex/ai] request_async close client"
+      client.close()
 
     when defined(debug):
       echo "DEBUG: Response status: ", response.status

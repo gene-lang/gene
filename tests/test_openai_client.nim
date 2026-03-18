@@ -38,6 +38,24 @@ suite "OpenAI Client":
       else:
         delEnv("OPENAI_AUTH_TOKEN")
 
+  test "explicit api key does not inherit oauth token from env":
+    let had_auth = existsEnv("OPENAI_AUTH_TOKEN")
+    let old_auth = getEnv("OPENAI_AUTH_TOKEN")
+    try:
+      putEnv("OPENAI_AUTH_TOKEN", "oauth-from-env")
+      let cfg = buildOpenAIConfig(%*{
+        "api_key": "sk-explicit-test"
+      })
+      check not isCodexOAuth(cfg)
+      check cfg.auth_token == ""
+      check cfg.headers["Authorization"] == "Bearer sk-explicit-test"
+      check not cfg.headers.hasKey("ChatGPT-Account-Id")
+    finally:
+      if had_auth:
+        putEnv("OPENAI_AUTH_TOKEN", old_auth)
+      else:
+        delEnv("OPENAI_AUTH_TOKEN")
+
   test "codex payload uses responses contract":
     let cfg = buildOpenAIConfig(%*{
       "auth_token": "oauth-token",

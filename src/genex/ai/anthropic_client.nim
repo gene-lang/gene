@@ -207,12 +207,14 @@ proc to_http_method(http_method: string): HttpMethod =
   of "OPTIONS": HttpOptions
   else: HttpPost
 
-proc request_async(url: string, http_method: HttpMethod, body: string, headers: HttpHeaders): Future[AsyncResponse] {.async.} =
-  var client = newAsyncHttpClient()
+proc request_async(url: string, http_method: HttpMethod, body: string, headers: HttpHeaders): Future[tuple[client: AsyncHttpClient, response: AsyncResponse]] {.async.} =
+  let client = newAsyncHttpClient()
   try:
-    return await client.request(url, httpMethod = http_method, body = body, headers = headers)
-  finally:
+    let response = await client.request(url, httpMethod = http_method, body = body, headers = headers)
+    return (client: client, response: response)
+  except:
     client.close()
+    raise
 
 proc performAnthropicRequest*(
   config: AnthropicConfig,
@@ -239,16 +241,22 @@ proc performAnthropicRequest*(
         provider_error: "timeout"
       )
 
-    let response = request_future.read()
-    let body_future = response.body()
-    let body_done = waitFor(body_future.withTimeout(config.timeout_ms))
-    if not body_done:
-      raise AnthropicError(
-        msg: "Network error: response body timed out after " & $config.timeout_ms & "ms",
-        status: -1,
-        provider_error: "timeout"
-      )
-    let response_body = body_future.read()
+    let request_result = request_future.read()
+    let client = request_result.client
+    let response = request_result.response
+    var response_body = ""
+    try:
+      let body_future = response.body()
+      let body_done = waitFor(body_future.withTimeout(config.timeout_ms))
+      if not body_done:
+        raise AnthropicError(
+          msg: "Network error: response body timed out after " & $config.timeout_ms & "ms",
+          status: -1,
+          provider_error: "timeout"
+        )
+      response_body = body_future.read()
+    finally:
+      client.close()
 
     let code_text = response.status.split()[0]
     let status_code = try: parseInt(code_text) except ValueError: -1

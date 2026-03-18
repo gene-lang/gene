@@ -2,7 +2,7 @@
 
 (import MEMORY_ROOT MEMORY_MARKDOWN_PATH MEMORY_INDEX_PATH from "config")
 (import file_exists? from "home_store")
-(import memory_read memory_write memory_search from "memory_store")
+(import memory_read memory_write memory_search sort_results_by_score cosine_similarity from "memory_store")
 
 (assert (MEMORY_ROOT == #"#{($env/GENECLAW_HOME || "")}/memory"))
 
@@ -41,5 +41,20 @@
 (var search_result (memory_search "concise" 3 0.3))
 (assert (search_result/ok == false))
 (assert (search_result/error == "memory_search unavailable: OpenAI credentials not configured"))
+
+(var sorted (sort_results_by_score [
+  {^heading "low" ^score 0.2}
+  {^heading "high" ^score 0.9}
+  {^heading "mid" ^score 0.5}
+]))
+(var first_sorted (sorted .get 0))
+(var second_sorted (sorted .get 1))
+(var third_sorted (sorted .get 2))
+(assert (first_sorted/heading == "high"))
+(assert (second_sorted/heading == "mid"))
+(assert (third_sorted/heading == "low"))
+
+(assert ((cosine_similarity [1.0 0.0] [1.0 0.0]) > 0.99))
+(assert ((cosine_similarity [1.0 0.0] [0.0 1.0]) < 0.01))
 
 (println "ok")
