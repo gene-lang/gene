@@ -1,0 +1,45 @@
+#!/usr/bin/env gene run
+
+(import MEMORY_ROOT MEMORY_MARKDOWN_PATH MEMORY_INDEX_PATH from "config")
+(import file_exists? from "home_store")
+(import memory_read memory_write memory_search from "memory_store")
+
+(assert (MEMORY_ROOT == #"#{($env/GENECLAW_HOME || "")}/memory"))
+
+(var full_initial (memory_read))
+(assert (full_initial/ok == true))
+(assert ((((full_initial/content || "") .to_s) .length) == 0))
+
+(var first_write (memory_write "User Preferences" "- Prefers concise responses" "append"))
+(assert (first_write/ok == true))
+(assert (first_write/reindexed == false))
+(assert ((gene/io/read MEMORY_MARKDOWN_PATH) == "## User Preferences\n- Prefers concise responses"))
+
+(var section_read (memory_read "User Preferences"))
+(assert (section_read/ok == true))
+(assert (section_read/content == "## User Preferences\n- Prefers concise responses"))
+
+(var second_write (memory_write "User Preferences" "- Likes explicit file references" "append"))
+(assert (second_write/ok == true))
+(assert ((gene/io/read MEMORY_MARKDOWN_PATH) == "## User Preferences\n- Prefers concise responses\n- Likes explicit file references"))
+
+(var replace_write (memory_write "User Preferences" "- Prefers concise responses\n- Wants direct answers" "replace"))
+(assert (replace_write/ok == true))
+(assert ((gene/io/read MEMORY_MARKDOWN_PATH) == "## User Preferences\n- Prefers concise responses\n- Wants direct answers"))
+
+(var create_existing (memory_write "User Preferences" "- duplicate" "create"))
+(assert (create_existing/ok == false))
+(assert (create_existing/error == "Section already exists: User Preferences"))
+
+(var full_after (memory_read))
+(assert (full_after/ok == true))
+(assert (full_after/content == "## User Preferences\n- Prefers concise responses\n- Wants direct answers"))
+
+(assert ((file_exists? MEMORY_MARKDOWN_PATH) == true))
+(assert ((file_exists? #"#{MEMORY_INDEX_PATH}.gene") == false))
+
+(var search_result (memory_search "concise" 3 0.3))
+(assert (search_result/ok == false))
+(assert (search_result/error == "memory_search unavailable: OpenAI credentials not configured"))
+
+(println "ok")

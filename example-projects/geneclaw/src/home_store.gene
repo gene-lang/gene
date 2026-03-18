@@ -8,6 +8,9 @@
 ($ns/HOME_CONFIG_PATH = #"#{GENECLAW_HOME}/config")
 ($ns/HOME_STATE_PATH = #"#{GENECLAW_HOME}/state")
 ($ns/STATE_SYSTEM_PROMPT_PATH = #"#{HOME_STATE_PATH}/system_prompt")
+($ns/MEMORY_ROOT = #"#{GENECLAW_HOME}/memory")
+($ns/MEMORY_MARKDOWN_PATH = #"#{MEMORY_ROOT}/MEMORY.md")
+($ns/MEMORY_INDEX_PATH = #"#{MEMORY_ROOT}/.index")
 ($ns/SESSIONS_PATH = #"#{GENECLAW_HOME}/sessions")
 ($ns/SCHEDULER_PATH = #"#{GENECLAW_HOME}/scheduler")
 ($ns/JOBS_PATH = #"#{SCHEDULER_PATH}/jobs")
@@ -19,7 +22,7 @@
 ($ns/ARCHIVE_PATH = #"#{GENECLAW_HOME}/archive")
 ($ns/TMP_PATH = #"#{GENECLAW_HOME}/tmp")
 ($ns/BOOTSTRAPPED = false)
-($ns/DEFAULT_SYSTEM_PROMPT = "You are GeneClaw, a capable AI agent. You can use tools to complete tasks. After receiving a tool result, provide a natural response. For general conversation, respond normally without tool calls.")
+($ns/DEFAULT_SYSTEM_PROMPT = "You are GeneClaw, a capable AI agent. You can use tools to complete tasks. After receiving a tool result, provide a natural response. For general conversation, respond normally without tool calls. When durable facts, decisions, or preferences matter, use memory_search before answering. When something should be remembered across sessions, use memory_write. Do not ask the user to edit MEMORY.md directly.")
 
 (fn $ns/default_system_prompt []
   DEFAULT_SYSTEM_PROMPT
@@ -76,7 +79,7 @@
 )
 
 (fn ensure_home_dirs []
-  (system/shell #"mkdir -p '#{GENECLAW_HOME}' '#{HOME_STATE_PATH}' '#{SESSIONS_PATH}' '#{JOBS_PATH}' '#{RUNS_PATH}' '#{DOCUMENT_ROOT}' '#{ARTIFACT_ROOT}' '#{LOGS_PATH}' '#{ARCHIVE_PATH}' '#{TMP_PATH}'")
+  (system/shell #"mkdir -p '#{GENECLAW_HOME}' '#{HOME_STATE_PATH}' '#{MEMORY_ROOT}' '#{SESSIONS_PATH}' '#{JOBS_PATH}' '#{RUNS_PATH}' '#{DOCUMENT_ROOT}' '#{ARTIFACT_ROOT}' '#{LOGS_PATH}' '#{ARCHIVE_PATH}' '#{TMP_PATH}'")
 )
 
 (fn $ns/ensure_home_bootstrap []

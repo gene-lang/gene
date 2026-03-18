@@ -1,0 +1,682 @@
+# GeneClaw long-term memory store
+
+(import CONFIG TMP_PATH from "config")
+(import MEMORY_ROOT MEMORY_MARKDOWN_PATH MEMORY_INDEX_PATH ensure_home_bootstrap file_exists? read_record write_record_tree from "home_store")
+(import ensure_array ensure_map from "config_helpers")
+
+(var log (new genex/logging/Logger $ns))
+($ns/EMBEDDING_MODEL = "text-embedding-3-small")
+($ns/DEFAULT_SEARCH_LIMIT = 5)
+($ns/DEFAULT_SEARCH_THRESHOLD = 0.3)
+(var MEMORY_BUSY false)
+
+(fn record_value [record key fallback]
+  (if record
+    (record .get key fallback)
+  else
+    fallback
+  )
+)
+
+(fn record_text [record key fallback = ""]
+  (var value (record_value record key fallback))
+  (if (value == nil)
+    fallback
+  elif (value is String)
+    value
+  else
+    (try
+      (value .to_s)
+    catch *
+      fallback
+    )
+  )
+)
+
+(fn record_bool [record key fallback = false]
+  (var value (record_value record key fallback))
+  (if (value == nil)
+    fallback
+  elif (value is Bool)
+    value
+  else
+    fallback
+  )
+)
+
+(fn ensure_memory_root []
+  (ensure_home_bootstrap)
+  (system/shell #"mkdir -p '#{MEMORY_ROOT}'")
+)
+
+(fn ensure_memory_markdown []
+  (ensure_memory_root)
+  (if_not (file_exists? MEMORY_MARKDOWN_PATH)
+    (gene/io/write MEMORY_MARKDOWN_PATH "")
+  )
+  MEMORY_MARKDOWN_PATH
+)
+
+(fn read_memory_markdown_text []
+  (ensure_memory_markdown)
+  (try
+    (var content (gene/io/read MEMORY_MARKDOWN_PATH))
+    (if content
+      (content .to_s)
+    else
+      ""
+    )
+  catch *
+    ""
+  )
+)
+
+(fn command_available? [name]
+  (try
+    (var probe (system/shell #"command -v #{name} >/dev/null 2>&1"))
+    (probe/exit_code == 0)
+  catch *
+    false
+  )
+)
+
+(fn file_sha256 [path]
+  (var target ((path || "") .to_s))
+  (if target/.empty?
+    (return "")
+  )
+
+  (var command
+    (if (command_available? "shasum")
+      #"shasum -a 256 '#{target}' | awk '{print $1}'"
+    elif (command_available? "sha256sum")
+      #"sha256sum '#{target}' | awk '{print $1}'"
+    else
+      #"openssl dgst -sha256 '#{target}' | awk '{print $NF}'"
+    )
+  )
+
+  (try
+    (var result (system/shell command))
+    (if (result/exit_code == 0)
+      ((result/output || "") .to_s .trim)
+    else
+      ""
+    )
+  catch *
+    ""
+  )
+)
+
+(fn tmp_token []
+  #"#{gene/now/.call/.to_i}-#{(math/random_int 99999 10000)}"
+)
+
+(fn text_sha256 [text]
+  (ensure_memory_root)
+  (var tmp_path #"#{TMP_PATH}/geneclaw-memory-hash-#{(tmp_token)}.txt")
+  (try
+    (gene/io/write tmp_path ((text || "") .to_s))
+    (var digest (file_sha256 tmp_path))
+    (system/shell #"rm -f '#{tmp_path}'")
+    digest
+  catch *
+    (try
+      (system/shell #"rm -f '#{tmp_path}'")
+    catch *
+      nil
+    )
+    ""
+  )
+)
+
+(fn index_file_path []
+  #"#{MEMORY_INDEX_PATH}.gene"
+)
+
+(fn index_tmp_path []
+  #"#{MEMORY_ROOT}/.index.tmp"
+)
+
+(fn index_tmp_file_path []
+  #"#{(index_tmp_path)}.gene"
+)
+
+(fn remove_index_file []
+  (try
+    (system/shell #"rm -f '#{(index_file_path)}' '#{(index_tmp_file_path)}'")
+  catch *
+    nil
+  )
+)
+
+(fn read_index_record []
+  (var record (read_record MEMORY_INDEX_PATH))
+  (if record
+    (ensure_map record)
+  else
+    nil
+  )
+)
+
+(fn move_file [from_path to_path]
+  (var result (system/shell #"mv '#{from_path}' '#{to_path}'"))
+  (if (result/exit_code != 0)
+    (throw #"Move failed: #{(result/output || "")}")
+  )
+  true
+)
+
+(fn with_memory_lock [action]
+  (if MEMORY_BUSY
+    (return {^ok false ^error "memory busy"})
+  )
+  (MEMORY_BUSY = true)
+  (try
+    (var result (action .call))
+    (MEMORY_BUSY = false)
+    result
+  catch *
+    (MEMORY_BUSY = false)
+    (throw $ex)
+  )
+)
+
+(fn section_heading_line [section]
+  (["## " (((section || "") .to_s) .trim)] .join "")
+)
+
+(fn build_section_text [section content]
+  (var heading (section_heading_line section))
+  (var body (((content || "") .to_s) .trim))
+  (if body/.empty?
+    heading
+  else
+    #"#{heading}\n#{body}"
+  )
+)
+
+(fn append_section_text [existing content]
+  (var base ((existing || "") .to_s))
+  (var addition (((content || "") .to_s) .trim))
+  (if addition/.empty?
+    (return base)
+  )
+  (if base/.empty?
+    (return addition)
+  )
+  (if (base .ends_with "\n")
+    #"#{base}#{addition}"
+  else
+    #"#{base}\n#{addition}"
+  )
+)
+
+(fn text_equals? [left right]
+  (var normalized_left (((left || "") .to_s) .trim))
+  (var normalized_right (((right || "") .to_s) .trim))
+  (if (normalized_left/.length != normalized_right/.length)
+    (return false)
+  )
+  (if normalized_left/.empty?
+    true
+  else
+    ((normalized_left .starts_with normalized_right) && (normalized_right .starts_with normalized_left))
+  )
+)
+
+(fn chunk_markdown [text]
+  (var source ((text || "") .to_s))
+  (var lines (if source/.empty? [] else (source .split "\n")))
+  (var raw_chunks [])
+  (var preamble [])
+  (var current_heading "")
+  (var current_lines [])
+  (var seen_heading false)
+
+  (for line in lines
+    (if (line .starts_with "## ")
+      (if seen_heading
+        (raw_chunks .append {^heading current_heading ^text (current_lines .join "\n")})
+      elif preamble/.not_empty?
+        (raw_chunks .append {^heading "" ^text (preamble .join "\n")})
+      )
+      (seen_heading = true)
+      (current_heading = ((line .substr 3) .trim))
+      (current_lines = [line])
+    else
+      (if seen_heading
+        (current_lines .append line)
+      else
+        (preamble .append line)
+      )
+    )
+  )
+
+  (if seen_heading
+    (raw_chunks .append {^heading current_heading ^text (current_lines .join "\n")})
+  elif preamble/.not_empty?
+    (raw_chunks .append {^heading "" ^text (preamble .join "\n")})
+  )
+
+  (var chunks [])
+  (var offset 0)
+  (var idx 0)
+  (for chunk in raw_chunks
+    (var chunk_text (record_text chunk "text" ""))
+    (chunks .append {
+      ^id idx
+      ^heading (record_text chunk "heading" "")
+      ^text chunk_text
+      ^hash (text_sha256 chunk_text)
+      ^offset offset
+      ^length chunk_text/.length
+    })
+    (offset += chunk_text/.length)
+    (if (idx < (raw_chunks/.size - 1))
+      (offset += 1)
+    )
+    (idx += 1)
+  )
+  chunks
+)
+
+(fn join_chunks [chunks]
+  (var parts [])
+  (for chunk in (ensure_array chunks)
+    (var text (record_text chunk "text" ""))
+    (if text/.not_empty?
+      (parts .append text)
+    )
+  )
+  (parts .join "\n")
+)
+
+(fn find_section_index [chunks section]
+  (var target (((section || "") .to_s) .trim))
+  (var idx 0)
+  (for chunk in (ensure_array chunks)
+    (if (text_equals? (record_text chunk "heading" "") target)
+      (return idx)
+    )
+    (idx += 1)
+  )
+  -1
+)
+
+(fn apply_section_update [current_text section content mode]
+  (var resolved_section (((section || "") .to_s) .trim))
+  (if resolved_section/.empty?
+    (return {^ok false ^error "Missing section"})
+  )
+
+  (var resolved_mode (((mode || "append") .to_s) .trim))
+  (var chunks (chunk_markdown current_text))
+  (var section_index (find_section_index chunks resolved_section))
+
+  (if (text_equals? resolved_mode "append")
+    (if (section_index >= 0)
+      (var existing (ensure_map (chunks .get section_index)))
+      (existing/text = (append_section_text existing/text content))
+      (chunks .set section_index existing)
+    else
+      (chunks .append {^heading resolved_section ^text (build_section_text resolved_section content)})
+    )
+  elif (text_equals? resolved_mode "replace")
+    (var replacement {^heading resolved_section ^text (build_section_text resolved_section content)})
+    (if (section_index >= 0)
+      (chunks .set section_index replacement)
+    else
+      (chunks .append replacement)
+    )
+  elif (text_equals? resolved_mode "create")
+    (if (section_index >= 0)
+      (return {^ok false ^error #"Section already exists: #{resolved_section}"})
+    )
+    (chunks .append {^heading resolved_section ^text (build_section_text resolved_section content)})
+  else
+    (return {^ok false ^error #"Unsupported mode: #{resolved_mode}"})
+  )
+
+  {^ok true ^text (join_chunks chunks)}
+)
+
+(fn embedding_credentials_available? []
+  (if_not genex/ai
+    (return false)
+  )
+  ((CONFIG/llm/openai/embedding_api_key || "") .not_empty?)
+)
+
+(fn embedding_api_key []
+  ((CONFIG/llm/openai/embedding_api_key || "") .to_s)
+)
+
+(fn build_embedding_client []
+  (var client_opts {^model EMBEDDING_MODEL ^timeout_ms CONFIG/llm/openai/timeout_ms})
+  (var resolved_api_key (embedding_api_key))
+  (if resolved_api_key/.not_empty?
+    (client_opts .set "api_key" resolved_api_key)
+  )
+  (if CONFIG/llm/openai/account_id/.not_empty?
+    (client_opts .set "account_id" CONFIG/llm/openai/account_id)
+  )
+  (if CONFIG/llm/openai/base_url/.not_empty?
+    (client_opts .set "base_url" CONFIG/llm/openai/base_url)
+  )
+  (new OpenAIClient client_opts)
+)
+
+(fn embedding_error_message [response]
+  (if (response is OpenAIError)
+    (return ((response .to_s) .to_s))
+  )
+  (if_not (response is Map)
+    (return "Embedding request failed")
+  )
+  (var error_map (if (response/error is Map) response/error else nil))
+  (if error_map
+    (var message (record_text error_map "message" "Embedding request failed"))
+    (if message/.not_empty?
+      (return message)
+    )
+  )
+  (if (text_equals? ((response/type || "") .to_s) "error")
+    (return (record_text response "message" "Embedding request failed"))
+  )
+  ""
+)
+
+(fn embed_text [text]
+  (if_not (embedding_credentials_available?)
+    (return {^ok false ^error "memory_search unavailable: OpenAI credentials not configured"})
+  )
+  (var client (build_embedding_client))
+  (var response (client .embeddings {^model EMBEDDING_MODEL ^input ((text || "") .to_s) ^encoding_format "float"}))
+  (var error_message (embedding_error_message response))
+  (if error_message/.not_empty?
+    (return {^ok false ^error error_message})
+  )
+  (var data (ensure_array (if (response is Map) (response/data || []) else [])))
+  (if data/.empty?
+    (return {^ok false ^error "Embedding request returned no data"})
+  )
+  (var first (ensure_map (data .get 0)))
+  (var vector (ensure_array (first/embedding || [])))
+  (if vector/.empty?
+    (return {^ok false ^error "Embedding request returned no vector"})
+  )
+  {^ok true ^vector vector}
+)
+
+(fn build_reuse_map [index]
+  (var reuse {})
+  (var current (ensure_map (if index index else {})))
+  (if_not (text_equals? (record_text current "model" "") EMBEDDING_MODEL)
+    (return reuse)
+  )
+  (for chunk in (ensure_array (current/chunks || []))
+    (var normalized (ensure_map chunk))
+    (var hash (record_text normalized "hash" ""))
+    (var vector (ensure_array (normalized/vector || [])))
+    (if (hash/.not_empty? && vector/.not_empty?)
+      (reuse .set hash vector)
+    )
+  )
+  reuse
+)
+
+(fn build_index_for_text [text old_index = nil]
+  (var source ((text || "") .to_s))
+  (var chunks (chunk_markdown source))
+  (var reuse_vectors (build_reuse_map old_index))
+  (var indexed_chunks [])
+  (var dimensions 0)
+
+  (for chunk in chunks
+    (var normalized (ensure_map chunk))
+    (var vector (reuse_vectors .get (normalized/hash || "") nil))
+    (if (vector == nil)
+      (var embedding (embed_text normalized/text))
+      (if_not embedding/ok
+        (return embedding)
+      )
+      (vector = embedding/vector)
+    )
+    (if ((dimensions == 0) && (vector is Array))
+      (dimensions = vector/.size)
+    )
+    (indexed_chunks .append {
+      ^id normalized/id
+      ^heading (normalized/heading || "")
+      ^text (normalized/text || "")
+      ^hash (normalized/hash || "")
+      ^vector vector
+      ^offset (normalized/offset || 0)
+      ^length (normalized/length || 0)
+    })
+  )
+
+  {^ok true ^index {
+    ^file_hash (text_sha256 source)
+    ^model EMBEDDING_MODEL
+    ^dimensions dimensions
+    ^chunks indexed_chunks
+  }}
+)
+
+(fn commit_markdown_and_index [markdown_text index]
+  (ensure_memory_root)
+  (var markdown_tmp #"#{MEMORY_ROOT}/MEMORY.md.tmp")
+  (var markdown_target MEMORY_MARKDOWN_PATH)
+  (var file_hash (text_sha256 markdown_text))
+  (var reindexed false)
+  (var warning "")
+
+  (gene/io/write markdown_tmp markdown_text)
+  (move_file markdown_tmp markdown_target)
+
+  (if index
+    (try
+      (write_record_tree (index_tmp_path) index)
+      (move_file (index_tmp_file_path) (index_file_path))
+      (reindexed = true)
+    catch *
+      (warning = #"Index refresh failed: #{$ex/message}")
+      (remove_index_file)
+    )
+  else
+    (remove_index_file)
+  )
+
+  {^ok true ^file_hash file_hash ^reindexed reindexed ^warning warning}
+)
+
+(fn ensure_index_current []
+  (var markdown_text (read_memory_markdown_text))
+  (var markdown_hash (text_sha256 markdown_text))
+  (var index (read_index_record))
+  (if (index && (text_equals? (record_text index "file_hash" "") markdown_hash))
+    (return {^ok true ^index index ^rebuilt false})
+  )
+
+  (if_not (embedding_credentials_available?)
+    (return {^ok false ^error "memory_search unavailable: OpenAI credentials not configured"})
+  )
+
+  (with_memory_lock (fn []
+    (var latest_text (read_memory_markdown_text))
+    (var latest_hash (text_sha256 latest_text))
+    (var latest_index (read_index_record))
+    (if (latest_index && (text_equals? (record_text latest_index "file_hash" "") latest_hash))
+      (return {^ok true ^index latest_index ^rebuilt false})
+    )
+
+    (var built (build_index_for_text latest_text latest_index))
+    (if_not built/ok
+      (return built)
+    )
+    (var commit (commit_markdown_and_index latest_text built/index))
+    (if_not commit/ok
+      (return commit)
+    )
+    {^ok true ^index built/index ^rebuilt commit/reindexed ^warning commit/warning}
+  ))
+)
+
+(fn cosine_similarity [a b]
+  (var left (ensure_array (if a a else [])))
+  (var right (ensure_array (if b b else [])))
+  (if ((left/.size == 0) || (right/.size == 0) || (left/.size != right/.size))
+    (return 0.0)
+  )
+  (var dot 0.0)
+  (var norm_a 0.0)
+  (var norm_b 0.0)
+  (for i in (range 0 left/.size)
+    (var left_i (left .get i))
+    (var right_i (right .get i))
+    (dot = (dot + (left_i * right_i)))
+    (norm_a = (norm_a + (left_i * left_i)))
+    (norm_b = (norm_b + (right_i * right_i)))
+  )
+  (if ((norm_a == 0.0) || (norm_b == 0.0))
+    0.0
+  else
+    (dot / ((math/sqrt norm_a) * (math/sqrt norm_b)))
+  )
+)
+
+(fn sort_results_by_score [results]
+  (var items [])
+  (for item in (ensure_array results)
+    (items .append item)
+  )
+
+  (var i 0)
+  (while (i < items/.size)
+    (var best i)
+    (var j (i + 1))
+    (while (j < items/.size)
+      (var candidate ((items .get j)/score || 0.0))
+      (var current_best ((items .get best)/score || 0.0))
+      (if (candidate > current_best)
+        (best = j)
+      )
+      (j += 1)
+    )
+    (if (best != i)
+      (var tmp (items .get i))
+      (items .set i (items .get best))
+      (items .set best tmp)
+    )
+    (i += 1)
+  )
+  items
+)
+
+(fn limit_results [results limit]
+  (if (limit <= 0)
+    (return [])
+  )
+  (if (results/.size > limit)
+    (results .slice 0 limit)
+  else
+    results
+  )
+)
+
+(fn $ns/memory_read [section = nil]
+  (var markdown_text (read_memory_markdown_text))
+  (var requested (((section || "") .to_s) .trim))
+  (if requested/.empty?
+    (return {^ok true ^content markdown_text})
+  )
+
+  (var chunks (chunk_markdown markdown_text))
+  (var idx (find_section_index chunks requested))
+  (if (idx < 0)
+    (return {^ok false ^error #"Section not found: #{requested}"})
+  )
+  (var chunk (ensure_map (chunks .get idx)))
+  {^ok true ^section requested ^content (chunk/text || "")}
+)
+
+(fn $ns/memory_write [section content mode = "append"]
+  (var requested (((section || "") .to_s) .trim))
+  (if requested/.empty?
+    (return {^ok false ^error "Missing section"})
+  )
+  (var body_text (if (content == nil) "" else (content .to_s)))
+  (var resolved_mode (((mode || "append") .to_s) .trim))
+
+  (with_memory_lock (fn []
+    (var current_text (read_memory_markdown_text))
+    (var updated (apply_section_update current_text requested body_text resolved_mode))
+    (if_not updated/ok
+      (return updated)
+    )
+
+    (var built_index nil)
+    (if (embedding_credentials_available?)
+      (var build_result (build_index_for_text updated/text (read_index_record)))
+      (if build_result/ok
+        (built_index = build_result/index)
+      else
+        (log .warn #"memory_write index build skipped: #{build_result/error}")
+      )
+    )
+
+    (var committed (commit_markdown_and_index updated/text built_index))
+    (if_not committed/ok
+      (return committed)
+    )
+    {
+      ^ok true
+      ^section requested
+      ^mode resolved_mode
+      ^file_hash committed/file_hash
+      ^reindexed committed/reindexed
+      ^warning (committed/warning || "")
+    }
+  ))
+)
+
+(fn $ns/memory_search [query limit = DEFAULT_SEARCH_LIMIT threshold = DEFAULT_SEARCH_THRESHOLD]
+  (var query_text (((query || "") .to_s) .trim))
+  (if query_text/.empty?
+    (return {^ok false ^error "Missing query"})
+  )
+
+  (var markdown_text (read_memory_markdown_text))
+  (if markdown_text/.trim/.empty?
+    (return {^ok true ^results [] ^count 0})
+  )
+
+  (var ensured (ensure_index_current))
+  (if_not ensured/ok
+    (return ensured)
+  )
+
+  (var embedded_query (embed_text query_text))
+  (if_not embedded_query/ok
+    (return embedded_query)
+  )
+
+  (var results [])
+  (for chunk in (ensure_array ((ensure_map ensured/index)/chunks || []))
+    (var normalized (ensure_map chunk))
+    (var score (cosine_similarity embedded_query/vector (ensure_array (normalized/vector || []))))
+    (if (score >= threshold)
+      (results .append {
+        ^heading (normalized/heading || "")
+        ^text (normalized/text || "")
+        ^score score
+      })
+    )
+  )
+
+  (results = (sort_results_by_score results))
+  (results = (limit_results results limit))
+  {^ok true ^results results ^count results/.size ^rebuilt (record_bool ensured "rebuilt" false)}
+)

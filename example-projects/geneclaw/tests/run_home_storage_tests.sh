@@ -50,7 +50,7 @@ run_test() {
       GENECLAW_TEST_INLINE="2222" \
       ANTHROPIC_OAUTH_TOKEN="oauth-home-token" \
       "$@" \
-      "$GENE_BIN" run "$test_file"
+      "$GENE_BIN" run --no-gir-cache "$test_file"
   )
 }
 
@@ -61,3 +61,6 @@ run_test tests/test_home_storage_write.gene
 run_test tests/test_home_storage_runtime_write.gene
 run_test tests/test_home_storage_read.gene
 run_test tests/test_home_storage_runtime_read.gene
+run_test tests/test_memory_store.gene
+run_test tests/test_memory_search_oauth_only.gene OPENAI_OAUTH_TOKEN=oauth-only-token
+run_test tests/test_memory_tools.gene

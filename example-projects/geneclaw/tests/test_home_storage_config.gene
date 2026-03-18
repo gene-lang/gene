@@ -1,12 +1,13 @@
 #!/usr/bin/env gene run
 
-(import GENECLAW_HOME HOME_STATE_PATH SESSIONS_PATH JOBS_PATH RUNS_PATH LOGS_PATH ARCHIVE_PATH TMP_PATH DOCUMENT_ROOT ARTIFACT_ROOT LLM_PROVIDER OPENAI_MODEL ANTHROPIC_AUTH_TOKEN MAX_STEPS DOCUMENT_MAX_INLINE_CHARS get_public_config get_public_config_at_path from "config")
+(import GENECLAW_HOME HOME_STATE_PATH MEMORY_ROOT SESSIONS_PATH JOBS_PATH RUNS_PATH LOGS_PATH ARCHIVE_PATH TMP_PATH DOCUMENT_ROOT ARTIFACT_ROOT LLM_PROVIDER OPENAI_MODEL ANTHROPIC_AUTH_TOKEN MAX_STEPS DOCUMENT_MAX_INLINE_CHARS get_public_config get_public_config_at_path from "config")
 (import get_system_prompt from "workspace_state")
 
 (var expected_home ($env .get "GENECLAW_HOME" ""))
 (var public_config (get_public_config))
 (var provider_result (get_public_config_at_path "llm/provider"))
 (var state_root_result (get_public_config_at_path "home/state_root"))
+(var memory_root_result (get_public_config_at_path "home/memory_root"))
 (var sessions_root_result (get_public_config_at_path "home/sessions_root"))
 (var tmp_root_result (get_public_config_at_path "home/tmp_root"))
 (var uploaded_root_result (get_public_config_at_path "assets/uploaded_root"))
@@ -14,6 +15,7 @@
 
 (assert (GENECLAW_HOME == expected_home))
 (assert (HOME_STATE_PATH == #"#{GENECLAW_HOME}/state"))
+(assert (MEMORY_ROOT == #"#{GENECLAW_HOME}/memory"))
 (assert (SESSIONS_PATH == #"#{GENECLAW_HOME}/sessions"))
 (assert (JOBS_PATH == #"#{GENECLAW_HOME}/scheduler/jobs"))
 (assert (RUNS_PATH == #"#{GENECLAW_HOME}/scheduler/runs"))
@@ -31,6 +33,7 @@
 
 (assert (public_config/home/root == expected_home))
 (assert (public_config/home/state_root == #"#{expected_home}/state"))
+(assert (public_config/home/memory_root == #"#{expected_home}/memory"))
 (assert (public_config/home/sessions_root == #"#{expected_home}/sessions"))
 (assert (public_config/home/tmp_root == #"#{expected_home}/tmp"))
 (assert (public_config/assets/uploaded_root == #"#{expected_home}/assets/uploaded"))
@@ -38,6 +41,8 @@
 (assert (provider_result/value == "anthropic"))
 (assert (state_root_result/found == true))
 (assert (state_root_result/value == #"#{expected_home}/state"))
+(assert (memory_root_result/found == true))
+(assert (memory_root_result/value == #"#{expected_home}/memory"))
 (assert (sessions_root_result/found == true))
 (assert (sessions_root_result/value == #"#{expected_home}/sessions"))
 (assert (tmp_root_result/found == true))

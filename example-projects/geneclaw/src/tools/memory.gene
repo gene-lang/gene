@@ -1,0 +1,63 @@
+# GeneClaw tools: memory_read / memory_write / memory_search
+
+(import memory_read memory_write memory_search from "memory_store")
+
+(fn $ns/register_memory_tools [register_tool log]
+  (register_tool "memory_read"
+    "Read the GeneClaw long-term memory markdown store, either fully or by ## section."
+    {^type "object"
+     ^properties {
+       ^section {^type "string" ^description "Optional ## section name to read"}
+     }
+     ^required []}
+    (fn [args]
+      (var result (memory_read (args .get "section" nil)))
+      (if_not result/ok
+        (return {^error (result/error || "memory_read failed")})
+      )
+      {^content (result/content || "") ^section (result/section || "")}
+    )
+  )
+
+  (register_tool "memory_write"
+    "Update the GeneClaw long-term memory markdown store by appending, replacing, or creating a ## section."
+    {^type "object"
+     ^properties {
+       ^section {^type "string" ^description "Target ## section name"}
+       ^content {^type "string" ^description "Markdown content to store beneath the section heading"}
+       ^mode {^type "string" ^description "append | replace | create"}
+     }
+     ^required ["section" "content"]}
+    (fn [args]
+      (var result (memory_write (args .get "section" "") (args .get "content" "") (args .get "mode" "append")))
+      (if_not result/ok
+        (return {^error (result/error || "memory_write failed")})
+      )
+      {
+        ^section (result/section || "")
+        ^mode (result/mode || "append")
+        ^file_hash (result/file_hash || "")
+        ^reindexed (result/reindexed || false)
+        ^warning (result/warning || "")
+      }
+    )
+  )
+
+  (register_tool "memory_search"
+    "Search the GeneClaw long-term memory store by semantic similarity."
+    {^type "object"
+     ^properties {
+       ^query {^type "string" ^description "Search query"}
+       ^limit {^type "integer" ^description "Maximum number of results to return"}
+       ^threshold {^type "number" ^description "Minimum cosine similarity score"}
+     }
+     ^required ["query"]}
+    (fn [args]
+      (var result (memory_search (args .get "query" "") (args .get "limit" 5) (args .get "threshold" 0.3)))
+      (if_not result/ok
+        (return {^error (result/error || "memory_search failed")})
+      )
+      {^results (result/results || []) ^count (result/count || 0)}
+    )
+  )
+)

@@ -1,0 +1,24 @@
+#!/usr/bin/env gene run
+
+(import init_tools invoke_tool from "tools")
+
+(init_tools)
+
+(var initial_read (invoke_tool "run-memory-tools" "ws-memory" "user-1" "chan-1" "" "session-memory" "memory_read" {^section "Decisions"}))
+(assert (initial_read/ok == false))
+(assert ((initial_read/error || "") .include? "Section not found"))
+
+(var write_args {^section "Decisions" ^content "### 2026-03-18\n- Added memory system" ^mode "append"})
+(var write_result (invoke_tool "run-memory-tools" "ws-memory" "user-1" "chan-1" "" "session-memory" "memory_write" write_args))
+(var write_payload (if (write_result/result is Map) write_result/result {}))
+(assert (write_result/ok == true))
+(assert ((write_payload .get "reindexed" false) == false))
+
+(var section_read (invoke_tool "run-memory-tools" "ws-memory" "user-1" "chan-1" "" "session-memory" "memory_read" {^section "Decisions"}))
+(assert (section_read/ok == true))
+
+(var search_result (invoke_tool "run-memory-tools" "ws-memory" "user-1" "chan-1" "" "session-memory" "memory_search" {^query "memory"}))
+(assert (search_result/ok == false))
+(assert ((search_result/error || "") .include? "OpenAI credentials not configured"))
+
+(println "ok")
