@@ -1031,10 +1031,12 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              if target.ref.class.ns.has_key(key):
-                let member = target.ref.class.ns[key]
-                retain(member)
-                self.frame.push(member)
+              let member = target.ref.class.get_member(key)
+              let ns_member = target.ref.class.ns[key]
+              let resolved = if member != NIL: member elif ns_member != NIL: ns_member else: VOID
+              if resolved != VOID:
+                retain(resolved)
+                self.frame.push(resolved)
               else:
                 self.frame.push(VOID)
             of VkEnum:
@@ -1212,10 +1214,12 @@ proc exec*(self: ptr VirtualMachine): Value =
                 else:
                   not_allowed("Invalid property type: " & $prop.kind)
                   "".to_key()
-              if target.ref.class.ns.has_key(key):
-                let member = target.ref.class.ns[key]
-                retain(member)
-                self.frame.push(member)
+              let member = target.ref.class.get_member(key)
+              let ns_member = target.ref.class.ns[key]
+              let resolved = if member != NIL: member elif ns_member != NIL: ns_member else: VOID
+              if resolved != VOID:
+                retain(resolved)
+                self.frame.push(resolved)
               else:
                 retain(default_val)
                 self.frame.push(default_val)

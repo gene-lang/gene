@@ -27,6 +27,7 @@ This directory contains example Gene programs demonstrating various language fea
 
 - `io.gene` - File I/O operations
 - `pipe.gene` - Unix pipe operations
+- `process_management.gene` - `system/Process` spawning, I/O, stderr, and shutdown
 - `parser.gene` - Parsing examples
 
 ## Web and Network
