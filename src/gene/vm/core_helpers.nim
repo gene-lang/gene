@@ -295,6 +295,8 @@ template get_value_class(val: Value): Class =
     safe_class_value(App.app.generator_class)
   of VkPackage:
     safe_class_value(App.app.package_class)
+  of VkApplication:
+    safe_class_value(App.app.application_class)
   of VkThread:
     safe_class_value(THREAD_CLASS_VALUE)
   of VkThreadMessage:

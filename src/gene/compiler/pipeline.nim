@@ -598,6 +598,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
     declared_names: @[initTable[Key, bool]()],
     skip_root_scope_start: true
   )
+  self.preserve_root_scope = true
   self.output.module_path = module_path_from_source(filename)
   self.output.type_check = type_check
   self.emit(Instruction(kind: IkStart))

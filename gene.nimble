@@ -90,6 +90,7 @@ task test, "Runs the test suite":
   exec "nim c -r tests/test_wasm.nim"
   exec "nim c -r tests/test_module.nim"
   exec "nim c -r tests/test_cli_run.nim"
+  exec "nim c -r tests/test_cli_package_context.nim"
   exec "nim c -r tests/test_cli_view.nim"
   # exec "nim c -r tests/test_cli_gir.nim"
   # exec "nim c -r tests/test_cli_fmt.nim"

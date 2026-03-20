@@ -118,6 +118,8 @@ proc value_class_value(val: Value): Value =
     App.app.date_class
   of VkDateTime:
     App.app.datetime_class
+  of VkApplication:
+    App.app.application_class
   of VkSet:
     if App.app.set_class.kind == VkClass:
       App.app.set_class
@@ -1859,6 +1861,23 @@ proc init_gene_and_meta_classes(object_class: Class) =
 
   let application_class = new_class("Application")
   application_class.parent = object_class
+
+  proc application_package_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                  arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Application.package requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkApplication or self_arg.ref.app == nil:
+      not_allowed("Application.package must be called on an application")
+    let pkg = self_arg.ref.app.pkg
+    if pkg == nil:
+      return NIL
+    let pkg_ref = new_ref(VkPackage)
+    pkg_ref.pkg = pkg
+    pkg_ref.to_ref_value()
+
+  application_class.def_native_method("package", application_package_method)
+  application_class.def_native_method("pkg", application_package_method)
   r = new_ref(VkClass)
   r.class = application_class
   App.app.application_class = r.to_ref_value()

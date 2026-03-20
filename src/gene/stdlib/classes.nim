@@ -99,6 +99,8 @@ proc value_class_value*(val: Value): Value =
       App.app.object_class
   of VkNamespace:
     App.app.namespace_class
+  of VkApplication:
+    App.app.application_class
   of VkClass:
     App.app.class_class
   of VkInstance:

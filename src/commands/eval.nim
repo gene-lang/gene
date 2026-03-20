@@ -1,9 +1,10 @@
-import parseopt, strutils, strformat, tables
+import parseopt, strutils, strformat, tables, os
 import ../gene/types
 import ../gene/vm
 import ../gene/compiler
 import ../gene/repl_session
 import ./base
+import ./package_context
 
 const DEFAULT_COMMAND = "eval"
 const COMMANDS = @[DEFAULT_COMMAND, "e"]
@@ -24,6 +25,7 @@ type
     contracts_enabled: bool
     native_tier: NativeCompileTier
     native_code: bool
+    pkg: string
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -32,6 +34,7 @@ proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
   manager.add_help("eval <code>: evaluate <code> as a gene expression")
   manager.add_help("  -d, --debug: enable debug output")
+  manager.add_help("  --pkg <package>: execute the eval session in a package context")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
   manager.add_help("  --contracts <on|off>: enable or disable runtime contract checks")
@@ -126,12 +129,22 @@ proc parse_options(args: seq[string]): Options =
           result.contracts_enabled = parse_contracts_enabled(value)
         except ValueError as e:
           echo e.msg
+      of "pkg":
+        result.pkg = value
       else:
         echo "Unknown option: ", key
     of cmdEnd:
       discard
   
   result.code = code_parts.join(" ")
+
+proc prepare_eval_frame(module_name: string, pkg_ctx: CliPackageContext) =
+  let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
+  configure_main_namespace(ns, module_name, pkg_ctx)
+  if VM.frame == nil:
+    VM.frame = new_frame(ns)
+  else:
+    VM.frame.update(new_frame(ns))
 
 proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)
@@ -180,6 +193,13 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   
   if code.len == 0:
     return failure("No code provided to evaluate")
+
+  var pkg_ctx = disabled_cli_package_context()
+  try:
+    pkg_ctx = resolve_cli_package_context(options.pkg, getCurrentDir(), "<eval>")
+  except CatchableError as e:
+    return failure(e.msg)
+  let module_name = virtual_module_name(pkg_ctx, "eval", "<eval>")
   
   init_app_and_vm()
   VM.native_tier = options.native_tier
@@ -199,7 +219,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     # Handle trace-instruction option
     if options.trace_instruction:
       # Show both compilation and execution with trace
-      let compiled = parse_and_compile(code, type_check = options.type_check)
+      let compiled = parse_and_compile(code, module_name, type_check = options.type_check, module_mode = true, run_init = false)
       echo "=== Compilation Output ==="
       echo "Instructions:"
       for i, instr in compiled.instructions:
@@ -207,21 +227,14 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo ""
       echo "=== Execution Trace ==="
       VM.trace = true
-      # Initialize frame if needed
-      if VM.frame == nil:
-        let ns = new_namespace(App.app.global_ns.ref.ns, "<eval>")
-        ns["__module_name__".to_key()] = "<eval>".to_value()
-        ns["__is_main__".to_key()] = TRUE
-        ns["gene".to_key()] = App.app.gene_ns
-        ns["genex".to_key()] = App.app.genex_ns
-        VM.frame = new_frame(ns)
+      prepare_eval_frame(module_name, pkg_ctx)
       VM.cu = compiled
       let value = VM.exec()
       echo "=== Final Result ==="
       echo $value
     # Show compilation details if requested
     elif options.compile or options.debugging:
-      let compiled = parse_and_compile(code, type_check = options.type_check)
+      let compiled = parse_and_compile(code, module_name, type_check = options.type_check, module_mode = true, run_init = false)
       echo "=== Compilation Output ==="
       echo "Instructions:"
       for i, instr in compiled.instructions:
@@ -229,18 +242,20 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo ""
       
       if not options.trace:  # If not tracing, just show compilation
+        prepare_eval_frame(module_name, pkg_ctx)
         VM.cu = compiled
         let value = VM.exec()
         echo "=== Result ==="
         echo $value
       else:
         echo "=== Execution Trace ==="
+        prepare_eval_frame(module_name, pkg_ctx)
         VM.cu = compiled
         let value = VM.exec()
         echo "=== Final Result ==="
         echo $value
     else:
-      let value = VM.exec(code, "<eval>")
+      let value = VM.exec(code, module_name, pkg_ctx.name, pkg_ctx.root)
       if options.print_last:
         echo $value
         

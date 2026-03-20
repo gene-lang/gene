@@ -6,6 +6,7 @@ import ../gene/compiler
 import ../gene/gir
 import ../gene/repl_session
 import ./base
+import ./package_context
 
 const DEFAULT_COMMAND = "run"
 const COMMANDS = @[DEFAULT_COMMAND]
@@ -27,6 +28,7 @@ type
     contracts_enabled: bool
     native_tier: NativeCompileTier
     native_code: bool
+    pkg: string
     file: string
     args: seq[string]
 
@@ -35,6 +37,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult
 proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
   manager.add_help("run <file>: parse and execute <file>")
+  manager.add_help("  --pkg <package>: resolve relative entry files from a package root or package name")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
   manager.add_help("  --contracts <on|off>: enable or disable runtime contract checks")
@@ -134,19 +137,17 @@ proc parse_options(args: seq[string]): Options =
             result.contracts_enabled = parse_contracts_enabled(value)
           except ValueError as e:
             echo e.msg
+        of "pkg":
+          result.pkg = value
         else:
           echo "Unknown option: ", key
           discard
     of cmdEnd:
       discard
 
-proc prepare_main_module_frame(module_name: string) =
+proc prepare_main_module_frame(module_name: string, pkg_ctx: CliPackageContext) =
   let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
-  ns["__module_name__".to_key()] = module_name.to_value()
-  ns["__is_main__".to_key()] = TRUE
-  ns["gene".to_key()] = App.app.gene_ns
-  ns["genex".to_key()] = App.app.genex_ns
-  App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
+  configure_main_namespace(ns, module_name, pkg_ctx)
 
   let frame = new_frame(ns)
   let args_gene = new_gene(NIL)
@@ -158,8 +159,8 @@ proc prepare_main_module_frame(module_name: string) =
   else:
     VM.frame.update(frame)
 
-proc execute_compiled_module(compiled: CompilationUnit, module_name: string): Value =
-  prepare_main_module_frame(module_name)
+proc execute_compiled_module(compiled: CompilationUnit, module_name: string, pkg_ctx: CliPackageContext): Value =
+  prepare_main_module_frame(module_name, pkg_ctx)
   VM.cu = compiled
   result = VM.exec()
   let init_result = VM.maybe_run_module_init()
@@ -198,7 +199,15 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return failure(e.msg)
 
   var file = options.file
+  var module_name = file
   var code: string
+  var pkg_ctx = disabled_cli_package_context()
+
+  if options.pkg.len > 0:
+    try:
+      pkg_ctx = resolve_cli_package_context(options.pkg, getCurrentDir(), "<run>")
+    except CatchableError as e:
+      return failure(e.msg)
   
   # Check if file is provided or read from stdin
   if file == "":
@@ -211,14 +220,30 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       if lines.len > 0:
         code = lines.join("\n")
         file = "<stdin>"
+        module_name = virtual_module_name(pkg_ctx, "run_stdin", file)
       else:
         return failure("No input provided. Provide a file to run.")
     else:
       return failure("No file provided to run.")
   else:
+    file = resolve_package_path(pkg_ctx, file)
+    module_name = file
     # Check if file exists
     if not fileExists(file):
       return failure("File not found: " & file)
+
+  if not pkg_ctx.enabled:
+    let discovery_path =
+      if file.len > 0 and file != "<stdin>":
+        file
+      else:
+        getCurrentDir()
+    try:
+      pkg_ctx = resolve_cli_package_context("", getCurrentDir(), "<run>", discovery_path)
+    except CatchableError as e:
+      return failure(e.msg)
+    if file == "<stdin>":
+      module_name = virtual_module_name(pkg_ctx, "run_stdin", file)
 
   init_app_and_vm()
   VM.native_tier = options.native_tier
@@ -250,7 +275,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       echo "Instructions: " & $compiled.instructions.len
 
     try:
-      discard execute_compiled_module(compiled, file)
+      discard execute_compiled_module(compiled, module_name, pkg_ctx)
     except CatchableError as e:
       return handle_exec_error(e)
 
@@ -264,7 +289,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
     return success()
 
   # Regular .gene file - check for cached GIR
-  if not options.no_gir_cache and not options.force_compile:
+  if file != "<stdin>" and not options.no_gir_cache and not options.force_compile:
     let gir_path = get_gir_path(file, "build")
     if fileExists(gir_path) and is_gir_up_to_date(gir_path, file):
       if options.debugging:
@@ -281,7 +306,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
 
       if not compiled.isNil:
         try:
-          discard execute_compiled_module(compiled, file)
+          discard execute_compiled_module(compiled, module_name, pkg_ctx)
         except CatchableError as e:
           return handle_exec_error(e)
 
@@ -302,19 +327,19 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
       # so we can inspect compilation output and then execute
       let code = if code != "": code else: readFile(file)
       echo "=== Compilation Output ==="
-      let compiled = parse_and_compile(code, file, type_check = options.type_check, module_mode = true, run_init = false)
+      let compiled = parse_and_compile(code, module_name, type_check = options.type_check, module_mode = true, run_init = false)
       echo "Instructions:"
       for i, instr in compiled.instructions:
         echo fmt"{i:04X} {instr}"
       echo ""
       echo "=== Execution Trace ==="
       VM.trace = true
-      value = execute_compiled_module(compiled, file)
+      value = execute_compiled_module(compiled, module_name, pkg_ctx)
     elif options.compile or options.debugging:
       # For trace/debug modes, we need to read the file into memory
       let code = if code != "": code else: readFile(file)
       echo "=== Compilation Output ==="
-      let compiled = parse_and_compile(code, file, type_check = options.type_check, module_mode = true, run_init = false)
+      let compiled = parse_and_compile(code, module_name, type_check = options.type_check, module_mode = true, run_init = false)
       echo "Instructions:"
       for i, instr in compiled.instructions:
         echo fmt"{i:03d}: {instr}"
@@ -322,21 +347,21 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
 
       if options.trace:
         echo "=== Execution Trace ==="
-      value = execute_compiled_module(compiled, file)
+      value = execute_compiled_module(compiled, module_name, pkg_ctx)
     else:
       # Normal execution
       # Compile and execute with module mode so run follows parse+compile+execute.
       if code != "":
-        let compiled = parse_and_compile(code, file, type_check = options.type_check, module_mode = true, run_init = false)
-        value = execute_compiled_module(compiled, file)
+        let compiled = parse_and_compile(code, module_name, type_check = options.type_check, module_mode = true, run_init = false)
+        value = execute_compiled_module(compiled, module_name, pkg_ctx)
       else:
         let stream = newFileStream(file, fmRead)
         if stream.isNil:
           stderr.writeLine("Error: Failed to open file: " & file)
           return failure("Failed to open file")
         defer: stream.close()
-        let compiled = parse_and_compile(stream, file, type_check = options.type_check, module_mode = true, run_init = false)
-        value = execute_compiled_module(compiled, file)
+        let compiled = parse_and_compile(stream, module_name, type_check = options.type_check, module_mode = true, run_init = false)
+        value = execute_compiled_module(compiled, module_name, pkg_ctx)
         if not options.no_gir_cache:
           let gir_path = get_gir_path(file, "build")
           try:

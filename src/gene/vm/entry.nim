@@ -1,7 +1,8 @@
 ## Top-level entry points: exec*(code: string), exec*(stream: Stream).
 ## Included from vm.nim — shares its scope.
 
-proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
+proc exec*(self: ptr VirtualMachine, code: string, module_name: string,
+           package_name = "", package_root = ""): Value =
   let compiled = parse_and_compile(code, module_name, module_mode = true, run_init = false, type_check = self.type_check)
 
   let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
@@ -11,7 +12,10 @@ proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
   ns["genex".to_key()] = App.app.genex_ns
-  bind_module_package_context(ns, module_name)
+  bind_module_package_context(ns, module_name, package_name, package_root)
+  let pkg_value = package_value_for_module(module_name, package_name, package_root)
+  if pkg_value.kind == VkPackage and pkg_value.ref.pkg != nil:
+    App.app.pkg = pkg_value.ref.pkg
   App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
 
   # Add eval function to the module namespace
@@ -41,7 +45,8 @@ proc exec*(self: ptr VirtualMachine, code: string, module_name: string): Value =
     return init_result.value
   return result
 
-proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value =
+proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string,
+           package_name = "", package_root = ""): Value =
   ## Execute Gene code from a stream (more memory-efficient for large files)
   let compiled = parse_and_compile(stream, module_name, module_mode = true, run_init = false, type_check = self.type_check)
 
@@ -52,7 +57,10 @@ proc exec*(self: ptr VirtualMachine, stream: Stream, module_name: string): Value
   # Add gene namespace to module namespace
   ns["gene".to_key()] = App.app.gene_ns
   ns["genex".to_key()] = App.app.genex_ns
-  bind_module_package_context(ns, module_name)
+  bind_module_package_context(ns, module_name, package_name, package_root)
+  let pkg_value = package_value_for_module(module_name, package_name, package_root)
+  if pkg_value.kind == VkPackage and pkg_value.ref.pkg != nil:
+    App.app.pkg = pkg_value.ref.pkg
   App.app.gene_ns.ref.ns["main_module".to_key()] = module_name.to_value()
 
   # Initialize frame if it doesn't exist

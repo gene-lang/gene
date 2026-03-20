@@ -261,7 +261,7 @@ proc build_package_value(name: string, root: string): Value =
   pkg_ref.pkg = pkg
   pkg_ref.to_ref_value()
 
-proc package_value_for_module(module_path: string, package_name = "", package_root = ""): Value =
+proc package_value_for_module*(module_path: string, package_name = "", package_root = ""): Value =
   var resolved_root = package_root
   var resolved_name = package_name
 
@@ -800,6 +800,45 @@ proc locate_package_root(package_name, importer_dir: string, override_path: stri
     importer_module = importer_module,
     package_name = package_name,
     searched = searched)
+
+proc resolve_package_reference*(package_spec: string, importer_dir = "", importer_module = ""): tuple[root: string, name: string] =
+  ## Resolve a CLI/package reference that may be either a package name or a path.
+  let importer_base = canonical_path(if importer_dir.len > 0: importer_dir else: getCurrentDir())
+  let candidate_path =
+    if package_spec.isAbsolute:
+      package_spec
+    elif importer_base.len > 0:
+      joinPath(importer_base, package_spec)
+    else:
+      package_spec
+
+  let explicit_path = package_spec.isAbsolute or package_spec.startsWith(".")
+  let existing_path = candidate_path.len > 0 and (dirExists(candidate_path) or fileExists(candidate_path))
+  var path_error: ref CatchableError = nil
+
+  if explicit_path or existing_path:
+    try:
+      result.root = canonical_path(locate_package_root("", importer_base, package_spec, importer_module))
+      result.name = package_manifest_name(result.root)
+      if result.name.len == 0:
+        result.name = package_spec
+      return
+    except CatchableError as e:
+      if explicit_path:
+        raise
+      path_error = e
+
+  try:
+    validate_package_name(package_spec)
+  except CatchableError:
+    if not path_error.isNil:
+      raise path_error
+    raise
+
+  result.root = canonical_path(locate_package_root(package_spec, importer_base, "", importer_module))
+  result.name = package_manifest_name(result.root)
+  if result.name.len == 0:
+    result.name = package_spec
 
 proc find_native_build(pkg_root: string, resolved_path: string): string =
   ## Look for a compiled native module under build/ matching the module basename.

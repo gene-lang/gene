@@ -94,6 +94,10 @@ proc init_app_and_vm*() =
   r.app.gene_ns   = new_namespace("gene"  ).to_value()
   r.app.genex_ns  = new_namespace("genex" ).to_value()
   App = r.to_ref_value()
+  App.app.global_ns.ref.ns["app".to_key()] = App
+  App.app.global_ns.ref.ns["$app".to_key()] = App
+  App.app.gene_ns.ref.ns["app".to_key()] = App
+  App.app.gene_ns.ref.ns["$app".to_key()] = App
 
   # Create built-in GeneException class
   # TODO: Rename to Exception once symbol collision is fixed
@@ -145,6 +149,8 @@ proc init_app_and_vm*() =
     id: 0,
     secret: THREADS[0].secret
   )
+  VM.thread_local_ns["app".to_key()] = App
+  VM.thread_local_ns["$app".to_key()] = App
   VM.thread_local_ns["$thread".to_key()] = main_thread_ref.to_value()
   VM.thread_local_ns["$main_thread".to_key()] = main_thread_ref.to_value()
   VM.thread_local_ns["thread".to_key()] = main_thread_ref.to_value()

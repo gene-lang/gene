@@ -3856,8 +3856,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           else:
             class_val = App.app.object_class
         of VkApplication:
-          # Applications don't have a specific class
-          class_val = App.app.object_class
+          class_val = App.app.application_class
         else:
           # For all other types, use the Object class
           class_val = App.app.object_class

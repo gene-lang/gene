@@ -4,6 +4,10 @@ cd example-projects/geneclaw
 source .env
 gene run --no-gir-cache src/main.gene
 
+cd example-projects/geneclaw/home
+source .env
+gene run --pkg $HOME/gene-workspace/gene-old/example-projects/geneclaw --no-gir-cache src/main.gene
+
 curl -s 'http://localhost:4090/api/config?path=llm/openai' | gene format
 
 ## LLM App

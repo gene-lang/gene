@@ -3,7 +3,7 @@
 
 cd "$(dirname "$0")/../.."
 
-GENE_BIN="./bin/gene"
+GENE_BIN="$(pwd)/bin/gene"
 PASS=0
 FAIL=0
 
@@ -105,6 +105,45 @@ result=$(echo -e "hello\nworld" | $GENE_BIN pipe /tmp/gene_pipe_test_$$.gene)
 expected='5
 5'
 rm -f /tmp/gene_pipe_test_$$.gene
+if [ "$result" = "$expected" ]; then
+    echo "  ✓ PASS"
+    ((PASS++))
+else
+    echo "  ✗ FAIL"
+    echo "  Expected:"
+    echo "$expected" | sed 's/^/    /'
+    echo "  Got:"
+    echo "$result" | sed 's/^/    /'
+    ((FAIL++))
+fi
+test_num=$((test_num + 1))
+
+# Test package-aware file resolution and $app context
+echo "Test $test_num: Package-aware file execution"
+pkg_root="/tmp/gene_pipe_pkg_$$"
+launch_dir="/tmp/gene_pipe_launch_$$"
+mkdir -p "$pkg_root/src" "$pkg_root/filters" "$launch_dir"
+launch_cwd="$(cd "$launch_dir" && pwd -P)"
+cat > "$pkg_root/package.gene" << 'EOF'
+^name "x/pipepkg"
+^version "0.1.0"
+EOF
+cat > "$pkg_root/src/index.gene" << 'EOF'
+(fn double [n] (n * 2))
+EOF
+cat > "$pkg_root/filters/main.gene" << EOF
+(import double from "index")
+(var app_pkg \$app/.pkg/.name)
+(var current_pkg \$pkg/.name)
+(if (((app_pkg == "x/pipepkg") && (current_pkg == "x/pipepkg")) && ((cwd) == "$launch_cwd"))
+  (double \$line/.to_i)
+else
+  (throw "bad pipe context"))
+EOF
+result=$(cd "$launch_dir" && printf "2\n3\n" | $GENE_BIN pipe --pkg "$pkg_root" filters/main.gene 2>&1)
+expected='4
+6'
+rm -rf "$pkg_root" "$launch_dir"
 if [ "$result" = "$expected" ]; then
     echo "  ✓ PASS"
     ((PASS++))

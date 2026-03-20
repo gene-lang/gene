@@ -3,6 +3,7 @@ import ../gene/types
 import ../gene/vm
 import ../gene/compiler
 import ./base
+import ./package_context
 
 const DEFAULT_COMMAND = "pipe"
 const COMMANDS = @[DEFAULT_COMMAND]
@@ -19,6 +20,7 @@ type
     type_check: bool
     native_tier: NativeCompileTier
     native_code: bool
+    pkg: string
     code: string
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -27,6 +29,7 @@ proc init*(manager: CommandManager) =
   manager.register(COMMANDS, handle)
   manager.add_help("pipe <code>: process stdin line-by-line with <code>")
   manager.add_help("  Each line is available as $line")
+  manager.add_help("  --pkg <package>: execute the pipe session in a package context")
   manager.add_help("  -d, --debug: enable debug output")
   manager.add_help("  --trace: enable execution tracing")
   manager.add_help("  --compile: show compilation details")
@@ -99,6 +102,8 @@ proc parse_options(args: seq[string]): PipeOptions =
           result.native_code = result.native_tier != NctNever
         except ValueError as e:
           echo e.msg
+      of "pkg":
+        result.pkg = value
       else:
         echo "Unknown option: ", key
     of cmdEnd:
@@ -116,6 +121,12 @@ proc set_line_variable(line: string) =
   let line_value = line.to_value()
   App.app.gene_ns.ref.ns["line".to_key()] = line_value
   App.app.global_ns.ref.ns["line".to_key()] = line_value
+
+proc prepare_pipe_frame(module_name: string, pkg_ctx: CliPackageContext) =
+  if VM.frame == nil:
+    let ns = new_namespace(App.app.global_ns.ref.ns, module_name)
+    configure_main_namespace(ns, module_name, pkg_ctx)
+    VM.frame = new_frame(ns)
 
 proc handle*(cmd: string, args: seq[string]): CommandResult =
   let options = parse_options(args)
@@ -179,12 +190,45 @@ Notes:
   setup_logger(options.debugging)
 
   var code = options.code
+  var pkg_ctx = disabled_cli_package_context()
+  if options.pkg.len > 0:
+    try:
+      pkg_ctx = resolve_cli_package_context(options.pkg, getCurrentDir(), "<pipe>")
+    except CatchableError as e:
+      return failure(e.msg)
 
   if code.len == 0:
     return failure("No code provided. Usage: gene pipe '<code>'")
 
   # Check if code is a file path - if so, read code from the file
-  if fileExists(code):
+  let code_path =
+    if options.pkg.len > 0:
+      resolve_package_path(pkg_ctx, code)
+    elif code.isAbsolute:
+      code
+    else:
+      absolutePath(code)
+  let code_is_file = fileExists(code_path)
+
+  if not pkg_ctx.enabled:
+    let discovery_path =
+      if code_is_file:
+        code_path
+      else:
+        getCurrentDir()
+    try:
+      pkg_ctx = resolve_cli_package_context("", getCurrentDir(), "<pipe>", discovery_path)
+    except CatchableError as e:
+      return failure(e.msg)
+
+  let module_name =
+    if code_is_file:
+      code_path
+    else:
+      virtual_module_name(pkg_ctx, "pipe", "<pipe>")
+
+  if code_is_file:
+    code = code_path
     try:
       let file_content = readFile(code)
       var lines: seq[string] = @[]
@@ -224,7 +268,7 @@ Notes:
   # Compile code once before processing lines
   var compiled: CompilationUnit
   try:
-    compiled = parse_and_compile(code, type_check = options.type_check)
+    compiled = parse_and_compile(code, module_name, type_check = options.type_check, module_mode = true, run_init = false)
 
     if options.compile or options.debugging:
       echo "=== Compiled Code ==="
@@ -250,17 +294,15 @@ Notes:
 
     # Execute the compiled code
     try:
-      # Initialize frame if needed
-      if VM.frame == nil:
-        let ns = new_namespace(App.app.global_ns.ref.ns, "<pipe>")
-        ns["__module_name__".to_key()] = "<pipe>".to_value()
-        ns["__is_main__".to_key()] = TRUE
-        ns["gene".to_key()] = App.app.gene_ns
-        ns["genex".to_key()] = App.app.genex_ns
-        VM.frame = new_frame(ns)
+      prepare_pipe_frame(module_name, pkg_ctx)
 
       VM.cu = compiled
-      let exec_result = VM.exec()
+      var exec_result = VM.exec()
+      if VM.frame != nil and VM.frame.ns != nil:
+        VM.frame.ns["__init_ran__".to_key()] = FALSE
+        let init_result = VM.maybe_run_module_init()
+        if init_result.ran:
+          exec_result = init_result.value
 
       # Print result if not nil (enables filtering)
       if exec_result.kind != VkNil:
