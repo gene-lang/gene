@@ -1,4 +1,4 @@
-import unittest, os, tables
+import unittest, os, tables, strutils
 import std/tempfiles
 
 import gene/types except Exception
@@ -129,6 +129,13 @@ suite "CLI package context":
     if not result.success:
       checkpoint(result.error)
     check result.success
+
+  test "eval fails on unresolved symbol":
+    reset_module_cache()
+    let result = eval_command.handle("eval", @["haha"])
+    check not result.success
+    check result.error.contains("^code \"GENE.SCOPE.UNDEFINED_VAR\"")
+    check result.error.contains("^message \"haha is not defined\"")
 
   test "repl package context resolves imports and exposes $app":
     reset_module_cache()

@@ -194,6 +194,12 @@ proc skip_wildcard_import_key(key: Key): bool {.inline.} =
   key == "gene".to_key() or
   key == "genex".to_key()
 
+proc resolve_namespace_value(ns: Namespace, key: Key): tuple[found: bool, value: Value, owner: Namespace] =
+  if ns != nil and ns.has_key(key):
+    let located = ns.locate(key)
+    return (true, located[0], located[1])
+  (false, NIL, nil)
+
 proc resolve_local_or_namespace(self: ptr VirtualMachine, name: string): tuple[found: bool, value: Value] =
   let key = name.to_key()
   if self.frame != nil and self.frame.scope != nil and self.frame.scope.tracker != nil:
@@ -206,8 +212,11 @@ proc resolve_local_or_namespace(self: ptr VirtualMachine, name: string): tuple[f
         scope = scope.parent
       if scope != nil and found.local_index < scope.members.len:
         return (true, scope.members[found.local_index])
-  if self.frame != nil and self.frame.ns != nil and self.frame.ns.members.hasKey(key):
-    return (true, self.frame.ns.members[key])
+  let ns_resolved =
+    if self.frame != nil: resolve_namespace_value(self.frame.ns, key)
+    else: (false, NIL, nil)
+  if ns_resolved.found:
+    return (true, ns_resolved.value)
   return (false, NIL)
 
 proc import_items(self: ptr VirtualMachine, source_ns: Namespace, items: seq[ImportItem]) =

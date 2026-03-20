@@ -219,6 +219,20 @@ suite "Run CLI":
     check result.error.contains("^code \"GENE.RUNTIME.ERROR\"")
     check result.error.contains("^message \"Unified method call not supported for VkInt\"")
 
+  test "run fails on unresolved top-level symbol":
+    let source_path = absolutePath("tmp/run_cli_undefined_symbol.gene")
+    createDir(parentDir(source_path))
+    writeFile(source_path, "haha")
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+
+    let result = run_command.handle("run", @[source_path, "--no-gir-cache"])
+    check not result.success
+    check result.error.contains("^code \"GENE.SCOPE.UNDEFINED_VAR\"")
+    check result.error.contains("^message \"haha is not defined\"")
+
   test "run rejects package-qualified imports that escape package root":
     let root = createTempDir("gene_run_pkg_boundary_", "")
     let app_src = root / "src" / "index.gene"

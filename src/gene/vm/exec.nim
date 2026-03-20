@@ -563,16 +563,22 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(cache.ns.members[name])
               else:
                 # Cache miss - do full lookup
-                var value = if self.frame.ns != nil: self.frame.ns[name] else: NIL
-                var found_ns = self.frame.ns
-                if value == NIL:
+                let resolved = resolve_namespace_value(self.frame.ns, name)
+                var found = resolved.found
+                var value = resolved.value
+                var found_ns = resolved.owner
+                if not found:
                   # Try thread-local namespace first (for $thread, $main_thread, etc.)
                   if self.thread_local_ns != nil:
-                    value = self.thread_local_ns[name]
-                    if value != NIL:
-                      found_ns = self.thread_local_ns
+                    let thread_resolved = resolve_namespace_value(self.thread_local_ns, name)
+                    found = thread_resolved.found
+                    value = thread_resolved.value
+                    found_ns = thread_resolved.owner
+                if not found:
+                  let symbol_name = get_symbol(symbol_index(name))
+                  not_allowed(symbol_name & " is not defined")
                 # Update cache if we found the value
-                if value != NIL:
+                if found_ns != nil:
                   cache.ns = found_ns
                   cache.version = found_ns.version
                   cache.value = value
@@ -584,16 +590,22 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.cu.inline_caches.add(InlineCache())
 
               # Do full lookup
-              var value = if self.frame.ns != nil: self.frame.ns[name] else: NIL
-              var found_ns = self.frame.ns
-              if value == NIL:
+              let resolved = resolve_namespace_value(self.frame.ns, name)
+              var found = resolved.found
+              var value = resolved.value
+              var found_ns = resolved.owner
+              if not found:
                 # Try thread-local namespace first (for $thread, $main_thread, etc.)
                 if self.thread_local_ns != nil:
-                  value = self.thread_local_ns[name]
-                  if value != NIL:
-                    found_ns = self.thread_local_ns
+                  let thread_resolved = resolve_namespace_value(self.thread_local_ns, name)
+                  found = thread_resolved.found
+                  value = thread_resolved.value
+                  found_ns = thread_resolved.owner
+              if not found:
+                let symbol_name = get_symbol(symbol_index(name))
+                not_allowed(symbol_name & " is not defined")
               # Initialize cache if we found the value
-              if value != NIL:
+              if found_ns != nil:
                 self.cu.inline_caches[self.pc].ns = found_ns
                 self.cu.inline_caches[self.pc].version = found_ns.version
                 self.cu.inline_caches[self.pc].value = value
