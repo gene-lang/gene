@@ -23,6 +23,7 @@
 (import register_tmux_tail_tool from "tools/tmux_tail")
 (import register_grep_tool from "tools/grep")
 (import register_find_files_tool from "tools/find_files")
+(import register_http_post_tool from "tools/http_post")
 (import register_memory_tools from "tools/memory")
 
 (var log (new genex/logging/Logger $ns))
@@ -199,6 +200,7 @@
   (register_tmux_tail_tool register_tool log)
   (register_grep_tool register_tool log inspect_root)
   (register_find_files_tool register_tool log inspect_root)
+  (register_http_post_tool register_tool log)
   (register_memory_tools register_tool log)
 
   (log .info #"Registered #{TOOLS/.size} tools")

@@ -1,0 +1,96 @@
+# GeneClaw tool: http_post
+# Supports POST, PUT, PATCH, and DELETE methods via curl
+
+(fn $ns/register_http_post_tool [register_tool log]
+  (register_tool "http_post"
+    "Make HTTP POST, PUT, PATCH, or DELETE requests to a URL"
+    {^type "object"
+     ^properties {
+       ^url {^type "string" ^description "The URL to send the request to"}
+       ^method {^type "string" ^description "HTTP method: POST (default), PUT, PATCH, or DELETE"
+                ^enum ["POST" "PUT" "PATCH" "DELETE"]}
+       ^body {^type "string" ^description "Request body (typically JSON). Optional for DELETE."}
+       ^content_type {^type "string" ^description "Content-Type header (default: application/json)"}
+       ^headers {^type "object" ^description "Additional HTTP headers as key-value pairs"
+                 ^additionalProperties {^type "string"}}
+     }
+     ^required ["url"]}
+    (fn [args]
+      (var url ((args/url || "") .to_s))
+      (if url/.empty?
+        (return {^error "Missing url"})
+      )
+
+      (var method (((args/method || "POST") .to_s) .trim))
+      (if_not ((method == "POST") || (method == "PUT") || (method == "PATCH") || (method == "DELETE"))
+        (return {^error #"Unsupported method: #{method}. Use POST, PUT, PATCH, or DELETE."})
+      )
+
+      (var body ((args/body || "") .to_s))
+      (var content_type ((args/content_type || "application/json") .to_s))
+      (var headers (args/headers || {}))
+
+      (log .debug #"http_post: #{method} #{url} body_len=#{body/.size}")
+
+      (try
+        # Build curl command
+        (var parts ["curl" "-s" #"-w '\\n%{http_code}'" #"-X #{method}"])
+
+        # Add Content-Type for methods with body
+        (if ((method != "DELETE") || body/.not_empty?)
+          (parts .push #"-H 'Content-Type: #{content_type}'")
+        )
+
+        # Add custom headers
+        (headers .each (fn [k v]
+          (parts .push #"-H '#{k}: #{v}'")
+        ))
+
+        # Add body
+        (if body/.not_empty?
+          # Write body to temp file to avoid shell quoting issues
+          (var tmp_file #"/tmp/geneclaw_http_body_#{gene/now/.call/.to_i}.tmp")
+          (gene/io/write tmp_file body)
+          (parts .push #"--data-binary '@#{tmp_file}'")
+        )
+
+        # Add URL (last)
+        (parts .push #"'#{url}'")
+
+        (var cmd (parts .join " "))
+        (var result (system/shell cmd))
+
+        # Clean up temp file
+        (if body/.not_empty?
+          (system/shell #"rm -f /tmp/geneclaw_http_body_#{gene/now/.call/.to_i}.tmp")
+        )
+
+        (if (result/exit_code != 0)
+          (return {^error #"#{method} request failed: #{result/output}"})
+        )
+
+        # Parse response: body is everything except last line, status is last line
+        (var output (result/output .trim))
+        (var lines (output .split "\n"))
+        (var status_str ((lines .get (lines/.size - 1)) .trim))
+        (var resp_body
+          (if (lines/.size > 1)
+            ((lines .slice 0 (lines/.size - 1)) .join "\n")
+          else
+            ""
+          )
+        )
+
+        (log .info #"http_post #{method} #{url} status=#{status_str} body_len=#{resp_body/.size}")
+        {^status status_str
+         ^method method
+         ^body (ifel (resp_body/.size > 4000)
+           #"#{(resp_body .substr 0 4000)}...[truncated]"
+           resp_body)}
+      catch *
+        (log .error #"http_post #{method} failed: #{url} - #{$ex/message}")
+        {^error #"HTTP #{method} failed: #{$ex/message}"}
+      )
+    )
+  )
+)

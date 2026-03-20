@@ -1,0 +1,42 @@
+#!/usr/bin/env gene run
+
+(import init_tools invoke_tool from "tools")
+
+(init_tools)
+
+# Test 1: missing URL should fail
+(var no_url (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "http_post"
+  (gene/json/parse "{}")))
+(assert (no_url/ok == false))
+(println "PASS: missing URL rejected")
+
+# Test 2: POST to httpbin echo endpoint
+(var post_result (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "http_post"
+  (gene/json/parse "{\"url\":\"https://httpbin.org/post\",\"body\":\"{\\\"test\\\":true}\"}")))
+(assert post_result/ok)
+(assert (post_result/result/method == "POST"))
+(assert (post_result/result/body .include? "test"))
+(println "PASS: POST request succeeded")
+
+# Test 3: PUT method
+(var put_result (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "http_post"
+  (gene/json/parse "{\"url\":\"https://httpbin.org/put\",\"method\":\"PUT\",\"body\":\"{\\\"update\\\":1}\"}")))
+(assert put_result/ok)
+(assert (put_result/result/method == "PUT"))
+(println "PASS: PUT request succeeded")
+
+# Test 4: PATCH method (via curl)
+(var patch_result (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "http_post"
+  (gene/json/parse "{\"url\":\"https://httpbin.org/patch\",\"method\":\"PATCH\",\"body\":\"{\\\"patch\\\":true}\"}")))
+(assert patch_result/ok)
+(assert (patch_result/result/method == "PATCH"))
+(println "PASS: PATCH request succeeded")
+
+# Test 5: DELETE method
+(var delete_result (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "http_post"
+  (gene/json/parse "{\"url\":\"https://httpbin.org/delete\",\"method\":\"DELETE\"}")))
+(assert delete_result/ok)
+(assert (delete_result/result/method == "DELETE"))
+(println "PASS: DELETE request succeeded")
+
+(println "All http_post tests passed!")
