@@ -1,0 +1,40 @@
+#!/usr/bin/env gene run
+
+(import init_tools invoke_tool from "tools")
+
+(init_tools)
+
+# Test 1: missing pattern should fail
+(var no_pattern (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
+  (gene/json/parse "{}")))
+(assert (no_pattern/ok == false))
+(println "PASS: missing pattern rejected")
+
+# Test 2: absolute path should be rejected
+(var abs_path (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
+  (gene/json/parse "{\"pattern\":\"*.gene\",\"path\":\"/etc\"}")))
+(assert (abs_path/ok == false))
+(assert (abs_path/result/error .include? "relative"))
+(println "PASS: absolute path rejected")
+
+# Test 3: path traversal should be rejected
+(var traversal (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
+  (gene/json/parse "{\"pattern\":\"*.gene\",\"path\":\"../../etc\"}")))
+(assert (traversal/ok == false))
+(assert (traversal/result/error .include? "traversal"))
+(println "PASS: path traversal rejected")
+
+# Test 4: valid search should succeed
+(var valid (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
+  (gene/json/parse "{\"pattern\":\"*.gene\"}")))
+(assert valid/ok)
+(assert (valid/result/results .include? ".gene"))
+(println "PASS: valid search returns results")
+
+# Test 5: search with max_depth
+(var depth (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
+  (gene/json/parse "{\"pattern\":\"*.gene\",\"max_depth\":1}")))
+(assert depth/ok)
+(println "PASS: max_depth search works")
+
+(println "All find_files tests passed!")
