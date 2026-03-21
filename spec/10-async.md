@@ -3,24 +3,41 @@
 ## 10.1 Async / Await
 
 ```gene
-# Create a future
-(var f (async (expensive_computation)))
+# Wrap a value in a completed Future
+(var f (async (compute_something)))
 
-# Wait for result
+# Retrieve the result
 (var result (await f))
 ```
 
-- `async` wraps an expression in a Future, returns immediately
+- `async` evaluates the expression **synchronously**, then wraps its result in a completed Future
+- It does **not** automatically make slow operations run in the background
+- Its purpose is to unify code paths — e.g., when one branch returns a Future and another returns a plain value, wrapping the plain value with `async` lets both branches be handled uniformly with `await`
 - `await` blocks until the future completes, polling the event loop
-- Multiple futures can execute concurrently
 
-### Concurrent Operations
+### Unifying Sync and Async Branches
+
 ```gene
-(var f1 (async (fetch_data "url1")))
-(var f2 (async (fetch_data "url2")))
-(var r1 (await f1))
+# fetch_data returns a Future, but fallback is a plain value.
+# Wrapping the fallback with async lets both be awaited uniformly.
+(var f
+  (if use_network
+    (fetch_data "url")       # Already a Future
+  else
+    (async cached_value)))   # Wrap plain value as a completed Future
+
+(var result (await f))       # Works for both branches
+```
+
+### True Concurrent Operations
+
+Real concurrency comes from async I/O functions that integrate with the event loop (see 10.2), not from wrapping synchronous code with `async`:
+
+```gene
+(var f1 (fetch_data "url1"))   # Returns Future, starts I/O
+(var f2 (fetch_data "url2"))   # Returns Future, starts I/O
+(var r1 (await f1))            # f1 and f2 execute concurrently
 (var r2 (await f2))
-# f1 and f2 execute concurrently
 ```
 
 ## 10.2 Async I/O
