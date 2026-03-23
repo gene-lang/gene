@@ -258,5 +258,3 @@ gcc -O2 -Wall -shared -o my_ext.dll my_ext.c
 
 - [Extension API Header](../src/gene/extension/gene_extension.h)
 - [Example C Extension](../tests/c_extension.c)
-- [Nim Extensions](extensions.md)
-

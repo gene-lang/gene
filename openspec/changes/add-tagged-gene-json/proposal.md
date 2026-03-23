@@ -9,7 +9,7 @@ API interop, but it loses Gene-specific structure on round trip:
 - integers outside the JSON safe integer range risk downstream precision loss
 
 The project now has a concrete tagged JSON design in
-`docs/json_serialization.md`. The next step is to add an explicit tagged mode
+`docs/proposals/future/json_serialization.md`. The next step is to add an explicit tagged mode
 for Gene-to-Gene transport through JSON without breaking the current plain JSON
 behavior.
 
@@ -39,7 +39,7 @@ behavior.
   - `src/gene/parser.nim` or existing parse helpers used by JSON decoding
   - `tests/test_stdlib_json.nim`
   - Gene-level JSON tests/examples
-  - `docs/json_serialization.md`
+  - `docs/proposals/future/json_serialization.md`
 - Risk: medium
 - Key risks:
   - ambiguity around raw maps containing `genetype` in tagged mode

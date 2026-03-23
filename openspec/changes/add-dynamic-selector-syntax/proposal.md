@@ -21,7 +21,7 @@ The draft in `tmp/dynamic_selector.md` captures the desired direction, but the c
   - `src/gene/vm/exec.nim`
   - `src/gene/vm/dispatch.nim`
   - `tests/test_selector.nim`
-  - `docs/selector_design.md`
+  - `docs/proposals/future/selector_design.md`
 - Related open changes:
   - `add-selector-transform`
   - `implement-complex-symbol-access`

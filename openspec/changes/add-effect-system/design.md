@@ -3,7 +3,7 @@
 ## Goals
 - Represent effects in function types and declarations.
 - Enforce effect boundaries in the type checker.
-- Keep syntax close to `docs/ai-first.md` while staying parseable by the current reader.
+- Keep syntax close to `docs/proposals/future/ai-first.md` while staying parseable by the current reader.
 
 ## Non-Goals (Initial Milestone)
 - Effect inference from body.

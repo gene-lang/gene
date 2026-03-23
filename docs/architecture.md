@@ -190,13 +190,15 @@ Core documentation:
 - [`gir.md`](gir.md) — GIR format and CLI workflows
 - [`performance.md`](performance.md) — Hotspot analysis and optimisation roadmap
 
-Design documents:
-- [`threading.md`](threading.md) / [`thread_support.md`](thread_support.md) — Threading model
+Current subsystem docs:
+- [`thread_support.md`](thread_support.md) — Threading model
 - [`generator_functions.md`](generator_functions.md) — Generator implementation
-- [`aop.md`](aop.md) — Aspect-oriented programming
-- [`selector_design.md`](selector_design.md) — Selector syntax and semantics
-- [`pattern_matching_design.md`](pattern_matching_design.md) — Pattern matching
-- [`macro_design.md`](macro_design.md) — Macro system
+
+Proposal and design-era docs:
+- [`proposals/future/selector_design.md`](proposals/future/selector_design.md) — Selector redesign and future direction
+- [`proposals/future/pattern_matching_design.md`](proposals/future/pattern_matching_design.md) — Pattern matching proposal
+- [`proposals/future/macro_design.md`](proposals/future/macro_design.md) — Macro system design notes
+- [`proposals/future/aop.md`](proposals/future/aop.md) — Aspect-oriented programming concept notes
 
 Extension and tooling:
 - [`c_extensions.md`](c_extensions.md) — Building C/Nim extensions

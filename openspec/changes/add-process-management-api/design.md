@@ -7,7 +7,7 @@ Gene already exposes `system/exec` and `system/shell`, but both are one-shot hel
 - Provide a Gene-native API for spawning child processes with piped stdio
 - Support interactive request/response flows by reading and writing process streams incrementally
 - Provide explicit process lifecycle control through signals, wait, and shutdown
-- Keep the public API compatible with the reviewed design in `docs/proc_management.md`
+- Keep the public API compatible with the reviewed design in `docs/proposals/implemented/proc_management.md`
 
 ## Non-Goals
 

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Implement complete macro constructor support in Gene following the design in `docs/constructor_design.md`. This includes validation, error handling, and super constructor calls to provide a clean, consistent syntax for constructors that receive unevaluated arguments.
+Implement complete macro constructor support in Gene following the design in `docs/proposals/future/constructor_design.md`. This includes validation, error handling, and super constructor calls to provide a clean, consistent syntax for constructors that receive unevaluated arguments.
 
 ## Why
 

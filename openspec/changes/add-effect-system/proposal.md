@@ -1,5 +1,5 @@
 ## Why
-Gene's AI-first vision requires explicit effect tracking in function signatures, but effects are currently not represented or enforced. This blocks the design in `docs/ai-first.md` and makes purity boundaries unverifiable.
+Gene's AI-first vision requires explicit effect tracking in function signatures, but effects are currently not represented or enforced. This blocks the design in `docs/proposals/future/ai-first.md` and makes purity boundaries unverifiable.
 
 ## What Changes
 - Add effect annotations (`! [Effect ...]`) to function definitions and function type expressions.

@@ -1,6 +1,6 @@
 ## 1. Definition
 - [ ] 1.1 Lock remaining semantics (arity/type contract, return value) for argument matching and `match` expression; confirm scope reuse and shadowing.
-- [ ] 1.2 Update `docs/pattern_matching_design.md` with the finalized scope, exclusions, and error model.
+- [ ] 1.2 Update `docs/proposals/future/pattern_matching_design.md` with the finalized scope, exclusions, and error model.
 
 ## 2. Spec
 - [ ] 2.1 Add spec deltas describing argument matching and `match` expression semantics (scope reuse, no aggregate object, compile-time lowering).

@@ -16,7 +16,7 @@ Actors are disabled by default in Gene. GeneClaw must enable the actor runtime d
 (gene/actor/enable ^workers 8)
 ```
 
-The worker count is application-level configuration. The actor runtime mailbox limit remains the global default from [actor_support.md](/Users/gcao/gene-workspace/gene-old/docs/actor_support.md#L182).
+The worker count is application-level configuration. The actor runtime mailbox limit remains the global default from [actor_support.md](/Users/gcao/gene-workspace/gene-old/docs/proposals/future/actor_support.md#L182).
 
 ## Architecture
 

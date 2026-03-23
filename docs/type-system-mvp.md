@@ -65,6 +65,6 @@ Gene already ships a real gradual typing pipeline:
 ## References
 
 - `docs/compiler.md`
-- `docs/gradual-typing-architecture-review.md`
+- `docs/proposals/implemented/gradual-typing-architecture-review.md`
 - `examples/how-types-work.md`
 - `src/gene/type_checker.nim`

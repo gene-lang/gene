@@ -3,8 +3,8 @@
 > Status: design-era document for an implemented subsystem. Native compilation,
 > HIR lowering, trampolines, and codegen exist in the current tree, but this
 > document mixes shipped behavior with original design intent. Verify details
-> against `src/gene/native/`, `docs/native_compilation_example.md`,
-> `docs/trampoline.md`, and current tests before treating any section here as
+> against `src/gene/native/`, `docs/proposals/implemented/native_compilation_example.md`,
+> `docs/proposals/implemented/trampoline.md`, and current tests before treating any section here as
 > canonical.
 
 ## Overview
@@ -422,7 +422,7 @@ proc compileToNative*(cu: CompilationUnit, fnType: FunctionType): NativeFunction
 | `src/gene/native/hir_convert.nim` | Bytecode → HIR conversion (future) |
 | `src/gene/native/x86_64.nim` | x86-64 code generation (future) |
 | `src/gene/native/registry.nim` | Native function registry (future) |
-| `docs/native-codegen-design.md` | This document |
+| `docs/proposals/implemented/native-codegen-design.md` | This document |
 
 ## 9. References
 

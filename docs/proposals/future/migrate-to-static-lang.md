@@ -1,6 +1,6 @@
 # Migrate Gene to a Static Language
 
-This document captures the architectural changes required to move Gene from a dynamic runtime to a statically typed language that still feels ergonomic for AI and humans. It complements `docs/ai-first-design.md` but focuses on the *systems changes* needed to make static typing, compile-only builds, interfaces, and module-level compilation practical.
+This document captures the architectural changes required to move Gene from a dynamic runtime to a statically typed language that still feels ergonomic for AI and humans. It complements `docs/proposals/future/ai-first-design.md` but focuses on the *systems changes* needed to make static typing, compile-only builds, interfaces, and module-level compilation practical.
 
 ## Goals
 
@@ -211,7 +211,7 @@ AOT requires compiling method/function bodies in advance (no lazy compilation at
 Enums are a foundational part of the static language. They must be compiled, not provided
 as runtime stdlib constructors.
 
-**Syntax (see `docs/ai-first-design.md` Phase 2):**
+**Syntax (see `docs/proposals/future/ai-first-design.md` Phase 2):**
 ```gene
 (enum Option [T]
   (Some [value: T])
@@ -275,7 +275,7 @@ as runtime stdlib constructors.
 
 ## Related Documents
 
-- `docs/ai-first-design.md` — overall AI-first roadmap
-- `docs/ai-first.md` — AI-first language overview
+- `docs/proposals/future/ai-first-design.md` — overall AI-first roadmap
+- `docs/proposals/future/ai-first.md` — AI-first language overview
 - `openspec/changes/add-static-typing/*` — initial static typing change
 - `openspec/changes/add-module-system/*` — module system change

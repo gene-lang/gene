@@ -1,5 +1,5 @@
 ## Context
-`docs/oop_updated_design.md` defines a unified OOP model for Gene: classes and instances are language-level Gene values, not separate Nim-only structures with a Gene wrapper. The runtime can keep optimized internal representations, but those optimizations must preserve a single observable object model.
+`docs/proposals/future/oop_updated_design.md` defines a unified OOP model for Gene: classes and instances are language-level Gene values, not separate Nim-only structures with a Gene wrapper. The runtime can keep optimized internal representations, but those optimizations must preserve a single observable object model.
 
 This change sits underneath existing and pending class-related proposals:
 - `rename-class-member-keywords` defines class-body declaration syntax.

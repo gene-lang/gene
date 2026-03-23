@@ -1,47 +1,45 @@
-# Gene Documentation Index
+# Gene Documentation
 
-The documents below describe the current VM implementation, design decisions, and performance work.  
-Files live in `docs/` unless stated otherwise.
+`spec/` is the canonical language reference for implemented behavior.
 
-## Architecture & Design Notes
+`docs/` is for current implementation notes, subsystem reference material, and
+operational guidance. Design proposals, speculative work, and design-era docs
+for implemented subsystems now live under [`docs/proposals/`](proposals/README.md).
 
-- [ai-first.md](ai-first.md) — AI-native language design principles and proposed features
-- [ai-first-design.md](ai-first-design.md) — Phased implementation roadmap for AI-first features
-- [architecture.md](architecture.md) — bird's-eye view of the VM and compiler pipeline
-- [gradual-typing-architecture-review.md](gradual-typing-architecture-review.md) — gradual-first typing architecture review and priorities
-- [selector_design.md](selector_design.md) — method/selector dispatch strategy
-- [spread_design.md](spread_design.md) — plans for the spread operator and collection literals
-- [simd_support.md](simd_support.md) — exploratory notes on SIMD integration
-- [gene_principles.md](gene_principles.md) — guiding principles behind language features
+## Current Reference Docs
 
-## Language & Runtime Topics
+- [architecture.md](architecture.md) — VM/compiler/runtime architecture overview
+- [compiler.md](compiler.md) — compiler pipeline and descriptor-first typing notes
+- [gir.md](gir.md) — GIR format, caching, and CLI workflow
+- [thread_support.md](thread_support.md) — current thread model and APIs
+- [generator_functions.md](generator_functions.md) — shipped generator semantics
+- [regex.md](regex.md) — current regex syntax and helper behavior
+- [package_support.md](package_support.md) — current package/import behavior
+- [type-system-mvp.md](type-system-mvp.md) — current gradual typing status
+- [descriptor-pipeline-migration.md](descriptor-pipeline-migration.md) — descriptor pipeline migration notes
+- [wasm.md](wasm.md) — current wasm build target and ABI contract
+- [http_server_and_client.md](http_server_and_client.md) — HTTP extension surface
+- [c_extensions.md](c_extensions.md) — native extension API and build flow
+- [deserialize_command.md](deserialize_command.md) — `gene deser` command behavior
+- [lsp.md](lsp.md) — current LSP implementation status
+- [symbol_resolution.md](symbol_resolution.md) — symbol lookup rules
+- [../examples/how-types-work.md](../examples/how-types-work.md) — runnable typing walkthrough
 
-- [gir.md](gir.md) — Gene Intermediate Representation file format
-- [descriptor-pipeline-migration.md](descriptor-pipeline-migration.md) — Phase A migration notes for descriptor-first metadata and GIR cache behavior
-- [../examples/how-types-work.md](../examples/how-types-work.md) — current end-to-end typing pipeline walkthrough with runnable sample
-- [generator_functions.md](generator_functions.md) — generator semantics and VM support
-- [arg_counter.md](arg_counter.md) — argument counting logic used by function matchers
-- [regex.md](regex.md) — Regexp literals and regex/string helper API
-- [json_serialization.md](json_serialization.md) — proposed tagged JSON format for round-tripping Gene values
-- [string_regex_design.md](string_regex_design.md) — design direction for UTF-8 strings, `CString` FFI, and Ruby-inspired string/regex support
-- [http_server_and_client.md](http_server_and_client.md) — HTTP extensions and runtime hooks
-- [packaging.md](packaging.md) — proposed package/dependency install workflow (Git refs + native build)
-- [wasm.md](wasm.md) — wasm build profile, exported ABI, and unsupported feature contract
-- [lsp.md](lsp.md) — Language Server Protocol implementation and editor integration
+## Performance And Ops
 
-## Implementation Diaries
+- [performance.md](performance.md) — benchmark numbers and optimization priorities
+- [gir-benchmarks.md](gir-benchmarks.md) — GIR-specific benchmark notes
+- [benchmark_http_server.md](benchmark_http_server.md) — HTTP benchmarking workflow
+- [ongoing-cleanup.md](ongoing-cleanup.md) — living cleanup tracker
 
-- [implementation/async_design.md](implementation/async_design.md) — architecture for async I/O with event loop integration
-- [implementation/async_progress.md](implementation/async_progress.md) — task-level todo list for async work
-- [implementation/caller_eval.md](implementation/caller_eval.md) — `$caller_eval` design trade-offs
-- [implementation/development_notes.md](implementation/development_notes.md) — open questions and troubleshooting log
+## Working Notes
 
-## Performance & Benchmarking
+- [implementation/async_design.md](implementation/async_design.md) — async implementation diary
+- [implementation/async_progress.md](implementation/async_progress.md) — async rollout progress log
+- [implementation/async_tasks.md](implementation/async_tasks.md) — async task checklist
+- [implementation/caller_eval.md](implementation/caller_eval.md) — `$caller_eval` implementation notes
+- [implementation/development_notes.md](implementation/development_notes.md) — development scratchpad
 
-- [performance.md](performance.md) — current benchmarks (~3.8M calls/sec fib(24)) and optimisation roadmap
-- [gir_benchmarks.md](gir_benchmarks.md) — GIR-specific profiling data and insights
+## Design And Proposal Docs
 
-## Reference Implementation
-
-Documentation for the feature-complete interpreter remains under `gene-new/docs/`.  
-Use it as the behavioural oracle when aligning VM semantics with the reference implementation.
+- [proposals/README.md](proposals/README.md) — future proposals, implemented-but-design-era notes, and archived historical docs

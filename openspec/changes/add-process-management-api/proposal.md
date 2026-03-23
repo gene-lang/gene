@@ -20,7 +20,7 @@ Gene currently supports one-shot process execution through `system/exec` and `sy
 - **Affected code**:
   - Modified: `src/gene/stdlib/system.nim`
   - New or modified: process management tests under `tests/`
-  - Referenced design doc: `docs/proc_management.md`
+  - Referenced design doc: `docs/proposals/implemented/proc_management.md`
 
 ## Compatibility Notes
 

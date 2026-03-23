@@ -258,7 +258,7 @@ The Matcher handles positional args, keyword args, defaults, splats, and destruc
 
 ## Generics
 
-See `docs/generics-design.md` for the full design.
+See `docs/proposals/implemented/generics-design.md` for the design note.
 
 **Implemented now:** `fn first:A`, `method echo:T` — explicit type params attached to definition names.
 
@@ -282,7 +282,7 @@ GIR is a binary serialization of CompilationUnit for caching. When a `.gene` fil
 
 ## Native Compilation
 
-See `docs/native-codegen-design.md`.
+See `docs/proposals/implemented/native-codegen-design.md`.
 
 The native pipeline extends the compiler output:
 

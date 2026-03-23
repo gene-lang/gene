@@ -632,5 +632,6 @@ proc shutdown_worker_pool() =
 - [Mummy Web Server](https://github.com/guzba/mummy) - Multi-threaded HTTP/WebSocket server for Nim
 - [Nim Threading Docs](https://nim-lang.org/docs/threads.html)
 - [Nim Channels](https://nim-lang.org/docs/channels_builtin.html)
-- Gene threading docs: `docs/threading.md`
+- Gene threading docs: `docs/thread_support.md` (current) and
+  `docs/proposals/archive/threading.md` (historical)
 - Gene HTTP server docs: `docs/http_server_and_client.md`

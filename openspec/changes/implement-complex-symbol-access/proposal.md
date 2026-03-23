@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implement the complex symbol access system as designed in `docs/complex_symbol_access_design.md`. This will enable slash-delimited paths like `geometry/shapes/Circle` and `/status` for classes, variables, and assignments with automatic rewriting to `^container` expressions.
+Implement the complex symbol access system as designed in `docs/proposals/future/complex_symbol_access_design.md`. This will enable slash-delimited paths like `geometry/shapes/Circle` and `/status` for classes, variables, and assignments with automatic rewriting to `^container` expressions.
 
 ## Why
 

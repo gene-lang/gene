@@ -86,4 +86,4 @@ Examples:
 
 For the broader design direction around UTF-8 strings, `CString` FFI, and
 Ruby-inspired `String`/`Regexp` behavior, see
-[string_regex_design.md](string_regex_design.md).
+[proposals/future/string_regex_design.md](proposals/future/string_regex_design.md).

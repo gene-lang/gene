@@ -37,7 +37,7 @@ Without an update/transform model, code devolves into manual tree walking and ad
 - `src/gene/compiler.nim`: selector/rule compilation and `/!` emission.
 - `src/gene/vm.nim`: core selector lookup semantics and `/!` execution.
 - `src/gene/stdlib.nim`: `Selector` APIs and new transform/update helpers.
-- `docs/selector_design.md`: document the updated semantics and APIs.
+- `docs/proposals/future/selector_design.md`: document the updated semantics and APIs.
 - `examples/html2.gene`: becomes runnable once rule/transform pieces land.
 
 ### Risks

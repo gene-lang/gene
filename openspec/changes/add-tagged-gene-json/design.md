@@ -9,7 +9,7 @@ Gene already exposes plain JSON helpers:
 Those helpers are appropriate for ordinary JSON interop, but they do not
 preserve Gene-specific values like symbols and Gene nodes across a round trip.
 
-The design note in `docs/json_serialization.md` defines a tagged JSON format
+The design note in `docs/proposals/future/json_serialization.md` defines a tagged JSON format
 built around a single string prefix, `#GENE#`, whose payload is parsed as one
 Gene value.
 
