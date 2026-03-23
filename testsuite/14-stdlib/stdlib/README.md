@@ -27,7 +27,7 @@ Nested directories cover namespace-focused areas:
 
 ## Running
 
-Run the default stdlib groups through the main runner:
+Run the default stdlib section through the main runner:
 
 ```bash
 cd testsuite
@@ -37,13 +37,13 @@ cd testsuite
 Run stdlib tests directly:
 
 ```bash
-bin/gene run testsuite/stdlib/8_runtime_serdes.gene
-bin/gene run testsuite/stdlib/strings/2_regex_methods.gene
-bin/gene run testsuite/stdlib/time/1_sleep_and_now.gene
+bin/gene run testsuite/14-stdlib/stdlib/8_runtime_serdes.gene
+bin/gene run testsuite/14-stdlib/stdlib/strings/2_regex_methods.gene
+bin/gene run testsuite/14-stdlib/stdlib/time/1_sleep_and_now.gene
 ```
 
 ## Notes
 
-- `stdlib/time/` tests exist on disk but are not currently included by the default `testsuite/run_tests.sh` pass.
+- `14-stdlib/stdlib/time/` is now part of the default recursive section run.
 - `serdes_objects.gene` is a support module for serialization tests, not a standalone test.
 - For lower-level stdlib coverage, also see Nim tests under `tests/`, such as JSON, datetime, string, array, regex, process, sqlite, and postgres suites.

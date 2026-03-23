@@ -5,9 +5,10 @@
 # Expected: DynamicGreeter
 # Expected: hello from dynamic class
 
-(var nil_prop nil/x)
+(var nil_value nil)
+(var nil_prop nil_value/x)
 (println (nil_prop is Nil))
-(println ((nil .anything) is Nil))
+(println ((nil_value .anything) is Nil))
 
 (class Proxy
   (on_method_missing [name args...]

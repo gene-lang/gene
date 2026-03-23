@@ -78,7 +78,11 @@ run_test() {
             set -e
             # Filter out empty lines and compile-time type warnings from actual output
             # (compile warnings contain "Type error:", runtime warnings like "Lossy conversion" are kept)
-            actual_output=$(echo "$actual_output" | grep -v '^$' | grep -v 'Warning:.*Type error:' || true)
+            actual_output=$(echo "$actual_output" \
+                | grep -v '^$' \
+                | grep -v 'Warning:.*Type error:' \
+                | sed -E 's/^T[0-9]+ WARN  .* gene\/runtime_types /Warning: /' \
+                || true)
 
             # Normalize outputs (remove trailing spaces)
             echo "$expected_output" | sed 's/[[:space:]]*$//' > /tmp/expected_$$.txt
@@ -121,23 +125,25 @@ run_test() {
     fi
 }
 
-# Function to run tests in a directory
-run_category() {
-    local category=$1
+# Function to run tests in a spec section recursively.
+# Helper modules can live under the same tree; only numbered files are executed.
+run_section() {
+    local section=$1
     local dir=$2
-    
+
     if [ -d "$dir" ]; then
-        echo -e "${BLUE}Testing $category:${NC}"
-        
-        # Run numbered tests in order
-        for i in 1 2 3 4 5 6 7 8 9; do
-            for test_file in "$dir"/${i}_*.gene; do
-                if [ -f "$test_file" ]; then
+        echo -e "${BLUE}Testing $section:${NC}"
+
+        while IFS= read -r test_file; do
+            local base
+            base=$(basename "$test_file")
+            case "$base" in
+                [0-9]*_*.gene)
                     run_test "$test_file"
-                fi
-            done
-        done
-        
+                    ;;
+            esac
+        done < <(find "$dir" -type f -name '*.gene' | sort -V)
+
         echo
     fi
 }
@@ -161,31 +167,22 @@ if [ $# -gt 0 ]; then
     done
     echo
 else
-    # Run tests in specific order
-    run_category "Basic Literals & Variables" "basics"
-    run_category "Control Flow" "control_flow"
-    run_category "Operators" "operators"
-    run_category "Arrays" "arrays"
-    run_category "Maps" "maps"
-    run_category "Strings" "strings"
-    run_category "Functions" "functions"
-    run_category "Native" "native"
-    run_category "Contracts" "contracts"
-    run_category "Types" "types"
-    run_category "Scopes" "scopes"
-    run_category "Callable Instances" "callable_instances"
-    run_category "OOP" "oop"
-    run_category "Async Support" "async"
-    run_category "Futures" "futures"
-    run_category "Generators" "generators"
-    run_category "Imports" "imports"
-    run_category "Stdlib" "stdlib"
-    run_category "Stdlib Core" "stdlib/core"
-    run_category "Stdlib Strings" "stdlib/strings"
-    run_category "Stdlib Arrays" "stdlib/arrays"
-    # run_category "AI Documents" "ai/documents"
-    run_category "Stdlib IO" "stdlib/io"
-    # run_category "Stdlib Time" "stdlib/time"
+    # Run spec-aligned sections in order
+    run_section "01 Syntax & Literals" "01-syntax"
+    run_section "02 Types" "02-types"
+    run_section "03 Expressions & Operators" "03-expressions"
+    run_section "04 Control Flow" "04-control-flow"
+    run_section "05 Functions" "05-functions"
+    run_section "06 Collections" "06-collections"
+    run_section "07 OOP" "07-oop"
+    run_section "08 Modules & Namespaces" "08-modules"
+    run_section "09 Errors & Contracts" "09-errors"
+    run_section "10 Async & Concurrency" "10-async"
+    run_section "11 Generators" "11-generators"
+    run_section "12 Patterns" "12-patterns"
+    run_section "13 Regex" "13-regex"
+    run_section "14 Standard Library" "14-stdlib"
+    run_section "15 Serialization" "15-serialization"
 
     # Run pipe command tests (uses its own test script)
     if [ -f "$SCRIPT_DIR/pipe/run_tests.sh" ]; then

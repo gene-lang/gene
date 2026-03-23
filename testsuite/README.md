@@ -4,25 +4,36 @@ The Gene test suite combines runnable `.gene` programs, command-suite scripts, a
 
 ## Layout
 
-Primary feature categories:
+Primary spec-aligned sections:
 
-- `basics/` — literals, variables, numbers, Gene values
-- `control_flow/` — `if`, loops, `do`, `case`, `ifel`
-- `operators/` — arithmetic, comparison, `is`, precedence, infix lowering
-- `arrays/`, `maps/`, `strings/` — core collection/string behavior
-- `functions/`, `types/`, `contracts/`, `scopes/` — callable behavior, gradual typing, and scope rules
-- `oop/`, `callable_instances/` — classes, inheritance, AOP, unified object behavior
-- `async/`, `futures/`, `generators/` — async I/O, futures, generators, spawn/await flows
-- `imports/` — module loading, namespace exports, comptime import behavior
-- `stdlib/` — top-level stdlib coverage plus nested `core/`, `arrays/`, `strings/`, `io/`, and `time/` groups
-- `native/` — runtime-native dispatch coverage
+- `01-syntax/` — literals, variables, numbers, Gene values, basic strings
+- `02-types/` — gradual typing, type flow, property types, generics
+- `03-expressions/` — arithmetic, comparison, `is`, precedence, infix lowering
+- `04-control-flow/` — `if`, loops, `do`, `ifel`, and case-oriented control tests
+- `05-functions/` — functions plus scope-related callable behavior
+- `06-collections/` — arrays and maps
+- `07-oop/` — classes, inheritance, callable instances, AOP
+- `08-modules/` — imports, namespace paths, comptime import behavior
+- `09-errors/` — contracts plus direct throw/catch coverage
+- `10-async/` — async I/O, futures, spawn/await, and thread-style reply flows
+- `11-generators/` — generator behavior and iteration
+- `12-patterns/` — destructuring and `case/when` pattern matching
+- `13-regex/` — regex literals and regex/string helpers
+- `14-stdlib/` — stdlib-focused coverage, including nested `stdlib/` and `native/`
+- `15-serialization/` — tagged JSON and serdes coverage
+
+Additional non-spec command suites and helpers:
+
 - `pipe/`, `examples/`, `fmt/` — command-focused suites with their own runners
+- `fixtures/` — shared files used by runnable tests
+- `ai/` — app-specific test programs outside the core language spec
+- `experimental/` — runnable tests for behavior not currently part of the spec-aligned default suite
 
 Helper modules and fixtures live alongside the tests where needed, for example:
 
-- `imports/math_lib.gene`
-- `imports/string_lib.gene`
-- `stdlib/serdes_objects.gene`
+- `08-modules/imports/math_lib.gene`
+- `08-modules/imports/string_lib.gene`
+- `15-serialization/serdes_objects.gene`
 - `fixtures/`
 
 ## Running Tests
@@ -38,7 +49,7 @@ Run selected test files:
 
 ```bash
 cd testsuite
-./run_tests.sh types/5_property_types.gene async/7_spawn_var_assignment.gene
+./run_tests.sh 02-types/types/5_property_types.gene 10-async/async/7_spawn_var_assignment.gene
 ```
 
 Run command-specific suites directly:
@@ -69,6 +80,6 @@ This directory is not the whole test story:
 
 Examples today:
 
-- thread messaging APIs are primarily covered in `tests/test_thread.nim`
-- destructuring edge cases are primarily covered in `tests/test_pattern_matching.nim`
+- some thread internals are still covered more deeply in `tests/test_thread.nim`
+- destructuring edge cases are still covered more deeply in `tests/test_pattern_matching.nim`
 - wasm/native pipeline internals are covered in dedicated Nim tests

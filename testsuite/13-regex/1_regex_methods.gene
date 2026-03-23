@@ -1,0 +1,17 @@
+# Expected: AB
+# Expected: a
+# Expected: a
+# Expected: a
+# Expected: a[1]b[2]
+# Expected: Regex method tests done
+
+(var r (new gene/Regexp ^^i "ab"))
+(var match1 (r .match "AB"))
+(println match1/value)
+(var match2 (#/a/ .match "ba"))
+(println match2/value)
+(println (#/a/ .find "ba"))
+(var m (#/(a)(b)/ .process "ab"))
+(println m/captures/0)
+(println ("a1b2" .replace_all #/(\\d)/[\\1]/))
+(println "Regex method tests done")

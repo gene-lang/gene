@@ -1,0 +1,15 @@
+# Expected: 42
+
+(do
+  (var worker
+    (spawn
+      (do
+        (thread .on_message (fn [msg]
+          (msg .reply (+ (msg .payload) 1))
+        ))
+        (keep_alive)
+      )
+    )
+  )
+  (println (await (worker .send_expect_reply 41)))
+)

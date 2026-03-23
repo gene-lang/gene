@@ -1,0 +1,10 @@
+# Expected: caught throw
+# Expected: catch and continue
+
+(try
+  (throw "boom")
+catch *
+  (println "caught throw")
+)
+
+(println "catch and continue")

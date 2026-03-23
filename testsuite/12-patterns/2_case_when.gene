@@ -1,0 +1,29 @@
+# Expected: 42
+# Expected: hello
+# Expected: two
+
+(var r1 (Ok 42))
+(case r1
+  when (Ok v)
+    (println v)
+  when (Err e)
+    (println e)
+)
+
+(var o1 (Some "hello"))
+(case o1
+  when (Some x)
+    (println x)
+  when None
+    (println "none")
+)
+
+(var x 2)
+(case x
+  when 1
+    (println "one")
+  when 2
+    (println "two")
+  else
+    (println "other")
+)

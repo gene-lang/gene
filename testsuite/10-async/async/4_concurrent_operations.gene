@@ -2,12 +2,12 @@
 
 (println "=== Test 004: Concurrent Operations ===")
 
-(var test_file "../fixtures/test.txt")
-(var gene_file "../fixtures/file.gene")
+(var test_file "../../fixtures/test.txt")
+(var gene_file "../../fixtures/file.gene")
 (var output_file "/tmp/gene_concurrent_test.txt")
 
 (println "Test 1: Multiple concurrent reads")
-(var start_time (gene/time/now))
+(var start_time (time/now_us))
 
 (var future1 (gene/io/read_async test_file))
 (var future2 (gene/io/read_async gene_file))
@@ -17,8 +17,8 @@
 (var r2 (await future2))
 (var r3 (await future3))
 
-(var end_time (gene/time/now))
-(println "Concurrent reads completed in" (end_time - start_time) "seconds")
+(var end_time (time/now_us))
+(println "Concurrent reads completed in us:" (end_time - start_time))
 (var len1 (r1 .length))
 (var len2 (r2 .length))
 (var len3 (r3 .length))

@@ -1,0 +1,14 @@
+# Expected: {^a 1 ^b 2}
+
+(do
+  (var worker
+    (spawn
+      (do
+        (thread .on_message (fn [msg]
+          (msg .reply (msg .payload))
+        ))
+      )
+    )
+  )
+  (println (await (worker .send_expect_reply {^a 1 ^b 2})))
+)

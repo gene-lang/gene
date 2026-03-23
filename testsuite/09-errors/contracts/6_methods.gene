@@ -1,0 +1,25 @@
+# Contracts should work for methods
+# Expected: 12
+# Expected: method contract caught
+
+(class Counter
+  (ctor [value]
+    (/value = value)
+  )
+
+  (method add [delta] -> Int
+    ^pre [(delta > 0)]
+    ^post [(result > (/value - delta))]
+    (/value = (/value + delta))
+    /value
+  )
+)
+
+(var c (new Counter 10))
+(println (c .add 2))
+
+(try
+  (c .add -1)
+catch *
+  (println "method contract caught")
+)

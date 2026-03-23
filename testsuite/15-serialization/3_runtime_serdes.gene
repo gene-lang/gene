@@ -1,0 +1,24 @@
+# Expected: runtime serdes ok
+
+(import ExportedThing:Thing make_exported:factory DEFAULT_THING:shared Status:State from "serdes_objects")
+
+(var class_ser (gene/serdes/serialize Thing))
+(assert ((class_ser .index "ClassRef") >= 0))
+(assert ((gene/serdes/serialize (gene/serdes/deserialize class_ser)) == class_ser))
+
+(var fn_ser (gene/serdes/serialize factory))
+(var fn_round (gene/serdes/deserialize fn_ser))
+(assert ((gene/serdes/serialize fn_round) == fn_ser))
+
+(var enum_ser (gene/serdes/serialize State/ok))
+(var enum_round (gene/serdes/deserialize enum_ser))
+(assert ((gene/serdes/serialize enum_round) == enum_ser))
+
+(var named_ser (gene/serdes/serialize shared))
+(var named_round (gene/serdes/deserialize named_ser))
+(named_round/name = "shared")
+(assert (shared/name == "shared"))
+(shared/name = "default")
+(assert ((gene/serdes/serialize named_round) == named_ser))
+
+(println "runtime serdes ok")

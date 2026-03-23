@@ -1,0 +1,13 @@
+# Expected: 1
+# Expected: 3
+# Expected: [10 20 [30 40] 99]
+
+(var [a] [1])
+(println a)
+
+(var [x y] [1 2])
+(println (+ x y))
+
+(var payload `(payload ^a 10 ^x 99 20 30 40))
+(var [^a b c... ^rest...] payload)
+(println [a b c rest/x])

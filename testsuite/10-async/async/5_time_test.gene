@@ -1,0 +1,15 @@
+#!/usr/bin/env gene run
+
+(println "=== Test 005: Time Function ===")
+
+(println "Test 1: Basic gene/now call")
+(var t1 (gene/now))
+(println "Year 1:" (t1 .year))
+
+(println "Test 2: Multiple gene/now calls")
+(var t2 (gene/now))
+(println "Year 2:" (t2 .year))
+
+(println "Now us positive:" (> (time/now_us) 0))
+
+(println "=== Test 005 PASSED ===")

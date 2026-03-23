@@ -1,0 +1,13 @@
+# Expected: tree serdes ok
+
+(var root "/tmp/gene_spec_tree_serdes")
+(var value {^name "alpha" ^items [1 2 3] ^nested {^ok true}})
+(gene/serdes/write_tree root value)
+(var loaded (gene/serdes/read_tree root))
+(assert (loaded/name == "alpha"))
+(assert (loaded/items/0 == 1))
+(assert (loaded/items/2 == 3))
+(assert (loaded/nested/ok == true))
+(assert (not (Dir/exists root)))
+(assert (((gene/io/read #"#{root}.gene") .length) > 0))
+(println "tree serdes ok")

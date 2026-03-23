@@ -100,6 +100,7 @@ Track completed cleanup work here with dates:
 - 2026-03-23: Updated `testsuite/README.md`, `testsuite/TEST_ORGANIZATION.md`, and `testsuite/stdlib/README.md` to match the current test layout instead of the old 14-test structure.
 - 2026-03-23: Confirmed there is currently no spec-section tagging convention in `testsuite/`; `# Expected:`, `# ExitCode:`, and `# Args:` are the only standardized metadata headers.
 - 2026-03-23: Initial spec/test audit: `testsuite/` covers most major spec areas, but destructuring edge cases and thread messaging APIs are still covered mainly in Nim tests rather than runnable `testsuite/` programs.
+- 2026-03-23: Reorganized `testsuite/` so the default runner follows `spec/` section numbering (`01-syntax` through `15-serialization`), added dedicated section coverage for errors, patterns, regex, serialization, and thread-style async replies, and restored the full `testsuite/run_tests.sh` pass to green.
 
 ## Agent Comments
 
