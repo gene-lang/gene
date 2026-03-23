@@ -1,111 +1,79 @@
 # Gene Test Suite Organization
 
-## Test Naming Convention
+This document describes how `testsuite/run_tests.sh` organizes and executes the runnable Gene tests.
 
-All test files follow a numbered prefix pattern:
-- `1_*.gene` - Most basic/fundamental tests
-- `2_*.gene` - Secondary features
-- `3_*.gene` - More advanced features
-- etc.
+## Execution Model
 
-## Test Execution Order
+The main runner executes flat feature directories in a fixed order:
 
-The `run_tests.sh` script executes tests in this specific order:
+1. `basics/`
+2. `control_flow/`
+3. `operators/`
+4. `arrays/`
+5. `maps/`
+6. `strings/`
+7. `functions/`
+8. `native/`
+9. `contracts/`
+10. `types/`
+11. `scopes/`
+12. `callable_instances/`
+13. `oop/`
+14. `async/`
+15. `futures/`
+16. `generators/`
+17. `imports/`
+18. `stdlib/`
+19. `stdlib/core/`
+20. `stdlib/strings/`
+21. `stdlib/arrays/`
+22. `stdlib/io/`
 
-### 1. Basic Literals & Variables
-- `1_literals.gene` - Basic literal values (numbers, strings, booleans, nil, symbols)
-- `2_variables.gene` - Variable declaration and assignment
-- `3_numbers.gene` - Number operations and arithmetic
-- `4_genes.gene` - Gene expressions (S-expressions)
+The runner currently skips `stdlib/time/` in the default pass even though those tests exist on disk.
 
-### 2. Control Flow
-- `1_if.gene` - If-else conditions
-- `2_loops.gene` - Loop structures (loop, while, break, continue)
-- `3_do_blocks.gene` - Do blocks and scoping
+Separate command suites are invoked through their own scripts:
 
-### 3. Operators
-- `1_arithmetic.gene` - Arithmetic operations (+, -, *, /)
-- `2_comparison.gene` - Comparison operators (<, <=, >, >=, ==, !=)
+- `pipe/run_tests.sh`
+- `examples/run_tests.sh`
+- `fmt/run_tests.sh` exists but is currently not called by the default runner
 
-### 4. Data Structures
+## File Naming
 
-#### Arrays
-- `1_basic_arrays.gene` - Array creation, access, modification
+Runnable Gene tests follow numeric prefixes for stable ordering:
 
-#### Maps
-- `1_basic_maps.gene` - Map creation, access, modification
+- `1_*.gene` through `9_*.gene` for most flat feature directories
+- `001_*.gene` style names for the pipe command suite
 
-#### Strings
-- `1_basic_strings.gene` - String literals and operations
+Helper files may live in the same directory and are not always standalone tests. Examples:
 
-### 5. Functions & Scopes
-- `functions/1_basic_functions.gene` - Function definitions and calls
-- `scopes/1_basic_scopes.gene` - Variable scoping and shadowing
+- `imports/math_lib.gene`
+- `imports/string_lib.gene`
+- `imports/fn_ns_lib.gene`
+- `stdlib/serdes_objects.gene`
 
-### 6. Standard Library
+## Metadata
 
-#### Core (`stdlib/core`)
-- `1_print_and_assert.gene` - Core namespace printing helpers and assertions
-- `2_base64.gene` - Base64 encode/decode helpers
+The runner understands these file headers:
 
-#### Strings (`stdlib/strings`)
-- `1_string_methods.gene` - String length, casing, and append methods
+- `# Expected:` for output assertions
+- `# ExitCode:` for non-zero or otherwise specific exit expectations
+- `# Args:` for extra CLI arguments
 
-#### Arrays (`stdlib/arrays`)
-- `1_array_methods.gene` - Array size, add, and indexed access
+Tests without `# Expected:` are treated as smoke tests and only need to exit with the expected code.
 
-#### IO (`stdlib/io`)
-- `1_file_io.gene` - Read/write helpers (sync and async)
+## Coverage Shape
 
-#### Time (`stdlib/time`)
-- `1_sleep_and_now.gene` - time/now with sync and async sleep helpers
+The runnable suite is organized by user-visible behavior:
 
-## Running Tests
+- syntax and basic runtime semantics in `basics/`, `operators/`, `control_flow/`
+- function/type/contract behavior in `functions/`, `types/`, `contracts/`
+- object model behavior in `oop/` and `callable_instances/`
+- async behavior in `async/`, `futures/`, and `generators/`
+- stdlib behavior in `stdlib/` and its nested subdirectories
+- CLI-oriented behavior in `pipe/`, `examples/`, and `fmt/`
 
-### Run all tests in order:
-```bash
-cd testsuite
-./run_tests.sh
-```
+Some features still rely more heavily on Nim tests than on `testsuite/` coverage. In particular:
 
-### Run individual test:
-```bash
-../bin/gene run basics/1_literals.gene
-```
-
-### Run tests for a specific feature:
-```bash
-for f in arrays/*.gene; do ../bin/gene run "$f"; done
-```
-
-## Test Output
-
-The test runner provides:
-- Color-coded results (green = pass, red = fail)
-- Feature grouping with section headers
-- Summary statistics with pass rate
-- Truncated error messages for failures
-
-## Adding New Tests
-
-When adding new tests:
-1. Use the next available number prefix in the feature directory
-2. Keep tests focused on a single feature/concept
-3. Use `print` statements instead of assertions
-4. End each test with a completion message
-5. Avoid features that are not yet implemented
-
-## Current Test Coverage
-
-| Feature | Tests | Status |
-|---------|-------|--------|
-| Basic Literals | 4 | ✅ Working |
-| Control Flow | 3 | ✅ Working |
-| Operators | 2 | ✅ Working |
-| Arrays | 1 | ✅ Working |
-| Maps | 1 | ✅ Working |
-| Strings | 1 | ✅ Working |
-| Functions | 1 | ✅ Working |
-| Scopes | 1 | ✅ Working |
-
-Total: 14 working test files
+- thread messaging and reply APIs
+- destructuring and pattern-matching edge cases
+- native codegen and wasm internals

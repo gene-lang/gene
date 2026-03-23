@@ -1,83 +1,74 @@
 # Gene Test Suite
 
-A comprehensive test suite for the Gene programming language, organized by feature categories with numbered test files for clear execution order.
+The Gene test suite combines runnable `.gene` programs, command-suite scripts, and Nim-level unit tests. This directory focuses on executable Gene programs that validate current language and stdlib behavior through the `bin/gene` CLI.
 
-## Structure
+## Layout
 
-```
-testsuite/
-├── basics/           # Fundamental language features
-│   ├── 1_literals.gene
-│   ├── 2_variables.gene
-│   ├── 3_numbers.gene
-│   └── 4_genes.gene
-├── control_flow/     # Control structures
-│   ├── 1_if.gene
-│   ├── 2_loops.gene
-│   └── 3_do_blocks.gene
-├── operators/        # Operator tests
-│   ├── 1_arithmetic.gene
-│   └── 2_comparison.gene
-├── arrays/           # Array operations
-│   └── 1_basic_arrays.gene
-├── maps/             # Map operations
-│   └── 1_basic_maps.gene
-├── strings/          # String operations
-│   └── 1_basic_strings.gene
-├── functions/        # Function definitions
-│   └── 1_basic_functions.gene
-├── scopes/           # Variable scoping
-│   └── 1_basic_scopes.gene
-└── run_tests.sh      # Test runner script
-```
+Primary feature categories:
+
+- `basics/` — literals, variables, numbers, Gene values
+- `control_flow/` — `if`, loops, `do`, `case`, `ifel`
+- `operators/` — arithmetic, comparison, `is`, precedence, infix lowering
+- `arrays/`, `maps/`, `strings/` — core collection/string behavior
+- `functions/`, `types/`, `contracts/`, `scopes/` — callable behavior, gradual typing, and scope rules
+- `oop/`, `callable_instances/` — classes, inheritance, AOP, unified object behavior
+- `async/`, `futures/`, `generators/` — async I/O, futures, generators, spawn/await flows
+- `imports/` — module loading, namespace exports, comptime import behavior
+- `stdlib/` — top-level stdlib coverage plus nested `core/`, `arrays/`, `strings/`, `io/`, and `time/` groups
+- `native/` — runtime-native dispatch coverage
+- `pipe/`, `examples/`, `fmt/` — command-focused suites with their own runners
+
+Helper modules and fixtures live alongside the tests where needed, for example:
+
+- `imports/math_lib.gene`
+- `imports/string_lib.gene`
+- `stdlib/serdes_objects.gene`
+- `fixtures/`
 
 ## Running Tests
 
-### Run all tests:
+Run the main Gene testsuite:
+
 ```bash
+cd testsuite
 ./run_tests.sh
 ```
 
-### Run individual test:
+Run selected test files:
+
 ```bash
-../bin/gene run basics/1_literals.gene
+cd testsuite
+./run_tests.sh types/5_property_types.gene async/7_spawn_var_assignment.gene
 ```
 
-### Run tests for a specific feature:
+Run command-specific suites directly:
+
 ```bash
-for f in control_flow/*.gene; do ../bin/gene run "$f"; done
+testsuite/pipe/run_tests.sh
+testsuite/examples/run_tests.sh
+testsuite/fmt/run_tests.sh
 ```
 
 ## Test Conventions
 
-1. **Numbered Prefixes**: Tests are numbered (1_, 2_, etc.) to indicate execution order
-2. **Expected Output**: Tests use `# Expected:` comments to specify expected output
-3. **Auto-verification**: The test runner compares actual output against expected
-4. **Feature Focus**: Each test focuses on a specific language feature
-5. **Flexible Testing**: Tests without `# Expected:` just verify successful execution
+Gene test files use comment-based metadata:
 
-## Current Status
+- `# Expected:` — expected output line(s)
+- `# ExitCode:` — expected process exit code
+- `# Args:` — extra CLI args passed to `bin/gene run`
 
-✅ **All 14 tests passing** (100% pass rate)
+If a file has no `# Expected:` lines, the runner only checks that it exits successfully.
 
-| Feature | Tests | Status |
-|---------|-------|--------|
-| Basics | 4 | ✅ |
-| Control Flow | 3 | ✅ |
-| Operators | 2 | ✅ |
-| Arrays | 1 | ✅ |
-| Maps | 1 | ✅ |
-| Strings | 1 | ✅ |
-| Functions | 1 | ✅ |
-| Scopes | 1 | ✅ |
+## Coverage Notes
 
-## Adding New Tests
+This directory is not the whole test story:
 
-When adding tests:
-1. Use the next available number in the feature directory
-2. Keep tests simple and focused
-3. Use print statements for output
-4. Test one concept at a time
-5. Include a completion message
+- `tests/` contains Nim unit tests for parser/compiler/VM internals
+- some features are covered in both places
+- some lower-level behaviors currently exist only in Nim tests
 
-See `TEST_ORGANIZATION.md` for detailed documentation.
+Examples today:
+
+- thread messaging APIs are primarily covered in `tests/test_thread.nim`
+- destructuring edge cases are primarily covered in `tests/test_pattern_matching.nim`
+- wasm/native pipeline internals are covered in dedicated Nim tests

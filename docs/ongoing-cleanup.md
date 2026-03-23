@@ -24,7 +24,8 @@ Living document tracking cleanup work across design, implementation, documentati
 
 ### Accuracy Audit & Spec/Test Alignment
 - [ ] Walk each doc and verify it reflects current implementation (not aspirational designs from months ago)
-- [ ] Mark speculative/future docs clearly (e.g. `wasm.md`, `simd_support.md`, `native-codegen-design.md`)
+- [ ] Mark genuinely speculative/future docs clearly (e.g. `simd_support.md`, `ai-first.md`, `ai-first-design.md`)
+- [ ] Label implemented subsystems with design-era docs separately from future work (e.g. `native-codegen-design.md`, `native_compilation_example.md`, `trampoline.md`) and audit them against current code/tests
 - [ ] Remove or archive docs for features that were abandoned or superseded
 - [ ] Ensure every spec item has corresponding tests in `testsuite/`
 - [ ] Tag test files with the spec section they cover
@@ -94,6 +95,12 @@ Track completed cleanup work here with dates:
 - 2026-03-20: Merged thread_support.md and threading.md into threading.md
 -->
 
+- 2026-03-23: Reclassified `wasm.md` as implementation-facing and `native-codegen-design.md` as an implemented subsystem doc that still needs an accuracy refresh.
+- 2026-03-23: Added explicit status banners to `docs/threading.md` (superseded by `thread_support.md`) and `docs/native-codegen-design.md` (implemented subsystem, not canonical spec).
+- 2026-03-23: Updated `testsuite/README.md`, `testsuite/TEST_ORGANIZATION.md`, and `testsuite/stdlib/README.md` to match the current test layout instead of the old 14-test structure.
+- 2026-03-23: Confirmed there is currently no spec-section tagging convention in `testsuite/`; `# Expected:`, `# ExitCode:`, and `# Args:` are the only standardized metadata headers.
+- 2026-03-23: Initial spec/test audit: `testsuite/` covers most major spec areas, but destructuring edge cases and thread messaging APIs are still covered mainly in Nim tests rather than runnable `testsuite/` programs.
+
 ## Agent Comments
 
 - Prioritize a canonical language reference early; a lot of cleanup becomes easier once one document is the source of truth.
@@ -102,3 +109,7 @@ Track completed cleanup work here with dates:
 - The VS Code grammar audit looks especially valuable because the language has several syntax forms (`^`, `/`, `/.`) that are easy for tooling to drift on.
 - `types.nim` is a strong candidate for incremental decomposition, but that work should likely happen after the spec/docs are clearer so refactors follow stable boundaries.
 - It may help to split this checklist into “high-leverage first” vs “later structural cleanup” so the project does not treat all items as equally urgent.
+- `wasm.md` currently looks implementation-facing and should stay in the accuracy audit bucket, not the speculative-doc bucket.
+- Native compilation is implemented and tested, but docs like `native-codegen-design.md` still read as design notes; treat them as “implemented but needs refresh,” not “future-only.”
+- The testsuite docs had significant drift; keeping `testsuite/README.md` and `testsuite/TEST_ORGANIZATION.md` current is part of the same accuracy-audit work as refreshing `spec/`.
+- The current strongest spec/test gaps appear to be: no standardized spec tags in test files, limited runnable `testsuite/` coverage for destructuring patterns, and thread messaging APIs that are mostly validated in Nim tests.

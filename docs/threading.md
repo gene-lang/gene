@@ -1,5 +1,9 @@
 # Threading in Gene
 
+> Status: superseded design note. This file describes an older `gene/thread/...`
+> namespace API and should not be used as the implementation reference.
+> See `docs/thread_support.md` for the current VM behavior.
+
 ## Overview
 
 Gene provides threading support through the `gene/thread` namespace. Threads allow concurrent execution of Gene code with message passing for communication.

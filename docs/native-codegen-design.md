@@ -1,5 +1,12 @@
 # Gene Native Code Generation Design
 
+> Status: design-era document for an implemented subsystem. Native compilation,
+> HIR lowering, trampolines, and codegen exist in the current tree, but this
+> document mixes shipped behavior with original design intent. Verify details
+> against `src/gene/native/`, `docs/native_compilation_example.md`,
+> `docs/trampoline.md`, and current tests before treating any section here as
+> canonical.
+
 ## Overview
 
 This document describes the design for compiling typed Gene functions to native machine code. The goal is to achieve 10-50x performance improvement for hot, fully-typed functions while maintaining seamless interop with the dynamic VM.
@@ -423,4 +430,3 @@ proc compileToNative*(cu: CompilationUnit, fnType: FunctionType): NativeFunction
 - [Cranelift IR Design](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift)
 - [V8 Turbofan Compiler](https://v8.dev/docs/turbofan)
 - [Simple JIT in C](https://eli.thegreenplace.net/2017/adventures-in-jit-compilation-part-1-an-interpreter/)
-
