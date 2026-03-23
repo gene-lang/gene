@@ -11,6 +11,8 @@
 ### With Replacement
 ```gene
 (var re_sub #/(\d)/[\\1]/)   # Pattern + replacement in one literal
+("a1b2" .replace re_sub)     # => "a[1]b2" (uses embedded replacement)
+("a1b2" .replace_all re_sub) # => "a[1]b[2]"
 ```
 
 ## 13.2 Matching

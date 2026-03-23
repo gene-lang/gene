@@ -42,6 +42,14 @@
   when (Err e) (println "Error:" e))
 ```
 
+### Option Matching
+```gene
+(var o (Some "hello"))
+(case o
+  when (Some x) (println x)
+  when None     (println "none"))
+```
+
 ### Wildcard
 ```gene
 (case result
@@ -49,11 +57,39 @@
   when (Err _) (println "failure"))
 ```
 
+### Return Value
+`case/when` is an expression — each branch returns a value:
+```gene
+(var doubled
+  (case (Ok 10)
+    when (Ok n) (n * 2)
+    when (Err e) -1))
+# doubled => 20
+```
+
 ## 12.4 Destructuring in `for`
 
+With arrays, `for [i x]` gives index + value:
 ```gene
+(for [i x] in ["a" "b" "c"]
+  (println i "=" x))
+# Prints:
+# 0 = a
+# 1 = b
+# 2 = c
+```
+
+With generators that yield arrays, elements are destructured:
+```gene
+(fn pairs* []
+  (yield [0 2])
+  (yield [1 3]))
+
 (for [k v] in (pairs*)
   (println k "=" v))
+# Prints:
+# 0 = 2
+# 1 = 3
 ```
 
 ## 12.5 `?` Operator (Early Return)
@@ -61,12 +97,27 @@
 Unwraps `Ok`/`Some`, returns early on `Err`/`None`:
 
 ```gene
-(fn process []
-  (var v ((get_result) ?))   # Returns Err early if get_result fails
-  (v * 2))
+(fn increment [r: (Result Int String)] -> (Result Int String)
+  (var v (r ?))    # Returns Err early if r is Err
+  (Ok (v + 1)))
+
+(increment (Ok 4))       # => (Ok 5)
+(increment (Err "boom")) # => (Err "boom")
+```
+
+Works with Option too:
+```gene
+(fn double [o: (Option Int)] -> (Option Int)
+  (var v (o ?))    # Returns None early if o is None
+  (Some (v * 2)))
+
+(double (Some 7))  # => (Some 14)
+(double None)      # => (None)
 ```
 
 ---
+
+> **Note:** The ADT pattern matching and `?` operator features (sections 12.3 ADT/Option/Wildcard, 12.5) are experimental and may undergo complete redesign.
 
 ## Potential Improvements
 
