@@ -24,7 +24,7 @@
 
 | Method           | Description                        | Example                                |
 |------------------|------------------------------------|----------------------------------------|
-| `.length`        | Character count                    | `"hello"/.length` => 5                 |
+| `.length`        | Character count                    | `("hello" .length)` => 5               |
 | `.to_upper`      | Uppercase                          | `"hi" .to_upper` => "HI"              |
 | `.to_lower`      | Lowercase                          | `"HI" .to_lower` => "hi"              |
 | `.capitalize`    | Capitalize first char              | `"hi" .capitalize` => "Hi"            |
