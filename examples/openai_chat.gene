@@ -1,25 +1,44 @@
 #!/usr/bin/env gene run
 
-# Example: call OpenAI-compatible chat endpoint using the native
-# `OpenAIClient` class registered by the VM. Reads API configuration
-# from environment variables and falls back to OpenAI defaults.
+# Requires:
+#   nimble buildext
+#   OPENAI_API_KEY
 
-(var api_key   ($env .get "OPENAI_API_KEY"))
-(var base_url  ($env .get "OPENAI_API_BASE" "https://api.openai.com/v1"))
-(var model     ($env .get "OPENAI_API_MODEL" "gpt-5-mini"))
+(import genex/ai)
 
-(var client_config
-  (if api_key
-    then {^api_key api_key ^base_url base_url ^model model}
-    else {^base_url base_url ^model model}))
+(var api_key $env/OPENAI_API_KEY)
 
-(var client (new OpenAIClient client_config))
+(if (not api_key)
+  (do
+    (println "Set OPENAI_API_KEY to run this example.")
+    (exit 1)
+  )
+)
+
+(var base_url
+  (if $env/OPENAI_BASE_URL
+    $env/OPENAI_BASE_URL
+  else
+    "https://api.openai.com/v1"
+  )
+)
+
+(var model
+  (if $env/OPENAI_API_MODEL
+    $env/OPENAI_API_MODEL
+  else
+    "gpt-5-mini"
+  )
+)
+
+(var client (new OpenAIClient {^api_key api_key ^base_url base_url ^model model}))
 
 (var messages
   [
     {^role "system" ^content "You are a friendly assistant."}
-    {^role "user"   ^content "Say hi in one short sentence."}
-  ])
-   
+    {^role "user" ^content "Say hi in one short sentence."}
+  ]
+)
+
 (var response (client .chat {^messages messages}))
 (println response)

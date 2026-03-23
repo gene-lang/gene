@@ -1,10 +1,12 @@
 #!/usr/bin/env gene run
 
-(println (gene/today))
-(println ((gene/today) .year))
+(var today (gene/today))
+(var now (gene/now))
 
-(println (gene/now))
-(println ((gene/now) .year))
-
-(println 01:02:03)
-(println (01:02:03 .hour))
+(println "today:" today)
+(println "today/year:" (today .year))
+(println "now:" now)
+(println "now/year:" (now .year))
+(println "now/hour:" (now .hour))
+(println "now/minute:" (now .minute))
+(println "now/second:" (now .second))

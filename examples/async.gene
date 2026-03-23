@@ -1,31 +1,15 @@
 #!/usr/bin/env gene run
 
-(fn f [a]
-  (var future
-    (gene/sleep_async 2500)
-  )
-  (future .on_success (fn []
-    (println a)
-  ))
-  future
-)
+(println "starting timer...")
 
-(f "ASYNC")
+(var timer (gene/sleep_async 100))
+(timer .on_success (fn []
+  (println "timer finished")
+))
+(await timer)
 
-(gene/sleep 1000)
-(println 1)
-(repeat 100 nil)
+(var sum_future (async (+ 20 22)))
+(var product_future (async (* 6 7)))
 
-(gene/sleep 1000)
-(println 2)
-(repeat 100 nil)
-
-(gene/sleep 1000)
-(println 3)
-
-#< Output should look like below (futures are checked at least once every N evaluations)
-1
-2
-ASYNC
-3
-#>#
+(println "sum:" (await sum_future))
+(println "product:" (await product_future))

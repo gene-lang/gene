@@ -1,13 +1,19 @@
-(HTML
-  (HEAD
-    (TITLE "Test HTML")
-  ) # HEAD
-  (BODY
-    (HEADER ^style {^font-size "22px"}
-      "This is the header section"
+#!/usr/bin/env gene run
+
+(import genex/html/tags/*)
+
+(var doc
+  (HTML
+    (HEAD
+      (TITLE "Gene HTML Example")
     )
-    (DIV ^style {^font-size "10px"}
-      "First section"
+    (BODY
+      (DIV ^class "card"
+        (H1 "Gene")
+        (P "HTML generated from Gene.")
+      )
     )
-  ) # BODY
-) # HTML
+  )
+)
+
+(println doc/.to_s)

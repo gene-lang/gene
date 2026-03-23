@@ -1,10 +1,18 @@
 #!/usr/bin/env gene run
 
-(println
+(println "main thread")
+
+(spawn
+  (println "fire-and-forget worker")
+)
+(gene/sleep 50)
+
+(var result
   (await
     (spawn_return
-      (gene/sleep 100)
-      "Result from thread"
+      (+ 40 2)
     )
   )
 )
+
+(println "spawn_return result:" result)

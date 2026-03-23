@@ -1,21 +1,19 @@
 #!/usr/bin/env gene run
 
-(gene/json/parse
-  "{\"a\": true}"
+(var parsed
+  (gene/json/parse "{\"ok\": true, \"items\": [1, 2, 3]}")
 )
+(println "parsed:" parsed)
 
-(println
-  ([
+(var payload
+  [
     1 2 3
-    {^a "a-value" ^b "b-value"}
+    {^lang "Gene" ^typed true}
     "some string"
-  ].to_json)
+  ]
 )
+(println "json:" (payload .to_json))
 
-(println
-  (gene/json/serialize `hello)
-)
-
-(println
-  (gene/json/deserialize (gene/json/serialize "#GENE#tagged-string"))
-)
+(var tagged (gene/json/serialize `hello))
+(println "tagged:" tagged)
+(println "roundtrip:" (gene/json/deserialize tagged))

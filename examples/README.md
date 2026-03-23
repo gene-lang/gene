@@ -1,84 +1,63 @@
 # Gene Examples
 
-This directory contains example Gene programs demonstrating various language features.
+This directory contains a curated set of example Gene programs.
+The goal is to keep examples small, current, and runnable against the codebase as it exists today.
 
-## Basic Examples
+## Core Language
 
 - `hello_world.gene` - Simple Hello World program
-- `print.gene` - Various print operations
-- `fib.gene` - Fibonacci sequence calculation
-- `cmd_args.gene` - Command line argument handling via `$program`/`$args`
-- `env.gene` - Environment variable access
+- `print.gene` - `print`, `println`, and stderr output
+- `cmd_args.gene` - Command line argument handling via `$args`
+- `env.gene` - Environment variable access via `$env` and `set_env`
+- `fib.gene` - Simple recursive function example
+- `oop.gene` - Classes, fields, inheritance, and `super`
+- `sample_typed.gene` - Gradual typing walkthrough sample
+- `full.gene` - Canonical language syntax reference
+- `how-types-work.md` - Walkthrough for `sample_typed.gene`
 
-## Data Structures
+## Data and Stdlib
 
 - `json.gene` - JSON parsing and manipulation
-- `datetime.gene` - Date and time operations
-
-## Control Flow and Functions
-
-- `benchmark.gene` - Performance benchmarking example
-- `fib_benchmark.gene` - Fibonacci benchmark
-- `simple_test.gene` - Simple test framework
-- `sample_typed.gene` - Gradual typing walkthrough sample (typed + untyped code)
-- `how-types-work.md` - End-to-end explanation of parse/typecheck/compile/GIR/runtime behavior for `sample_typed.gene`
-
-## I/O and Files
-
+- `datetime.gene` - Date and DateTime values
 - `io.gene` - File I/O operations
-- `pipe.gene` - Unix pipe operations
-- `process_management.gene` - `system/Process` spawning, I/O, stderr, and shutdown
-- `parser.gene` - Parsing examples
+- `process_management.gene` - `system/Process` spawning and control
+- `sqlite.gene` - SQLite queries using `genex/sqlite`
 
-## Web and Network
+## Concurrency
 
-- `http.gene` - HTTP client example
-- `http_server.gene` - HTTP server implementation
-- `http_async.gene` - Asynchronous HTTP operations
-- `http_websocket.gene` - WebSocket example
-- `http_todo_app.gene` - Complete TODO app with HTTP API
-- `ai/openai_chat.gene` - Uses `genex/ai` to call an OpenAI-compatible chat endpoint; reads `OPENAI_API_KEY`, `OPENAI_API_BASE`, and `OPENAI_API_MODEL` (defaults to `https://api.openai.com/v1` + built-in model when unset)
+- `async.gene` - Futures, callbacks, and `await`
+- `thread.gene` - `spawn` and `spawn_return`
 
-## Database
+## Extensions and Web
 
-- `sqlite.gene` - SQLite database operations
-- `mysql.gene` - MySQL database operations
+- `html.gene` - HTML generation with `genex/html/tags`
+- `http_server.gene` - Minimal HTTP server using `genex/http`
+- `openai_chat.gene` - OpenAI-compatible chat example using `genex/ai`
 
-## Advanced Features
+## Shell Integration
 
-- `async.gene`, `async2.gene` - Asynchronous programming
-- `thread.gene` - Multi-threading example
-- `repl.gene` - REPL implementation
-- `repl-on-demand.gene`, `repl-on-error.gene` - Debug REPL examples
-
-## UI and Graphics
-
-- `html.gene`, `html2.gene` - HTML generation
-- `svg.gene` - SVG graphics generation
-
-## Platform-Specific
-
-- `alfred_workflow.gene` - macOS Alfred workflow
-- `chrome_tabs.gene` - Chrome tab manipulation
+- `pipe.gene` - Reading piped stdin
 
 ## Running Examples
 
-To run any example:
+To run a self-contained example:
 
 ```bash
-./gene run examples/hello_world.gene
+./bin/gene run examples/hello_world.gene
 ```
 
-Or if the example has a shebang line:
+Run the lightweight curated batch:
 
 ```bash
-./examples/hello_world.gene
+./examples/run_examples.sh
 ```
 
-## Adding New Examples
+Some examples depend on extension modules:
 
-When adding new examples:
-1. Use descriptive filenames
-2. Add a comment at the top explaining what the example demonstrates
-3. Keep examples focused on demonstrating specific features
-4. Update this README with a description
+```bash
+nimble buildext
+```
+
+That is required for `html.gene`, `http_server.gene`, `sqlite.gene`, and `openai_chat.gene`.
+
+`http_server.gene` is long-running by design. `openai_chat.gene` also requires `OPENAI_API_KEY`.

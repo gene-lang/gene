@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
 
-for file in examples/*; do
-  echo '$' $file
+set -euo pipefail
 
-  if [ "$file" = "examples/pipe.gene" ]; then
-    echo TEST | $file
-  elif [ "$file" = "examples/repl.gene" ] ||
-       [ "$file" = "examples/repl-on-demand.gene" ] ||
-       [ "$file" = "examples/repl-on-error.gene" ] ||
-       [ "$file" = "examples/http_todo_app.gene" ] ||
-       [ "$file" = "examples/http_todo_app_repl.gene" ] ||
-       [ "$file" = "examples/http_server.gene" ]; then
-    echo "SKIPPED!"
-  elif [ -f "$file" ] && [ -x "$file" ]; then
-    "$file"
-  else
-    echo "NOT EXECUTABLE!"
-  fi
+examples=(
+  examples/hello_world.gene
+  examples/print.gene
+  examples/cmd_args.gene
+  examples/env.gene
+  examples/json.gene
+  examples/datetime.gene
+  examples/fib.gene
+  examples/async.gene
+  examples/thread.gene
+  examples/io.gene
+  examples/oop.gene
+  examples/sample_typed.gene
+  examples/process_management.gene
+)
 
+for file in "${examples[@]}"; do
+  echo '$' "$file"
+  ./bin/gene run "$file"
   echo
   echo
 done

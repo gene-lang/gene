@@ -1,23 +1,17 @@
 #!/usr/bin/env gene run
 
-# Support mysql, sqlite etc
-# Connect
-# Create table
-# Alter table
-# Drop table
-# Select
-# Insert
-# Update
-# Delete
-# Begin
-# Commit
-# Close connection
+# Requires:
+#   nimble buildext
 
-# Data types
-# Bool
-# Int
-# Float
-# String
-# DateTime
+(import genex/sqlite)
 
-# https://nim-lang.org/docs/db_sqlite.html
+(var db (genex/sqlite/open "/tmp/gene_examples.db"))
+
+(db .exec "CREATE TABLE IF NOT EXISTS items (name TEXT)")
+(db .exec "DELETE FROM items")
+(db .exec "INSERT INTO items (name) VALUES (?)" "alpha")
+(db .exec "INSERT INTO items (name) VALUES (?)" "beta")
+
+(println (db .query "SELECT name FROM items ORDER BY name"))
+
+(db .close)

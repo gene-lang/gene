@@ -1,3 +1,9 @@
 #!/usr/bin/env gene run
 
-(println $args)
+(println "args:" $args)
+
+(if ($args/.size > 0)
+  (println "first arg:" $args/0)
+else
+  (println "Try: gene run examples/cmd_args.gene hello")
+)
