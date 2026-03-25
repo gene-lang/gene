@@ -152,7 +152,7 @@ type
       of VkEnumMember:
         enum_member*: EnumMember
       of VkInterface:
-        interface*: Interface
+        gene_interface*: GeneInterface
       of VkAdapter:
         adapter*: Adapter
       of VkNativeFn:

@@ -330,13 +330,6 @@ proc emitCall*(buf: CodeBuffer, target: HirBlockId) =
   buf.addFixup(target)
   buf.emitI32(0)
 
-proc emitCallReg*(buf: CodeBuffer, reg: X86Reg) =
-  ## call reg (indirect call)
-  if needsRex(reg):
-    buf.emit(REX_B)
-  buf.emit(0xFF)
-  buf.emit(modRM(0b11, RDX, reg))  # /2 opcode extension
-
 proc emitSubRspImm*(buf: CodeBuffer, imm: int32) =
   ## sub rsp, imm32
   # 48 81 ec imm32 = sub rsp, imm32
@@ -604,6 +597,9 @@ proc genBr*(ctx: CodegenContext, op: HirOp) =
 proc genJump*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitJmp(op.jumpTarget)
 
+proc loadRegF64*(ctx: CodegenContext, dst: XmmReg, hirReg: HirReg) =
+  ctx.buf.emitMovsdLoad(dst, RBP, ctx.regOffset(hirReg))
+
 proc genRet*(ctx: CodegenContext, op: HirOp) =
   if ctx.fn.returnType == HtF64:
     # Load float, bitcast to int64 for uniform ABI return
@@ -616,9 +612,6 @@ proc genRet*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitPop(RBP)
   ctx.buf.emitPop(R12)
   ctx.buf.emitRet()
-
-proc loadRegF64*(ctx: CodegenContext, dst: XmmReg, hirReg: HirReg) =
-  ctx.buf.emitMovsdLoad(dst, RBP, ctx.regOffset(hirReg))
 
 proc storeRegF64*(ctx: CodegenContext, hirReg: HirReg, src: XmmReg) =
   ctx.buf.emitMovsdStore(RBP, ctx.regOffset(hirReg), src)

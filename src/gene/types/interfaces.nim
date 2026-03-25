@@ -6,13 +6,12 @@
 import tables
 import ./type_defs
 import ./core
-import ./classes
 
 #################### Interface #######################
 
-proc new_interface*(name: string, module_path: string = ""): Interface =
+proc new_interface*(name: string, module_path: string = ""): GeneInterface =
   ## Create a new interface with the given name
-  Interface(
+  GeneInterface(
     name: name,
     module_path: module_path,
     methods: initTable[Key, InterfaceMethod](),
@@ -20,7 +19,7 @@ proc new_interface*(name: string, module_path: string = ""): Interface =
     ns: new_namespace(nil, name)
   )
 
-proc add_method*(self: Interface, name: string, callable: Value = NIL, type_id: TypeId = NO_TYPE_ID) =
+proc add_method*(self: GeneInterface, name: string, callable: Value = NIL, type_id: TypeId = NO_TYPE_ID) =
   ## Add a method signature to the interface
   self.methods[name.to_key()] = InterfaceMethod(
     name: name,
@@ -28,7 +27,7 @@ proc add_method*(self: Interface, name: string, callable: Value = NIL, type_id: 
     type_id: type_id
   )
 
-proc add_prop*(self: Interface, name: string, type_id: TypeId = NO_TYPE_ID, readonly: bool = false) =
+proc add_prop*(self: GeneInterface, name: string, type_id: TypeId = NO_TYPE_ID, readonly: bool = false) =
   ## Add a property signature to the interface
   self.props[name.to_key()] = InterfaceProp(
     name: name,
@@ -36,25 +35,25 @@ proc add_prop*(self: Interface, name: string, type_id: TypeId = NO_TYPE_ID, read
     readonly: readonly
   )
 
-proc has_method*(self: Interface, name: Key): bool {.inline.} =
+proc has_method*(self: GeneInterface, name: Key): bool {.inline.} =
   self.methods.has_key(name)
 
-proc has_prop*(self: Interface, name: Key): bool {.inline.} =
+proc has_prop*(self: GeneInterface, name: Key): bool {.inline.} =
   self.props.has_key(name)
 
-proc get_method*(self: Interface, name: Key): InterfaceMethod {.inline.} =
+proc get_method*(self: GeneInterface, name: Key): InterfaceMethod {.inline.} =
   self.methods.get_or_default(name, nil)
 
-proc get_prop*(self: Interface, name: Key): InterfaceProp {.inline.} =
+proc get_prop*(self: GeneInterface, name: Key): InterfaceProp {.inline.} =
   self.props.get_or_default(name, nil)
 
 #################### Implementation #######################
 
-proc new_implementation*(interface: Interface, target_class: Class = nil, 
+proc new_implementation*(gene_interface: GeneInterface, target_class: Class = nil, 
                          target_kind: ImplementationTargetKind = ItkClass): Implementation =
   ## Create a new implementation connecting a class to an interface
   Implementation(
-    interface: interface,
+    gene_interface: gene_interface,
     target_class: target_class,
     target_kind: target_kind,
     method_mappings: initTable[Key, AdapterMapping](),
@@ -104,10 +103,10 @@ proc map_prop_hidden*(self: Implementation, interface_prop: string) =
 
 #################### Adapter #######################
 
-proc new_adapter*(interface: Interface, inner: Value, implementation: Implementation): Adapter =
+proc new_adapter*(gene_interface: GeneInterface, inner: Value, implementation: Implementation): Adapter =
   ## Create a new adapter wrapping a value
   Adapter(
-    interface: interface,
+    gene_interface: gene_interface,
     inner: inner,
     implementation: implementation,
     own_data: initTable[Key, Value]()
@@ -142,7 +141,7 @@ var adapter_registry* = initTable[Key, Table[Key, Implementation]]()
 proc register_implementation*(class_name: string, impl: Implementation) =
   ## Register an external implementation for a class
   let class_key = class_name.to_key()
-  let interface_key = impl.interface.name.to_key()
+  let interface_key = impl.gene_interface.name.to_key()
   
   if not adapter_registry.has_key(class_key):
     adapter_registry[class_key] = initTable[Key, Implementation]()
@@ -158,9 +157,9 @@ proc find_implementation*(class_name: string, interface_name: string): Implement
     return adapter_registry[class_key].get_or_default(interface_key, nil)
   return nil
 
-proc find_implementation*(class_name: string, interface: Interface): Implementation =
+proc find_implementation*(class_name: string, gene_interface: GeneInterface): Implementation =
   ## Find an implementation for a class/interface pair
-  find_implementation(class_name, interface.name)
+  find_implementation(class_name, gene_interface.name)
 
 #################### Inline Implementation Check #######################
 

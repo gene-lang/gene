@@ -8,7 +8,6 @@ import "./compiler/if"
 import "./compiler/case"
 import "./compiler/comptime"
 import "./compiler/optimize"
-import "./compiler/interfaces"
 export comptime
 export optimize
 
@@ -242,8 +241,10 @@ proc compile_async(self: Compiler, gene: ptr Gene)
 proc compile_await(self: Compiler, gene: ptr Gene)
 proc compile_spawn(self: Compiler, gene: ptr Gene)
 proc compile_yield(self: Compiler, gene: ptr Gene)
-proc compile_import(self: Compiler, gene: ptr Gene)
-proc compile_export(self: Compiler, gene: ptr Gene)
+proc compile_import*(self: Compiler, gene: ptr Gene)
+proc compile_export*(self: Compiler, gene: ptr Gene)
+proc compile_interface*(self: Compiler, gene: ptr Gene)
+proc compile_implement*(self: Compiler, gene: ptr Gene)
 
 proc is_vmstmt_form(input: Value): bool =
   input.kind == VkGene and
@@ -751,6 +752,7 @@ proc compile*(b: Block) =
 include "./compiler/misc"
 include "./compiler/async"
 include "./compiler/modules"
+include "./compiler/interfaces"
 
 
 include "./compiler/pipeline"

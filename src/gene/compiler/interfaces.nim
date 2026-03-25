@@ -1,16 +1,11 @@
-## Interface and Adapter compilation
-##
-## This module handles compiling interface definitions and implementations.
-
-import tables
-import ../types
-import ../logging_core
-
-const InterfaceLogger = "gene/compiler/interface"
+## Interface and Adapter compilation:
+## compile_interface, compile_implement, compile_adapter_call.
+## Included from compiler.nim — shares its scope.
 
 proc compile_interface*(self: Compiler, gene: ptr Gene) =
   ## Compile an interface definition
-  ## Syntax: (interface Name body...)
+  ## Syntax: (interface Name)
+  ## For now, just creates an empty interface. Methods/props are defined in implement blocks.
   
   if gene.children.len == 0:
     not_allowed("interface requires a name")
@@ -19,27 +14,9 @@ proc compile_interface*(self: Compiler, gene: ptr Gene) =
   if name.kind != VkSymbol:
     not_allowed("interface name must be a symbol")
   
-  let interface_name = name.str
-  let module_path = self.output.module_path
-  
   # Emit the interface instruction
   # This will create the interface at runtime
   self.emit(Instruction(kind: IkInterface, arg0: name))
-  
-  # If there's a body, compile it as an init block
-  if gene.children.len > 1:
-    let body = new_stream_value(gene.children[1..^1])
-    let compiled = compile_init(body,
-      local_defs = true,
-      module_path = module_path,
-      inherited_type_descriptors = self.output.type_descriptors,
-      inherited_type_aliases = self.output.type_aliases)
-    let r = new_ref(VkCompiledUnit)
-    r.cu = compiled
-    self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
-    self.emit(Instruction(kind: IkCallInit))
-  else:
-    self.emit(Instruction(kind: IkPushNil))
 
 proc compile_implement*(self: Compiler, gene: ptr Gene) =
   ## Compile an implement block

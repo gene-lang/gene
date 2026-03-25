@@ -73,10 +73,16 @@ proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran
 proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value
 proc exec_continue*(self: ptr VirtualMachine): Value
 
+# Forward declarations for adapter functions
+proc exec_interface(vm: ptr VirtualMachine, name: Value)
+proc exec_implement(vm: ptr VirtualMachine, interface_name: Value, is_external: bool)
+proc exec_adapter(vm: ptr VirtualMachine)
+proc adapter_get_member(vm: ptr VirtualMachine, adapter: Adapter, key: Key): Value
+proc adapter_set_member(adapter: Adapter, key: Key, value: Value)
+
 include "./vm/native"
 
 import ./vm/async
-import ./vm/adapter
 include ./vm/async_exec
 
 when not defined(noExtensions):
@@ -87,6 +93,7 @@ include ./vm/dispatch
 include ./vm/vm_modules
 include ./vm/exec
 include ./vm/exec_support
+include ./vm/adapter
 include ./vm/entry
 include ./vm/diagnostics
 include ./vm/runtime_helpers

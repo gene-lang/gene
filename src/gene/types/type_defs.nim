@@ -488,9 +488,9 @@ type
     native_param_types*: seq[(string, Value)]  # (param_name, class_value) for native methods
     native_return_type*: Value                  # class value; NIL means Any
 
-  ## Interface definition - defines the visible face (properties, methods)
+  ## GeneInterface definition - defines the visible face (properties, methods)
   ## An interface specifies what members an adapter must expose.
-  Interface* = ref object
+  GeneInterface* = ref object
     name*: string
     module_path*: string
     internal_path*: string
@@ -508,6 +508,12 @@ type
     type_id*: TypeId      # Property type (NO_TYPE_ID if unspecified)
     readonly*: bool       # If true, property cannot be set
 
+  ## Adapter mapping kind - how to map interface members to wrapped object
+  AdapterMappingKind* = enum
+    AmkRename
+    AmkComputed
+    AmkHidden
+
   ## Adapter mapping - how to map interface members to wrapped object
   AdapterMapping* = ref object
     case kind*: AdapterMappingKind
@@ -518,14 +524,9 @@ type
       of AmkHidden:        # Hidden: property doesn't exist
         discard
 
-  AdapterMappingKind* = enum
-    AmkRename
-    AmkComputed
-    AmkHidden
-
   ## Implementation - connects a class to an interface with mappings
   Implementation* = ref object
-    interface*: Interface
+    gene_interface*: GeneInterface
     target_class*: Class   # The class being adapted (nil for external adapters on built-ins)
     target_kind*: ImplementationTargetKind
     method_mappings*: Table[Key, AdapterMapping]
@@ -540,7 +541,7 @@ type
 
   ## Adapter - wrapper that changes object's visible behavior without mutation
   Adapter* = ref object
-    interface*: Interface
+    gene_interface*: GeneInterface
     inner*: Value          # The wrapped value
     implementation*: Implementation  # The implementation providing mappings
     own_data*: Table[Key, Value]  # Adapter's own supplementary data
