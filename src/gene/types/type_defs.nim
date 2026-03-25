@@ -208,6 +208,8 @@ type
     VkCast               # Type casting
     VkEnum
     VkEnumMember
+    VkInterface          # Interface definition
+    VkAdapter            # Adapter wrapper
     VkNativeFn
     VkNativeMacro    # Native macro (receives unevaluated args)
     VkNativeMethod
@@ -409,6 +411,8 @@ type
     thread_message_class* : Value
     thread_message_type_class* : Value
     aspect_class*   : Value
+    interface_class*: Value
+    adapter_class*  : Value
 
   Package* = ref object
     dir*: string          # Where the package assets are installed
@@ -483,6 +487,63 @@ type
     native_signature_known*: bool
     native_param_types*: seq[(string, Value)]  # (param_name, class_value) for native methods
     native_return_type*: Value                  # class value; NIL means Any
+
+  ## Interface definition - defines the visible face (properties, methods)
+  ## An interface specifies what members an adapter must expose.
+  Interface* = ref object
+    name*: string
+    module_path*: string
+    internal_path*: string
+    methods*: Table[Key, InterfaceMethod]  # Method signatures
+    props*: Table[Key, InterfaceProp]      # Property signatures
+    ns*: Namespace  # Interface can act like a namespace for static access
+
+  InterfaceMethod* = ref object
+    name*: string
+    callable*: Value      # Default implementation (can be NIL for abstract)
+    type_id*: TypeId      # Return type (NO_TYPE_ID if unspecified)
+
+  InterfaceProp* = ref object
+    name*: string
+    type_id*: TypeId      # Property type (NO_TYPE_ID if unspecified)
+    readonly*: bool       # If true, property cannot be set
+
+  ## Adapter mapping - how to map interface members to wrapped object
+  AdapterMapping* = ref object
+    case kind*: AdapterMappingKind
+      of AmkRename:        # Rename: redirect to inner property/method
+        inner_name*: Key
+      of AmkComputed:      # Computed: call function on access
+        compute_fn*: Value
+      of AmkHidden:        # Hidden: property doesn't exist
+        discard
+
+  AdapterMappingKind* = enum
+    AmkRename
+    AmkComputed
+    AmkHidden
+
+  ## Implementation - connects a class to an interface with mappings
+  Implementation* = ref object
+    interface*: Interface
+    target_class*: Class   # The class being adapted (nil for external adapters on built-ins)
+    target_kind*: ImplementationTargetKind
+    method_mappings*: Table[Key, AdapterMapping]
+    prop_mappings*: Table[Key, AdapterMapping]
+    own_data*: Table[Key, Value]  # Adapter's own supplementary data
+    ctor*: Value           # Constructor for adapter (if it has own data)
+
+  ImplementationTargetKind* = enum
+    ItkClass               # Implementation for a specific class
+    ItkBuiltin             # Implementation for a built-in type (Array, Map, etc.)
+    ItkAny                 # Implementation for any value
+
+  ## Adapter - wrapper that changes object's visible behavior without mutation
+  Adapter* = ref object
+    interface*: Interface
+    inner*: Value          # The wrapped value
+    implementation*: Implementation  # The implementation providing mappings
+    own_data*: Table[Key, Value]  # Adapter's own supplementary data
 
   BoundMethod* = object
     self*: Value
@@ -745,6 +806,11 @@ type
     IkSubClass
     IkNew
     IkResolveMethod
+
+    # Interface and Adapter
+    IkInterface          # Define an interface
+    IkImplement          # Register implementation (inline or external)
+    IkAdapter            # Create adapter wrapper (InterfaceName obj)
 
     IkCallInit
     IkDefineMethod      # Define a method on a class

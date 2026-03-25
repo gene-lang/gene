@@ -151,6 +151,10 @@ type
         enum_def*: EnumDef
       of VkEnumMember:
         enum_member*: EnumMember
+      of VkInterface:
+        interface*: Interface
+      of VkAdapter:
+        adapter*: Adapter
       of VkNativeFn:
         native_fn*: NativeFn
       of VkNativeMacro:

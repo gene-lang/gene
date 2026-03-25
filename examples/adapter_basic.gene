@@ -1,0 +1,31 @@
+#!/usr/bin/env gene run
+# Basic example of Interface and Adapter in Gene
+
+# Define an interface
+(interface Sizeable
+  (method size [] -> Int)
+  (method empty? [] -> Bool)
+)
+
+# A class that implements the interface inline
+(class Container
+  (implement Sizeable
+    (method size [] (/items .length))
+    (method empty? [] ((/items .length) == 0))
+  )
+  
+  (ctor [items]
+    (/items = items)
+  )
+)
+
+# Using the interface
+(var container (new Container [1 2 3 4 5]))
+(println "Container size:" container/.size)
+(println "Is empty?" container/.empty?)
+
+# Cast to interface (returns same object for inline implementation)
+(var sizeable (Sizeable container))
+(println "As Sizeable, size:" sizeable/.size)
+
+(println "=== Done ===")

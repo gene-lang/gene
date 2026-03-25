@@ -4,6 +4,7 @@ import types/classes
 import types/custom_value
 import types/instructions
 import types/helpers
+import types/interfaces
 import ./utils
 
 export type_defs
@@ -12,4 +13,5 @@ export classes
 export custom_value
 export instructions
 export helpers
+export interfaces
 export utils

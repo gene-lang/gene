@@ -223,6 +223,15 @@ proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value])
   of VkBoundMethod:
     let bm = callable.ref.bound_method
     return self.exec_callable(bm.`method`.callable, @[bm.self] & args)
+  of VkInterface:
+    # Calling an interface creates an adapter
+    if args.len != 1:
+      raise new_exception(types.Exception, "Interface call requires exactly 1 argument (the object to adapt)")
+    # Push interface and arg to frame stack and call exec_adapter
+    self.frame.push(callable)
+    self.frame.push(args[0])
+    exec_adapter(self)
+    return self.frame.pop()
   of VkBlock:
     let blk = callable.ref.block
     if blk.body_compiled == nil:

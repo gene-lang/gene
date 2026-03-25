@@ -8,6 +8,7 @@ import "./compiler/if"
 import "./compiler/case"
 import "./compiler/comptime"
 import "./compiler/optimize"
+import "./compiler/interfaces"
 export comptime
 export optimize
 

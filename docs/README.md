@@ -15,6 +15,7 @@ for implemented subsystems now live under [`docs/proposals/`](proposals/README.m
 - [type-system-mvp.md](type-system-mvp.md) — current gradual typing status
 - [deserialize_command.md](deserialize_command.md) — `gene deser` command behavior
 - [how-types-work.md](how-types-work.md) — runnable typing walkthrough
+- [adapter-design.md](adapter-design.md) — interface and adapter system design
 
 ## Implementation-Only Docs
 

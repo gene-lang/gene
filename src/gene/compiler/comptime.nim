@@ -37,7 +37,7 @@ proc is_module_def_node*(v: Value): bool =
   if gt.kind != VkSymbol:
     return false
   case gt.str:
-  of "fn", "class", "ns", "enum", "type", "object", "import", "interface", "comptime", "$dep":
+  of "fn", "class", "ns", "enum", "type", "object", "import", "interface", "implement", "comptime", "$dep":
     return true
   else:
     return false
@@ -358,7 +358,7 @@ proc eval_comptime_expr(expr: Value, env: var ComptimeEnv): ComptimeResult =
     if gene.children.len >= 1 and gene.children[0].kind == VkSymbol:
       let op = gene.children[0].str
       if op in ["+", "-", "*", "/", "%", "**", "./", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "++", "=", "+=", "-=", "%="]:
-        if gene.`type`.kind != VkSymbol or gene.`type`.str notin ["var", "if", "ifel", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "interface", "comptime", "type", "object", "$", ".", "->", "@"]:
+        if gene.`type`.kind != VkSymbol or gene.`type`.str notin ["var", "if", "ifel", "fn", "do", "loop", "while", "for", "ns", "class", "try", "throw", "import", "export", "interface", "implement", "comptime", "type", "object", "$", ".", "->", "@"]:
           let args = @[gene.`type`] & gene.children[1..^1]
           result = eval_comptime_operator(op, args, env)
           return

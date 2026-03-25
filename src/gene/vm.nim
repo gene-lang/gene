@@ -76,6 +76,7 @@ proc exec_continue*(self: ptr VirtualMachine): Value
 include "./vm/native"
 
 import ./vm/async
+import ./vm/adapter
 include ./vm/async_exec
 
 when not defined(noExtensions):

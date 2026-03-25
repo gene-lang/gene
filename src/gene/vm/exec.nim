@@ -769,6 +769,8 @@ proc exec*(self: ptr VirtualMachine): Value =
                   let warning = validate_or_coerce_type(value, expected_type_id, cls.prop_type_descs, "property " & prop_name)
                   emit_type_warning(warning)
             instance_props(target)[name] = value
+          of VkAdapter:
+            adapter_set_member(target.ref.adapter, name, value)
           of VkArray:
             # Arrays don't support named members, this is likely an error
             let symbol_index = cast[uint64](name) and PAYLOAD_MASK
@@ -896,6 +898,11 @@ proc exec*(self: ptr VirtualMachine): Value =
               self.frame.push(member)
             else:
               not_allowed("enum " & value.ref.enum_def.name & " has no member " & member_name)
+          of VkAdapter:
+            # Access member through adapter mapping
+            let member = adapter_get_member(self, value.ref.adapter, name)
+            retain(member)
+            self.frame.push(member)
           of VkInstance:
             if name in instance_props(value):
               let member = instance_props(value)[name]
@@ -3693,6 +3700,19 @@ proc exec*(self: ptr VirtualMachine): Value =
           target_ns.members[class_key] = v
         self.frame.push(v)
 
+      of IkInterface:
+        # Define an interface
+        exec_interface(self, inst.arg0)
+
+      of IkImplement:
+        # Register an implementation
+        let is_external = inst.arg1 != 0
+        exec_implement(self, inst.arg0, is_external)
+
+      of IkAdapter:
+        # Create an adapter wrapper
+        exec_adapter(self)
+
       of IkResolveMethod:
         # Peek at the object without popping it
         let v = self.frame.current()
@@ -4535,6 +4555,10 @@ proc exec*(self: ptr VirtualMachine): Value =
           let result = self.run_intercepted_method(target.ref.interception, NIL, @[], @[])
           self.frame.push(result)
 
+        of VkInterface:
+          # Interface call with 0 args - error, need an object to adapt
+          raise new_exception(types.Exception, "Interface call requires an object to adapt")
+
         of VkBlock:
           let b = target.ref.block
           if b.body_compiled == nil:
@@ -4819,6 +4843,12 @@ proc exec*(self: ptr VirtualMachine): Value =
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
 
+        of VkInterface:
+          # Interface call with 1 arg - create adapter
+          self.frame.push(target)
+          self.frame.push(arg)
+          exec_adapter(self)
+
         else:
           not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
         {.pop}
@@ -4966,6 +4996,14 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkInterception:
           let result = self.run_intercepted_method(target.ref.interception, NIL, args, @[])
           self.frame.push(result)
+
+        of VkInterface:
+          # Interface call with multiple args - use first arg as object to adapt
+          if args.len < 1:
+            raise new_exception(types.Exception, "Interface call requires at least 1 argument (the object to adapt)")
+          self.frame.push(target)
+          self.frame.push(args[0])
+          exec_adapter(self)
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)

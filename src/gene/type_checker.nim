@@ -1714,7 +1714,7 @@ proc check_ifel(self: TypeChecker, gene: ptr Gene): TypeExpr =
 proc is_infix_special_form(expr_type: Value): bool {.inline.} =
   expr_type.kind == VkSymbol and expr_type.str in [
     "var", "if", "ifel", "fn", "do", "loop", "while", "for", "ns", "class",
-    "try", "throw", "import", "export", "interface", "comptime", "type",
+    "try", "throw", "import", "export", "interface", "implement", "comptime", "type",
     "object", "$", ".", "->", "@"
   ]
 
@@ -2679,6 +2679,8 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
       of "ns":
         return self.check_ns(gene)
       of "interface":
+        return ANY_TYPE
+      of "implement":
         return ANY_TYPE
       of "import":
         return self.check_import(gene)

@@ -1,0 +1,92 @@
+#!/usr/bin/env gene run
+# Test file for Interface and Adapter feature
+# This file demonstrates the adapter pattern in Gene
+
+# ============================================================================
+# 1) INTERFACE DEFINITION
+# ============================================================================
+
+# Define a simple interface with methods and properties
+(interface Readable
+  (method read [] -> String)
+  (method close [] -> Nil)
+  (prop name String)
+  (prop closed Bool ^readonly true)
+)
+
+# Define another interface for demonstration
+(interface Writable
+  (method write [data: String] -> Int)
+  (method flush [] -> Nil)
+)
+
+# ============================================================================
+# 2) INLINE IMPLEMENTATION (inside class)
+# ============================================================================
+
+# When implement is inside the class, the class natively satisfies the interface
+# (Readable obj) returns obj directly — no wrapper, direct access
+
+(class FileStream
+  (implement Readable
+    (method read []
+      "file contents"
+    )
+    (method close []
+      (/closed = true)
+    )
+  )
+  
+  (ctor [name]
+    (/name = name)
+    (/closed = false)
+  )
+)
+
+# ============================================================================
+# 3) EXTERNAL IMPLEMENTATION (adapter created)
+# ============================================================================
+
+# A simple class that doesn't implement Readable
+(class DataBuffer
+  (ctor [data]
+    (/data = data)
+    (/position = 0)
+  )
+  
+  (method get_data []
+    /data
+  )
+  
+  (method set_data [new_data]
+    (/data = new_data)
+  )
+)
+
+# External implementation creates an adapter wrapper
+# (implement Readable for DataBuffer
+#   (method read []
+#     (var result (/inner .get_data))
+#     result
+#   )
+#   (method close []
+#     (/inner .set_data "")
+#   )
+# )
+
+# ============================================================================
+# 4) USING INTERFACES
+# ============================================================================
+
+# Create a FileStream - has inline implementation
+(var fs (new FileStream "test.txt"))
+
+# Calling interface on inline implementation returns same object
+(var readable_fs (Readable fs))
+(println "FileStream after Readable cast:" readable_fs/.name)
+
+# ============================================================================
+# 5) TEST OUTPUT
+# ============================================================================
+
+(println "=== Adapter Feature Test Complete ===")
