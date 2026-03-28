@@ -65,10 +65,10 @@
 
 (implement Readable for DataBuffer
   (method read []
-    (/inner .get_data)
+    (/_genevalue .get_data)
   )
   (method close []
-    (/inner .set_data "")
+    (/_genevalue .set_data "")
   )
 )
 
@@ -103,3 +103,18 @@
 # ============================================================================
 
 (println "=== Adapter Feature Test Complete ===")
+
+# ============================================================================
+# 6) TEST _genevalue AND _geneinternal
+# ============================================================================
+
+# Test _genevalue for accessing wrapped value
+(println "Testing _genevalue:")
+(var inner_val readable_buffer/_genevalue)
+(println "  Inner value via _genevalue:" inner_val)
+
+# Test _geneinternal for adapter's own data
+(println "Testing _geneinternal:")
+(var internal readable_buffer/_geneinternal)
+(internal/test_key = "test_value")
+(println "  Stored in _geneinternal:" internal/test_key)

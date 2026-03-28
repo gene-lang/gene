@@ -119,12 +119,14 @@ Adapters generally should not store instance-specific data, but can when the ada
   (method age [] -> Int)
 )
 
+# _genevalue refers to the wrapped value
+# _geneinternal stores supplementary context
 (implement Ageable for Int
   (ctor [birth_year]
-    (/_internal/birth_year = birth_year)
+    (/_geneinternal/birth_year = birth_year)
   )
 
-  (method age [] (/value - /_internal/birth_year))
+  (method age [] (/_genevalue - /_geneinternal/birth_year))
 )
 
 (var age (Ageable 2026 1990))

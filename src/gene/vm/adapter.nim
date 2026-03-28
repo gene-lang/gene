@@ -5,37 +5,6 @@
 
 import tables
 import ../types
-import ../logging_core
-
-const AdapterLogger = "gene/vm/adapter"
-
-proc get_or_create_interface_class(vm: ptr VirtualMachine): Class =
-  ## Get or create the Interface class
-  if not App.is_nil and App.kind == VkApplication and App.app.interface_class.kind == VkClass:
-    return App.app.interface_class.ref.class
-  
-  # Create the Interface class if it doesn't exist
-  let object_class = App.app.object_class.ref.class
-  result = new_class("Interface", object_class)
-  
-  # Store it in the app
-  let r = new_ref(VkClass)
-  r.class = result
-  App.app.interface_class = r.to_ref_value()
-
-proc get_or_create_adapter_class(vm: ptr VirtualMachine): Class =
-  ## Get or create the Adapter class
-  if not App.is_nil and App.kind == VkApplication and App.app.adapter_class.kind == VkClass:
-    return App.app.adapter_class.ref.class
-  
-  # Create the Adapter class if it doesn't exist
-  let object_class = App.app.object_class.ref.class
-  result = new_class("Adapter", object_class)
-  
-  # Store it in the app
-  let r = new_ref(VkClass)
-  r.class = result
-  App.app.adapter_class = r.to_ref_value()
 
 proc exec_interface(vm: ptr VirtualMachine, name: Value) =
   ## Execute IkInterface instruction - create an interface
@@ -212,16 +181,28 @@ proc exec_adapter(vm: ptr VirtualMachine) =
 proc adapter_get_member(vm: ptr VirtualMachine, adapter: Adapter, key: Key): Value =
   ## Get a member from an adapter
   ## This handles the mapping from interface members to inner object members
-  
+  ##
+  ## Special properties:
+  ## - _genevalue: returns the wrapped inner value (for built-in types)
+  ## - _geneinternal: returns an accessor for adapter's own supplementary data
+
   let gene_interface = adapter.gene_interface
   let impl = adapter.implementation
+
+  # Special: _genevalue returns the wrapped inner value
+  if key == "_genevalue".to_key():
+    return adapter.inner
+
+  # Special: _geneinternal provides access to adapter's own data
+  # Returns a VkAdapterInternal that delegates member access to adapter.own_data
+  if key == "_geneinternal".to_key():
+    let r = new_ref(VkAdapterInternal)
+    r.adapter_internal = adapter
+    return r.to_ref_value()
 
   if adapter.own_data.has_key(key):
     return adapter.own_data[key]
 
-  if key == "inner".to_key():
-    return adapter.inner
-  
   # Check if it's a property
   if gene_interface.props.has_key(key):
     let mapping = impl.prop_mappings.get_or_default(key, nil)
@@ -288,9 +269,6 @@ proc adapter_set_member(adapter: Adapter, key: Key, value: Value) =
   let gene_interface = adapter.gene_interface
   let impl = adapter.implementation
 
-  if key == "inner".to_key():
-    raise new_exception(types.Exception, "Adapter inner is readonly")
-  
   # Check if it's a property
   if gene_interface.props.has_key(key):
     let prop = gene_interface.props[key]
@@ -338,10 +316,6 @@ proc adapter_member_or_nil(vm: ptr VirtualMachine, adapter_val: Value, prop: Val
   let key = adapter_member_key(prop)
   adapter_get_member(vm, adapter_val.ref.adapter, key)
 
-proc adapter_set_member_value(adapter_val: Value, prop: Value, value: Value) =
-  let key = adapter_member_key(prop)
-  adapter_set_member(adapter_val.ref.adapter, key, value)
-
 proc is_adapter_value*(value: Value): bool {.inline.} =
   ## Check if a value is an adapter
   value.kind == VkAdapter
@@ -357,3 +331,65 @@ proc adapter_get_interface*(value: Value): GeneInterface {.inline.} =
   if value.kind == VkAdapter:
     return value.ref.adapter.gene_interface
   return nil
+
+#################### Adapter Method Dispatch #######################
+
+proc dispatch_adapter_method(vm: ptr VirtualMachine, obj: Value, method_name: string, args: seq[Value]): Value =
+  ## Dispatch a method call on an adapter, resolving through the interface mapping.
+  let member = adapter_get_member(vm, obj.ref.adapter, method_name.to_key())
+  if member == NIL or member == VOID:
+    not_allowed("Method " & method_name & " not found on Adapter")
+  case member.kind
+  of VkFunction:
+    vm.exec_method_impl(member, obj, args, vm.frame)
+  of VkBoundMethod:
+    let bm = member.ref.bound_method
+    if bm.`method`.callable.kind == VkFunction:
+      vm.exec_method_impl(bm.`method`.callable, bm.self, args, vm.frame)
+    else:
+      vm.exec_callable(member, args)
+  else:
+    vm.exec_callable_with_self(member, obj, args)
+
+proc dispatch_adapter_method_kw(vm: ptr VirtualMachine, obj: Value, method_name: string, args: seq[Value], kw_pairs: seq[(Key, Value)]): Value =
+  ## Dispatch a keyword-args method call on an adapter.
+  let member = adapter_get_member(vm, obj.ref.adapter, method_name.to_key())
+  if member == NIL or member == VOID:
+    not_allowed("Method " & method_name & " not found on Adapter")
+  case member.kind
+  of VkFunction:
+    vm.exec_method_kw_impl(member, obj, args, kw_pairs, vm.frame)
+  of VkBoundMethod:
+    let bm = member.ref.bound_method
+    if bm.`method`.callable.kind == VkFunction:
+      vm.exec_method_kw_impl(bm.`method`.callable, bm.self, args, kw_pairs, vm.frame)
+    else:
+      if kw_pairs.len > 0:
+        not_allowed("Keyword arguments are not supported for adapter bound method kind: " & $bm.`method`.callable.kind)
+      vm.exec_callable(member, args)
+  else:
+    if kw_pairs.len > 0:
+      not_allowed("Keyword arguments are not supported for adapter method kind: " & $member.kind)
+    vm.exec_callable_with_self(member, obj, args)
+
+#################### Adapter Internal Access #######################
+
+proc adapter_internal_get_member*(adapter_internal_val: Value, key: Key): Value =
+  ## Get a member from adapter's internal data via VkAdapterInternal
+  if adapter_internal_val.kind != VkAdapterInternal:
+    raise new_exception(types.Exception, "Expected VkAdapterInternal")
+  let adapter = adapter_internal_val.ref.adapter_internal
+  return adapter.own_data.get_or_default(key, NIL)
+
+proc adapter_internal_set_member*(adapter_internal_val: Value, key: Key, value: Value) =
+  ## Set a member in adapter's internal data via VkAdapterInternal
+  if adapter_internal_val.kind != VkAdapterInternal:
+    raise new_exception(types.Exception, "Expected VkAdapterInternal")
+  let adapter = adapter_internal_val.ref.adapter_internal
+  adapter.own_data[key] = value
+
+proc adapter_internal_member_or_nil*(adapter_internal_val: Value, prop: Value): Value =
+  ## Get a member from adapter internal data, returning NIL if not found
+  let key = adapter_member_key(prop)
+  adapter_internal_get_member(adapter_internal_val, key)
+

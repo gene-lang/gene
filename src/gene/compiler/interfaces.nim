@@ -1,5 +1,5 @@
 ## Interface and Adapter compilation:
-## compile_interface, compile_implement, compile_adapter_call.
+## compile_interface, compile_implement.
 ## Included from compiler.nim — shares its scope.
 
 proc interface_prop_name(input: Value): string =
@@ -184,19 +184,3 @@ proc compile_implement*(self: Compiler, gene: ptr Gene) =
       self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
       self.emit(Instruction(kind: IkCallInit))
 
-proc compile_adapter_call*(self: Compiler, gene: ptr Gene) =
-  ## Compile an interface call that creates an adapter
-  ## Syntax: (InterfaceName obj)
-  ## 
-  ## This is called when InterfaceName is used as a function call
-  ## on an object that doesn't have an inline implementation.
-  
-  # The type (interface) is already compiled and on the stack
-  # Compile the argument (the object to wrap)
-  if gene.children.len == 0:
-    not_allowed("adapter call requires an object to wrap")
-  
-  self.compile(gene.children[0])
-  
-  # Emit adapter instruction
-  self.emit(Instruction(kind: IkAdapter))

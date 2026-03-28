@@ -86,6 +86,12 @@ proc get_class*(val: Value): Class {.inline.} =
         return App.ref.app.adapter_class.ref.class
       else:
         return App.ref.app.object_class.ref.class
+    of VkAdapterInternal:
+      # AdapterInternal delegates to Map class for method access
+      if App.ref.app.map_class.kind == VkClass:
+        return App.ref.app.map_class.ref.class
+      else:
+        return App.ref.app.object_class.ref.class
     of VkFuture:
       if App.ref.app.future_class.kind == VkClass:
         return App.ref.app.future_class.ref.class

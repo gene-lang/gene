@@ -84,6 +84,12 @@ proc exec_adapter(vm: ptr VirtualMachine)
 proc adapter_get_member(vm: ptr VirtualMachine, adapter: Adapter, key: Key): Value
 proc adapter_set_member(adapter: Adapter, key: Key, value: Value)
 proc adapter_member_or_nil(vm: ptr VirtualMachine, adapter_val: Value, prop: Value): Value
+proc dispatch_adapter_method(vm: ptr VirtualMachine, obj: Value, method_name: string, args: seq[Value]): Value
+proc dispatch_adapter_method_kw(vm: ptr VirtualMachine, obj: Value, method_name: string, args: seq[Value], kw_pairs: seq[(Key, Value)]): Value
+# Forward declarations for adapter internal functions
+proc adapter_internal_get_member*(adapter_internal_val: Value, key: Key): Value
+proc adapter_internal_set_member*(adapter_internal_val: Value, key: Key, value: Value)
+proc adapter_internal_member_or_nil*(adapter_internal_val: Value, prop: Value): Value
 
 include "./vm/native"
 

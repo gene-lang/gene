@@ -771,6 +771,8 @@ proc exec*(self: ptr VirtualMachine): Value =
             instance_props(target)[name] = value
           of VkAdapter:
             adapter_set_member(target.ref.adapter, name, value)
+          of VkAdapterInternal:
+            adapter_internal_set_member(target, name, value)
           of VkArray:
             # Arrays don't support named members, this is likely an error
             let symbol_index = cast[uint64](name) and PAYLOAD_MASK
@@ -792,7 +794,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           not_allowed("Cannot set member on nil (namespace or object doesn't exist)")
 
         case target.kind:
-        of VkMap, VkNamespace, VkClass, VkInstance, VkAdapter:
+        of VkMap, VkNamespace, VkClass, VkInstance, VkAdapter, VkAdapterInternal:
           let key = case prop.kind:
             of VkString, VkSymbol: prop.str.to_key()
             of VkInt: ($prop.int64).to_key()
@@ -811,6 +813,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               instance_props(target)[key] = value
             of VkAdapter:
               adapter_set_member(target.ref.adapter, key, value)
+            of VkAdapterInternal:
+              adapter_internal_set_member(target, key, value)
             else:
               discard
         of VkGene:
@@ -903,6 +907,11 @@ proc exec*(self: ptr VirtualMachine): Value =
           of VkAdapter:
             # Access member through adapter mapping
             let member = adapter_get_member(self, value.ref.adapter, name)
+            retain(member)
+            self.frame.push(member)
+          of VkAdapterInternal:
+            # Access member from adapter's internal data
+            let member = adapter_internal_get_member(value, name)
             retain(member)
             self.frame.push(member)
           of VkInstance:
@@ -1062,6 +1071,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(VOID)
             of VkAdapter:
               let member = adapter_member_or_nil(self, target, prop)
+              retain(member)
+              self.frame.push(member)
+            of VkAdapterInternal:
+              let member = adapter_internal_member_or_nil(target, prop)
               retain(member)
               self.frame.push(member)
             of VkEnum:
@@ -1250,6 +1263,14 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(default_val)
             of VkAdapter:
               let member = adapter_member_or_nil(self, target, prop)
+              if member == NIL or member == VOID:
+                retain(default_val)
+                self.frame.push(default_val)
+              else:
+                retain(member)
+                self.frame.push(member)
+            of VkAdapterInternal:
+              let member = adapter_internal_member_or_nil(target, prop)
               if member == NIL or member == VOID:
                 retain(default_val)
                 self.frame.push(default_val)
@@ -5549,21 +5570,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
         if obj.kind == VkAdapter:
-          let member = adapter_get_member(self, obj.ref.adapter, method_name.to_key())
-          if member == NIL or member == VOID:
-            not_allowed("Method " & method_name & " not found on Adapter")
-          let result = case member.kind
-            of VkFunction:
-              self.exec_method_impl(member, obj, @[], self.frame)
-            of VkBoundMethod:
-              let bm = member.ref.bound_method
-              if bm.`method`.callable.kind == VkFunction:
-                self.exec_method_impl(bm.`method`.callable, bm.self, @[], self.frame)
-              else:
-                self.exec_callable(member, @[])
-            else:
-              self.exec_callable_with_self(member, obj, @[])
-          self.frame.push(result)
+          self.frame.push(dispatch_adapter_method(self, obj, method_name, @[]))
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -5720,21 +5727,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
 
         if obj.kind == VkAdapter:
-          let member = adapter_get_member(self, obj.ref.adapter, method_name.to_key())
-          if member == NIL or member == VOID:
-            not_allowed("Method " & method_name & " not found on Adapter")
-          let result = case member.kind
-            of VkFunction:
-              self.exec_method_impl(member, obj, @[arg], self.frame)
-            of VkBoundMethod:
-              let bm = member.ref.bound_method
-              if bm.`method`.callable.kind == VkFunction:
-                self.exec_method_impl(bm.`method`.callable, bm.self, @[arg], self.frame)
-              else:
-                self.exec_callable(member, @[arg])
-            else:
-              self.exec_callable_with_self(member, obj, @[arg])
-          self.frame.push(result)
+          self.frame.push(dispatch_adapter_method(self, obj, method_name, @[arg]))
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -5902,21 +5895,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
 
         if obj.kind == VkAdapter:
-          let member = adapter_get_member(self, obj.ref.adapter, method_name.to_key())
-          if member == NIL or member == VOID:
-            not_allowed("Method " & method_name & " not found on Adapter")
-          let result = case member.kind
-            of VkFunction:
-              self.exec_method_impl(member, obj, @[arg1, arg2], self.frame)
-            of VkBoundMethod:
-              let bm = member.ref.bound_method
-              if bm.`method`.callable.kind == VkFunction:
-                self.exec_method_impl(bm.`method`.callable, bm.self, @[arg1, arg2], self.frame)
-              else:
-                self.exec_callable(member, @[arg1, arg2])
-            else:
-              self.exec_callable_with_self(member, obj, @[arg1, arg2])
-          self.frame.push(result)
+          self.frame.push(dispatch_adapter_method(self, obj, method_name, @[arg1, arg2]))
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -6214,25 +6193,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let obj = self.frame.pop()
 
         if obj.kind == VkAdapter:
-          let member = adapter_get_member(self, obj.ref.adapter, method_name.to_key())
-          if member == NIL or member == VOID:
-            not_allowed("Method " & method_name & " not found on Adapter")
-          let result = case member.kind
-            of VkFunction:
-              self.exec_method_kw_impl(member, obj, args, kw_pairs, self.frame)
-            of VkBoundMethod:
-              let bm = member.ref.bound_method
-              if bm.`method`.callable.kind == VkFunction:
-                self.exec_method_kw_impl(bm.`method`.callable, bm.self, args, kw_pairs, self.frame)
-              else:
-                if kw_pairs.len > 0:
-                  not_allowed("Keyword arguments are not supported for adapter bound method kind: " & $bm.`method`.callable.kind)
-                self.exec_callable(member, args)
-            else:
-              if kw_pairs.len > 0:
-                not_allowed("Keyword arguments are not supported for adapter method kind: " & $member.kind)
-              self.exec_callable_with_self(member, obj, args)
-          self.frame.push(result)
+          self.frame.push(dispatch_adapter_method_kw(self, obj, method_name, args, kw_pairs))
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue

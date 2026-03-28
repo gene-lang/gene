@@ -155,6 +155,8 @@ type
         gene_interface*: GeneInterface
       of VkAdapter:
         adapter*: Adapter
+      of VkAdapterInternal:
+        adapter_internal*: Adapter  # Reference to adapter for internal data access
       of VkNativeFn:
         native_fn*: NativeFn
       of VkNativeMacro:

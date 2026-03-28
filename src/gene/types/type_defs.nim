@@ -210,6 +210,7 @@ type
     VkEnumMember
     VkInterface          # Interface definition
     VkAdapter            # Adapter wrapper
+    VkAdapterInternal    # Adapter internal data accessor
     VkNativeFn
     VkNativeMacro    # Native macro (receives unevaluated args)
     VkNativeMethod

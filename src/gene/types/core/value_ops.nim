@@ -618,6 +618,12 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result = type_desc_to_string(payload.runtime_type.type_id, payload.type_descs)
         else:
           result = $self.kind
+      of VkInterface:
+        result = "<Interface " & self.ref.gene_interface.name & ">"
+      of VkAdapter:
+        result = "<Adapter:" & self.ref.adapter.gene_interface.name & " " & $self.ref.adapter.inner & ">"
+      of VkAdapterInternal:
+        result = "<AdapterInternal>"
       else:
         result = $self.kind
 
