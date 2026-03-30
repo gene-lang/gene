@@ -443,7 +443,15 @@ proc compile_complex_symbol(self: Compiler, input: Value) =
         # For now, just treat it as a regular member access
         not_allowed("Spread operator (...) in complex symbols not supported")
       else:
-        self.emit(Instruction(kind: IkPushValue, arg0: s.to_symbol_value()))
+        let use_implicit_dynamic_segment =
+          i == r.csymbol.len - 1 and
+          r.csymbol.len > 2 and
+          not r.csymbol[i - 1].startsWith("_gene") and
+          self.scope_tracker.locate(s.to_key()).local_index >= 0
+        if use_implicit_dynamic_segment:
+          self.compile(s.to_symbol_value())
+        else:
+          self.emit(Instruction(kind: IkPushValue, arg0: s.to_symbol_value()))
         self.emit(Instruction(kind: IkGetMemberOrNil))
       i.inc()
 

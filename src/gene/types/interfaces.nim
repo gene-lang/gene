@@ -60,7 +60,8 @@ proc new_implementation*(gene_interface: GeneInterface, target_class: Class = ni
     is_inline: is_inline,
     method_mappings: initTable[Key, AdapterMapping](),
     prop_mappings: initTable[Key, AdapterMapping](),
-    own_data: initTable[Key, Value]()
+    own_data: initTable[Key, Value](),
+    ctor: NIL
   )
 
 proc map_method_rename*(self: Implementation, interface_method: string, inner_method: string) =

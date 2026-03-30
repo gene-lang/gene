@@ -906,7 +906,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               not_allowed("enum " & value.ref.enum_def.name & " has no member " & member_name)
           of VkAdapter:
             # Access member through adapter mapping
-            let member = adapter_get_member(self, value.ref.adapter, name)
+            let member = adapter_get_member(self, value, name)
             retain(member)
             self.frame.push(member)
           of VkAdapterInternal:
@@ -3754,6 +3754,9 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkImplementMethod:
         exec_implement_method(self, inst.arg0)
 
+      of IkImplementCtor:
+        exec_implement_ctor(self)
+
       of IkAdapter:
         # Create an adapter wrapper
         exec_adapter(self)
@@ -3764,7 +3767,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let method_name = inst.arg0.str
 
         if v.kind == VkAdapter:
-          let member = adapter_get_member(self, v.ref.adapter, method_name.to_key())
+          let member = adapter_get_member(self, v, method_name.to_key())
           if member == NIL or member == VOID:
             not_allowed("Method '" & method_name & "' not found on adapter")
           self.frame.push(member)
@@ -5055,9 +5058,10 @@ proc exec*(self: ptr VirtualMachine): Value =
           # Interface call with multiple args - use first arg as object to adapt
           if args.len < 1:
             raise new_exception(types.Exception, "Interface call requires at least 1 argument (the object to adapt)")
+          let ctor_args = if args.len > 1: args[1..^1] else: @[]
           self.frame.push(target)
           self.frame.push(args[0])
-          exec_adapter(self)
+          exec_adapter(self, ctor_args)
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
@@ -5314,6 +5318,14 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkInterception:
           let result = self.run_intercepted_method(target.ref.interception, NIL, args, kw_pairs)
           self.frame.push(result)
+
+        of VkInterface:
+          if args.len < 1:
+            raise new_exception(types.Exception, "Interface call requires at least 1 argument (the object to adapt)")
+          let ctor_args = if args.len > 1: args[1..^1] else: @[]
+          self.frame.push(target)
+          self.frame.push(args[0])
+          exec_adapter(self, ctor_args, kw_pairs)
 
         else:
           not_allowed("IkUnifiedCallKw requires a callable, got " & $target.kind)

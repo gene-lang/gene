@@ -817,6 +817,7 @@ type
     IkInterfaceProp      # Define an interface property signature
     IkImplement          # Register implementation (inline or external)
     IkImplementMethod    # Define an external implementation method mapping
+    IkImplementCtor      # Define an external implementation constructor
     IkAdapter            # Create adapter wrapper (InterfaceName obj)
 
     IkCallInit

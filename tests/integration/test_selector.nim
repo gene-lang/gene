@@ -139,6 +139,24 @@ test_vm """
   data/users/<idx>/name
 """, "Bob"
 
+test_vm """
+  (class KVStore
+    (ctor []
+      (/data = {})
+    )
+    (method set [key value]
+      (/data/key = value)
+    )
+    (method get [key]
+      /data/key
+    )
+  )
+  (var store (new KVStore))
+  (store .set "lang" "Gene")
+  (store .set "author" "Guoliang")
+  (store .get "lang")
+""", "Gene"
+
 test_vm_error """
   (var key nil)
   (var data {^name "Ada"})

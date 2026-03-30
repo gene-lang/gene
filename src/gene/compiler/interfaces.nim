@@ -36,30 +36,7 @@ proc compile_interface_prop_decl(self: Compiler, gene: ptr Gene) =
     )
   )
 
-proc compile_external_implement_method(self: Compiler, gene: ptr Gene) =
-  if gene.children.len < 2:
-    not_allowed("method requires a name and argument list")
-
-  let name = gene.children[0]
-  if name.kind != VkSymbol:
-    not_allowed("method name must be a symbol")
-
-  let parsed_name = split_generic_definition_name(name.str)
-  let method_name = parsed_name.base_name.to_symbol_value()
-  if method_name.kind notin {VkString, VkSymbol}:
-    not_allowed("method name must be a symbol or string")
-
-  var fn_value = new_gene_value()
-  fn_value.gene.type = "fn".to_symbol_value()
-  for k, v in gene.props:
-    fn_value.gene.props[k] = v
-
-  # Preserve the original method name on the lowered function so generic method
-  # parameters continue to be visible to to_function(), but register the stripped
-  # base name on the implementation mapping.
-  fn_value.gene.children.add(name)
-
-  let args = gene.children[1]
+proc external_implement_args_with_self(args: Value): Value =
   var method_args: Value
   if args.kind == VkArray:
     let src = array_data(args)
@@ -85,8 +62,29 @@ proc compile_external_implement_method(self: Compiler, gene: ptr Gene) =
     method_args = new_array_value()
     array_data(method_args).add("self".to_symbol_value())
     array_data(method_args).add(args)
+  method_args
 
-  fn_value.gene.children.add(method_args)
+proc compile_external_implement_method(self: Compiler, gene: ptr Gene) =
+  if gene.children.len < 2:
+    not_allowed("method requires a name and argument list")
+
+  let name = gene.children[0]
+  if name.kind != VkSymbol:
+    not_allowed("method name must be a symbol")
+
+  let parsed_name = split_generic_definition_name(name.str)
+  let method_name = parsed_name.base_name.to_symbol_value()
+
+  var fn_value = new_gene_value()
+  fn_value.gene.type = "fn".to_symbol_value()
+  for k, v in gene.props:
+    fn_value.gene.props[k] = v
+
+  # Preserve the original method name on the lowered function so generic method
+  # parameters continue to be visible to to_function(), but register the stripped
+  # base name on the implementation mapping.
+  fn_value.gene.children.add(name)
+  fn_value.gene.children.add(external_implement_args_with_self(gene.children[1]))
 
   if gene.children.len == 2:
     fn_value.gene.children.add(NIL)
@@ -96,6 +94,27 @@ proc compile_external_implement_method(self: Compiler, gene: ptr Gene) =
 
   self.compile_fn(fn_value, define_binding = false)
   self.emit(Instruction(kind: IkImplementMethod, arg0: method_name))
+
+proc compile_external_implement_ctor(self: Compiler, gene: ptr Gene) =
+  if gene.children.len == 0:
+    not_allowed("ctor requires an argument list")
+
+  var fn_value = new_gene_value()
+  fn_value.gene.type = "fn".to_symbol_value()
+  for k, v in gene.props:
+    fn_value.gene.props[k] = v
+
+  fn_value.gene.children.add("__adapter_ctor__".to_symbol_value())
+  fn_value.gene.children.add(external_implement_args_with_self(gene.children[0]))
+
+  if gene.children.len == 1:
+    fn_value.gene.children.add(NIL)
+  else:
+    for i in 1..<gene.children.len:
+      fn_value.gene.children.add(gene.children[i])
+
+  self.compile_fn(fn_value, define_binding = false)
+  self.emit(Instruction(kind: IkImplementCtor))
 
 proc compile_interface*(self: Compiler, gene: ptr Gene) =
   ## Compile an interface definition
@@ -164,10 +183,12 @@ proc compile_implement*(self: Compiler, gene: ptr Gene) =
       for i in body_start..<gene.children.len:
         let child = gene.children[i]
         if child.kind != VkGene or child.gene == nil or child.gene.type.kind != VkSymbol:
-          not_allowed("external implement body only supports method declarations")
+          not_allowed("external implement body only supports method and ctor declarations")
         case child.gene.type.str
         of "method":
           self.compile_external_implement_method(child.gene)
+        of "ctor":
+          self.compile_external_implement_ctor(child.gene)
         else:
           not_allowed("unsupported external implement member: " & child.gene.type.str)
       self.emit(Instruction(kind: IkPop))
@@ -183,4 +204,3 @@ proc compile_implement*(self: Compiler, gene: ptr Gene) =
       r.cu = compiled
       self.emit(Instruction(kind: IkPushValue, arg0: r.to_ref_value()))
       self.emit(Instruction(kind: IkCallInit))
-

@@ -80,6 +80,7 @@ task test, "Runs unit tests only":
   exec "nim c -r tests/test_custom_value.nim"
   exec "nim c -r tests/test_thread_msg.nim"
   exec "nim c -r tests/test_bytecode_to_hir.nim"
+  exec "nim c -r tests/test_adapter.nim"
   exec "nim c -r tests/test_vm_builtins.nim"
   exec "nim c -r tests/test_vm_neg.nim"
 
@@ -104,6 +105,7 @@ task testintegration, "Runs non-unit integration tests":
   exec "nim c -r tests/integration/test_symbol.nim"
   exec "nim c -r tests/integration/test_template.nim"
   exec "nim c -r tests/integration/test_async.nim"
+  exec "nim c -r tests/integration/test_adapter.nim"
   exec "nim c -r tests/integration/test_cast.nim"
   exec "nim c -r tests/integration/test_cli_compile.nim"
   exec "nim c -r tests/integration/test_cli_deser.nim"

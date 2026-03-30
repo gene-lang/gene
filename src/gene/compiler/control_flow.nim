@@ -536,11 +536,23 @@ proc compile_container_assignment(self: Compiler, container_expr: Value, name_sy
     not_allowed("Container assignment target must resolve to a symbol")
   let name_str = name_sym.str
   let (is_index, index) = to_int(name_str)
-  let use_dynamic_member =
+  let dynamic_member_span =
+    if is_index:
+      (matched: false, is_method: false, expr: NIL, next_index: 0)
+    else:
+      parse_dynamic_path_span([name_str], 0)
+  let use_explicit_dynamic_member =
+    dynamic_member_span.matched and
+    dynamic_member_span.next_index == 1 and
+    not dynamic_member_span.is_method
+  let use_implicit_dynamic_member =
     (not is_index) and
+    (not use_explicit_dynamic_member) and
     container_expr.kind == VkComplexSymbol and
     container_expr.ref.csymbol.len > 1 and
+    not container_expr.ref.csymbol[^1].startsWith("_gene") and
     self.scope_tracker.locate(name_sym.str.to_key()).local_index >= 0
+  let use_dynamic_member = use_explicit_dynamic_member or use_implicit_dynamic_member
 
   self.compile(container_expr)
   if operator == "=":
@@ -548,7 +560,10 @@ proc compile_container_assignment(self: Compiler, container_expr: Value, name_sy
       self.compile(rhs)
       self.emit(Instruction(kind: IkSetChild, arg0: index))
     elif use_dynamic_member:
-      self.compile(name_sym)
+      if use_explicit_dynamic_member:
+        self.compile(dynamic_member_span.expr)
+      else:
+        self.compile(name_sym)
       self.compile(rhs)
       self.emit(Instruction(kind: IkSetMemberDynamic))
     else:
@@ -560,7 +575,10 @@ proc compile_container_assignment(self: Compiler, container_expr: Value, name_sy
   if is_index:
     self.emit(Instruction(kind: IkGetChild, arg0: index))
   elif use_dynamic_member:
-    self.compile(name_sym)
+    if use_explicit_dynamic_member:
+      self.compile(dynamic_member_span.expr)
+    else:
+      self.compile(name_sym)
     self.emit(Instruction(kind: IkGetMemberOrNil))
   else:
     self.emit(Instruction(kind: IkGetMember, arg0: name_sym))
@@ -579,7 +597,10 @@ proc compile_container_assignment(self: Compiler, container_expr: Value, name_sy
   if is_index:
     self.emit(Instruction(kind: IkSetChild, arg0: index))
   elif use_dynamic_member:
-    self.compile(name_sym)
+    if use_explicit_dynamic_member:
+      self.compile(dynamic_member_span.expr)
+    else:
+      self.compile(name_sym)
     self.emit(Instruction(kind: IkSwap))
     self.emit(Instruction(kind: IkSetMemberDynamic))
   else:
@@ -680,12 +701,22 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
     let key = r.csymbol[0].to_key()
     let last_segment = r.csymbol[^1]
     let (last_is_int, last_index) = to_int(last_segment)
-    let use_dynamic_last_segment =
-      if last_is_int or r.csymbol.len <= 2:
-        false
+    let dynamic_last_span =
+      if last_is_int:
+        (matched: false, is_method: false, expr: NIL, next_index: 0)
       else:
-        let found = self.scope_tracker.locate(last_segment.to_key())
-        found.local_index >= 0
+        parse_dynamic_path_span(r.csymbol, r.csymbol.len - 1)
+    let use_explicit_dynamic_last_segment =
+      dynamic_last_span.matched and
+      dynamic_last_span.next_index == r.csymbol.len and
+      not dynamic_last_span.is_method
+    let use_implicit_dynamic_last_segment =
+      (not last_is_int) and
+      (not use_explicit_dynamic_last_segment) and
+      r.csymbol.len > 2 and
+      not r.csymbol[^2].startsWith("_gene") and
+      self.scope_tracker.locate(last_segment.to_key()).local_index >= 0
+    let use_dynamic_last_segment = use_explicit_dynamic_last_segment or use_implicit_dynamic_last_segment
     
     # Load the target object first (for both regular and compound assignment)
     if r.csymbol[0] == "SPECIAL_NS":
@@ -718,7 +749,10 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
       if last_is_int:
         self.emit(Instruction(kind: IkGetChild, arg0: last_index))
       elif use_dynamic_last_segment:
-        self.compile(last_segment.to_symbol_value())
+        if use_explicit_dynamic_last_segment:
+          self.compile(dynamic_last_span.expr)
+        else:
+          self.compile(last_segment.to_symbol_value())
         self.emit(Instruction(kind: IkGetMemberOrNil))
       else:
         self.emit(Instruction(kind: IkGetMember, arg0: last_segment.to_key()))
@@ -746,7 +780,10 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
       if last_is_int:
         self.emit(Instruction(kind: IkSetChild, arg0: last_index))
       elif use_dynamic_last_segment:
-        self.compile(last_segment.to_symbol_value())
+        if use_explicit_dynamic_last_segment:
+          self.compile(dynamic_last_span.expr)
+        else:
+          self.compile(last_segment.to_symbol_value())
         self.emit(Instruction(kind: IkSwap))
         self.emit(Instruction(kind: IkSetMemberDynamic))
       else:
@@ -757,7 +794,10 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
         self.compile(gene.children[1])
         self.emit(Instruction(kind: IkSetChild, arg0: last_index))
       elif use_dynamic_last_segment:
-        self.compile(last_segment.to_symbol_value())
+        if use_explicit_dynamic_last_segment:
+          self.compile(dynamic_last_span.expr)
+        else:
+          self.compile(last_segment.to_symbol_value())
         self.compile(gene.children[1])
         self.emit(Instruction(kind: IkSetMemberDynamic))
       else:
