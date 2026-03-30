@@ -251,6 +251,8 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   VM.native_code = options.native_tier != NctNever
   VM.type_check = options.type_check
   VM.contracts_enabled = options.contracts_enabled
+  App.app.gir_cache_reads_enabled = not options.no_gir_cache and not options.force_compile
+  App.app.gir_cache_writes_enabled = not options.no_gir_cache
   init_stdlib()
   set_program_args(file, options.args)
   VM.repl_on_error = options.repl_on_error

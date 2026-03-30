@@ -1,6 +1,6 @@
 import unittest, json, tables, os
 
-import ../src/genex/ai/openai_client
+import genex/ai/openai_client
 
 suite "OpenAI Client":
   test "oauth token selects codex auth headers":

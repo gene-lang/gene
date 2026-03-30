@@ -1,6 +1,6 @@
 import unittest, json, tables, os, strutils
 
-import ../src/genex/ai/anthropic_client
+import genex/ai/anthropic_client
 
 proc splitBetas(value: string): seq[string] =
   for part in value.split(','):

@@ -1,6 +1,6 @@
 import unittest, tables, strutils
-import ../src/gene/types except Exception
-import ../src/gene/vm/extension
+import gene/types except Exception
+import gene/vm/extension
 import ../helpers
 
 suite "HTTP Extension Tests":

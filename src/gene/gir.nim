@@ -7,6 +7,13 @@ const
   GIR_VERSION* = 22'u32
   COMPILER_VERSION = "0.1.3"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
+  INSTRUCTION_ABI_VERSION* = 2'u32  # Version 2: adapter/interface opcode layout changed
+
+proc current_vm_abi_marker(): string =
+  "nim-" & NimVersion &
+    "-" & $sizeof(pointer) & "bit" &
+    "-valueabi" & $VALUE_ABI_VERSION &
+    "-instabi" & $INSTRUCTION_ABI_VERSION
   
 type
   GirHeader* = object
@@ -618,7 +625,7 @@ proc save_gir*(cu: CompilationUnit, path: string, source_path: string = "", debu
   header.magic = ['G', 'E', 'N', 'E']
   header.version = GIR_VERSION
   header.compiler_version = COMPILER_VERSION
-  header.vm_abi = "nim-" & NimVersion & "-" & $sizeof(pointer) & "bit-valueabi" & $VALUE_ABI_VERSION
+  header.vm_abi = current_vm_abi_marker()
   header.timestamp = 0'i64  # TODO: Fix epochTime conversion
   header.debug = debug
   header.published = false
@@ -720,12 +727,18 @@ proc load_gir_file*(path: string): GirFile =
   header.compiler_version = stream.read_string()
   header.vm_abi = stream.read_string()
 
-  # Validate VALUE_ABI version to prevent loading incompatible GIR files
+  # Validate ABI markers to prevent loading incompatible GIR files.
   let expected_abi_marker = "-valueabi" & $VALUE_ABI_VERSION
   if not header.vm_abi.contains(expected_abi_marker):
     raise new_exception(types.Exception,
       "Incompatible GIR file: VALUE_ABI mismatch. " &
       "Expected valueabi" & $VALUE_ABI_VERSION & " but got: " & header.vm_abi &
+      ". Please recompile the source file.")
+  let expected_instruction_abi_marker = "-instabi" & $INSTRUCTION_ABI_VERSION
+  if not header.vm_abi.contains(expected_instruction_abi_marker):
+    raise new_exception(types.Exception,
+      "Incompatible GIR file: INSTRUCTION_ABI mismatch. " &
+      "Expected instabi" & $INSTRUCTION_ABI_VERSION & " but got: " & header.vm_abi &
       ". Please recompile the source file.")
 
   header.timestamp = stream.readInt64()
@@ -884,7 +897,10 @@ proc is_gir_up_to_date*(gir_path: string, source_path: string): bool =
 
     let vm_abi = stream.read_string()
     let expected_abi_marker = "-valueabi" & $VALUE_ABI_VERSION
+    let expected_instruction_abi_marker = "-instabi" & $INSTRUCTION_ABI_VERSION
     if not vm_abi.contains(expected_abi_marker):
+      return false
+    if not vm_abi.contains(expected_instruction_abi_marker):
       return false
 
     # Skip timestamp/flags and read stored source hash.

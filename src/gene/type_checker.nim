@@ -764,11 +764,14 @@ proc register_imported_types_from_module(self: TypeChecker, module_types: seq[Mo
       let imported_name = if item.alias.len > 0: item.alias else: item.path[^1]
       self.register_imported_type(imported_name, force = true)
 
+proc gir_cache_reads_enabled_for_typechecker(): bool =
+  App == NIL or App.kind != VkApplication or App.app.gir_cache_reads_enabled
+
 proc check_import(self: TypeChecker, gene: ptr Gene): TypeExpr =
   let module_path = import_module_path(gene)
   if module_path.len > 0:
     let items = collect_import_items(gene)
-    if items.len > 0:
+    if items.len > 0 and gir_cache_reads_enabled_for_typechecker():
       let gir_path = self.resolve_import_gir_path(module_path)
       if gir_path.len > 0:
         try:

@@ -15,6 +15,8 @@ proc new_app*(): Application =
   result = Application()
   let global = new_namespace("global")
   result.ns = global
+  result.gir_cache_reads_enabled = true
+  result.gir_cache_writes_enabled = true
 
 #################### Namespace ###################
 

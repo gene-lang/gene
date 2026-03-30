@@ -39,40 +39,40 @@ suite "Range tests":
     # check $r2 == "1..10 step 2"  # TODO: Fix string representation of ranges
 
   test "Range length calculation":
-    # (0..10) should have length 10
+    # (0..10) includes both ends, so length is 11
     let r1 = new_range_value(0.to_value(), 10.to_value(), NIL)
-    # check r1.len == 10  # TODO: Fix range length calculation
+    # check r1.len == 11  # TODO: Fix range length calculation
     
-    # (0..10 step 2) should have length 5 (0, 2, 4, 6, 8)
+    # (0..10 step 2) should have length 6 (0, 2, 4, 6, 8, 10)
     let r2 = new_range_value(0.to_value(), 10.to_value(), 2.to_value())
-    # check r2.len == 5  # TODO: Fix range length calculation
+    # check r2.len == 6  # TODO: Fix range length calculation
     
-    # (1..5) should have length 4
+    # (1..5) should have length 5
     let r3 = new_range_value(1.to_value(), 5.to_value(), NIL)
-    # check r3.len == 4  # TODO: Fix range length calculation
+    # check r3.len == 5  # TODO: Fix range length calculation
 
   test "Range indexing":
     let r = new_range_value(0.to_value(), 10.to_value(), 2.to_value())
-    check r[0].int == 0  # First element
-    check r[1].int == 2  # Second element
-    check r[2].int == 4  # Third element
-    check r[4].int == 8  # Fifth element
+    check r[0] == 0.to_value()  # First element
+    check r[1] == 2.to_value()  # Second element
+    check r[2] == 4.to_value()  # Third element
+    check r[4] == 8.to_value()  # Fifth element
 
   test "Range in for loop":
     test_vm """
       (var sum 0)
       (for i in (0 .. 5)
-        (set sum (sum + i)))
+        (sum = (sum + i)))
       sum
-    """, 10  # 0 + 1 + 2 + 3 + 4 = 10
+    """, 15  # 0 + 1 + 2 + 3 + 4 + 5 = 15
 
   test "Range with step in for loop":
     test_vm """
       (var sum 0)
       (for i in (range 0 10 2)
-        (set sum (sum + i)))
+        (sum = (sum + i)))
       sum
-    """, 20  # 0 + 2 + 4 + 6 + 8 = 20
+    """, 30  # 0 + 2 + 4 + 6 + 8 + 10 = 30
 
   # TODO: Implement .to_a method for ranges
   # test "Range to array conversion":
@@ -95,6 +95,6 @@ suite "Range tests":
   # TODO: Implement 'in' operator for ranges
   # test "Range membership test":
   #   test_vm "(3 in (0 .. 10))", TRUE
-  #   test_vm "(10 in (0 .. 10))", FALSE  # End is exclusive
+  #   test_vm "(10 in (0 .. 10))", TRUE
   #   test_vm "(11 in (0 .. 10))", FALSE
   #   test_vm "(-1 in (0 .. 10))", FALSE

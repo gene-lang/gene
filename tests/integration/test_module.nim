@@ -144,10 +144,16 @@ test "Compilation & VM: explicit exports limit wildcard imports":
     public
   """), "test_code") == 1
 
-  check VM.exec(cleanup("""
+  let hidden_code = cleanup("""
     (import * from "tests/fixtures/mod_exports")
     hidden
-  """), "test_code") == NIL
+  """)
+  try:
+    discard VM.exec(hidden_code, "test_code")
+    fail()
+  except CatchableError as e:
+    check e.msg.contains("GENE.SCOPE.UNDEFINED_VAR")
+    check e.msg.contains("hidden is not defined")
 
 test "Compilation & VM: ambiguous module candidates fail with stable code":
   init_all()

@@ -364,6 +364,8 @@ type
     cmd*: string
     args*: seq[string]
     main_module*: Module
+    gir_cache_reads_enabled*: bool
+    gir_cache_writes_enabled*: bool
     # dep_root*: DependencyRoot
     props*: Table[Key, Value]  # Additional properties
 

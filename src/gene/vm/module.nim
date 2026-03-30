@@ -46,6 +46,12 @@ const
   PACKAGE_ERR_BOUNDARY = "GENE.PACKAGE.BOUNDARY"
   PACKAGE_ERR_INVALID_LOCK = "GENE.PACKAGE.INVALID_LOCK"
 
+proc gir_cache_reads_enabled(): bool =
+  App != NIL and App.kind == VkApplication and App.app.gir_cache_reads_enabled
+
+proc gir_cache_writes_enabled(): bool =
+  App != NIL and App.kind == VkApplication and App.app.gir_cache_writes_enabled
+
 proc canonical_path(path: string): string =
   if path.len == 0:
     return ""
@@ -1193,7 +1199,7 @@ proc compile_module*(path: string): CompilationUnit =
       not_allowed("Failed to open module '" & path & "'")
 
   let gir_path = get_gir_path(actual_path, "build")
-  if fileExists(gir_path) and is_gir_up_to_date(gir_path, actual_path):
+  if gir_cache_reads_enabled() and fileExists(gir_path) and is_gir_up_to_date(gir_path, actual_path):
     try:
       let loaded = load_gir(gir_path)
       register_module_type_registry(actual_path, loaded)
@@ -1209,10 +1215,11 @@ proc compile_module*(path: string): CompilationUnit =
 
   let compiled = parse_and_compile(stream, actual_path, module_mode = true, run_init = false)
   register_module_type_registry(actual_path, compiled)
-  try:
-    save_gir(compiled, gir_path, actual_path)
-  except CatchableError:
-    discard
+  if gir_cache_writes_enabled():
+    try:
+      save_gir(compiled, gir_path, actual_path)
+    except CatchableError:
+      discard
   return compiled
 
 proc load_module*(vm: ptr VirtualMachine, path: string): Namespace =

@@ -1,7 +1,7 @@
 import unittest
 import std/strutils
 
-import ../src/genex/websocket
+import genex/websocket
 
 suite "WebSocket frame encoding":
   test "encode small text frame (server, no mask)":

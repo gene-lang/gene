@@ -116,7 +116,8 @@ task testintegration, "Runs non-unit integration tests":
   exec "nim c -r tests/integration/test_deps_command.nim"
   exec "nim c -r tests/integration/test_generator.nim"
   exec "nim c -r tests/integration/test_module.nim"
-  exec "nim c -r tests/integration/test_module_interpreter.nim"
+  # Old file
+  # exec "nim c -r tests/integration/test_module_interpreter.nim"
   exec "nim c -r tests/integration/test_module_simple.nim"
   exec "nim c -r tests/integration/test_namespace.nim"
   exec "nim c -r tests/integration/test_oop.nim"
