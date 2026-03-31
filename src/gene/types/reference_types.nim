@@ -82,7 +82,8 @@ type
 
       # Collection types
       of VkSet:
-        set*: HashSet[Value]
+        set_items*: seq[Value]
+        set_buckets*: OrderedTable[Hash, seq[int]]
       of VkMap:
         map*: Table[Key, Value]
       of VkHashMap:

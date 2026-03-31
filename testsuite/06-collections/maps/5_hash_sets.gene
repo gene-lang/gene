@@ -1,0 +1,31 @@
+# Expected: true
+# Expected: 3
+# Expected: 2
+# Expected: 6
+# Expected: [1 2 3 4]
+# Expected: [3]
+# Expected: [1 2]
+# Expected: true
+# Expected: (HashSet 1 "two")
+
+(var s (new HashSet 1 "two" [3 4] [3 4]))
+(println (s .has [3 4]))
+(println (s .size))
+
+(s .add 2)
+(println (s .delete 2))
+
+(var sum 0)
+(for x in (new HashSet 1 2 3)
+  (sum += x)
+)
+(println sum)
+
+(var a (new HashSet 1 2 3))
+(var b (new HashSet 3 4))
+(println ((a .union b) .to_array))
+(println ((a .intersect b) .to_array))
+(println ((a .diff b) .to_array))
+(println ((new HashSet 1 2) .subset? a))
+
+(println ((new HashSet 1 "two") .to_s))

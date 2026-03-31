@@ -162,7 +162,7 @@ proc len*(self: Value): int =
   of VkHashMap:
     return self.ref.hash_map_items.len div 2
   of VkSet:
-    return self.ref.set.len
+    return self.ref.set_items.len
   of VkGene:
     return self.gene.children.len
   of VkRange:
@@ -187,6 +187,14 @@ proc new_stream_value*(v: varargs[Value]): Value =
 
 proc new_set_value*(): Value =
   let r = new_ref(VkSet)
+  r.set_items = @[]
+  r.set_buckets = initOrderedTable[Hash, seq[int]]()
+  result = r.to_ref_value()
+
+proc new_set_value*(items: seq[Value]): Value =
+  let r = new_ref(VkSet)
+  r.set_items = items
+  r.set_buckets = initOrderedTable[Hash, seq[int]]()
   result = r.to_ref_value()
 
 #################### Map #########################

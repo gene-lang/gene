@@ -1,8 +1,10 @@
 import std/json
 import unittest
 
+import gene/error_display
 import gene/types except Exception
 import gene/vm
+import gene/vm/diagnostics
 
 import ../helpers
 
@@ -299,3 +301,10 @@ test "runtime exception produces structured diagnostic envelope":
     check parsed.hasKey("span")
     check parsed["span"].hasKey("line")
     check parsed["code"].getStr().len > 0
+
+test "render_error_message preserves canonical diagnostic field order":
+  let rendered = render_error_message(diagnostics.make_diagnostic_message(
+    "GENE.RUNTIME.ERROR",
+    "boom"
+  ))
+  check rendered == "{^message \"boom\" ^code \"GENE.RUNTIME.ERROR\" ^severity \"error\" ^stage \"runtime\" ^span {^file \"\" ^line 0 ^column 0} ^hints [] ^repair_tags [\"runtime\"]}"

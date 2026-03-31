@@ -82,6 +82,11 @@ proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
         parts.add(display_value(val.ref.hash_map_items[i + 1], false))
       i += 2
     "{{" & parts.join(" ") & "}}"
+  of VkSet:
+    var parts: seq[string] = @[]
+    for item in val.ref.set_items:
+      parts.add(display_value(item, false))
+    "(HashSet" & (if parts.len > 0: " " & parts.join(" ") else: "") & ")"
   of VkGene:
     var segments: seq[string] = @[]
     if not val.gene.type.is_nil():

@@ -125,3 +125,10 @@ suite "HashMap":
     except CatchableError as e:
       check e.msg.contains("not hashable for HashMap")
 
+  test_vm """
+    (do
+      (var m {{[1 2] "pair" 1 "one"}})
+      (m .delete 1)
+      (m .get [1 2])
+    )
+  """, "pair"

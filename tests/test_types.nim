@@ -88,11 +88,11 @@ test "Array":
   check a[0] == 1
   check a[1] == NIL
 
-test "Set display is unsupported":
+test "HashSet display uses constructor syntax":
   let s = new_set_value()
   check s.kind == VkSet
-  check s.str_no_quotes() == "unsupported"
-  check $s == "unsupported"
+  check s.str_no_quotes() == "(HashSet)"
+  check $s == "(HashSet)"
 
 test "Frozen gene display":
   var gene_ptr = new_frozen_gene(1.to_value())

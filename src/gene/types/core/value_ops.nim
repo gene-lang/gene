@@ -201,7 +201,19 @@ proc `==`*(a, b: ptr Reference): bool =
     of VkInt:
       return a.int_data == b.int_data
     of VkSet:
-      return a.set == b.set
+      let items1 = a.set_items
+      let items2 = b.set_items
+      if items1.len != items2.len:
+        return false
+      for item1 in items1:
+        var found = false
+        for item2 in items2:
+          if item1 == item2:
+            found = true
+            break
+        if not found:
+          return false
+      return true
     of VkComplexSymbol:
       return a.csymbol == b.csymbol
     else:
@@ -238,6 +250,12 @@ template hash_map_items*(v: Value): var seq[Value] =
 
 template hash_map_buckets*(v: Value): var OrderedTable[Hash, seq[int]] =
   `ref`(v).hash_map_buckets
+
+template hash_set_items*(v: Value): var seq[Value] =
+  `ref`(v).set_items
+
+template hash_set_buckets*(v: Value): var OrderedTable[Hash, seq[int]] =
+  `ref`(v).set_buckets
 
 proc hash_map_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
   let u = cast[uint64](v)
@@ -314,6 +332,20 @@ proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
           if items1[i] != items2[i] or items1[i + 1] != items2[i + 1]:
             return false
           i += 2
+        return true
+      elif tag1 == REF_TAG and tag2 == REF_TAG and a.ref.kind == VkSet and b.ref.kind == VkSet:
+        let items1 = a.ref.set_items
+        let items2 = b.ref.set_items
+        if items1.len != items2.len:
+          return false
+        for item1 in items1:
+          var found = false
+          for item2 in items2:
+            if item1 == item2:
+              found = true
+              break
+          if not found:
+            return false
         return true
       # Arrays compare structurally
       elif tag1 == ARRAY_TAG and tag2 == ARRAY_TAG:
@@ -523,7 +555,10 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
           result &= v.str_no_quotes()
         result &= "]"
       of VkSet:
-        result = "unsupported"
+        result = "(HashSet"
+        for item in self.ref.set_items:
+          result &= " " & item.str_no_quotes()
+        result &= ")"
       of VkMap:
         result = if map_is_frozen(self): "#{" else: "{"
         var first = true
@@ -620,7 +655,10 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result &= $v
         result &= "]"
       of VkSet:
-        result = "unsupported"
+        result = "(HashSet"
+        for item in self.ref.set_items:
+          result &= " " & $item
+        result &= ")"
       of VkMap:
         result = if map_is_frozen(self): "#{" else: "{"
         var first = true
@@ -841,7 +879,7 @@ proc size*(self: Value): int =
           of VkHashMap:
             return r.hash_map_items.len div 2
           of VkSet:
-            return r.set.len
+            return r.set_items.len
           of VkMap:
             return r.map.len
           of VkString:

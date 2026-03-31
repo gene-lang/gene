@@ -2,6 +2,7 @@ import strutils, tables, algorithm
 
 import ../types
 import ../hash_map_support
+import ../hash_set_support
 import ./classes
 import ./json
 
@@ -1402,11 +1403,207 @@ proc init_collection_classes*(object_class: Class) =
 
 proc init_set_class*(object_class: Class) =
   var r: ptr Reference
-  let set_class = new_class("Set")
+  let set_class = new_class("HashSet")
   set_class.parent = object_class
   set_class.def_native_method("to_s", object_to_s_method)
   r = new_ref(VkClass)
   r.class = set_class
   App.app.set_class = r.to_ref_value()
+  App.app.gene_ns.ns["HashSet".to_key()] = App.app.set_class
+  App.app.global_ns.ns["HashSet".to_key()] = App.app.set_class
   App.app.gene_ns.ns["Set".to_key()] = App.app.set_class
   App.app.global_ns.ns["Set".to_key()] = App.app.set_class
+
+  proc hash_set_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if has_keyword_args:
+      not_allowed("HashSet constructor does not accept keyword arguments")
+    let result_set = new_set_value()
+    for i in 0..<arg_count:
+      {.cast(gcsafe).}:
+        discard hash_set_add(vm, result_set, args[i])
+    result_set
+
+  set_class.def_native_constructor(hash_set_constructor)
+
+  proc vm_hash_set_has(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.has expects a member argument")
+
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.has must be called on a HashSet")
+
+    let found = block:
+      {.cast(gcsafe).}:
+        hash_set_contains(vm, hash_set, get_positional_arg(args, 1, has_keyword_args))
+    found.to_value()
+
+  set_class.def_native_method("has", vm_hash_set_has, @[("member", NIL)], App.app.bool_class)
+  set_class.def_native_method("contains", vm_hash_set_has, @[("member", NIL)], App.app.bool_class)
+
+  proc vm_hash_set_add(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.add expects at least one member argument")
+
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.add must be called on a HashSet")
+
+    for i in 1..<get_positional_count(arg_count, has_keyword_args):
+      {.cast(gcsafe).}:
+        discard hash_set_add(vm, hash_set, get_positional_arg(args, i, has_keyword_args))
+    hash_set
+
+  set_class.def_native_method("add", vm_hash_set_add)
+
+  proc vm_hash_set_delete(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.delete expects at least one member argument")
+
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.delete must be called on a HashSet")
+
+    var last_removed = NIL
+    for i in 1..<get_positional_count(arg_count, has_keyword_args):
+      let deleted = block:
+        {.cast(gcsafe).}:
+          hash_set_delete(vm, hash_set, get_positional_arg(args, i, has_keyword_args))
+      if deleted.found:
+        last_removed = deleted.value
+    last_removed
+
+  set_class.def_native_method("delete", vm_hash_set_delete)
+  set_class.def_native_method("del", vm_hash_set_delete)
+
+  proc vm_hash_set_size(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashSet.size requires self")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.size must be called on a HashSet")
+    hash_set_count(hash_set).to_value()
+
+  set_class.def_native_method("size", vm_hash_set_size, @[], App.app.int_class)
+
+  proc vm_hash_set_clear(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashSet.clear requires self")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.clear must be called on a HashSet")
+    hash_set_items(hash_set).setLen(0)
+    hash_set_buckets(hash_set).clear()
+    hash_set
+
+  set_class.def_native_method("clear", vm_hash_set_clear)
+
+  proc vm_hash_set_to_array(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashSet.to_array requires self")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.to_array must be called on a HashSet")
+    let result_array = new_array_value()
+    for item in hash_set_items(hash_set):
+      array_data(result_array).add(item)
+    result_array
+
+  set_class.def_native_method("to_array", vm_hash_set_to_array, @[], App.app.array_class)
+
+  proc vm_hash_set_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashSet.iter requires self")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.iter must be called on a HashSet")
+    let iterator_class_val = App.app.gene_ns.ns["ArrayIterator".to_key()]
+    if iterator_class_val.kind != VkClass or iterator_class_val.ref.class == nil:
+      not_allowed("ArrayIterator class is not initialized")
+    let iter_val = new_instance_value(iterator_class_val.ref.class)
+    instance_props(iter_val)["array".to_key()] = vm_hash_set_to_array(vm, args, arg_count, has_keyword_args)
+    instance_props(iter_val)["index".to_key()] = 0.to_value()
+    iter_val
+
+  set_class.def_native_method("iter", vm_hash_set_iter)
+
+  proc require_hash_set_arg(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, index: int, method_name: string): Value {.inline, gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) <= index:
+      not_allowed("HashSet." & method_name & " expects another HashSet")
+    let other = get_positional_arg(args, index, has_keyword_args)
+    if other.kind != VkSet:
+      not_allowed("HashSet." & method_name & " expects a HashSet argument")
+    other
+
+  proc vm_hash_set_union(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.union expects another HashSet")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.union must be called on a HashSet")
+    let other = require_hash_set_arg(args, arg_count, has_keyword_args, 1, "union")
+    let result_set = new_set_value()
+    for item in hash_set_items(hash_set):
+      {.cast(gcsafe).}:
+        discard hash_set_add(vm, result_set, item)
+    for item in hash_set_items(other):
+      {.cast(gcsafe).}:
+        discard hash_set_add(vm, result_set, item)
+    result_set
+
+  set_class.def_native_method("union", vm_hash_set_union)
+
+  proc vm_hash_set_intersect(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.intersect expects another HashSet")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.intersect must be called on a HashSet")
+    let other = require_hash_set_arg(args, arg_count, has_keyword_args, 1, "intersect")
+    let result_set = new_set_value()
+    for item in hash_set_items(hash_set):
+      let present = block:
+        {.cast(gcsafe).}:
+          hash_set_contains(vm, other, item)
+      if present:
+        {.cast(gcsafe).}:
+          discard hash_set_add(vm, result_set, item)
+    result_set
+
+  set_class.def_native_method("intersect", vm_hash_set_intersect)
+
+  proc vm_hash_set_diff(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.diff expects another HashSet")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.diff must be called on a HashSet")
+    let other = require_hash_set_arg(args, arg_count, has_keyword_args, 1, "diff")
+    let result_set = new_set_value()
+    for item in hash_set_items(hash_set):
+      let present = block:
+        {.cast(gcsafe).}:
+          hash_set_contains(vm, other, item)
+      if not present:
+        {.cast(gcsafe).}:
+          discard hash_set_add(vm, result_set, item)
+    result_set
+
+  set_class.def_native_method("diff", vm_hash_set_diff)
+
+  proc vm_hash_set_subset(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashSet.subset? expects another HashSet")
+    let hash_set = get_positional_arg(args, 0, has_keyword_args)
+    if hash_set.kind != VkSet:
+      not_allowed("HashSet.subset? must be called on a HashSet")
+    let other = require_hash_set_arg(args, arg_count, has_keyword_args, 1, "subset?")
+    for item in hash_set_items(hash_set):
+      let present = block:
+        {.cast(gcsafe).}:
+          hash_set_contains(vm, other, item)
+      if not present:
+        return FALSE
+    TRUE
+
+  set_class.def_native_method("subset?", vm_hash_set_subset, @[("other", NIL)], App.app.bool_class)
