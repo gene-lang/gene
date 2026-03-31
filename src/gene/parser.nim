@@ -1045,11 +1045,35 @@ proc read_frozen_gene(self: var Parser): Value {.gcsafe.} =
   read_gene_impl(self, frozen = true)
 
 proc read_map(self: var Parser): Value {.gcsafe.} =
+  if self.buf[self.bufpos] == '{':
+    self.bufpos.inc()
+    let r = new_hash_map_value()
+    while true:
+      self.skip_ws()
+      if self.buf[self.bufpos] == EndOfFile:
+        raise new_exception(ParseError, "EOF while reading HashMap literal")
+      if self.buf[self.bufpos] == '}' and self.buf[self.bufpos + 1] == '}':
+        self.bufpos += 2
+        return r
+      hash_map_items(r).add(self.read())
+
   let r = new_map_value()
   map_data(r) = self.read_map(MkMap)
   result = r
 
 proc read_frozen_map(self: var Parser): Value {.gcsafe.} =
+  if self.buf[self.bufpos] == '{':
+    self.bufpos.inc()
+    let r = new_frozen_hash_map_value()
+    while true:
+      self.skip_ws()
+      if self.buf[self.bufpos] == EndOfFile:
+        raise new_exception(ParseError, "EOF while reading frozen HashMap literal")
+      if self.buf[self.bufpos] == '}' and self.buf[self.bufpos + 1] == '}':
+        self.bufpos += 2
+        return r
+      hash_map_items(r).add(self.read())
+
   let r = new_frozen_map_value()
   map_data(r) = self.read_map(MkMap)
   result = r

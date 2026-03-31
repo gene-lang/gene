@@ -85,6 +85,10 @@ type
         set*: HashSet[Value]
       of VkMap:
         map*: Table[Key, Value]
+      of VkHashMap:
+        hash_map_frozen*: bool
+        hash_map_items*: seq[Value]
+        hash_map_buckets*: OrderedTable[Hash, seq[int]]
       of VkStream:
         stream*: seq[Value]
         stream_index*: int64

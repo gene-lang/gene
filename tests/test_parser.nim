@@ -127,6 +127,23 @@ test_parser "{^a^^b ^a^c 2}", to_value({"a": to_value({"b": TRUE, "c": to_value(
 test_parser_error "{^a^b 1 ^a 2}"
 test_parser_error "{^a^b 1 ^a {^c 2}}"
 
+test_parser "{{}}", proc(r: Value) =
+  check r.kind == VkHashMap
+  check hash_map_items(r).len == 0
+
+test_parser "{{1 2 \"three\" 4}}", proc(r: Value) =
+  check r.kind == VkHashMap
+  check hash_map_items(r).len == 4
+  check hash_map_items(r)[0] == 1.to_value()
+  check hash_map_items(r)[1] == 2.to_value()
+  check hash_map_items(r)[2] == "three".to_value()
+  check hash_map_items(r)[3] == 4.to_value()
+
+test_parser "#{{1 2}}", proc(r: Value) =
+  check r.kind == VkHashMap
+  check hash_map_is_frozen(r)
+  check hash_map_items(r).len == 2
+
 test_parser "(_ ^a^b 1)", proc(r: Value) =
   assert map_data(r.gene.props["a".to_key()])["b".to_key()] == 1
 test_parser "(_ ^a^^b 1)", proc(r: Value) =

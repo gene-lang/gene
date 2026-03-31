@@ -1,0 +1,50 @@
+# Expected: one
+# Expected: 2
+# Expected: pair
+# Expected: true
+# Expected: true
+# Expected: 4
+# Expected: 33
+# Expected: seven
+# Expected: two
+# Expected: {{1 "one" "two" 2}}
+
+(var m {{1 "one" "two" 2 [1 2] "pair"}})
+(println (m .get 1))
+(println (m .get "two"))
+(println (m .get [1 2]))
+
+(m .set 3 "three")
+(println (m .has 3))
+(println (m .contains 3))
+(println (m .size))
+
+(var total 0)
+(for [k v] in {{1 10 2 20}}
+  (total += (k + v))
+)
+(println total)
+
+(class Key
+  (ctor [id]
+    (/id = id)
+  )
+  (method hash [] /id)
+)
+
+(var key (new Key 7))
+(println ({{key "seven"}} .get key))
+
+(class BadKey
+  (ctor [id]
+    (/id = id)
+  )
+  (method hash [] 1)
+)
+
+(var k1 (new BadKey 1))
+(var k2 (new BadKey 2))
+(var collisions {{k1 "one" k2 "two"}})
+(println (collisions .get k2))
+
+(println ({{1 "one" "two" 2}} .to_s))

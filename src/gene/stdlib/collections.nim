@@ -1,6 +1,7 @@
 import strutils, tables, algorithm
 
 import ../types
+import ../hash_map_support
 import ./classes
 import ./json
 
@@ -1206,6 +1207,198 @@ proc init_collection_classes*(object_class: Class) =
     result_ref
 
   map_class.def_native_method("pairs", vm_map_pairs)
+
+  let hash_map_class = new_class("HashMap")
+  hash_map_class.parent = object_class
+  hash_map_class.def_native_method("to_s", object_to_s_method)
+  r = new_ref(VkClass)
+  r.class = hash_map_class
+  App.app.hash_map_class = r.to_ref_value()
+  App.app.gene_ns.ns["HashMap".to_key()] = App.app.hash_map_class
+  App.app.global_ns.ns["HashMap".to_key()] = App.app.hash_map_class
+
+  proc hash_map_constructor(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if has_keyword_args:
+      not_allowed("HashMap constructor does not accept keyword arguments")
+    if (arg_count mod 2) != 0:
+      not_allowed("HashMap literals expect alternating key/value entries")
+    let result_map = new_hash_map_value()
+    var i = 0
+    while i < arg_count:
+      {.cast(gcsafe).}:
+        hash_map_put(vm, result_map, args[i], args[i + 1])
+      i += 2
+    result_map
+
+  hash_map_class.def_native_constructor(hash_map_constructor)
+
+  proc vm_hash_map_get(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashMap.get expects at least a key argument")
+
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.get must be called on a HashMap")
+
+    let lookup = block:
+      {.cast(gcsafe).}:
+        hash_map_get(vm, hash_map, get_positional_arg(args, 1, has_keyword_args))
+    if lookup.found:
+      return lookup.value
+    if get_positional_count(arg_count, has_keyword_args) >= 3:
+      return get_positional_arg(args, 2, has_keyword_args)
+    NIL
+
+  hash_map_class.def_native_method("get", vm_hash_map_get)
+
+  proc vm_hash_map_set(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 3:
+      not_allowed("HashMap.set expects key and value arguments")
+
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.set must be called on a HashMap")
+
+    ensure_mutable_hash_map(hash_map, "set item on")
+    {.cast(gcsafe).}:
+      hash_map_put(vm, hash_map, get_positional_arg(args, 1, has_keyword_args), get_positional_arg(args, 2, has_keyword_args))
+    hash_map
+
+  hash_map_class.def_native_method("set", vm_hash_map_set)
+
+  proc vm_hash_map_has(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashMap.has expects a key argument")
+
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.has must be called on a HashMap")
+
+    let found = block:
+      {.cast(gcsafe).}:
+        hash_map_find_pair(vm, hash_map, get_positional_arg(args, 1, has_keyword_args)) >= 0
+    found.to_value()
+
+  hash_map_class.def_native_method("has", vm_hash_map_has, @[("key", NIL)], App.app.bool_class)
+  hash_map_class.def_native_method("contains", vm_hash_map_has, @[("key", NIL)], App.app.bool_class)
+
+  proc vm_hash_map_delete(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("HashMap.delete expects at least a key argument")
+
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.delete must be called on a HashMap")
+
+    ensure_mutable_hash_map(hash_map, "delete from")
+    var last_removed = NIL
+    for i in 1..<get_positional_count(arg_count, has_keyword_args):
+      let deleted = block:
+        {.cast(gcsafe).}:
+          hash_map_delete(vm, hash_map, get_positional_arg(args, i, has_keyword_args))
+      if deleted.found:
+        last_removed = deleted.value
+    last_removed
+
+  hash_map_class.def_native_method("delete", vm_hash_map_delete)
+  hash_map_class.def_native_method("del", vm_hash_map_delete)
+
+  proc vm_hash_map_size(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.size requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.size must be called on a HashMap")
+    hash_map_pair_count(hash_map).to_value()
+
+  hash_map_class.def_native_method("size", vm_hash_map_size, @[], App.app.int_class)
+
+  proc vm_hash_map_clear(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.clear requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.clear must be called on a HashMap")
+    ensure_mutable_hash_map(hash_map, "clear")
+    hash_map_items(hash_map).setLen(0)
+    hash_map_buckets(hash_map).clear()
+    hash_map
+
+  hash_map_class.def_native_method("clear", vm_hash_map_clear)
+
+  proc vm_hash_map_keys(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.keys requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.keys must be called on a HashMap")
+    var result_ref = new_array_value()
+    var i = 0
+    while i < hash_map_items(hash_map).len:
+      array_data(result_ref).add(hash_map_items(hash_map)[i])
+      i += 2
+    result_ref
+
+  hash_map_class.def_native_method("keys", vm_hash_map_keys, @[], App.app.array_class)
+
+  proc vm_hash_map_values(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.values requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.values must be called on a HashMap")
+    var result_ref = new_array_value()
+    var i = 1
+    while i < hash_map_items(hash_map).len:
+      array_data(result_ref).add(hash_map_items(hash_map)[i])
+      i += 2
+    result_ref
+
+  hash_map_class.def_native_method("values", vm_hash_map_values, @[], App.app.array_class)
+
+  proc vm_hash_map_pairs(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.pairs requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.pairs must be called on a HashMap")
+    var result_ref = new_array_value()
+    var i = 0
+    while i + 1 < hash_map_items(hash_map).len:
+      var pair = new_array_value()
+      array_data(pair).add(hash_map_items(hash_map)[i])
+      array_data(pair).add(hash_map_items(hash_map)[i + 1])
+      array_data(result_ref).add(pair)
+      i += 2
+    result_ref
+
+  hash_map_class.def_native_method("pairs", vm_hash_map_pairs, @[], App.app.array_class)
+
+  proc vm_hash_map_iter(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.iter requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.iter must be called on a HashMap")
+    let iterator_class_val = App.app.gene_ns.ns["MapIterator".to_key()]
+    if iterator_class_val.kind != VkClass or iterator_class_val.ref.class == nil:
+      not_allowed("MapIterator class is not initialized")
+    let iter_val = new_instance_value(iterator_class_val.ref.class)
+    instance_props(iter_val)["pairs".to_key()] = vm_hash_map_pairs(vm, args, arg_count, has_keyword_args)
+    instance_props(iter_val)["index".to_key()] = 0.to_value()
+    iter_val
+
+  hash_map_class.def_native_method("iter", vm_hash_map_iter)
+
+  proc vm_hash_map_immutable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("HashMap.immutable? requires self")
+    let hash_map = get_positional_arg(args, 0, has_keyword_args)
+    if hash_map.kind != VkHashMap:
+      not_allowed("HashMap.immutable? must be called on a HashMap")
+    hash_map_is_frozen(hash_map).to_value()
+
+  hash_map_class.def_native_method("immutable?", vm_hash_map_immutable, @[], App.app.bool_class)
 
 proc init_set_class*(object_class: Class) =
   var r: ptr Reference

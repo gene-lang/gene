@@ -1,5 +1,5 @@
 # Forward declarations for new types
-import tables, sets, asyncdispatch
+import tables, sets, asyncdispatch, hashes
 
 when defined(gene_wasm):
   type
@@ -131,6 +131,10 @@ type
     from_thread_secret*: int    # Sender thread secret
     handled*: bool              # For user callbacks
 
+  HashMapEntry* = object
+    key*: Value
+    value*: Value
+
   ValueKind* {.size: sizeof(int16) .} = enum
     # Core types
     VkNil = 0
@@ -178,6 +182,7 @@ type
     VkArray             # Sequence type
     VkSet
     VkMap
+    VkHashMap
     VkGene
     VkStream
     VkDocument
@@ -385,6 +390,7 @@ type
     complex_symbol_class*: Value
     array_class*    : Value
     map_class*      : Value
+    hash_map_class* : Value
     set_class*      : Value
     gene_class*     : Value
     stream_class*   : Value
@@ -838,6 +844,8 @@ type
     IkMapSetPropValue   # args: key, literal value
     IkMapSpread         # Spread map key-value pairs into current map
     IkMapEnd
+    IkHashMapStart
+    IkHashMapEnd
 
     IkArrayStart
     IkArrayAddSpread    # Spread add - pop array and push all elements onto stack

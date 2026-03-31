@@ -233,6 +233,23 @@ proc to_ref_value*(v: ptr Reference): Value {.inline.} =
   assert (ptr_addr and 0xFFFF_0000_0000_0000u64) == 0, "Reference pointer too large for NaN boxing"
   result = cast[Value](REF_TAG or ptr_addr)
 
+template hash_map_items*(v: Value): var seq[Value] =
+  `ref`(v).hash_map_items
+
+template hash_map_buckets*(v: Value): var OrderedTable[Hash, seq[int]] =
+  `ref`(v).hash_map_buckets
+
+proc hash_map_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
+  let u = cast[uint64](v)
+  if (u and 0xFFFF_0000_0000_0000u64) != REF_TAG:
+    return false
+  let r = cast[ptr Reference](u and PAYLOAD_MASK)
+  r != nil and r.kind == VkHashMap and r.hash_map_frozen
+
+proc ensure_mutable_hash_map*(v: Value, op_name = "mutate"): void {.inline, gcsafe.} =
+  if hash_map_is_frozen(v):
+    not_allowed("Cannot " & op_name & " immutable hash map")
+
 #################### Value ######################
 
 # Forward declaration
@@ -286,6 +303,17 @@ proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
           let other = map2.getOrDefault(k, NOT_FOUND)
           if other == NOT_FOUND or v != other:
             return false
+        return true
+      elif tag1 == REF_TAG and tag2 == REF_TAG and a.ref.kind == VkHashMap and b.ref.kind == VkHashMap:
+        let items1 = a.ref.hash_map_items
+        let items2 = b.ref.hash_map_items
+        if items1.len != items2.len:
+          return false
+        var i = 0
+        while i < items1.len:
+          if items1[i] != items2[i] or items1[i + 1] != items2[i + 1]:
+            return false
+          i += 2
         return true
       # Arrays compare structurally
       elif tag1 == ARRAY_TAG and tag2 == ARRAY_TAG:
@@ -422,6 +450,11 @@ proc is_literal*(self: Value): bool =
         case r.kind:
           of VkInt, VkSelector, VkRegex:
             return true
+          of VkHashMap:
+            for item in r.hash_map_items:
+              if not is_literal(item):
+                return false
+            return true
           else:
             result = false
       of GENE_TAG:
@@ -503,6 +536,19 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
           result &= "^" & get_symbol(symbol_index.int) & " " & v.str_no_quotes()
           first = false
         result &= "}"
+      of VkHashMap:
+        result = if hash_map_is_frozen(self): "#{{" else: "{{"
+        var first = true
+        var i = 0
+        while i < self.ref.hash_map_items.len:
+          if not first:
+            result &= " "
+          result &= self.ref.hash_map_items[i].str_no_quotes()
+          if i + 1 < self.ref.hash_map_items.len:
+            result &= " " & self.ref.hash_map_items[i + 1].str_no_quotes()
+          first = false
+          i += 2
+        result &= "}}"
       of VkSelector:
         result = "@(" & self.ref.selector_pattern & ")"
       of VkGene:
@@ -587,6 +633,19 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result &= "^" & get_symbol(symbol_index.int) & " " & $v
           first = false
         result &= "}"
+      of VkHashMap:
+        result = if hash_map_is_frozen(self): "#{{" else: "{{"
+        var first = true
+        var i = 0
+        while i < self.ref.hash_map_items.len:
+          if not first:
+            result &= " "
+          result &= $self.ref.hash_map_items[i]
+          if i + 1 < self.ref.hash_map_items.len:
+            result &= " " & $self.ref.hash_map_items[i + 1]
+          first = false
+          i += 2
+        result &= "}}"
       of VkSelector:
         result = "@(" & self.ref.selector_pattern & ")"
       of VkGene:
@@ -779,6 +838,8 @@ proc size*(self: Value): int =
             if r.custom_data != nil and r.custom_data.materialize_hook != nil:
               return r.custom_data.materialize_hook(r.custom_data).size()
             return 0
+          of VkHashMap:
+            return r.hash_map_items.len div 2
           of VkSet:
             return r.set.len
           of VkMap:

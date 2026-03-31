@@ -73,6 +73,15 @@ proc display_value(val: Value; topLevel: bool): string {.gcsafe.} =
       let key_name = get_symbol_gcsafe(symbol_index.int)
       parts.add("^" & key_name & " " & display_value(v, false))
     "{" & parts.join(" ") & "}"
+  of VkHashMap:
+    var parts: seq[string] = @[]
+    var i = 0
+    while i < val.ref.hash_map_items.len:
+      parts.add(display_value(val.ref.hash_map_items[i], false))
+      if i + 1 < val.ref.hash_map_items.len:
+        parts.add(display_value(val.ref.hash_map_items[i + 1], false))
+      i += 2
+    "{{" & parts.join(" ") & "}}"
   of VkGene:
     var segments: seq[string] = @[]
     if not val.gene.type.is_nil():
@@ -110,6 +119,8 @@ proc value_class_value(val: Value): Value =
     App.app.array_class
   of VkMap:
     App.app.map_class
+  of VkHashMap:
+    App.app.hash_map_class
   of VkGene:
     App.app.gene_class
   of VkRegex:

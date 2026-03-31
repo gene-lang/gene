@@ -144,6 +144,8 @@ proc get_class*(val: Value): Class {.inline.} =
       return App.ref.app.array_class.ref.class
     of VkMap:
       return App.ref.app.map_class.ref.class
+    of VkHashMap:
+      return App.ref.app.hash_map_class.ref.class
     of VkSet:
       return App.ref.app.set_class.ref.class
     of VkGene:

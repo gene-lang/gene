@@ -159,6 +159,8 @@ proc len*(self: Value): int =
     return array_data(self).len
   of VkMap:
     return map_data(self).len
+  of VkHashMap:
+    return self.ref.hash_map_items.len div 2
   of VkSet:
     return self.ref.set.len
   of VkGene:
@@ -209,6 +211,28 @@ proc new_frozen_map_value*(): Value =
 
 proc new_frozen_map_value*(map: Table[Key, Value]): Value =
   new_map_value_impl(map, true)
+
+#################### HashMap #####################
+
+proc new_hash_map_value*(frozen = false): Value =
+  let r = new_ref(VkHashMap)
+  r.hash_map_frozen = frozen
+  r.hash_map_items = @[]
+  r.hash_map_buckets = initOrderedTable[Hash, seq[int]]()
+  r.to_ref_value()
+
+proc new_hash_map_value*(items: seq[Value], frozen = false): Value =
+  let r = new_ref(VkHashMap)
+  r.hash_map_frozen = frozen
+  r.hash_map_items = items
+  r.hash_map_buckets = initOrderedTable[Hash, seq[int]]()
+  r.to_ref_value()
+
+proc new_frozen_hash_map_value*(): Value =
+  new_hash_map_value(true)
+
+proc new_frozen_hash_map_value*(items: seq[Value]): Value =
+  new_hash_map_value(items, true)
 
 #################### Instance ####################
 

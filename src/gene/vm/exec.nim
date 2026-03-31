@@ -1670,6 +1670,26 @@ proc exec*(self: ptr VirtualMachine): Value =
         if current.kind == VkMap:
           map_ptr(current).frozen = inst.arg1 != 0
 
+      of IkHashMapStart:
+        self.frame.collection_bases.push(self.frame.stack_index)
+
+      of IkHashMapEnd:
+        let base = self.frame.collection_bases.pop()
+        let count = int(self.frame.stack_index) - int(base)
+        if (count mod 2) != 0:
+          not_allowed("HashMap literals expect alternating key/value entries")
+
+        let hash_map = new_hash_map_value(inst.arg1 != 0)
+        var i = 0
+        while i < count:
+          let key = self.frame.stack[base + uint16(i)]
+          let value = self.frame.stack[base + uint16(i + 1)]
+          hash_map_put(self, hash_map, key, value)
+          i += 2
+
+        self.frame.stack_index = base
+        self.frame.push(hash_map)
+
       of IkGeneStart:
         self.frame.push(new_gene_value())
 

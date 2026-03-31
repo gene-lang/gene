@@ -134,6 +134,7 @@ task testintegration, "Runs non-unit integration tests":
   exec "nim c -r tests/integration/test_stdlib_string.nim"
   exec "nim c -r tests/integration/test_stdlib_array.nim"
   exec "nim c -r tests/integration/test_stdlib_map.nim"
+  exec "nim c -r tests/integration/test_hash_map.nim"
   exec "nim c -r tests/integration/test_stdlib_gene.nim"
   exec "nim c -r tests/integration/test_stdlib_regex.nim"
   exec "nim c -r tests/integration/test_stdlib_json.nim"

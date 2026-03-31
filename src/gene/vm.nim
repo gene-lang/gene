@@ -21,6 +21,7 @@ from ./types/runtime_types import
   resolve_method
 import ./compiler
 from ./parser import read, read_all
+import ./hash_map_support
 import ./vm/args
 import ./vm/module
 import ./vm/utils

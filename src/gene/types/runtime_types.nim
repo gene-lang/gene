@@ -254,6 +254,7 @@ proc runtime_type_name*(v: Value): string =
   of VkNil: "Nil"
   of VkArray: "Array"
   of VkMap: "Map"
+  of VkHashMap: "HashMap"
   of VkInstance:
     # For instances, try to get the class name
     let inst = cast[ptr InstanceObj](v.raw and PAYLOAD_MASK)
@@ -297,7 +298,7 @@ proc is_named_compatible(value: Value, expected_type: string): bool =
   of "Numeric":
     return actual in ["Int", "Float"]
   of "Collection":
-    return actual in ["Array", "Map", "Set"]
+    return actual in ["Array", "Map", "HashMap", "Set"]
   of "Function":
     return value.kind in {VkFunction, VkBlock, VkNativeFn}
   else:

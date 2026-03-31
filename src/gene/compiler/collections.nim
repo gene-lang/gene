@@ -82,6 +82,12 @@ proc compile_map(self: Compiler, input: Value) =
       self.emit(Instruction(kind: IkMapSetProp, arg0: k))
   self.emit(Instruction(kind: IkMapEnd, arg1: if map_is_frozen(input): 1 else: 0))
 
+proc compile_hash_map(self: Compiler, input: Value) =
+  self.emit(Instruction(kind: IkHashMapStart))
+  for item in hash_map_items(input):
+    self.compile(item)
+  self.emit(Instruction(kind: IkHashMapEnd, arg1: if hash_map_is_frozen(input): 1 else: 0))
+
 proc compile_range(self: Compiler, gene: ptr Gene) =
   # (range start end) or (range start end step)
   if gene.children.len < 2:

@@ -557,6 +557,8 @@ proc compile*(self: Compiler, input: Value) =
         self.compile_array(input)
       of VkMap:
         self.compile_map(input)
+      of VkHashMap:
+        self.compile_hash_map(input)
       of VkSelector:
         self.compile_literal(input)
       of VkGene:

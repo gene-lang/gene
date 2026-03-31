@@ -7,7 +7,7 @@ const
   GIR_VERSION* = 22'u32
   COMPILER_VERSION = "0.1.3"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
-  INSTRUCTION_ABI_VERSION* = 2'u32  # Version 2: adapter/interface opcode layout changed
+  INSTRUCTION_ABI_VERSION* = 3'u32  # Version 3: HashMap opcodes added
 
 proc current_vm_abi_marker(): string =
   "nim-" & NimVersion &
