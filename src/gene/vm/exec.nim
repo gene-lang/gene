@@ -490,11 +490,13 @@ proc exec*(self: ptr VirtualMachine): Value =
               inst = self.cu.instructions[self.pc].addr
               continue
 
-        # Not optimizable — rewrite kind to IkGeneEnd in a local copy and re-dispatch
-        var fallback = self.cu.instructions[self.pc]
-        fallback.kind = IkGeneEnd
-        inst = fallback.addr
-        continue  # Re-dispatch through IkGeneEnd handler
+        # Not optimizable — temporarily patch instruction in-place and re-dispatch
+        self.cu.instructions[self.pc].kind = IkGeneEnd
+        inst = self.cu.instructions[self.pc].addr
+        # Note: instruction stays as IkGeneEnd permanently for this call site.
+        # This is safe because IkGeneEnd is a strict superset of IkTailCall behavior,
+        # and the TCO opportunity is only lost for this specific call site.
+        continue
         {.pop}
 
       of IkResolveSymbol:
