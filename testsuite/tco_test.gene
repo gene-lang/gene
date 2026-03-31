@@ -1,0 +1,56 @@
+#!/usr/bin/env gene run
+# Expected: count_down: done
+# Expected: sum 100000: 5000050000
+# Expected: even/odd 99999: false
+# Expected: fib 10: 55
+# Expected: factorial 20: 2432902008176640000
+# Tail Call Optimization tests
+# These tests use deep recursion that would stack overflow without TCO.
+
+# 1) Simple tail recursion - count down from N
+(fn count_down [n]
+  (if (n <= 0)
+    "done"
+  else
+    (count_down (n - 1))
+  )
+)
+(println "count_down:" (count_down 100000))
+
+# 2) Tail-recursive accumulator - sum 1..N
+(fn sum_acc [n acc]
+  (if (n <= 0)
+    acc
+  else
+    (sum_acc (n - 1) (acc + n))
+  )
+)
+(println "sum 100000:" (sum_acc 100000 0))
+
+# 3) Mutual tail recursion style via single function
+#    (true mutual TCO requires both functions to be tail-call optimized,
+#     but we can test the pattern with a single dispatcher)
+(fn even_odd [n]
+  (if (n == 0) true
+  elif (n == 1) false
+  else (even_odd (n - 2)))
+)
+(println "even/odd 99999:" (even_odd 99999))
+
+# 4) Non-tail recursion still works (fib is NOT tail-recursive)
+(fn fib [n]
+  (if (n <= 1) n
+  else ((fib (n - 1)) + (fib (n - 2))))
+)
+(println "fib 10:" (fib 10))
+
+# 5) Tail-recursive factorial with accumulator
+(fn fact [n acc]
+  (if (n <= 1)
+    acc
+  else
+    (fact (n - 1) (n * acc))
+  )
+)
+(println "factorial 20:" (fact 20 1))
+

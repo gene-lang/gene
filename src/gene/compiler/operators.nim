@@ -379,7 +379,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       i += 1
 
   let gene_end_label = if fn_label == end_label: fn_label else: end_label
-  self.emit(Instruction(kind: IkGeneEnd, arg0: start_pos, label: gene_end_label))
+  let call_kind = if self.tail_position: IkTailCall else: IkGeneEnd
+  self.emit(Instruction(kind: call_kind, arg0: start_pos, label: gene_end_label))
   # echo fmt"Added GeneEnd with label {end_label} at position {self.output.instructions.len - 1}"
 
 proc likely_runtime_type_leaf(self: Compiler, value: Value): bool =

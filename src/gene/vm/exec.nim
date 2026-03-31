@@ -451,86 +451,50 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkTailCall:
+        # IkTailCall works like IkGeneEnd but optimizes self-recursive tail calls
+        # by reusing the current frame. For all other cases, patches the instruction
+        # to IkGeneEnd and re-dispatches so the full IkGeneEnd handler runs.
         {.push checks: off}
-        # IkTailCall works like IkGeneEnd but optimizes tail calls to the same function
-        let value = self.frame.current()
-        case value.kind:
-          of VkFrame:
-            let new_frame = value.ref.frame
-            case new_frame.kind:
-              of FkFunction, FkMethod, FkMacroMethod:
-                let f = new_frame.target.ref.fn
-                if f.body_compiled == nil:
-                  f.compile()
+        let tco_value = self.frame.current()
+        if tco_value.kind == VkFrame:
+          let tco_frame = tco_value.ref.frame
+          if tco_frame.kind in {FkFunction, FkMethod, FkMacroMethod}:
+            let f = tco_frame.target.ref.fn
+            if f.body_compiled == nil:
+              f.compile()
 
-                # Check if this is a tail call to the same function
-                if is_function_like(self.frame.kind) and
-                   self.frame.target.kind == VkFunction and
-                   self.frame.target.ref.fn == f:
-                  # Tail call optimization - reuse current frame
-                  # Pop the VkFrame value from the stack
-                  discard self.frame.pop()
+            if is_function_like(self.frame.kind) and
+               self.frame.target.kind == VkFunction and
+               self.frame.target.ref.fn == f:
+              # Same-function tail call — reuse frame
+              discard self.frame.pop()
+              self.frame.args = tco_frame.args
 
-                  # Update arguments and scope in place
-                  self.frame.args = new_frame.args
-
-                  # Reset scope
-                  if f.matcher.is_empty():
-                    self.frame.scope = f.parent_scope
-                    # Increment ref_count since the frame will own this reference
-                    if self.frame.scope != nil:
-                      self.frame.scope.ref_count.inc()
-                  else:
-                    self.frame.scope = new_scope(f.scope_tracker, f.parent_scope)
-                    # Process arguments
-                    if is_method_frame(self.frame):
-                      # Method call - create args without self
-                      var method_args = new_gene(NIL)
-                      if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 1:
-                        for i in 1..<self.frame.args.gene.children.len:
-                          method_args.children.add(self.frame.args.gene.children[i])
-                      process_args(f.matcher, method_args.to_gene_value(), self.frame.scope)
-                    else:
-                      process_args(f.matcher, self.frame.args, self.frame.scope)
-
-                  # Reset stack
-                  self.frame.stack_index = 0
-
-                  # Jump to start of function body
-                  self.pc = 0
-                  inst = self.cu.instructions[self.pc].addr
-                  continue
-                else:
-                  # Not a tail call - fall back to regular call like IkGeneEnd
-                  self.pc.inc()
-                  discard self.frame.pop()
-                  new_frame.caller_frame = self.frame
-                  self.frame.ref_count.inc()
-                  new_frame.caller_address = Address(cu: self.cu, pc: self.pc)
-                  new_frame.ns = f.ns
-                  self.frame = new_frame
-                  self.cu = f.body_compiled
-
-                  # Process arguments
-                  if not f.matcher.is_empty():
-                    if is_method_frame(new_frame):
-                      var method_args = new_gene(NIL)
-                      if new_frame.args.kind == VkGene and new_frame.args.gene.children.len > 1:
-                        for i in 1..<new_frame.args.gene.children.len:
-                          method_args.children.add(new_frame.args.gene.children[i])
-                      process_args(f.matcher, method_args.to_gene_value(), new_frame.scope)
-                    else:
-                      process_args(f.matcher, new_frame.args, new_frame.scope)
-
-                  self.pc = 0
-                  inst = self.cu.instructions[self.pc].addr
-                  continue
+              if f.matcher.is_empty():
+                self.frame.scope = f.parent_scope
+                if self.frame.scope != nil:
+                  self.frame.scope.ref_count.inc()
               else:
-                # For other frame kinds, just do regular call
-                not_allowed("IkTailCall not supported for frame kind: " & $new_frame.kind)
-          else:
-            # For non-frames, fall back to IkGeneEnd behavior
-            not_allowed("IkTailCall not supported for value kind: " & $value.kind)
+                self.frame.scope = new_scope(f.scope_tracker, f.parent_scope)
+                if is_method_frame(self.frame):
+                  var method_args = new_gene(NIL)
+                  if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 1:
+                    for i in 1..<self.frame.args.gene.children.len:
+                      method_args.children.add(self.frame.args.gene.children[i])
+                  process_args(f.matcher, method_args.to_gene_value(), self.frame.scope)
+                else:
+                  process_args(f.matcher, self.frame.args, self.frame.scope)
+
+              self.frame.stack_index = 0
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+        # Not optimizable — rewrite kind to IkGeneEnd in a local copy and re-dispatch
+        var fallback = self.cu.instructions[self.pc]
+        fallback.kind = IkGeneEnd
+        inst = fallback.addr
+        continue  # Re-dispatch through IkGeneEnd handler
         {.pop}
 
       of IkResolveSymbol:
