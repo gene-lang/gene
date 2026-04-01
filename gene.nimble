@@ -35,20 +35,26 @@ task bench, "Build and run benchmarks":
 
 task buildext, "Build extension modules":
   exec "mkdir -p build"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp.dylib src/genex/http.nim"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/libsqlite.dylib src/genex/sqlite.nim"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/libpostgres.dylib src/genex/postgres.nim"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/libhtml.dylib src/genex/html.nim"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/liblogging.dylib src/genex/logging.nim"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/libtest.dylib src/genex/test.nim"
-  exec "nim c --app:lib -d:release --mm:orc -o:build/libai.dylib src/genex/ai/bindings.nim"
+  let libext = when defined(windows): ".dll"
+               elif defined(macosx): ".dylib"
+               else: ".so"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libhttp" & libext & " src/genex/http.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libsqlite" & libext & " src/genex/sqlite.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libpostgres" & libext & " src/genex/postgres.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libhtml" & libext & " src/genex/html.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/liblogging" & libext & " src/genex/logging.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libtest" & libext & " src/genex/test.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libai" & libext & " src/genex/ai/bindings.nim"
 
 task buildllmamacpp, "Build LLM runtime dependencies":
   exec "./tools/build_llama_runtime.sh"
 
 task buildwithllm, "Build Gene with LLM support":
   exec "mkdir -p build"
-  exec "nim c --app:lib -d:release -d:geneLLM --mm:orc -o:build/libllm.dylib src/genex/llm.nim"
+  let libext = when defined(windows): ".dll"
+               elif defined(macosx): ".dylib"
+               else: ".so"
+  exec "nim c --app:lib -d:release -d:geneLLM --mm:orc -o:build/libllm" & libext & " src/genex/llm.nim"
   exec "nim c -d:release -d:geneLLM --mm:orc --opt:speed -o:bin/gene src/gene.nim"
 
 task buildcext, "Build C extension example":
