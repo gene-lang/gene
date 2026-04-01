@@ -176,7 +176,7 @@ proc `=default`*(v: var Value) {.inline.} =
   ## This ensures no uninitialized garbage, making =copy safe
   v.raw = 0
 
-proc `=destroy`*(v: var Value) =
+proc `=destroy`*(v: Value) =
   ## Called when Value goes out of scope
   ## Decrements ref count for managed types
   if isManaged(v):

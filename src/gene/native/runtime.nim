@@ -26,7 +26,18 @@ type
 
 when defined(posix):
   import std/posix
-  proc clear_cache(start, `end`: ptr char) {.importc: "__builtin___clear_cache".}
+  when defined(macosx):
+    proc sys_icache_invalidate(start: pointer, size: csize_t) {.importc, header: "<libkern/OSCacheControl.h>".}
+  proc clear_cache(start, `end`: ptr char) {.inline.} =
+    when defined(macosx):
+      sys_icache_invalidate(start, cast[uint](`end`) - cast[uint](start))
+    elif defined(amd64):
+      # x86_64 maintains cache coherency in hardware — no flush needed
+      discard
+    else:
+      # ARM/other: use __builtin___clear_cache (available on GCC/Clang for ARM)
+      proc builtin_clear_cache(start, `end`: pointer) {.importc: "__builtin___clear_cache", nodecl.}
+      builtin_clear_cache(start, `end`)
   when defined(macosx):
     proc pthread_jit_write_protect_np(enable: cint) {.importc.}
 
