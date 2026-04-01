@@ -87,8 +87,8 @@ type
 let ANY_TYPE = TypeExpr(kind: TkAny)
 
 const BUILTIN_TYPE_NAMES = [
-  "Any", "Self", "Int", "Float", "Bool", "String", "Nil",
-  "Array", "Map", "Result", "Option", "Tuple",
+  "Any", "Self", "Int", "Float", "Bool", "String", "Nil", "Symbol",
+  "Array", "Map", "HashMap", "HashSet", "Result", "Option", "Tuple",
   "Module", "Namespace", "Class"
 ]
 
@@ -1193,6 +1193,10 @@ proc native_type_from_class_value(self: TypeChecker, class_value: Value): TypeEx
     return TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
   if cls.name == "Map":
     return TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE])
+  if cls.name == "HashMap":
+    return TypeExpr(kind: TkApplied, ctor: "HashMap", args: @[ANY_TYPE, ANY_TYPE])
+  if cls.name == "HashSet":
+    return TypeExpr(kind: TkApplied, ctor: "HashSet", args: @[ANY_TYPE])
   if cls.name == "Option":
     return TypeExpr(kind: TkApplied, ctor: "Option", args: @[ANY_TYPE])
   if cls.name == "Result":
@@ -1891,6 +1895,12 @@ proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if in_pos < 1 or in_pos + 1 >= gene.children.len:
     return ANY_TYPE
 
+  proc report_for_type_error(msg: string) =
+    let full = "Type error: " & msg
+    if self.strict:
+      raise new_exception(types.Exception, full)
+    self.warn("Warning: " & full)
+
   var index_name = ""
   var value_pattern: Value = NIL
 
@@ -1904,13 +1914,19 @@ proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
     of VkArray, VkMap:
       value_pattern = var_node
     else:
-      value_pattern = "_".to_symbol_value()
+      report_for_type_error("for loop variable must be a symbol or destructuring pattern")
+      return ANY_TYPE
   of 2:
     # (for i x in ...) or (for k [a b] in ...)
     let key_node = gene.children[0]
     let val_node = gene.children[1]
-    if key_node.kind == VkSymbol:
-      index_name = key_node.str
+    if key_node.kind != VkSymbol:
+      report_for_type_error("for loop index/key binding must be a symbol")
+      return ANY_TYPE
+    if val_node.kind notin {VkSymbol, VkArray, VkMap}:
+      report_for_type_error("for loop value binding must be a symbol or destructuring pattern")
+      return ANY_TYPE
+    index_name = key_node.str
     value_pattern = val_node
   else:
     return ANY_TYPE
@@ -1924,11 +1940,21 @@ proc check_for(self: TypeChecker, gene: ptr Gene): TypeExpr =
   # Infer element type from collection
   let ct = self.resolve(collection_type)
   var elem_type = ANY_TYPE
-  if ct.kind == TkApplied and ct.ctor == "Array" and ct.args.len > 0:
-    elem_type = ct.args[0]
+  var key_type = TypeExpr(kind: TkNamed, name: "Int")
+  if ct.kind == TkApplied:
+    if ct.ctor == "Array" and ct.args.len > 0:
+      elem_type = ct.args[0]
+    elif ct.ctor == "Map" and ct.args.len > 1:
+      key_type = ct.args[0]
+      elem_type = ct.args[1]
+    elif ct.ctor == "HashMap" and ct.args.len > 1:
+      key_type = ct.args[0]
+      elem_type = ct.args[1]
+    elif ct.ctor == "HashSet" and ct.args.len > 0:
+      elem_type = ct.args[0]
 
   if index_name.len > 0 and index_name != "_":
-    self.define(index_name, TypeExpr(kind: TkNamed, name: "Int"))
+    self.define(index_name, key_type)
 
   case value_pattern.kind
   of VkSymbol:
@@ -2619,6 +2645,27 @@ proc infer_map_value_type(self: TypeChecker, map_value: Value): TypeExpr =
     return ANY_TYPE
   inferred
 
+proc infer_hash_map_value_type(self: TypeChecker, hash_map_value: Value): TypeExpr =
+  var inferred: TypeExpr = nil
+  var i = 1
+  let items = hash_map_items(hash_map_value)
+  while i < items.len:
+    let item_type = self.resolve(self.check_expr(items[i]))
+    if inferred == nil:
+      inferred = item_type
+    elif item_type.kind == TkVar or inferred.kind == TkVar:
+      inferred = ANY_TYPE
+    else:
+      try:
+        self.unify(inferred, item_type, "hash_map")
+      except CatchableError:
+        inferred = ANY_TYPE
+    i += 2
+
+  if inferred == nil:
+    return ANY_TYPE
+  inferred
+
 proc check_expr(self: TypeChecker, v: Value): TypeExpr =
   case v.kind
   of VkNil:
@@ -2658,6 +2705,9 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
   of VkMap:
     let value_type = self.infer_map_value_type(v)
     return TypeExpr(kind: TkApplied, ctor: "Map", args: @[TypeExpr(kind: TkNamed, name: "Symbol"), value_type])
+  of VkHashMap:
+    let value_type = self.infer_hash_map_value_type(v)
+    return TypeExpr(kind: TkApplied, ctor: "HashMap", args: @[ANY_TYPE, value_type])
   of VkGene:
     let gene = v.gene
     if gene == nil:

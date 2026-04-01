@@ -232,6 +232,12 @@ suite "Static type checking":
       checker.type_check_node(node)
     check true
 
+  test_strict_type_error """
+    (for k v in {^a 1 ^b 2}
+      (k + v)
+    )
+  """
+
   test_vm """
     (fn identity:T [x: T] -> T
       x)

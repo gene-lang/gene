@@ -18,12 +18,12 @@ The runtime SHALL support pair iteration through `.next_pair`.
 
 #### Scenario: Array index-value iteration
 - **GIVEN** an array `[10 20]`
-- **WHEN** code evaluates `(for [i v] in [10 20] ...)`
+- **WHEN** code evaluates `(for i v in [10 20] ...)`
 - **THEN** the loop binds index-value pairs from the iterator
 
 #### Scenario: Map key-value iteration
 - **GIVEN** a map `{^a 1 ^b 2}`
-- **WHEN** code evaluates `(for [k v] in m ...)`
+- **WHEN** code evaluates `(for k v in m ...)`
 - **THEN** the loop binds key-value pairs from the iterator
 
 ### Requirement: Selector Iterable Expansion

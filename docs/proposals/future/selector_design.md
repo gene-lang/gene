@@ -243,7 +243,7 @@ compiled as:
     ...body...
 ```
 
-#### Destructuring iteration: `(for [k v] in iterable ...)`
+#### Pair iteration: `(for k v in iterable ...)`
 
 ```
 compiled as:
@@ -261,22 +261,22 @@ compiled as:
 ```gene
 # Iterate over map entries
 (var m {^a 1 ^b 2 ^c 3})
-(for [k v] in m
+(for k v in m
   (println k "=" v))
 # a=1  b=2  c=3
 
 # Iterate over array with index
 (var arr ["x" "y" "z"])
-(for [i val] in arr
+(for i val in arr
   (println i ":" val))
 # 0:x  1:y  2:z
 
 # Iterate over generator key-value pairs
 (fn entries* [m]
-  (for [k v] in m
+  (for k v in m
     (yield [k v])))
 
-(for [k v] in (entries* {^x 10 ^y 20})
+(for k v in (entries* {^x 10 ^y 20})
   (println k "->" v))
 
 # Iterate over gene children
@@ -286,7 +286,7 @@ compiled as:
 # child1  child2
 
 # Iterate over gene props
-(for [k v] in (g .:$props)
+(for k v in (g .:$props)
   (println k "=" v))
 # a=1
 ```
@@ -343,7 +343,7 @@ Similarly, `**` should call `.next_pair` on any iterable that supports it:
 (fn config_entries* [files]
   (for f in files
     (var cfg (parse_config f))
-    (for [k v] in cfg
+    (for k v in cfg
       (yield [k v]))))
 
 ((@ ** (fn [k v] [k (normalize v)]) @@) (config_entries* file_list))
@@ -517,7 +517,7 @@ All mutation helpers share the selector traversal engine. For multi-segment path
 ## Next Steps
 
 1. **Define and implement the iteration protocol** (`IkGetIterator`, `IkIterNext`, `IkIterNextPair`).
-2. Refactor `compile_for` to use the iteration protocol — support `(for x in ...)` and `(for [k v] in ...)` over all iterables.
+2. Refactor `compile_for` to use the iteration protocol — support `(for x in ...)` and `(for k v in ...)` over all iterables.
 3. Make generators iterable (`.iter` returns self, already has `.next`).
 4. Wire `*` and `**` in `Selector.call` to consume iterables via the protocol.
 5. Add tests for `**`, `@`, `@@`, callable entry transforms, and `!` in stream mode.
@@ -551,7 +551,7 @@ All mutation helpers share the selector traversal engine. For multi-segment path
 
 4. **Refactor `compile_for`**
    - Replace `$for_collection` / `$for_index` / `IkLen` / `IkGetChildDynamic` with `IkGetIterator` / `IkIterNext` / `IkIterNextPair`.
-   - Detect `(for [k v] in ...)` pattern → use `IkIterNextPair`.
+   - Detect `(for k v in ...)` pattern → use `IkIterNextPair`.
    - Detect `(for x in ...)` → use `IkIterNext`.
    - Keep array fast-path: `IkGetIterator` on arrays creates an internal indexed iterator (no method dispatch overhead).
 
