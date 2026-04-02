@@ -64,3 +64,6 @@ nimble.paths
 
 example-projects/geneclaw/home/
 !example-projects/geneclaw/home/config
+
+.omx/logs
+.omx/state

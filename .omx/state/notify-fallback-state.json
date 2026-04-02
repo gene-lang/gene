@@ -12,9 +12,9 @@
   "dispatch_drain": {
     "enabled": true,
     "max_per_tick": 5,
-    "run_count": 7469,
+    "run_count": 7779,
     "leader_only": true,
-    "last_tick_at": "2026-04-02T02:24:25.603Z",
+    "last_tick_at": "2026-04-02T02:26:14.568Z",
     "last_result": {
       "processed": 0,
       "skipped": 0,
@@ -26,17 +26,17 @@
     "enabled": true,
     "leader_only": true,
     "stale_threshold_ms": 180000,
-    "precomputed_leader_stale": true,
-    "last_tick_at": "2026-04-02T02:24:25.603Z",
+    "precomputed_leader_stale": false,
+    "last_tick_at": "2026-04-02T02:26:14.568Z",
     "last_error": null,
-    "run_count": 7469
+    "run_count": 7779
   },
   "ralph_continue_steer": {
     "enabled": true,
     "cadence_ms": 60000,
     "message": "Ralph loop active continue",
     "active": false,
-    "last_state_check_at": "2026-04-02T02:24:25.677Z",
+    "last_state_check_at": "2026-04-02T02:26:14.645Z",
     "last_sent_at": "",
     "cooldown_anchor_at": "",
     "last_reason": "cleared",
@@ -52,11 +52,11 @@
   "fallback_auto_nudge": {
     "enabled": true,
     "stall_ms": 5000,
-    "last_tick_at": "2026-04-02T02:24:25.669Z",
+    "last_tick_at": "2026-04-02T02:26:14.645Z",
     "last_turn_at": "2026-04-02T02:07:57.178Z",
     "last_turn_count": 1,
     "last_message": "Used `$team` via `omx team` in a clean temp clone because the main repo was dirty and team mode requ",
-    "last_reason": "eligible_but_not_sent",
+    "last_reason": "hud_state_missing",
     "last_error": null,
     "last_nudged_signature": "",
     "last_nudged_at": ""
