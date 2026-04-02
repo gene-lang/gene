@@ -22,5 +22,6 @@ This directory contains the canonical language specification for Gene, a homoico
 13. [Regular Expressions](13-regex.md) — Regex literals, matching, replacement
 14. [Standard Library](14-stdlib.md) — Built-in functions, I/O, string methods, collections
 15. [Serialization](15-serialization.md) — JSON, GIR, type serialization
+16. [Compile-Time Evaluation](16-comptime.md) — comptime blocks, conditional compilation, code emission
 
 Each section includes a **Potential Improvements** subsection documenting known rough edges, design questions, and ideas for future refinement.
