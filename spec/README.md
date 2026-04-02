@@ -12,7 +12,7 @@ This directory contains the canonical language specification for Gene, a homoico
 3. [Expressions & Operators](03-expressions.md) — Arithmetic, comparison, logical, assignment
 4. [Control Flow](04-control-flow.md) — if/elif/else, loops, case/when
 5. [Functions](05-functions.md) — Definition, arguments, closures, macros
-6. [Collections](06-collections.md) — Arrays, maps, Gene values, spread, selectors
+6. [Collections](06-collections.md) — Arrays, maps, Gene values, spread
 7. [Object-Oriented Programming](07-oop.md) — Classes, methods, inheritance, namespaces
 8. [Modules & Namespaces](08-modules.md) — Import, export, namespace system
 9. [Error Handling & Contracts](09-errors.md) — try/catch, throw, pre/postconditions
@@ -23,5 +23,6 @@ This directory contains the canonical language specification for Gene, a homoico
 14. [Standard Library](14-stdlib.md) — Built-in functions, I/O, string methods, collections
 15. [Serialization](15-serialization.md) — JSON, GIR, type serialization
 16. [Compile-Time Evaluation](16-comptime.md) — comptime blocks, conditional compilation, code emission
+17. [Selectors](17-selectors.md) — Unified path access, selector values, stream selection
 
 Each section includes a **Potential Improvements** subsection documenting known rough edges, design questions, and ideas for future refinement.

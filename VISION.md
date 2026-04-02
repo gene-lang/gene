@@ -97,7 +97,7 @@ The `!` suffix convention is elegant — any function ending with `!` receives u
     ($caller_eval body...)))
 ```
 
-Templates with quote/unquote (`\`` and `%var`) enable code generation that reads like the output.
+Templates with quote/unquote ( \` and `%var`) enable code generation that reads like the output.
 
 ### 5. Performance Through Architecture
 

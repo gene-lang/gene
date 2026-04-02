@@ -99,23 +99,17 @@ g/.children    # => ["child1", "child2"]
 # => (list 1 2 3)
 ```
 
-## 6.4 Selectors
+## 6.4 Selectors (Overview)
 
-Selectors provide path-based data access:
+Collections participate in Gene's selector system, but selectors are substantial enough to have their own section: see [17. Selectors](17-selectors.md).
+
+Quick reminders:
 
 ```gene
-# Selector literals
-(@ "key")              # Single segment
-(@ "a" "b" "c")       # Multi-segment: a/b/c
-
-# Shorthand
-@users/*/name          # Wildcard: all user names
-
-# Stream operations
-# * — expand array elements
-# ** — expand map entries as [key, value]
-# @ — collect stream into array
-# @@ — collect stream into map
+user/name             # Path lookup
+people/0/name         # Nested array + map access
+@users/*/name         # Reusable selector value
+(data .@users/0/name) # Method shorthand
 ```
 
 ## 6.5 Immutability
