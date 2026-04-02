@@ -347,29 +347,37 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
         while i < items.len:
           let item = items[i]
           var is_rest = false
+          var is_keyword_param = false
+          var param_type_id = BUILTIN_TYPE_ANY_ID
           if item.kind == VkSymbol and item.str == "...":
             not_allowed("Fn type rest marker must follow a parameter type")
           if item.kind == VkSymbol and item.str.startsWith("^"):
+            is_keyword_param = true
             # Keyword param - skip label, use type
             if i + 1 < items.len:
-              params.add(resolve_type_value_to_id_with_index(items[i + 1], type_descs, type_desc_index, type_aliases, type_vars, module_path))
+              param_type_id = resolve_type_value_to_id_with_index(items[i + 1], type_descs, type_desc_index, type_aliases, type_vars, module_path)
               i += 2
             else:
-              params.add(BUILTIN_TYPE_ANY_ID)
+              param_type_id = BUILTIN_TYPE_ANY_ID
               i += 1
           else:
             var param_item = item
             if item.kind == VkSymbol and item.str.endsWith("...") and item.str.len > 3:
               param_item = item.str[0..^4].to_symbol_value()
               is_rest = true
-            params.add(resolve_type_value_to_id_with_index(param_item, type_descs, type_desc_index, type_aliases, type_vars, module_path))
+            param_type_id = resolve_type_value_to_id_with_index(param_item, type_descs, type_desc_index, type_aliases, type_vars, module_path)
             i += 1
           if i < items.len and items[i].kind == VkSymbol and items[i].str == "...":
             if is_rest:
               not_allowed("Fn type parameter has duplicate rest marker")
             is_rest = true
             i += 1
-          if is_rest:
+          if is_rest and not is_keyword_param:
+            param_type_id = intern_type_desc(type_descs,
+              TypeDesc(module_path: module_path, kind: TdkApplied, ctor: "Array", args: @[param_type_id]),
+              type_desc_index)
+          params.add(param_type_id)
+          if is_rest and not is_keyword_param:
             if rest_index >= 0:
               not_allowed("Fn type can only contain one positional rest parameter")
             rest_index = (params.len - 1).int32

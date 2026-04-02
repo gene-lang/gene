@@ -27,7 +27,7 @@ proc test_strict_type_ok(code: string) =
 
 suite "Static type checking":
   test_strict_type_ok """
-    (fn typed_middle_rest [head: Int nums...: (Array Int) tail: Bool]
+    (fn typed_middle_rest [head: Int nums...: Int tail: Bool]
       [head nums tail]
     )
     (typed_middle_rest 1 2 3 true)
@@ -65,17 +65,38 @@ suite "Static type checking":
   """
 
   test_strict_type_error """
-    (fn typed_middle_rest [head: Int nums...: (Array Int) tail: Bool]
+    (fn typed_middle_rest [head: Int nums...: Int tail: Bool]
       [head nums tail]
     )
     (typed_middle_rest 1 2 "x" true)
   """
 
   test_strict_type_error """
-    (fn typed_middle_rest [head: Int nums...: (Array Int) tail: Bool]
+    (fn typed_middle_rest [head: Int nums...: Int tail: Bool]
       [head nums tail]
     )
     (typed_middle_rest 1 2 3 4)
+  """
+
+  test_strict_type_ok """
+    (fn typed_nested_rest [chunks...: (Array Int)]
+      chunks
+    )
+    (typed_nested_rest [1 2] [3 4])
+  """
+
+  test_strict_type_error """
+    (fn typed_nested_rest [chunks...: (Array Int)]
+      chunks
+    )
+    (typed_nested_rest [1 2] 3)
+  """
+
+  test_strict_type_ok """
+    (fn fixed_array_plus_rest [item: (Array Int) rest...: Int]
+      [item rest]
+    )
+    (fixed_array_plus_rest [1 2] 3 4)
   """
 
   test_vm_error """

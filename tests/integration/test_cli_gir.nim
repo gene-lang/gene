@@ -600,6 +600,21 @@ suite "GIR CLI":
     check is_compatible(fn_value, expected_int_id, expected_descs)
     check not is_compatible(fn_value, expected_string_id, expected_descs)
 
+  test "runtime function compatibility supports typed rest element shorthand":
+    var actual_descs = builtin_type_descs()
+    let fn_obj = to_function(parser.read("(fn collect [head: String items...: Int] items)"), actual_descs)
+
+    let fn_ref = new_ref(VkFunction)
+    fn_ref.fn = fn_obj
+    let fn_value = fn_ref.to_ref_value()
+
+    var expected_descs = builtin_type_descs()
+    let expected_ok = resolve_type_value_to_id(parser.read("(Fn [String Int...] Any)"), expected_descs)
+    let expected_bad = resolve_type_value_to_id(parser.read("(Fn [String String...] Any)"), expected_descs)
+
+    check is_compatible(fn_value, expected_ok, expected_descs)
+    check not is_compatible(fn_value, expected_bad, expected_descs)
+
   test "types_equivalent builtin compares structural applied types":
     init_all()
     let same = VM.exec("(types_equivalent `(Array Int) `(Array Int))", "types_equivalent_same.gene")

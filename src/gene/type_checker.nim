@@ -87,6 +87,16 @@ type
 
 let ANY_TYPE = TypeExpr(kind: TkAny)
 
+proc array_type_of(elem: TypeExpr): TypeExpr {.inline.} =
+  TypeExpr(kind: TkApplied, ctor: "Array", args: @[if elem == nil: ANY_TYPE else: elem])
+
+proc rest_source_type(t: TypeExpr): TypeExpr {.inline.} =
+  if t != nil and t.kind == TkApplied and t.ctor == "Array" and t.args.len > 0:
+    return t.args[0]
+  if t == nil:
+    return ANY_TYPE
+  t
+
 const BUILTIN_TYPE_NAMES = [
   "Any", "Self", "Int", "Float", "Bool", "String", "Nil", "Symbol",
   "Array", "Map", "HashMap", "HashSet", "Result", "Option", "Tuple",
@@ -426,10 +436,13 @@ proc type_to_string(t: TypeExpr): string =
   of TkFn:
     var params: seq[string] = @[]
     for p in rt.params:
+      let printed_type =
+        if p.is_rest and p.label.len == 0: rest_source_type(p.typ)
+        else: p.typ
       if p.label.len > 0:
-        params.add("^" & p.label & " " & type_to_string(p.typ))
+        params.add("^" & p.label & " " & type_to_string(printed_type))
       else:
-        params.add(type_to_string(p.typ))
+        params.add(type_to_string(printed_type))
       if p.is_rest:
         params.add("...")
     var effects = ""
@@ -889,7 +902,10 @@ proc parse_fn_params(self: TypeChecker, v: Value): seq[ParamType] =
       if i < items.len and items[i].kind == VkSymbol and items[i].str == "...":
         is_rest = true
         i += 1
-      result.add(ParamType(label: label, typ: t, is_rest: is_rest))
+      let param_type =
+        if is_rest and label.len == 0: array_type_of(t)
+        else: t
+      result.add(ParamType(label: label, typ: param_type, is_rest: is_rest))
     else:
       var type_expr = item
       var is_rest = false
@@ -903,7 +919,10 @@ proc parse_fn_params(self: TypeChecker, v: Value): seq[ParamType] =
           raise new_exception(types.Exception, "Invalid Fn type: duplicate rest marker")
         is_rest = true
         i += 1
-      result.add(ParamType(label: "", typ: t, is_rest: is_rest))
+      let param_type =
+        if is_rest: array_type_of(t)
+        else: t
+      result.add(ParamType(label: "", typ: param_type, is_rest: is_rest))
 
 proc parse_effect_list(self: TypeChecker, v: Value): seq[string] =
   if v.kind != VkArray:
@@ -1065,8 +1084,7 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
           positional_rest_count += 1
           if positional_rest_count > 1:
             raise new_exception(types.Exception, "Only one positional rest parameter is allowed")
-          if typ == nil:
-            typ = TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
+          typ = array_type_of(typ)
         params.add((name, label, typ, is_rest))
       i += 1
     elif item.kind == VkComplexSymbol:
@@ -1088,7 +1106,7 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
           positional_rest_count += 1
           if positional_rest_count > 1:
             raise new_exception(types.Exception, "Only one positional rest parameter is allowed")
-          typ = TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
+          typ = array_type_of(typ)
         params.add((name, "", typ, is_rest))
       i += 1
     elif item.kind == VkArray:

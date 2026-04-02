@@ -66,6 +66,26 @@ proc ensure_local_generic_type_id(name: string,
   generic_type_ids[name] = type_id
   type_id
 
+proc normalize_param_annotation_name(raw: string): string {.gcsafe.} =
+  result = raw
+  if result.endsWith("...") and result.len > 3:
+    result = result[0..^4]
+  if result.startsWith("^"):
+    if result.len >= 2 and (result[1] == '^' or result[1] == '!'):
+      result = result[2..^1]
+    elif result.len > 1:
+      result = result[1..^1]
+    else:
+      result = ""
+
+proc wrap_rest_annotation_type_id(type_id: TypeId,
+                                  type_descs: var seq[TypeDesc],
+                                  type_desc_index: var Table[string, TypeId],
+                                  module_path: string): TypeId {.gcsafe.} =
+  intern_type_desc(type_descs,
+    TypeDesc(module_path: module_path, kind: TdkApplied, ctor: "Array", args: @[type_id]),
+    type_desc_index)
+
 proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
                   type_aliases: Table[string, TypeId] = initTable[string, TypeId](),
                   module_path = "",
@@ -124,9 +144,14 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
         i.inc
         if i < src.len:
           let type_val = src[i]
-          if not use_precomputed_type_ids and not type_id_map.hasKey(base):
-            type_id_map[base] = resolve_local_type_value_to_id(
+          let binding_name = normalize_param_annotation_name(base)
+          if not use_precomputed_type_ids and binding_name.len > 0 and not type_id_map.hasKey(binding_name):
+            var resolved_type_id = resolve_local_type_value_to_id(
               type_val, type_descs, type_desc_index, aliases, generic_type_ids, module_path)
+            if base.endsWith("...") and base.len > 3:
+              resolved_type_id = wrap_rest_annotation_type_id(
+                resolved_type_id, type_descs, type_desc_index, module_path)
+            type_id_map[binding_name] = resolved_type_id
           i.inc # Skip type expression
         continue
       elif item.kind == VkArray:

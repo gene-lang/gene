@@ -267,7 +267,13 @@ proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0)
   of TdkFn:
     var params: seq[string] = @[]
     for i, param in desc.params:
-      params.add(type_desc_to_string(param, type_descs, depth + 1))
+      var printed_param = param
+      if desc.rest_index >= 0 and i == desc.rest_index.int and
+         param >= 0 and param.int < type_descs.len:
+        let param_desc = type_descs[param.int]
+        if param_desc.kind == TdkApplied and param_desc.ctor == "Array" and param_desc.args.len > 0:
+          printed_param = param_desc.args[0]
+      params.add(type_desc_to_string(printed_param, type_descs, depth + 1))
       if desc.rest_index >= 0 and i == desc.rest_index.int:
         params.add("...")
     let ret = type_desc_to_string(desc.ret, type_descs, depth + 1)
