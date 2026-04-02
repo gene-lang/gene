@@ -11,16 +11,16 @@ Living document tracking cleanup work across design, implementation, documentati
 ## P0 — Foundation / Highest Leverage
 
 ### Canonical Language Reference & Spec
-- [ ] Create `spec/` directory for the canonical language specification
-- [ ] Write a proper **Language Reference** (or promote `examples/full.gene` into a structured spec)
-- [ ] Define core syntax (S-expressions, literals, comments, quoting)
-- [ ] Define type system (built-in types, type annotations, gradual typing)
-- [ ] Define evaluation rules (scoping, closures, tail calls)
-- [ ] Define OOP model (classes, methods, constructors, inheritance)
-- [ ] Define control flow (if/elif/else, loops, try/catch, pattern matching)
-- [ ] Define macro system
-- [ ] Define module/namespace system
-- [ ] Define async/await semantics
+- [x] Create `spec/` directory for the canonical language specification
+- [x] Write a proper **Language Reference** (now `spec/README.md` plus sections `01`-`17`)
+- [x] Define core syntax (S-expressions, literals, comments, quoting)
+- [x] Define type system (built-in types, type annotations, gradual typing)
+- [x] Define evaluation rules (scoping, closures, tail calls)
+- [x] Define OOP model (classes, methods, constructors, inheritance)
+- [x] Define control flow (if/elif/else, loops, try/catch, pattern matching)
+- [x] Define macro system
+- [x] Define module/namespace system
+- [x] Define async/await semantics
 
 ### Accuracy Audit & Spec/Test Alignment
 - [ ] Walk each doc and verify it reflects current implementation (not aspirational designs from months ago)
@@ -57,7 +57,7 @@ Existing extension: `tools/vscode-extension/` (v0.1.0, packaged as `.vsix`)
 - [ ] Review `language-configuration.json` — brackets, auto-close, comment toggling
 - [ ] Add snippet definitions for common patterns (class, fn, if/else, try/catch)
 - [ ] Bump version and rebuild `.vsix` after updates
-- [ ] Review current `docs/lsp.md` — assess what's implemented vs planned
+- [x] Review current `docs/lsp.md` — assess what's implemented vs planned
 - [ ] Prioritize: diagnostics > hover > completion > goto-definition
 - [ ] Connect LSP to the existing compiler pipeline for real-time feedback
 
@@ -104,6 +104,9 @@ Track completed cleanup work here with dates:
 - 2026-03-23: Moved proposal/design/history docs out of the `docs/` root into `docs/proposals/{future,implemented,archive}/` and rewrote `docs/README.md` so the root docs now skew toward current implementation/reference material.
 - 2026-03-23: Demoted scratch and design-era leftovers out of the `docs/` root (`NOTES`, `development_notes`, `dispatch-design`, `symbol_resolution`) and rewrote the HTTP, benchmark, and LSP docs around current code paths.
 - 2026-03-23: Documented the current spec-coverage gap in `docs/README.md`: compiler internals, GIR, wasm, HTTP/C extensions, and LSP are still implementation-only docs rather than `spec/` sections.
+- 2026-04-02: Re-reviewed the cleanup tracker against the current repo state and marked the canonical spec foundation items complete now that `spec/README.md` and sections `01`-`17` exist as the language reference.
+- 2026-04-02: Re-reviewed `docs/lsp.md`; it now clearly documents the current `gene lsp` implementation surface (sync, completion, definition, hover, references, workspace symbol search) versus missing features, so that checklist item is complete.
+- 2026-04-02: Kept spec/test alignment tasks open because `testsuite/` still has no per-file spec-section metadata beyond `# Expected:`, `# ExitCode:`, and `# Args:`, and the numbered suite currently stops at `15-serialization` while `spec/` also includes `16-comptime` and `17-selectors`.
 
 ## Agent Comments
 
