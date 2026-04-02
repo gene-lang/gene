@@ -257,37 +257,65 @@ proc type_expr_to_string*(v: Value): string =
     let gene = v.gene
     if gene == nil:
       return "Any"
-    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
+    if gene.`type`.kind == VkSymbol and gene.`type`.str in ["Fn", "Method"]:
       var params: seq[string] = @[]
+      var idx = 0
       if gene.children.len > 0 and gene.children[0].kind == VkArray:
         let items = array_data(gene.children[0])
         var i = 0
         while i < items.len:
           let item = items[i]
+          if item.kind == VkSymbol and item.str == "...":
+            params.add("...")
+            i += 1
+            continue
           if item.kind == VkSymbol and item.str.startsWith("^"):
             let label = item.str[1..^1]
             if i + 1 < items.len:
-              params.add("^" & label & " " & type_expr_to_string(items[i + 1]))
+              if label == "...":
+                params.add("^... " & type_expr_to_string(items[i + 1]))
+              else:
+                params.add("^" & label & " " & type_expr_to_string(items[i + 1]))
               i += 2
             else:
-              params.add("^" & label & " Any")
+              if label == "...":
+                params.add("^... Any")
+              else:
+                params.add("^" & label & " Any")
               i += 1
           else:
-            params.add(type_expr_to_string(item))
+            var text = type_expr_to_string(item)
+            if item.kind == VkSymbol and item.str.endsWith("...") and item.str.len > 3:
+              text = type_expr_to_string(item.str[0..^4].to_symbol_value()) & " ..."
+            elif i + 1 < items.len and items[i + 1].kind == VkSymbol and items[i + 1].str == "...":
+              text &= " ..."
+              i += 1
+            params.add(text)
             i += 1
+        idx = 1
       let ret =
-        if gene.children.len > 1: type_expr_to_string(gene.children[1]) else: "Any"
+        if idx < gene.children.len and gene.children[idx].kind == VkSymbol and gene.children[idx].str == "->" and idx + 1 < gene.children.len:
+          idx += 2
+          type_expr_to_string(gene.children[idx - 1])
+        elif idx < gene.children.len and not (gene.children[idx].kind == VkSymbol and gene.children[idx].str == "!"):
+          idx += 1
+          type_expr_to_string(gene.children[idx - 1])
+        else:
+          "Any"
       var effects: seq[string] = @[]
-      if gene.children.len > 2:
-        let maybe_bang = gene.children[2]
-        if maybe_bang.kind == VkSymbol and maybe_bang.str == "!" and gene.children.len > 3:
-          let effect_list = gene.children[3]
+      if idx < gene.children.len:
+        let maybe_bang = gene.children[idx]
+        if maybe_bang.kind == VkSymbol and maybe_bang.str == "!" and idx + 1 < gene.children.len:
+          let effect_list = gene.children[idx + 1]
           if effect_list.kind == VkArray:
             for eff in array_data(effect_list):
               effects.add(type_expr_to_string(eff))
       let effect_suffix =
         if effects.len > 0: " ! [" & effects.join(" ") & "]" else: ""
-      return "(Fn [" & params.join(" ") & "] " & ret & effect_suffix & ")"
+      let args =
+        if params.len > 0: " [" & params.join(" ") & "]"
+        else: ""
+      return "(Fn" & args & " -> " & ret & effect_suffix & ")"
     if is_union_gene(gene):
       var parts: seq[string] = @[]
       for member in union_members(v):
@@ -337,64 +365,66 @@ proc resolve_type_value_to_id_with_index(v: Value, type_descs: var seq[TypeDesc]
     let gene = v.gene
     if gene == nil:
       return BUILTIN_TYPE_ANY_ID
-    # Handle Fn type: (Fn [Int String] Float)
-    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
-      var params: seq[TypeId] = @[]
-      var rest_index = -1'i32
+    # Handle callable type: (Fn [Int] -> String)
+    if gene.`type`.kind == VkSymbol and gene.`type`.str in ["Fn", "Method"]:
+      var params: seq[CallableParamDesc] = @[]
+      var idx = 0
       if gene.children.len > 0 and gene.children[0].kind == VkArray:
         let items = array_data(gene.children[0])
         var i = 0
         while i < items.len:
           let item = items[i]
-          var is_rest = false
-          var is_keyword_param = false
+          var kind = CpkPositional
           var param_type_id = BUILTIN_TYPE_ANY_ID
           if item.kind == VkSymbol and item.str == "...":
             not_allowed("Fn type rest marker must follow a parameter type")
           if item.kind == VkSymbol and item.str.startsWith("^"):
-            is_keyword_param = true
-            # Keyword param - skip label, use type
+            let label = item.str[1..^1]
             if i + 1 < items.len:
               param_type_id = resolve_type_value_to_id_with_index(items[i + 1], type_descs, type_desc_index, type_aliases, type_vars, module_path)
               i += 2
             else:
               param_type_id = BUILTIN_TYPE_ANY_ID
               i += 1
+            if label == "...":
+              params.add(CallableParamDesc(kind: CpkKeywordRest, keyword_name: "", type_id: param_type_id))
+            else:
+              params.add(CallableParamDesc(kind: CpkKeyword, keyword_name: label, type_id: param_type_id))
+            continue
           else:
             var param_item = item
             if item.kind == VkSymbol and item.str.endsWith("...") and item.str.len > 3:
               param_item = item.str[0..^4].to_symbol_value()
-              is_rest = true
+              kind = CpkPositionalRest
             param_type_id = resolve_type_value_to_id_with_index(param_item, type_descs, type_desc_index, type_aliases, type_vars, module_path)
             i += 1
           if i < items.len and items[i].kind == VkSymbol and items[i].str == "...":
-            if is_rest:
+            if kind == CpkPositionalRest:
               not_allowed("Fn type parameter has duplicate rest marker")
-            is_rest = true
+            kind = CpkPositionalRest
             i += 1
-          if is_rest and not is_keyword_param:
-            param_type_id = intern_type_desc(type_descs,
-              TypeDesc(module_path: module_path, kind: TdkApplied, ctor: "Array", args: @[param_type_id]),
-              type_desc_index)
-          params.add(param_type_id)
-          if is_rest and not is_keyword_param:
-            if rest_index >= 0:
-              not_allowed("Fn type can only contain one positional rest parameter")
-            rest_index = (params.len - 1).int32
+          params.add(CallableParamDesc(kind: kind, keyword_name: "", type_id: param_type_id))
+        idx = 1
       let ret =
-        if gene.children.len > 1: resolve_type_value_to_id_with_index(gene.children[1], type_descs, type_desc_index, type_aliases, type_vars, module_path)
-        else: BUILTIN_TYPE_ANY_ID
+        if idx < gene.children.len and gene.children[idx].kind == VkSymbol and gene.children[idx].str == "->" and idx + 1 < gene.children.len:
+          idx += 2
+          resolve_type_value_to_id_with_index(gene.children[idx - 1], type_descs, type_desc_index, type_aliases, type_vars, module_path)
+        elif idx < gene.children.len and not (gene.children[idx].kind == VkSymbol and gene.children[idx].str == "!"):
+          idx += 1
+          resolve_type_value_to_id_with_index(gene.children[idx - 1], type_descs, type_desc_index, type_aliases, type_vars, module_path)
+        else:
+          BUILTIN_TYPE_ANY_ID
       var effects: seq[string] = @[]
-      if gene.children.len > 2:
-        let maybe_bang = gene.children[2]
-        if maybe_bang.kind == VkSymbol and maybe_bang.str == "!" and gene.children.len > 3:
-          let effect_list = gene.children[3]
+      if idx < gene.children.len:
+        let maybe_bang = gene.children[idx]
+        if maybe_bang.kind == VkSymbol and maybe_bang.str == "!" and idx + 1 < gene.children.len:
+          let effect_list = gene.children[idx + 1]
           if effect_list.kind == VkArray:
             for eff in array_data(effect_list):
               if eff.kind == VkSymbol:
                 effects.add(eff.str)
       return intern_type_desc(type_descs,
-        TypeDesc(module_path: module_path, kind: TdkFn, params: params, rest_index: rest_index, ret: ret, effects: effects), type_desc_index)
+        TypeDesc(module_path: module_path, kind: TdkFn, params: params, ret: ret, effects: effects), type_desc_index)
     # Handle union type: (Int | String)
     if is_union_gene(gene):
       var members: seq[TypeId] = @[]

@@ -184,8 +184,9 @@ proc writeTypeDesc(stream: Stream, desc: TypeDesc) =
   of TdkFn:
     stream.write(desc.params.len.uint32)
     for param in desc.params:
-      stream.write(param.int32)
-    stream.write(desc.rest_index.int32)
+      stream.write(param.kind.uint8)
+      stream.write_string(param.keyword_name)
+      stream.write(param.type_id.int32)
     stream.write(desc.ret.int32)
     stream.write(desc.effects.len.uint32)
     for effect in desc.effects:
@@ -216,16 +217,19 @@ proc readTypeDesc(stream: Stream): TypeDesc =
     result = TypeDesc(module_path: module_path, kind: TdkUnion, members: members)
   of TdkFn:
     let param_count = stream.readUint32()
-    var params: seq[TypeId] = @[]
+    var params: seq[CallableParamDesc] = @[]
     for _ in 0..<param_count:
-      params.add(stream.readInt32())
-    let rest_index = stream.readInt32()
+      params.add(CallableParamDesc(
+        kind: cast[CallableParamKind](stream.readUint8()),
+        keyword_name: stream.read_string(),
+        type_id: stream.readInt32()
+      ))
     let ret = stream.readInt32()
     let effect_count = stream.readUint32()
     var effects: seq[string] = @[]
     for _ in 0..<effect_count:
       effects.add(stream.read_string())
-    result = TypeDesc(module_path: module_path, kind: TdkFn, params: params, rest_index: rest_index, ret: ret, effects: effects)
+    result = TypeDesc(module_path: module_path, kind: TdkFn, params: params, ret: ret, effects: effects)
   of TdkVar:
     result = TypeDesc(module_path: module_path, kind: TdkVar, var_id: stream.readInt32())
 

@@ -384,6 +384,58 @@ suite "Static type checking":
     check array_data(result)[0] == 42
     check array_data(result)[1] == "hello".to_value()
 
+  test_strict_type_ok """
+    (fn noop [] -> Void VOID)
+    (fn takes_void [f: (Fn -> Void)] -> Void
+      (f))
+    (takes_void noop)
+  """
+
+  test_strict_type_ok """
+    (fn make_one [] -> Int 1)
+    (fn takes_zero [f: (Fn -> Int)] -> Int
+      (f))
+    (takes_zero make_one)
+  """
+
+  test_strict_type_ok """
+    (type MixedFn (Fn [^a Int ^... String Int ... String] -> String))
+    (type DisplayMethod (Method [Int] -> String))
+  """
+
+  test_strict_type_error """
+    (var self 1)
+  """
+
+  test_strict_type_error """
+    (fn self [] 1)
+  """
+
+  test_strict_type_error """
+    (fn f [self: Int] self)
+  """
+
+  test_strict_type_error """
+    (type Self Int)
+  """
+
+  test_strict_type_error """
+    (class Self)
+  """
+
+  test_strict_type_error """
+    (fn f [x: Self] x)
+  """
+
+  test_vm """
+    (class Box
+      (method clone [] -> Self
+        self))
+    (var box (new Box))
+    (box .clone)
+  """, proc(result: Value) =
+    check result.kind == VkInstance
+
   test_vm """
     (var x: (String | Nil) "hi")
     (if (x != nil)

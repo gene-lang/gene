@@ -60,6 +60,16 @@ proc json_type_id_array(type_ids: seq[TypeId]): JsonNode =
   for type_id in type_ids:
     result.add(%int(type_id))
 
+proc json_callable_param_array(params: seq[CallableParamDesc]): JsonNode =
+  result = newJArray()
+  for param in params:
+    var node = newJObject()
+    node["kind"] = %($param.kind)
+    if param.keyword_name.len > 0:
+      node["keyword_name"] = %param.keyword_name
+    node["type_id"] = %int(param.type_id)
+    result.add(node)
+
 proc module_type_node_to_json(node: ModuleTypeNode): JsonNode =
   result = newJObject()
   result["name"] = %node.name
@@ -84,7 +94,7 @@ proc type_desc_to_json(type_id: TypeId, desc: TypeDesc): JsonNode =
   of TdkUnion:
     result["members"] = json_type_id_array(desc.members)
   of TdkFn:
-    result["params"] = json_type_id_array(desc.params)
+    result["params"] = json_callable_param_array(desc.params)
     result["ret"] = %int(desc.ret)
     var effects = newJArray()
     for effect in desc.effects:

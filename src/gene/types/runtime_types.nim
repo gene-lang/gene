@@ -18,6 +18,11 @@ type
     RtApplied,
     RtFn
 
+  RtCallableParam = object
+    kind: CallableParamKind
+    keyword_name: string
+    typ: RtType
+
   RtType = ref object
     case kind: RtTypeKind
     of RtAny:
@@ -30,8 +35,7 @@ type
       ctor: string
       args: seq[RtType]
     of RtFn:
-      params: seq[RtType]
-      rest_index: int
+      params: seq[RtCallableParam]
       ret: RtType
       effects: seq[string]
 
@@ -166,13 +170,16 @@ proc type_desc_to_rt(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): RtT
       members.add(type_desc_to_rt(type_descs, member, depth + 1))
     RtType(kind: RtUnion, members: members)
   of TdkFn:
-    var params: seq[RtType] = @[]
+    var params: seq[RtCallableParam] = @[]
     for param in desc.params:
-      params.add(type_desc_to_rt(type_descs, param, depth + 1))
+      params.add(RtCallableParam(
+        kind: param.kind,
+        keyword_name: param.keyword_name,
+        typ: type_desc_to_rt(type_descs, param.type_id, depth + 1)
+      ))
     RtType(
       kind: RtFn,
       params: params,
-      rest_index: desc.rest_index.int,
       ret: type_desc_to_rt(type_descs, desc.ret, depth + 1),
       effects: desc.effects
     )
@@ -291,6 +298,8 @@ proc adt_type_name(value: Value): string =
 proc is_named_compatible(value: Value, expected_type: string): bool =
   if expected_type == "Any":
     return true
+  if expected_type == "Self":
+    return value.kind == VkInstance
   let actual = runtime_type_name(value)
   if actual == expected_type:
     return true
@@ -381,10 +390,12 @@ proc type_expr_compatible(actual: RtType, expected: RtType): bool =
   if actual.kind == RtFn and expected.kind == RtFn:
     if actual.params.len != expected.params.len:
       return false
-    if actual.rest_index != expected.rest_index:
-      return false
     for i in 0..<actual.params.len:
-      if not type_expr_compatible(actual.params[i], expected.params[i]):
+      if actual.params[i].kind != expected.params[i].kind:
+        return false
+      if actual.params[i].keyword_name != expected.params[i].keyword_name:
+        return false
+      if not type_expr_compatible(actual.params[i].typ, expected.params[i].typ):
         return false
     if not type_expr_compatible(actual.ret, expected.ret):
       return false
@@ -407,12 +418,36 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
   if matcher.children.len != expected.params.len:
     return false
   for i, param in matcher.children:
-    let actual_param =
+    let actual_type =
       if param.type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
         type_desc_to_rt(matcher.type_descriptors, param.type_id)
       else:
         RtType(kind: RtAny)
-    if not type_expr_compatible(actual_param, expected.params[i]):
+    let actual_param = RtCallableParam(
+      kind:
+        if param.is_prop:
+          if param.is_splat: CpkKeywordRest else: CpkKeyword
+        else:
+          if param.is_splat: CpkPositionalRest else: CpkPositional,
+      keyword_name:
+        if param.is_prop and not param.is_splat:
+          try:
+            cast[Value](param.name_key).str
+          except CatchableError:
+            ""
+        else:
+          "",
+      typ:
+        if param.is_splat and actual_type.kind == RtApplied and actual_type.ctor == "Array" and actual_type.args.len > 0:
+          actual_type.args[0]
+        else:
+          actual_type
+    )
+    if actual_param.kind != expected.params[i].kind:
+      return false
+    if actual_param.keyword_name != expected.params[i].keyword_name:
+      return false
+    if not type_expr_compatible(actual_param.typ, expected.params[i].typ):
       return false
   let actual_return =
     if matcher.return_type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:

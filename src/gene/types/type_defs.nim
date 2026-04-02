@@ -252,6 +252,17 @@ type
     TdkFn
     TdkVar
 
+  CallableParamKind* {.size: sizeof(int8).} = enum
+    CpkPositional
+    CpkPositionalRest
+    CpkKeyword
+    CpkKeywordRest
+
+  CallableParamDesc* = object
+    kind*: CallableParamKind
+    keyword_name*: string
+    type_id*: TypeId
+
   TypeDesc* = object
     module_path*: string  # "stdlib" for built-ins, "" for local module-scoped types
     case kind*: TypeDescKind
@@ -265,8 +276,7 @@ type
     of TdkUnion:
       members*: seq[TypeId]
     of TdkFn:
-      params*: seq[TypeId]
-      rest_index*: int32
+      params*: seq[CallableParamDesc]
       ret*: TypeId
       effects*: seq[string]
     of TdkVar:

@@ -191,7 +191,7 @@ suite "GIR CLI":
       TypeDesc(kind: TdkNamed, name: "Int"),
       TypeDesc(kind: TdkNamed, name: "String"),
       TypeDesc(kind: TdkUnion, members: @[0'i32, 1'i32]),
-      TypeDesc(kind: TdkFn, params: @[0'i32], ret: 1'i32, effects: @["io/read"])
+      TypeDesc(kind: TdkFn, params: @[CallableParamDesc(kind: CpkPositional, keyword_name: "", type_id: 0'i32)], ret: 1'i32, effects: @["io/read"])
     ]
 
     let gir_path = "build/tests/type_descriptor_roundtrip.gir"
@@ -205,7 +205,9 @@ suite "GIR CLI":
     check loaded.type_descriptors[2].kind == TdkUnion
     check loaded.type_descriptors[2].members == @[0'i32, 1'i32]
     check loaded.type_descriptors[3].kind == TdkFn
-    check loaded.type_descriptors[3].params == @[0'i32]
+    check loaded.type_descriptors[3].params.len == 1
+    check loaded.type_descriptors[3].params[0].kind == CpkPositional
+    check loaded.type_descriptors[3].params[0].type_id == 0'i32
     check loaded.type_descriptors[3].ret == 1'i32
     check loaded.type_descriptors[3].effects == @["io/read"]
 
@@ -221,7 +223,13 @@ suite "GIR CLI":
 
     let user_desc = TypeDesc(module_path: module_path, kind: TdkNamed, name: "User")
     let union_desc = TypeDesc(module_path: module_path, kind: TdkUnion, members: @[user_id, 1'i32])
-    let fn_desc = TypeDesc(module_path: module_path, kind: TdkFn, params: @[user_id], ret: union_id, effects: @["io/read"])
+    let fn_desc = TypeDesc(
+      module_path: module_path,
+      kind: TdkFn,
+      params: @[CallableParamDesc(kind: CpkPositional, keyword_name: "", type_id: user_id)],
+      ret: union_id,
+      effects: @["io/read"]
+    )
 
     compiled.type_descriptors = @[user_desc, union_desc, fn_desc]
     compiled.type_registry = new_module_type_registry(module_path)
@@ -249,7 +257,9 @@ suite "GIR CLI":
     check loaded.type_registry.descriptors[union_id].members == @[user_id, 1'i32]
     check loaded.type_registry.descriptors.hasKey(fn_id)
     check loaded.type_registry.descriptors[fn_id].kind == TdkFn
-    check loaded.type_registry.descriptors[fn_id].params == @[user_id]
+    check loaded.type_registry.descriptors[fn_id].params.len == 1
+    check loaded.type_registry.descriptors[fn_id].params[0].kind == CpkPositional
+    check loaded.type_registry.descriptors[fn_id].params[0].type_id == user_id
     check loaded.type_registry.descriptors[fn_id].ret == union_id
     check loaded.type_registry.descriptors[fn_id].effects == @["io/read"]
     check loaded.type_registry.named_types.len == 1
@@ -270,7 +280,12 @@ suite "GIR CLI":
     let user_id = intern_type_desc(descs, TypeDesc(kind: TdkNamed, module_path: module_path, name: "User"))
     let applied_id = intern_type_desc(descs, TypeDesc(kind: TdkApplied, ctor: "Array", args: @[user_id]))
     let union_id = intern_type_desc(descs, TypeDesc(kind: TdkUnion, members: @[user_id, BUILTIN_TYPE_NIL_ID]))
-    let fn_id = intern_type_desc(descs, TypeDesc(kind: TdkFn, params: @[user_id], ret: union_id, effects: @["io/read"]))
+    let fn_id = intern_type_desc(descs, TypeDesc(
+      kind: TdkFn,
+      params: @[CallableParamDesc(kind: CpkPositional, keyword_name: "", type_id: user_id)],
+      ret: union_id,
+      effects: @["io/read"]
+    ))
 
     let registry = populate_registry(descs, module_path)
     check registry != nil

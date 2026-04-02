@@ -5,11 +5,11 @@
 # Expected: VkInstance 1 2
 # Expected: result1 2
 
-(fn before_fn [self x]
+(fn before_fn [_self x]
   (println "before_fn" x)
 )
 
-(fn after_fn [self x result]
+(fn after_fn [_self x result]
   (println "after_fn" result)
 )
 

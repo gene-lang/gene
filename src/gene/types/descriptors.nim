@@ -12,11 +12,12 @@ const
   BUILTIN_TYPE_STRING_ID*: TypeId = 3
   BUILTIN_TYPE_BOOL_ID*: TypeId = 4
   BUILTIN_TYPE_NIL_ID*: TypeId = 5
-  BUILTIN_TYPE_SYMBOL_ID*: TypeId = 6
-  BUILTIN_TYPE_CHAR_ID*: TypeId = 7
-  BUILTIN_TYPE_ARRAY_ID*: TypeId = 8
-  BUILTIN_TYPE_MAP_ID*: TypeId = 9
-  BUILTIN_TYPE_COUNT* = 10
+  BUILTIN_TYPE_VOID_ID*: TypeId = 6
+  BUILTIN_TYPE_SYMBOL_ID*: TypeId = 7
+  BUILTIN_TYPE_CHAR_ID*: TypeId = 8
+  BUILTIN_TYPE_ARRAY_ID*: TypeId = 9
+  BUILTIN_TYPE_MAP_ID*: TypeId = 10
+  BUILTIN_TYPE_COUNT* = 11
 
 proc builtin_type_descs*(): seq[TypeDesc] =
   ## Return the pre-created TypeDesc objects for all built-in types.
@@ -28,10 +29,11 @@ proc builtin_type_descs*(): seq[TypeDesc] =
     TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "String"),          # 3 = String
     TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Bool"),            # 4 = Bool
     TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Nil"),             # 5 = Nil
-    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Symbol"),          # 6 = Symbol
-    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Char"),            # 7 = Char
-    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Array"),           # 8 = Array
-    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Map"),             # 9 = Map
+    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Void"),            # 6 = Void
+    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Symbol"),          # 7 = Symbol
+    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Char"),            # 8 = Char
+    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Array"),           # 9 = Array
+    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Map"),             # 10 = Map
   ]
 
 proc lookup_builtin_type*(name: string): TypeId =
@@ -44,6 +46,7 @@ proc lookup_builtin_type*(name: string): TypeId =
   of "String", "string": BUILTIN_TYPE_STRING_ID
   of "Bool", "bool": BUILTIN_TYPE_BOOL_ID
   of "Nil", "nil": BUILTIN_TYPE_NIL_ID
+  of "Void", "void": BUILTIN_TYPE_VOID_ID
   of "Symbol": BUILTIN_TYPE_SYMBOL_ID
   of "Char": BUILTIN_TYPE_CHAR_ID
   of "Array": BUILTIN_TYPE_ARRAY_ID
@@ -92,6 +95,19 @@ proc join_strings(values: seq[string], sep: string): string {.gcsafe.} =
 
 proc type_desc_key_for_id(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): string {.gcsafe.}
 
+proc callable_param_type_key(type_descs: seq[TypeDesc], param: CallableParamDesc,
+                             depth = 0): string {.gcsafe.} =
+  let type_key = type_desc_key_for_id(type_descs, param.type_id, depth + 1)
+  case param.kind
+  of CpkPositional:
+    "pos:" & type_key
+  of CpkPositionalRest:
+    "rest:" & type_key
+  of CpkKeyword:
+    "kw:" & param.keyword_name & ":" & type_key
+  of CpkKeywordRest:
+    "kwrest:" & type_key
+
 proc type_desc_key(desc: TypeDesc, type_descs: seq[TypeDesc], depth = 0): string {.gcsafe.} =
   if depth > TYPE_DESC_MAX_DEPTH:
     return "any"
@@ -115,10 +131,9 @@ proc type_desc_key(desc: TypeDesc, type_descs: seq[TypeDesc], depth = 0): string
   of TdkFn:
     var params: seq[string] = @[]
     for param in desc.params:
-      params.add(type_desc_key_for_id(type_descs, param, depth + 1))
+      params.add(callable_param_type_key(type_descs, param, depth + 1))
     let effects = sorted_unique_strings(desc.effects)
-    return module_prefix & "fn:[" & join_strings(params, ",") & "]@" &
-      $desc.rest_index & "->" &
+    return module_prefix & "fn:[" & join_strings(params, ",") & "]->" &
       type_desc_key_for_id(type_descs, desc.ret, depth + 1) &
       "!" & join_strings(effects, ",")
   of TdkVar:
@@ -170,6 +185,10 @@ proc normalize_type_desc(desc: TypeDesc, type_descs: seq[TypeDesc]): TypeDesc {.
   of TdkUnion:
     result.members = normalize_type_id_list(type_descs, desc.members)
   of TdkFn:
+    for i in 0..<result.params.len:
+      let normalized = normalize_type_id_list(type_descs, @[desc.params[i].type_id])
+      if normalized.len > 0:
+        result.params[i].type_id = normalized[0]
     result.effects = sorted_unique_strings(desc.effects)
   else:
     discard
@@ -240,6 +259,21 @@ proc canonicalize_type_desc_owner*(desc: TypeDesc, fallback_module_path = ""): T
   if owner.len > 0:
     result.module_path = owner
 
+proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0): string {.gcsafe.}
+
+proc callable_param_to_string(param: CallableParamDesc, type_descs: seq[TypeDesc],
+                              depth = 0): string {.gcsafe.} =
+  let printed_type = type_desc_to_string(param.type_id, type_descs, depth + 1)
+  case param.kind
+  of CpkPositional:
+    printed_type
+  of CpkPositionalRest:
+    printed_type & " ..."
+  of CpkKeyword:
+    "^" & param.keyword_name & " " & printed_type
+  of CpkKeywordRest:
+    "^... " & printed_type
+
 proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0): string {.gcsafe.} =
   if type_id == NO_TYPE_ID:
     return "Any"
@@ -266,21 +300,16 @@ proc type_desc_to_string*(type_id: TypeId, type_descs: seq[TypeDesc], depth = 0)
     "(" & join_strings(parts, " | ") & ")"
   of TdkFn:
     var params: seq[string] = @[]
-    for i, param in desc.params:
-      var printed_param = param
-      if desc.rest_index >= 0 and i == desc.rest_index.int and
-         param >= 0 and param.int < type_descs.len:
-        let param_desc = type_descs[param.int]
-        if param_desc.kind == TdkApplied and param_desc.ctor == "Array" and param_desc.args.len > 0:
-          printed_param = param_desc.args[0]
-      params.add(type_desc_to_string(printed_param, type_descs, depth + 1))
-      if desc.rest_index >= 0 and i == desc.rest_index.int:
-        params.add("...")
+    for param in desc.params:
+      params.add(callable_param_to_string(param, type_descs, depth + 1))
     let ret = type_desc_to_string(desc.ret, type_descs, depth + 1)
     let effects =
       if desc.effects.len > 0: " ! [" & join_strings(desc.effects, " ") & "]"
       else: ""
-    "(Fn [" & join_strings(params, " ") & "] " & ret & effects & ")"
+    let args =
+      if params.len > 0: " [" & join_strings(params, " ") & "]"
+      else: ""
+    "(Fn" & args & " -> " & ret & effects & ")"
   of TdkVar:
     "T" & $desc.var_id
 
@@ -315,6 +344,17 @@ proc type_id_list_key(ids: seq[TypeId], normalize = false): string {.gcsafe.} =
     parts.add($id)
   join_strings(parts, ",")
 
+proc callable_param_registry_key(param: CallableParamDesc): string {.gcsafe.} =
+  case param.kind
+  of CpkPositional:
+    "pos:" & $param.type_id
+  of CpkPositionalRest:
+    "rest:" & $param.type_id
+  of CpkKeyword:
+    "kw:" & param.keyword_name & ":" & $param.type_id
+  of CpkKeywordRest:
+    "kwrest:" & $param.type_id
+
 proc descriptor_registry_key*(desc: TypeDesc): string {.gcsafe.} =
   ## Canonical registry key used by module-kind indexes.
   let scope = module_registry_scope(desc.module_path)
@@ -328,7 +368,10 @@ proc descriptor_registry_key*(desc: TypeDesc): string {.gcsafe.} =
   of TdkUnion:
     scope & "::union:[" & type_id_list_key(desc.members, normalize = true) & "]"
   of TdkFn:
-    scope & "::fn:[" & type_id_list_key(desc.params) & "]@" & $desc.rest_index &
+    var params: seq[string] = @[]
+    for param in desc.params:
+      params.add(callable_param_registry_key(param))
+    scope & "::fn:[" & join_strings(params, ",") & "]" &
       "->" & $desc.ret &
       "!" & join_strings(sorted_unique_strings(desc.effects), ",")
   of TdkVar:

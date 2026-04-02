@@ -21,9 +21,15 @@ type
     TkVar
 
   ParamType* = object
-    label*: string  # "" for positional, non-empty for keyword-only
+    kind*: CallableParamKind
+    keyword_name*: string
     typ*: TypeExpr
-    is_rest*: bool
+
+  ParameterDecl = object
+    binding_name*: string
+    kind*: CallableParamKind
+    keyword_name*: string
+    typ*: TypeExpr
 
   TypeExpr* = ref object
     case kind*: TypeKind
@@ -39,8 +45,7 @@ type
     of TkFn:
       params*: seq[ParamType]
       ret*: TypeExpr
-      variadic*: bool
-      kw_splat*: bool
+      receiver*: TypeExpr
       effects*: seq[string]
     of TkVar:
       id*: int
@@ -98,10 +103,51 @@ proc rest_source_type(t: TypeExpr): TypeExpr {.inline.} =
   t
 
 const BUILTIN_TYPE_NAMES = [
-  "Any", "Self", "Int", "Float", "Bool", "String", "Nil", "Symbol",
+  "Any", "Self", "Int", "Float", "Bool", "String", "Nil", "Void", "Symbol",
   "Array", "Map", "HashMap", "HashSet", "Result", "Option", "Tuple",
   "Module", "Namespace", "Class"
 ]
+
+proc is_reserved_value_name(name: string): bool {.inline.} =
+  name == "self"
+
+proc is_reserved_type_name(name: string): bool {.inline.} =
+  name == "Self"
+
+proc ensure_user_value_name(name: string, context: string) =
+  if is_reserved_value_name(name):
+    raise new_exception(types.Exception, "Reserved identifier '" & name & "' cannot be used for " & context)
+
+proc ensure_user_type_name(name: string, context: string) =
+  if is_reserved_type_name(name):
+    raise new_exception(types.Exception, "Reserved type name '" & name & "' cannot be used for " & context)
+
+proc effective_type(t: TypeExpr): TypeExpr {.inline.} =
+  if t == nil: ANY_TYPE else: t
+
+proc map_value_type_of(value_type: TypeExpr): TypeExpr {.inline.} =
+  TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, effective_type(value_type)])
+
+proc param_binding_type(param: ParameterDecl): TypeExpr {.inline.} =
+  case param.kind
+  of CpkPositional, CpkKeyword:
+    effective_type(param.typ)
+  of CpkPositionalRest:
+    array_type_of(param.typ)
+  of CpkKeywordRest:
+    map_value_type_of(param.typ)
+
+proc public_param(param: ParameterDecl): ParamType {.inline.} =
+  ParamType(
+    kind: param.kind,
+    keyword_name: if param.kind == CpkKeyword: param.keyword_name else: "",
+    typ: effective_type(param.typ)
+  )
+
+proc positional_rest_source_type(t: TypeExpr): TypeExpr {.inline.} =
+  if t == nil:
+    return ANY_TYPE
+  t
 
 proc is_builtin_type_name(name: string): bool {.inline.} =
   for n in BUILTIN_TYPE_NAMES:
@@ -241,6 +287,7 @@ proc lookup_type_param(self: TypeChecker, name: string): TypeExpr =
 proc push_type_param_scope(self: TypeChecker, params: seq[string]) =
   var scope = initTable[string, TypeExpr]()
   for name in params:
+    ensure_user_type_name(name, "type parameter")
     if scope.hasKey(name):
       raise new_exception(types.Exception, "Duplicate type parameter: " & name)
     scope[name] = self.fresh_var()
@@ -276,13 +323,12 @@ proc instantiate_type_vars(self: TypeChecker, t: TypeExpr): TypeExpr =
     of TkFn:
       var params: seq[ParamType] = @[]
       for param in rt.params:
-        params.add(ParamType(label: param.label, typ: clone(param.typ), is_rest: param.is_rest))
+        params.add(ParamType(kind: param.kind, keyword_name: param.keyword_name, typ: clone(param.typ)))
       TypeExpr(
         kind: TkFn,
         params: params,
         ret: clone(rt.ret),
-        variadic: rt.variadic,
-        kw_splat: rt.kw_splat,
+        receiver: clone(rt.receiver),
         effects: rt.effects
       )
     of TkVar:
@@ -321,6 +367,8 @@ proc occurs(self: TypeChecker, id: int, t: TypeExpr): bool =
       if self.occurs(id, p.typ):
         return true
     if self.occurs(id, rt.ret):
+      return true
+    if rt.receiver != nil and self.occurs(id, rt.receiver):
       return true
   else:
     discard
@@ -405,10 +453,14 @@ proc unify(self: TypeChecker, a: TypeExpr, b: TypeExpr, context: string) =
     if ta.params.len != tb.params.len:
       raise new_exception(types.Exception, "Type error: function arity mismatch in " & context)
     for i in 0..<ta.params.len:
-      if ta.params[i].is_rest != tb.params[i].is_rest:
-        raise new_exception(types.Exception, "Type error: function rest parameter mismatch in " & context)
+      if ta.params[i].kind != tb.params[i].kind:
+        raise new_exception(types.Exception, "Type error: function parameter kind mismatch in " & context)
+      if ta.params[i].keyword_name != tb.params[i].keyword_name:
+        raise new_exception(types.Exception, "Type error: function keyword parameter mismatch in " & context)
       self.unify(ta.params[i].typ, tb.params[i].typ, context)
     self.unify(ta.ret, tb.ret, context)
+    if ta.receiver != nil and tb.receiver != nil:
+      self.unify(ta.receiver, tb.receiver, context)
     if not effects_compatible(ta.effects, tb.effects):
       raise new_exception(types.Exception, "Type error: effect mismatch (expected " & effects_to_string(ta.effects) & ", got " & effects_to_string(tb.effects) & ") in " & context)
   of TkAny, TkVar:
@@ -437,18 +489,24 @@ proc type_to_string(t: TypeExpr): string =
     var params: seq[string] = @[]
     for p in rt.params:
       let printed_type =
-        if p.is_rest and p.label.len == 0: rest_source_type(p.typ)
+        if p.kind == CpkPositionalRest: positional_rest_source_type(p.typ)
         else: p.typ
-      if p.label.len > 0:
-        params.add("^" & p.label & " " & type_to_string(printed_type))
-      else:
+      case p.kind
+      of CpkPositional:
         params.add(type_to_string(printed_type))
-      if p.is_rest:
-        params.add("...")
+      of CpkPositionalRest:
+        params.add(type_to_string(printed_type) & " ...")
+      of CpkKeyword:
+        params.add("^" & p.keyword_name & " " & type_to_string(printed_type))
+      of CpkKeywordRest:
+        params.add("^... " & type_to_string(printed_type))
     var effects = ""
     if rt.effects.len > 0:
       effects = " ! [" & rt.effects.join(" ") & "]"
-    return "(Fn [" & params.join(" ") & "] " & type_to_string(rt.ret) & effects & ")"
+    let args =
+      if params.len > 0: " [" & params.join(" ") & "]"
+      else: ""
+    return "(Fn" & args & " -> " & type_to_string(rt.ret) & effects & ")"
   of TkVar:
     return "T" & $rt.id
 
@@ -478,17 +536,17 @@ proc intern_type_desc(self: TypeChecker, t: TypeExpr): TypeId =
     return intern_type_desc(self.type_descs,
       TypeDesc(module_path: self.module_path, kind: TdkUnion, members: members), self.type_desc_index)
   of TkFn:
-    var params: seq[TypeId] = @[]
-    var rest_index = -1'i32
-    for i, param in rt.params:
-      params.add(self.intern_type_desc(param.typ))
-      if param.is_rest:
-        rest_index = i.int32
+    var params: seq[CallableParamDesc] = @[]
+    for param in rt.params:
+      params.add(CallableParamDesc(
+        kind: param.kind,
+        keyword_name: param.keyword_name,
+        type_id: self.intern_type_desc(param.typ)
+      ))
     return intern_type_desc(self.type_descs, TypeDesc(
       module_path: self.module_path,
       kind: TdkFn,
       params: params,
-      rest_index: rest_index,
       ret: self.intern_type_desc(rt.ret),
       effects: rt.effects
     ), self.type_desc_index)
@@ -503,10 +561,15 @@ proc pop_scope(self: TypeChecker) =
   if self.scopes.len > 1:
     discard self.scopes.pop()
 
-proc define(self: TypeChecker, name: string, t: TypeExpr) =
+proc define_internal(self: TypeChecker, name: string, t: TypeExpr) =
   if name.len == 0 or name == "_":
     return
   self.scopes[^1][name] = t
+
+proc define(self: TypeChecker, name: string, t: TypeExpr) =
+  if name.len == 0 or name == "_":
+    return
+  self.define_internal(name, t)
 
 proc lookup(self: TypeChecker, name: string): TypeExpr =
   for i in countdown(self.scopes.len - 1, 0):
@@ -897,32 +960,29 @@ proc parse_fn_params(self: TypeChecker, v: Value): seq[ParamType] =
       if i + 1 >= items.len:
         raise new_exception(types.Exception, "Invalid Fn type: missing type for " & item.str)
       let t = self.parse_type_expr(items[i + 1])
-      var is_rest = false
       i += 2
-      if i < items.len and items[i].kind == VkSymbol and items[i].str == "...":
-        is_rest = true
-        i += 1
-      let param_type =
-        if is_rest and label.len == 0: array_type_of(t)
-        else: t
-      result.add(ParamType(label: label, typ: param_type, is_rest: is_rest))
+      if label == "...":
+        result.add(ParamType(kind: CpkKeywordRest, keyword_name: "", typ: t))
+      else:
+        if i < items.len and items[i].kind == VkSymbol and items[i].str == "...":
+          i += 1
+          result.add(ParamType(kind: CpkKeywordRest, keyword_name: "", typ: t))
+        else:
+          result.add(ParamType(kind: CpkKeyword, keyword_name: label, typ: t))
     else:
       var type_expr = item
-      var is_rest = false
+      var kind = CpkPositional
       if item.kind == VkSymbol and item.str.endsWith("...") and item.str.len > 3:
         type_expr = item.str[0..^4].to_symbol_value()
-        is_rest = true
+        kind = CpkPositionalRest
       let t = self.parse_type_expr(type_expr)
       i += 1
       if i < items.len and items[i].kind == VkSymbol and items[i].str == "...":
-        if is_rest:
+        if kind == CpkPositionalRest:
           raise new_exception(types.Exception, "Invalid Fn type: duplicate rest marker")
-        is_rest = true
+        kind = CpkPositionalRest
         i += 1
-      let param_type =
-        if is_rest: array_type_of(t)
-        else: t
-      result.add(ParamType(label: "", typ: param_type, is_rest: is_rest))
+      result.add(ParamType(kind: kind, keyword_name: "", typ: t))
 
 proc parse_effect_list(self: TypeChecker, v: Value): seq[string] =
   if v.kind != VkArray:
@@ -965,6 +1025,8 @@ proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
     if name == "Any":
       return ANY_TYPE
     if name == "Self":
+      if self.current_class.len == 0:
+        raise new_exception(types.Exception, "Invalid contextual type: Self is only available inside class scope")
       return TypeExpr(kind: TkNamed, name: "Self")
     let type_param = self.lookup_type_param(name)
     if type_param != nil:
@@ -980,28 +1042,34 @@ proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
     let gene = v.gene
     if gene == nil:
       return ANY_TYPE
-    if gene.`type`.kind == VkSymbol and gene.`type`.str == "Fn":
-      if gene.children.len < 2:
-        raise new_exception(types.Exception, "Invalid Fn type: expected params and return")
-      let params = self.parse_fn_params(gene.children[0])
-      let ret = self.parse_type_expr(gene.children[1])
-      var is_variadic = false
-      for param in params:
-        if param.is_rest:
-          is_variadic = true
-          break
+    if gene.`type`.kind == VkSymbol and gene.`type`.str in ["Fn", "Method"]:
+      var idx = 0
+      var params: seq[ParamType] = @[]
+      var ret = ANY_TYPE
       var effects: seq[string] = @[]
-      if gene.children.len > 2:
-        let maybe_bang = gene.children[2]
+      if idx < gene.children.len and gene.children[idx].kind == VkArray:
+        params = self.parse_fn_params(gene.children[idx])
+        idx += 1
+      if idx < gene.children.len and gene.children[idx].kind == VkSymbol and gene.children[idx].str == "->":
+        if idx + 1 >= gene.children.len:
+          raise new_exception(types.Exception, "Invalid Fn type: missing return type after ->")
+        ret = self.parse_type_expr(gene.children[idx + 1])
+        idx += 2
+      elif idx < gene.children.len and not (gene.children[idx].kind == VkSymbol and gene.children[idx].str == "!"):
+        ret = self.parse_type_expr(gene.children[idx])
+        idx += 1
+      if idx < gene.children.len:
+        let maybe_bang = gene.children[idx]
         if maybe_bang.kind == VkSymbol and maybe_bang.str == "!":
-          if gene.children.len < 4:
+          if idx + 1 >= gene.children.len:
             raise new_exception(types.Exception, "Invalid Fn type: missing effects after !")
-          effects = self.parse_effect_list(gene.children[3])
-          if gene.children.len > 4:
+          effects = self.parse_effect_list(gene.children[idx + 1])
+          idx += 2
+          if idx < gene.children.len:
             raise new_exception(types.Exception, "Invalid Fn type: unexpected extra elements")
         else:
           raise new_exception(types.Exception, "Invalid Fn type: unexpected element " & $maybe_bang.kind)
-      return TypeExpr(kind: TkFn, params: params, ret: ret, variadic: is_variadic, kw_splat: false, effects: effects)
+      return TypeExpr(kind: TkFn, params: params, ret: ret, receiver: nil, effects: effects)
     if is_union_gene(gene):
       return self.parse_union(gene)
     # Generic constructor: (Array T)
@@ -1017,8 +1085,8 @@ proc parse_type_expr(self: TypeChecker, v: Value): TypeExpr =
   else:
     raise new_exception(types.Exception, "Invalid type expression: " & $v.kind)
 
-proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, string, TypeExpr, bool)], seq[string]) =
-  ## Returns (params, prop_splats) where params is (var_name, keyword_label, type, is_rest).
+proc parse_param_annotations(self: TypeChecker, args: Value,
+                             allow_reserved_self = false): seq[ParameterDecl] =
   var items: seq[Value] = @[]
   case args.kind
   of VkArray:
@@ -1028,10 +1096,9 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
   of VkComplexSymbol:
     items = @[args]
   else:
-    return (@[], @[])
+    return @[]
 
-  var params: seq[(string, string, TypeExpr, bool)] = @[]
-  var prop_splats: seq[string] = @[]
+  var params: seq[ParameterDecl] = @[]
   var positional_rest_count = 0
   var i = 0
   while i < items.len:
@@ -1044,7 +1111,7 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
       if item.str == "...":
         raise new_exception(types.Exception, "Positional rest must follow a named parameter")
       var raw = item.str
-      var label = ""
+      var keyword_name = ""
       var typ: TypeExpr = nil
       var name = ""
       var is_rest = false
@@ -1063,10 +1130,12 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
       name = raw
       if name.startsWith("^"):
         if name.len >= 2 and (name[1] == '^' or name[1] == '!'):
-          label = name[2..^1]
+          keyword_name = name[2..^1]
         else:
-          label = name[1..^1]
-        name = label
+          keyword_name = name[1..^1]
+        name = keyword_name
+      if name.len > 0 and name != "_" and not (allow_reserved_self and name == "self"):
+        ensure_user_value_name(name, "parameter")
       if is_rest and (name.len == 0 or name == "_"):
         raise new_exception(types.Exception, "Positional rest must bind to a named parameter")
       if has_type:
@@ -1074,15 +1143,16 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
           raise new_exception(types.Exception, "Missing type for parameter " & name)
         typ = self.parse_type_expr(items[i + 1])
         i += 1
-      if is_rest and label.len > 0:
-        prop_splats.add(name)
-      else:
-        if is_rest:
-          positional_rest_count += 1
-          if positional_rest_count > 1:
-            raise new_exception(types.Exception, "Only one positional rest parameter is allowed")
-          typ = array_type_of(typ)
-        params.add((name, label, typ, is_rest))
+      var kind = CpkPositional
+      if keyword_name.len > 0:
+        kind = if is_rest: CpkKeywordRest else: CpkKeyword
+      elif is_rest:
+        kind = CpkPositionalRest
+      if kind == CpkPositionalRest:
+        positional_rest_count += 1
+        if positional_rest_count > 1:
+          raise new_exception(types.Exception, "Only one positional rest parameter is allowed")
+      params.add(ParameterDecl(binding_name: name, kind: kind, keyword_name: keyword_name, typ: typ))
       i += 1
     elif item.kind == VkComplexSymbol:
       if item.ref.csymbol.len < 2:
@@ -1103,28 +1173,31 @@ proc parse_param_annotations(self: TypeChecker, args: Value): (seq[(string, stri
           positional_rest_count += 1
           if positional_rest_count > 1:
             raise new_exception(types.Exception, "Only one positional rest parameter is allowed")
-          typ = array_type_of(typ)
-        params.add((name, "", typ, is_rest))
+        if name.len > 0 and name != "_" and not (allow_reserved_self and name == "self"):
+          ensure_user_value_name(name, "parameter")
+        params.add(ParameterDecl(
+          binding_name: name,
+          kind: if is_rest: CpkPositionalRest else: CpkPositional,
+          keyword_name: "",
+          typ: typ
+        ))
       i += 1
     elif item.kind == VkArray:
       # Destructuring not typed yet
-      params.add(("_", "", nil, false))
+      params.add(ParameterDecl(binding_name: "_", kind: CpkPositional, keyword_name: "", typ: nil))
       i += 1
     else:
       i += 1
-  return (params, prop_splats)
+  return params
 
 proc rest_param_index(params: seq[ParamType]): int =
   for i, param in params:
-    if param.is_rest:
+    if param.kind == CpkPositionalRest:
       return i
   return -1
 
 proc rest_element_type(self: TypeChecker, param: ParamType): TypeExpr =
-  let resolved = self.resolve(param.typ)
-  if resolved != nil and resolved.kind == TkApplied and resolved.ctor == "Array" and resolved.args.len > 0:
-    return resolved.args[0]
-  return ANY_TYPE
+  self.resolve(effective_type(param.typ))
 
 proc check_expected_arg(self: TypeChecker, expected: TypeExpr, arg: Value, context: string) =
   let arg_type = self.check_expr(arg)
@@ -1210,14 +1283,20 @@ proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], prop
   if ct.kind != TkFn:
     raise new_exception(types.Exception, "Type error: calling non-function in " & context)
   self.ensure_effects_allowed(ct.effects, context)
-  # Split params into positional and keyword-only
+  # Split params into positional, fixed keyword, and keyword-rest
   var pos_params: seq[ParamType] = @[]
   var kw_params = initTable[string, ParamType]()
+  var kw_rest = ParamType(kind: CpkKeywordRest, keyword_name: "", typ: ANY_TYPE)
+  var has_kw_rest = false
   for p in ct.params:
-    if p.label.len > 0:
-      kw_params[p.label] = p
-    else:
+    case p.kind
+    of CpkPositional, CpkPositionalRest:
       pos_params.add(p)
+    of CpkKeyword:
+      kw_params[p.keyword_name] = p
+    of CpkKeywordRest:
+      kw_rest = p
+      has_kw_rest = true
 
   let pos_count = args.len
   let rest_index = rest_param_index(pos_params)
@@ -1265,14 +1344,51 @@ proc check_call(self: TypeChecker, callee_type: TypeExpr, args: seq[Value], prop
           self.unify(kw_params[key_name].typ, arg_type, context)
         except CatchableError as e:
           self.warn("Warning: " & e.msg)
-    elif ct.kind == TkFn and ct.kw_splat:
-      discard self.check_expr(v)
+    elif has_kw_rest:
+      self.check_expected_arg(kw_rest.typ, v, context)
     else:
       if self.strict:
         raise new_exception(types.Exception, "Type error: unexpected keyword argument '" & key_name & "' in " & context)
       else:
         self.warn("Warning: Type error: unexpected keyword argument '" & key_name & "' in " & context)
   return self.resolve_self(ct.ret)
+
+proc bind_receiver_type(self: TypeChecker, t: TypeExpr, recv_type: TypeExpr): TypeExpr =
+  let rt = self.resolve(t)
+  if rt == nil:
+    return ANY_TYPE
+  case rt.kind
+  of TkAny:
+    ANY_TYPE
+  of TkNamed:
+    if rt.name == "Self": self.resolve(recv_type) else: TypeExpr(kind: TkNamed, name: rt.name)
+  of TkApplied:
+    var args: seq[TypeExpr] = @[]
+    for arg in rt.args:
+      args.add(self.bind_receiver_type(arg, recv_type))
+    TypeExpr(kind: TkApplied, ctor: rt.ctor, args: args)
+  of TkUnion:
+    var members: seq[TypeExpr] = @[]
+    for member in rt.members:
+      members.add(self.bind_receiver_type(member, recv_type))
+    TypeExpr(kind: TkUnion, members: members)
+  of TkFn:
+    var params: seq[ParamType] = @[]
+    for param in rt.params:
+      params.add(ParamType(
+        kind: param.kind,
+        keyword_name: param.keyword_name,
+        typ: self.bind_receiver_type(param.typ, recv_type)
+      ))
+    TypeExpr(
+      kind: TkFn,
+      params: params,
+      ret: self.bind_receiver_type(rt.ret, recv_type),
+      receiver: if rt.receiver != nil: self.bind_receiver_type(rt.receiver, recv_type) else: nil,
+      effects: rt.effects
+    )
+  of TkVar:
+    TypeExpr(kind: TkVar, id: rt.id)
 
 proc native_type_from_class_value(self: TypeChecker, class_value: Value): TypeExpr =
   if class_value == NIL or class_value.kind != VkClass:
@@ -1410,12 +1526,7 @@ proc check_method_call(self: TypeChecker, recv_type: TypeExpr, method_name: stri
     let fn_t = self.resolve(mt)
     if fn_t.kind != TkFn:
       return ANY_TYPE
-    # Drop implicit self param
-    var params = fn_t.params
-    if params.len > 0:
-      params = params[1..^1]
-    let fake = TypeExpr(kind: TkFn, params: params, ret: fn_t.ret, variadic: fn_t.variadic, kw_splat: fn_t.kw_splat, effects: fn_t.effects)
-    return self.check_call(fake, args, props, context)
+    return self.check_call(self.bind_receiver_type(fn_t, rt), args, props, context)
   return self.check_native_method_call(rt, method_name, args, props, context)
 
 proc check_super_call(self: TypeChecker, gene: ptr Gene): TypeExpr =
@@ -1449,17 +1560,15 @@ proc check_super_call(self: TypeChecker, gene: ptr Gene): TypeExpr =
   let fn_t = self.resolve(mt)
   if fn_t.kind != TkFn:
     return ANY_TYPE
-  var params = fn_t.params
-  if params.len > 0:
-    params = params[1..^1]
-  let fake = TypeExpr(kind: TkFn, params: params, ret: fn_t.ret, variadic: fn_t.variadic, kw_splat: fn_t.kw_splat, effects: fn_t.effects)
-  return self.check_call(fake, args, gene.props, "super " & member_name)
+  let recv_type = TypeExpr(kind: TkNamed, name: self.current_class)
+  return self.check_call(self.bind_receiver_type(fn_t, recv_type), args, gene.props, "super " & member_name)
 
 proc define_pattern_bindings(self: TypeChecker, pattern: Value, value_type: TypeExpr) =
   case pattern.kind
   of VkSymbol:
     let name = pattern.str
     if name.len > 0 and name != "_":
+      ensure_user_value_name(name, "binding")
       self.define(name, value_type)
   of VkArray:
     var elem_type = ANY_TYPE
@@ -1480,6 +1589,7 @@ proc define_pattern_bindings(self: TypeChecker, pattern: Value, value_type: Type
         bind_name = ""
       if bind_name.len == 0 or bind_name == "_":
         continue
+      ensure_user_value_name(bind_name, "binding")
 
       if child.kind == MatchProp or child.is_prop:
         if child.is_splat:
@@ -1538,6 +1648,8 @@ proc check_var(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   if pattern.kind != VkSymbol:
     return ANY_TYPE
+
+  ensure_user_value_name(name, "variable")
 
   if annotated != nil:
     if gene.children.len > value_index:
@@ -2295,6 +2407,7 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
   elif first.kind in {VkSymbol, VkString}:
     let parsed_name = split_generic_definition_name(first.str)
     name = parsed_name.base_name
+    ensure_user_value_name(name, "function")
     type_params = parsed_name.type_params
     if gene.children.len < 2:
       return ANY_TYPE
@@ -2304,6 +2417,7 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
     let parts = first.ref.csymbol
     if parts.len > 0:
       name = parts[^1]
+      ensure_user_value_name(name, "function")
     if gene.children.len < 2:
       return ANY_TYPE
     args_val = gene.children[1]
@@ -2335,36 +2449,25 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
       effects = self.parse_effect_list(gene.children[body_start + 1])
       body_start += 2
 
-  let (params, prop_splats) = self.parse_param_annotations(args_val)
-  var is_variadic = false
-  var has_self_param = false
-  for (var_name, _, _, is_rest) in params:
-    if var_name == "self":
-      has_self_param = true
-    if is_rest:
-      is_variadic = true
+  let params = self.parse_param_annotations(args_val, allow_reserved_self = name == "__init__")
   var fn_params: seq[ParamType] = @[]
-  # First pass: build parameter types for function signature
-  for (var_name, label, typ, is_rest) in params:
-    let t = if typ != nil: typ else: ANY_TYPE
-    fn_params.add(ParamType(label: label, typ: t, is_rest: is_rest))
+  for param in params:
+    fn_params.add(public_param(param))
 
   # Build function type and define in OUTER scope first
-  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic, kw_splat: prop_splats.len > 0, effects: effects)
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, receiver: nil, effects: effects)
   if name.len > 0 and name != "<unnamed>":
     self.define(name, fn_type)
 
   # Now push scope for function body and define parameters
   self.push_scope()
-  if name == "__init__" and not has_self_param:
+  if name == "__init__":
     let init_self = self.current_init_self()
     let self_type = if init_self != nil: init_self else: TypeExpr(kind: TkNamed, name: "Module")
-    self.define("self", self_type)
-  for i, (var_name, label, typ, is_rest) in params:
-    if var_name.len > 0 and var_name != "_":
-      self.define(var_name, fn_params[i].typ)
-  for prop_name in prop_splats:
-    self.define(prop_name, TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE]))
+    self.define_internal("self", self_type)
+  for param in params:
+    if param.binding_name.len > 0 and param.binding_name != "_":
+      self.define(param.binding_name, param_binding_type(param))
 
   # Also define function name in inner scope for recursion
   if name.len > 0 and name != "<unnamed>":
@@ -2401,24 +2504,17 @@ proc check_block(self: TypeChecker, gene: ptr Gene): TypeExpr =
     args_val = gene.children[0]
     body_start = 1
 
-  let (params, prop_splats) = self.parse_param_annotations(args_val)
-  var is_variadic = false
+  let params = self.parse_param_annotations(args_val)
   var fn_params: seq[ParamType] = @[]
 
-  # Build parameter types
-  for (var_name, label, typ, is_rest) in params:
-    let t = if typ != nil: typ else: ANY_TYPE
-    fn_params.add(ParamType(label: label, typ: t, is_rest: is_rest))
-    if is_rest:
-      is_variadic = true
+  for param in params:
+    fn_params.add(public_param(param))
 
   # Push scope for block body and define parameters
   self.push_scope()
-  for i, (var_name, label, typ, is_rest) in params:
-    if var_name.len > 0 and var_name != "_":
-      self.define(var_name, fn_params[i].typ)
-  for prop_name in prop_splats:
-    self.define(prop_name, TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE]))
+  for param in params:
+    if param.binding_name.len > 0 and param.binding_name != "_":
+      self.define(param.binding_name, param_binding_type(param))
 
   # Type-check body
   let effects: seq[string] = @[]
@@ -2432,7 +2528,7 @@ proc check_block(self: TypeChecker, gene: ptr Gene): TypeExpr =
   self.pop_scope()
 
   # Block returns a function type
-  return TypeExpr(kind: TkFn, params: fn_params, ret: last, variadic: is_variadic, kw_splat: prop_splats.len > 0, effects: effects)
+  return TypeExpr(kind: TkFn, params: fn_params, ret: last, receiver: nil, effects: effects)
 
 proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: ClassInfo): TypeExpr =
   if gene.type.kind == VkSymbol and gene.type.str == "ctor!":
@@ -2462,27 +2558,22 @@ proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Clas
       effects = self.parse_effect_list(gene.children[body_start + 1])
       body_start += 2
 
-  let (params, prop_splats) = self.parse_param_annotations(args_val)
-  var is_variadic = false
+  let saved_class = self.current_class
+  self.current_class = class_name
+  defer: self.current_class = saved_class
+  let params = self.parse_param_annotations(args_val)
   var fn_params: seq[ParamType] = @[]
   self.push_scope()
-  for (var_name, label, typ, is_rest) in params:
-    let t = if typ != nil: typ else: ANY_TYPE
-    fn_params.add(ParamType(label: label, typ: t, is_rest: is_rest))
-    if is_rest:
-      is_variadic = true
-    if var_name.len > 0 and var_name != "_":
-      self.define(var_name, t)
-  for prop_name in prop_splats:
-    self.define(prop_name, TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE]))
+  for param in params:
+    fn_params.add(public_param(param))
+    if param.binding_name.len > 0 and param.binding_name != "_":
+      self.define(param.binding_name, param_binding_type(param))
 
-  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic, kw_splat: prop_splats.len > 0, effects: effects)
+  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, receiver: nil, effects: effects)
   cls.ctor_type = fn_type
 
   let saved_return = self.current_return
-  let saved_class = self.current_class
   self.current_return = return_type
-  self.current_class = class_name
   self.effect_stack.add(effects)
   defer:
     discard self.effect_stack.pop()
@@ -2498,7 +2589,6 @@ proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Clas
       except CatchableError as e:
         self.warn("Warning: " & e.msg)
   self.current_return = saved_return
-  self.current_class = saved_class
   self.pop_scope()
   return fn_type
 
@@ -2510,6 +2600,7 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
     return ANY_TYPE
   let parsed_name = split_generic_definition_name(name_val.str)
   let method_name = parsed_name.base_name
+  ensure_user_value_name(method_name, "method")
   if method_name.ends_with("!"):
     raise new_exception(types.Exception, "Macro-like class methods are not supported; use (method name [args] ...)")
   let type_params = parsed_name.type_params
@@ -2520,6 +2611,9 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
   if type_params.len > 0:
     self.push_type_param_scope(type_params)
     defer: self.pop_type_param_scope()
+  let saved_class = self.current_class
+  self.current_class = class_name
+  defer: self.current_class = saved_class
   var return_type: TypeExpr = ANY_TYPE
   if body_start < gene.children.len:
     let maybe_arrow = gene.children[body_start]
@@ -2539,30 +2633,26 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
       effects = self.parse_effect_list(gene.children[body_start + 1])
       body_start += 2
 
-  let (params, prop_splats) = self.parse_param_annotations(args_val)
-  var is_variadic = false
+  let params = self.parse_param_annotations(args_val)
   var fn_params: seq[ParamType] = @[]
-  # Implicit self param
-  fn_params.add(ParamType(label: "", typ: TypeExpr(kind: TkNamed, name: "Self"), is_rest: false))
   self.push_scope()
-  self.define("self", TypeExpr(kind: TkNamed, name: class_name))
-  for (var_name, label, typ, is_rest) in params:
-    let t = if typ != nil: typ else: ANY_TYPE
-    fn_params.add(ParamType(label: label, typ: t, is_rest: is_rest))
-    if is_rest:
-      is_variadic = true
-    if var_name.len > 0 and var_name != "_":
-      self.define(var_name, t)
-  for prop_name in prop_splats:
-    self.define(prop_name, TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE]))
+  self.define_internal("self", TypeExpr(kind: TkNamed, name: class_name))
+  for param in params:
+    fn_params.add(public_param(param))
+    if param.binding_name.len > 0 and param.binding_name != "_":
+      self.define(param.binding_name, param_binding_type(param))
 
-  let fn_type = TypeExpr(kind: TkFn, params: fn_params, ret: return_type, variadic: is_variadic, kw_splat: prop_splats.len > 0, effects: effects)
+  let fn_type = TypeExpr(
+    kind: TkFn,
+    params: fn_params,
+    ret: return_type,
+    receiver: TypeExpr(kind: TkNamed, name: "Self"),
+    effects: effects
+  )
   cls.methods[method_name] = fn_type
 
   let saved_return = self.current_return
-  let saved_class = self.current_class
   self.current_return = return_type
-  self.current_class = class_name
   self.effect_stack.add(effects)
   defer:
     discard self.effect_stack.pop()
@@ -2578,7 +2668,6 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
       except CatchableError as e:
         self.warn("Warning: " & e.msg)
   self.current_return = saved_return
-  self.current_class = saved_class
   self.pop_scope()
   return fn_type
 
@@ -2589,8 +2678,12 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if name_val.kind != VkSymbol:
     return ANY_TYPE
   let class_name = name_val.str
+  ensure_user_type_name(class_name, "class")
   # Ensure every class declaration gets a stable descriptor entry.
   discard self.intern_type_desc(TypeExpr(kind: TkNamed, name: class_name))
+  let saved_class = self.current_class
+  self.current_class = class_name
+  defer: self.current_class = saved_class
   var body_start = 1
   var parent_name = ""
   if gene.children.len >= 3 and gene.children[1] == "<".to_symbol_value():
@@ -2614,6 +2707,7 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
     if fields_val.kind == VkMap:
       for k, v in map_data(fields_val):
         let key_name = key_to_string(k)
+        ensure_user_value_name(key_name, "field")
         let t = self.parse_type_expr(v)
         cls.fields[key_name] = t
 
@@ -2644,7 +2738,7 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if init_items.len > 0:
     let class_self = TypeExpr(kind: TkNamed, name: "Class")
     self.push_scope()
-    self.define("self", class_self)
+    self.define_internal("self", class_self)
     self.init_self_stack.add(class_self)
     for item in init_items:
       discard self.check_expr(item)
@@ -2670,11 +2764,12 @@ proc check_ns(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   let ns_type = TypeExpr(kind: TkNamed, name: "Namespace")
   if ns_name.len > 0:
+    ensure_user_value_name(ns_name, "namespace")
     self.define(ns_name, ns_type)
 
   if gene.children.len > 1:
     self.push_scope()
-    self.define("self", ns_type)
+    self.define_internal("self", ns_type)
     self.init_self_stack.add(ns_type)
     for i in 1..<gene.children.len:
       discard self.check_expr(gene.children[i])
@@ -2905,6 +3000,7 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
       of "type":
         if gene.children.len >= 2 and gene.children[0].kind == VkSymbol:
           let alias_name = gene.children[0].str
+          ensure_user_type_name(alias_name, "type alias")
           let alias_type = self.parse_type_expr(gene.children[1])
           self.types[alias_name] = alias_type
         elif gene.children.len >= 2 and gene.children[0].kind == VkGene:

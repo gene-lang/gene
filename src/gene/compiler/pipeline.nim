@@ -95,13 +95,17 @@ proc remap_checker_type_id(checker_type_id: TypeId,
                                         output_descs, output_desc_index, depth + 1))
     mapped = TypeDesc(module_path: desc.module_path, kind: TdkUnion, members: members)
   of TdkFn:
-    var params: seq[TypeId] = @[]
+    var params: seq[CallableParamDesc] = @[]
     for param in desc.params:
-      params.add(remap_checker_type_id(param, checker_descs, checker_to_output, checker_visiting,
-                                       output_descs, output_desc_index, depth + 1))
+      params.add(CallableParamDesc(
+        kind: param.kind,
+        keyword_name: param.keyword_name,
+        type_id: remap_checker_type_id(param.type_id, checker_descs, checker_to_output, checker_visiting,
+                                       output_descs, output_desc_index, depth + 1)
+      ))
     let ret = remap_checker_type_id(desc.ret, checker_descs, checker_to_output, checker_visiting,
                                     output_descs, output_desc_index, depth + 1)
-    mapped = TypeDesc(module_path: desc.module_path, kind: TdkFn, params: params, rest_index: desc.rest_index, ret: ret, effects: desc.effects)
+    mapped = TypeDesc(module_path: desc.module_path, kind: TdkFn, params: params, ret: ret, effects: desc.effects)
   else:
     discard
 
