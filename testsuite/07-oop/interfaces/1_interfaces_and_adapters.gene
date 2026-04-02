@@ -1,0 +1,53 @@
+# Interfaces and adapters in current Gene
+# Expected: inline_name=test.txt
+# Expected: inline_read=file contents
+# Expected: external_read=payload
+# Expected: external_after_close=
+# Expected: adapter_age=36
+
+(interface Readable
+  (method read)
+  (method close)
+  (prop name))
+
+(class FileStream
+  (implement Readable
+    (method read []
+      "file contents"))
+  (ctor [name]
+    (/name = name)))
+
+(var fs (Readable (new FileStream "test.txt")))
+(println "inline_name=" fs/name)
+(println "inline_read=" (fs .read))
+
+(class DataBuffer
+  (ctor [data]
+    (/data = data))
+  (method get_data []
+    /data)
+  (method set_data [new_data]
+    (/data = new_data)))
+
+(implement Readable for DataBuffer
+  (method read []
+    (/_genevalue .get_data))
+  (method close []
+    (/_genevalue .set_data "")))
+
+(var buffer (new DataBuffer "payload"))
+(var readable (Readable buffer))
+(println "external_read=" (readable .read))
+(readable .close)
+(println "external_after_close=" (buffer .get_data))
+
+(interface Ageable
+  (method age))
+
+(implement Ageable for Int
+  (ctor [birth_year]
+    (/_geneinternal/birth_year = birth_year))
+  (method age []
+    (/_genevalue - /_geneinternal/birth_year)))
+
+(println "adapter_age=" ((Ageable 2026 1990) .age))

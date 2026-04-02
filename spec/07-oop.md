@@ -10,6 +10,9 @@
   (method get_x _ /x)
   (method get_y _ /y)
   (method sum _ (/x + /y)))
+
+(var p (new Point 3 4))
+[(p .get_x) (p .get_y) (p .sum)]   # => [3 4 7]
 ```
 
 - `/property` reads or writes instance properties
@@ -37,10 +40,20 @@
     (/value = (/value + n))
     /value)
   (method get _ /value))
+
+(var c (new Counter 0))
+[(c .increment 5) c/.get]   # => [5 5]
 ```
 
 ### Method Calls
 ```gene
+(class Counter
+  (ctor [start] (/value = start))
+  (method increment [n]
+    (/value = (/value + n))
+    /value)
+  (method get _ /value))
+
 (var c (new Counter 0))
 (c .increment 5)    # Parenthesized: with arguments
 c/.get              # Slash-dot: no arguments (shorthand)
@@ -67,11 +80,112 @@ If a class defines a `call` method, instances can be invoked like functions:
   (ctor [name age]
     (/name = name)
     (/age = age)))
+
+(var p (new Person "Ada" 37))
+[p/name p/age]   # => ["Ada" 37]
 ```
 
 The `^fields` property declares field names and types as metadata.
 
-## 7.5 Inheritance
+## 7.5 Interfaces
+
+Interfaces declare a visible surface of methods and properties.
+
+```gene
+(interface Readable
+  (method read)
+  (method close)
+  (prop name)
+  (prop closed ^readonly true))
+
+((Readable .class) .name)   # => "Interface"
+```
+
+- `(method name)` declares a method on the interface.
+- `(prop name)` declares a property on the interface.
+- `^readonly true` on a property prevents writes through adapter wrappers created from external implementations.
+
+Interface declarations are currently name-based. Extra argument lists, return annotations, or property type tokens written inside an `interface` body are tolerated by the parser, but they are not used for runtime validation today.
+
+## 7.6 Implementations And Adapters
+
+### Inline Implementation
+
+An inline `implement` inside a class declares that the class natively satisfies the interface.
+
+```gene
+(interface Readable
+  (method read)
+  (prop name))
+
+(class FileStream
+  (implement Readable
+    (method read []
+      "file contents"))
+  (ctor [name]
+    (/name = name)))
+
+(var fs (Readable (new FileStream "test.txt")))
+fs/name     # => "test.txt"
+```
+
+Calling the interface on an inline implementation returns the original object, not an adapter wrapper.
+
+### External Implementation
+
+An external `implement` registers an adapter for an existing class.
+
+```gene
+(interface Readable
+  (method read)
+  (method close))
+
+(class DataBuffer
+  (ctor [data]
+    (/data = data))
+  (method get_data []
+    /data)
+  (method set_data [new_data]
+    (/data = new_data)))
+
+(implement Readable for DataBuffer
+  (method read []
+    (/_genevalue .get_data))
+  (method close []
+    (/_genevalue .set_data "")))
+
+(var buffer (new DataBuffer "payload"))
+(var readable (Readable buffer))
+(readable .read)     # => "payload"
+(readable .close)
+(buffer .get_data)   # => ""
+```
+
+For external implementations:
+
+- Calling the interface creates an adapter wrapper.
+- If an interface property or method is declared but not explicitly implemented, the adapter falls back to a same-name member on the wrapped value.
+- `_genevalue` refers to the wrapped value.
+- `_geneinternal` exposes adapter-owned supplemental state.
+
+### Adapter Constructors
+
+External implementations can define `ctor` to initialize adapter-owned state.
+
+```gene
+(interface Ageable
+  (method age))
+
+(implement Ageable for Int
+  (ctor [birth_year]
+    (/_geneinternal/birth_year = birth_year))
+  (method age []
+    (/_genevalue - /_geneinternal/birth_year)))
+
+((Ageable 2026 1990) .age)   # => 36
+```
+
+## 7.7 Inheritance
 
 ```gene
 (class Shape
@@ -80,35 +194,48 @@ The `^fields` property declares field names and types as metadata.
 (class Circle < Shape
   (ctor [r] (/r = r))
   (method area _ (3.14159 * /r * /r)))
+
+((new Circle 2) .area)   # => 12.56636
 ```
 
 ### Super Calls
 ```gene
+(class BaseCounter
+  (ctor [start]
+    (/value = start))
+  (method add [n]
+    (/value = (/value + n))
+    /value))
+
 (class FastCounter < BaseCounter
   (ctor [start]
     (super .ctor start))      # Call parent constructor
   (method add [n]
     (super .add (n * 2))))    # Call parent method
+
+(var c (new FastCounter 1))
+(c .add 3)   # => 7
 ```
 
 - `(super .method args...)` — call parent's regular method
 - `(super .ctor args...)` — call parent constructor
 - Single inheritance only (one parent class)
 
-## 7.6 Property Access
+## 7.8 Property Access
 
 ```gene
-# Inside methods/constructor: use /
-/x              # Read property
-(/x = value)    # Write property
+(class Point
+  (ctor [x y]
+    (/x = x)
+    (/y = y)))
 
-# Outside: use instance/property
 (var p (new Point 3 4))
 p/x             # => 3
-(p/x = 10)     # Write
+(p/x = 10)
+[p/x p/y]       # => [10 4]
 ```
 
-## 7.7 `on_member_missing`
+## 7.9 `on_member_missing`
 
 Dynamic member resolution for namespaces:
 
@@ -118,14 +245,17 @@ Dynamic member resolution for namespaces:
     (fn [name]
       #"Dynamic/#{name}")))
 
-Dynamic/foo    # => "Dynamic/foo"
+Dynamic/foo   # => "Dynamic/foo"
 ```
 
 ---
 
 ## Potential Improvements
 
-- **Interfaces / protocols**: No way to declare that multiple classes implement the same contract. Must rely on duck typing.
+- **Interface member typing**: Interface declarations do not yet enforce argument types, return types, or property types at runtime.
+- **Interface inheritance / composition**: Interfaces are flat declarations; there is no `extends`, mixin, or composition mechanism between interfaces.
+- **External adapter mapping syntax**: Gene-level external implementations support computed methods and adapter constructors, but not explicit rename/hide declarations for methods or properties.
+- **Inline readonly semantics**: `^readonly` on interface properties is enforced on adapter wrappers from external implementations, but inline implementations return the original object and do not add write guards.
 - **Multiple inheritance / mixins**: Only single inheritance is supported. Mixins or trait composition would reduce duplication.
 - **Access control**: All properties and methods are public. No `private`, `protected`, or module-private visibility.
 - **Static methods**: No dedicated `static` method syntax. Must use namespace functions instead.

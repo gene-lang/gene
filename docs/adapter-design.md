@@ -1,5 +1,8 @@
 # Adapter Design
 
+Status: design-oriented notes for the implemented interface/adapter subsystem.
+The canonical implementation-facing behavior now lives in [spec/07-oop.md](/Users/gcao/gene-workspace/gene-old/spec/07-oop.md).
+
 ## Overview
 
 An Adapter is a special wrapper that changes one object's visible behavior and shape without mutating the original. Adapters are the *mechanism* (how mapping works); Interfaces are the *face* (what consumers see). No adapter exists without an interface — the interface defines the visible surface, the adapter provides the plumbing.
