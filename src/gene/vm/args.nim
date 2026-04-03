@@ -37,8 +37,11 @@ template is_simple_positional(matcher: RootMatcher, arg_count: int): bool =
   matcher.hint_mode == MhSimpleData and matcher.children.len == arg_count
 
 template ensure_scope_capacity(scope: Scope, count: int) =
-  while scope.members.len < count:
-    scope.members.add(NIL)
+  if scope.members.len < count:
+    let old_len = scope.members.len
+    scope.members.setLen(count)
+    for idx in old_len..<count:
+      scope.members[idx] = NIL
 
 proc key_to_name(key: Key): string {.inline.} =
   try:
@@ -50,8 +53,11 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
                       pos_count: int, keywords: seq[(Key, Value)],
                       scope: Scope) {.inline.} =
   ## Shared argument binding logic for positional/keyword combinations.
-  while scope.members.len < matcher.children.len:
-    scope.members.add(NIL)
+  if scope.members.len < matcher.children.len:
+    let old_len = scope.members.len
+    scope.members.setLen(matcher.children.len)
+    for idx in old_len..<matcher.children.len:
+      scope.members[idx] = NIL
   for i in 0..<matcher.children.len:
     scope.members[i] = NIL
 
