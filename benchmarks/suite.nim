@@ -63,14 +63,14 @@ when isMainModule:
 
   # --- 1. Function call (1 arg) ---
   runBench("fn_call_1arg", fmt"""
-    (fn f1 [n] (n + 1))
+    (fn f1 [n] nil)
     (repeat {REPEATS}
 {unroll("(f1 42)")})
   """)
 
   # --- 2. Function call (5 args) ---
   runBench("fn_call_5args", fmt"""
-    (fn f5 [a b c d e] (a + b + c + d + e))
+    (fn f5 [a b c d e] nil)
     (repeat {REPEATS}
 {unroll("(f5 1 2 3 4 5)")})
   """)
@@ -78,8 +78,8 @@ when isMainModule:
   # --- 3. Method call (1 arg) ---
   runBench("method_call_1arg", fmt"""
     (class C
-      (ctor [] (/n = 0))
-      (method m1 [v] (/n = (/n + v))))
+      (ctor [] nil)
+      (method m1 [v] nil))
     (var c (new C))
     (repeat {REPEATS}
 {unroll("(c .m1 1)")})
@@ -88,8 +88,8 @@ when isMainModule:
   # --- 4. Method call (5 args) ---
   runBench("method_call_5args", fmt"""
     (class C
-      (ctor [] (/n = 0))
-      (method m5 [a b c d e] (/n = (/n + a + b + c + d + e))))
+      (ctor [] nil)
+      (method m5 [a b c d e] nil))
     (var c (new C))
     (repeat {REPEATS}
 {unroll("(c .m5 1 2 3 4 5)")})
