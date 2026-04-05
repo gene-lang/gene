@@ -390,6 +390,10 @@ proc emitBlr*(buf: CodeBuffer, reg: Arm64Reg) =
   let instr = 0xD63F_0000'u32 or (uint32(ord(reg) and 0x1F) shl 5)
   buf.emitU32(instr)
 
+const
+  CACHE_REGS* = [X9, X10, X11, X12, X13, X14, X15]
+  CACHE_EMPTY* = -1'i32
+
 proc newCodegenContext*(fn: HirFunction): CodegenContext =
   result = CodegenContext(
     buf: newCodeBuffer(),
@@ -435,10 +439,6 @@ proc loadRegF64*(ctx: CodegenContext, dst: DReg, hirReg: HirReg) =
 proc storeRegF64*(ctx: CodegenContext, hirReg: HirReg, src: DReg) =
   ## Store FP D-register to HIR register on stack
   ctx.buf.emitFStr(src, ctx.regOffset(hirReg))
-
-const
-  CACHE_REGS = [X9, X10, X11, X12, X13, X14, X15]
-  CACHE_EMPTY = -1'i32
 
 proc invalidateCache*(ctx: CodegenContext) {.inline.} =
   for i in 0..<ctx.readCache.len:
@@ -494,6 +494,20 @@ proc genOp*(ctx: CodegenContext, op: HirOp)
 proc genConstI64*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitMovImm64(X0, op.constI64)
   ctx.cachedStore(op.dest, X0)
+
+proc genConstBool*(ctx: CodegenContext, op: HirOp) =
+  let val: int64 = if op.constBool: 1 else: 0
+  ctx.buf.emitMovImm64(X0, val)
+  ctx.cachedStore(op.dest, X0)
+
+proc genCopy*(ctx: CodegenContext, op: HirOp) =
+  ## Copy one HIR register to another (used for variable assignment)
+  if op.destType == HtF64:
+    ctx.loadRegF64(D0, op.unaryArg)
+    ctx.storeRegF64(op.dest, D0)
+  else:
+    ctx.cachedLoad(X0, op.unaryArg)
+    ctx.cachedStore(op.dest, X0)
 
 proc genAddI64*(ctx: CodegenContext, op: HirOp) =
   ctx.cachedLoad(X0, op.binLeft)
@@ -736,6 +750,8 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   case op.kind
   of HokConstI64: ctx.genConstI64(op)
   of HokConstF64: ctx.genConstF64(op)
+  of HokConstBool: ctx.genConstBool(op)
+  of HokCopy: ctx.genCopy(op)
   of HokAddI64: ctx.genAddI64(op)
   of HokSubI64: ctx.genSubI64(op)
   of HokMulI64: ctx.genMulI64(op)

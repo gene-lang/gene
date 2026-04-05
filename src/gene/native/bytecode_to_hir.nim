@@ -561,6 +561,51 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     ctx.push(resultReg, vt)
     pc += 1
 
+  of IkVar:
+    # Local variable declaration: pop initializer, store to variable's HIR register
+    let varIdx = inst.arg0.int64.int32
+    let initVal = ctx.pop()
+    # Track the variable's type from its initializer
+    ctx.varTypes[varIdx] = initVal.typ
+    # Ensure the builder has enough registers allocated for this variable index
+    while ctx.builder.nextReg <= varIdx:
+      discard ctx.builder.allocReg()
+    # Copy the initializer value to the variable's register
+    let varReg = newHirReg(varIdx)
+    ctx.builder.emit(HirOp(kind: HokCopy, dest: varReg, destType: initVal.typ, unaryArg: initVal.reg))
+    # IkVar also pushes the value onto the stack
+    ctx.push(varReg, initVal.typ)
+
+  of IkVarAssign:
+    # Variable assignment: peek top of stack (value stays), store to variable's register
+    let varIdx = inst.arg0.int64.int32
+    let newVal = ctx.peek()
+    # Update type tracking
+    ctx.varTypes[varIdx] = newVal.typ
+    let varReg = newHirReg(varIdx)
+    ctx.builder.emit(HirOp(kind: HokCopy, dest: varReg, destType: newVal.typ, unaryArg: newVal.reg))
+
+  of IkIncVar:
+    # Increment variable by 1, push result
+    let varIdx = inst.arg0.int64.int32
+    let vt = ctx.varType(varIdx)
+    let varReg = newHirReg(varIdx)
+    let oneReg = ctx.builder.emitConstI64(1)
+    let resultReg = ctx.emitAdd(varReg, oneReg, vt)
+    # Store back to the variable register
+    ctx.builder.emit(HirOp(kind: HokCopy, dest: varReg, destType: vt, unaryArg: resultReg))
+    ctx.push(varReg, vt)
+
+  of IkDecVar:
+    # Decrement variable by 1, push result
+    let varIdx = inst.arg0.int64.int32
+    let vt = ctx.varType(varIdx)
+    let varReg = newHirReg(varIdx)
+    let oneReg = ctx.builder.emitConstI64(1)
+    let resultReg = ctx.emitSub(varReg, oneReg, vt)
+    ctx.builder.emit(HirOp(kind: HokCopy, dest: varReg, destType: vt, unaryArg: resultReg))
+    ctx.push(varReg, vt)
+
   of IkData:
     discard
 
@@ -825,6 +870,74 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     let resultReg = ctx.emitNe(left.reg, right.reg, t)
     ctx.push(resultReg, HtBool)
 
+  of IkNot:
+    let value = ctx.pop()
+    # Not: if value is truthy, push false; else push true
+    # For typed native code, this is: result = (value == 0)
+    let zeroReg = ctx.builder.emitConstI64(0)
+    let resultReg = ctx.emitEq(value.reg, zeroReg, HtI64)
+    ctx.push(resultReg, HtBool)
+
+  of IkAnd:
+    # Short-circuit AND: if first is truthy, result is second; else result is first
+    # In native typed code, treat as: if first != 0 then second else first
+    let second = ctx.pop()
+    let first = ctx.pop()
+    # For typed native code with booleans/ints, we use: first & second (bitwise AND works for bools)
+    # More accurate: result = if first then second else first
+    # Simple approach for bools: AND = a * b (both 0/1), for ints: emit conditional
+    # Use simple bitwise AND which is correct for bool values
+    let resultReg = ctx.builder.allocReg()
+    ctx.builder.emit(HirOp(kind: HokMulI64, dest: resultReg, destType: HtI64, binLeft: first.reg, binRight: second.reg))
+    ctx.push(resultReg, HtI64)
+
+  of IkOr:
+    # Short-circuit OR: if first is truthy, result is first; else result is second
+    # Simple approach: result = if first != 0 then first else second
+    # For bools: OR = 1 - (1-a)*(1-b), but simpler: a + b - a*b or just a | b
+    # Since these are 0/1 bools, bitwise OR works
+    let second = ctx.pop()
+    let first = ctx.pop()
+    let resultReg = ctx.builder.allocReg()
+    # Use: result = first + second - first*second (correct for 0/1 values)
+    let prodReg = ctx.builder.allocReg()
+    ctx.builder.emit(HirOp(kind: HokMulI64, dest: prodReg, destType: HtI64, binLeft: first.reg, binRight: second.reg))
+    let sumReg = ctx.builder.emitAddI64(first.reg, second.reg)
+    ctx.builder.emit(HirOp(kind: HokSubI64, dest: resultReg, destType: HtI64, binLeft: sumReg, binRight: prodReg))
+    ctx.push(resultReg, HtI64)
+
+  of IkLoopStart, IkLoopEnd:
+    # Loop markers — no-ops in both VM and native. The labels are used by
+    # IkContinue/IkBreak to find jump targets.
+    discard
+
+  of IkContinue:
+    # Jump to loop start label
+    let label = inst.arg0.int64.int
+    if label >= 0:
+      let targetBlock = ctx.getOrCreateBlock(label, fmt"loop_{label}")
+      ctx.builder.emitJump(targetBlock)
+      ctx.scheduleBlock(label)
+    return false
+
+  of IkBreak:
+    # Jump to loop end label
+    let label = inst.arg0.int64.int
+    if label >= 0:
+      let targetBlock = ctx.getOrCreateBlock(label, fmt"break_{label}")
+      ctx.builder.emitJump(targetBlock)
+      ctx.scheduleBlock(label)
+    return false
+
+  of IkPushNil:
+    let constReg = ctx.builder.emitConstI64(0)
+    ctx.push(constReg, HtI64)
+
+  of IkDup:
+    if ctx.stack.len > 0:
+      let top = ctx.peek()
+      ctx.push(top.reg, top.typ, top.fnName, top.callable)
+
   of IkPop:
     if ctx.stack.len > 0:
       discard ctx.pop()
@@ -1040,6 +1153,16 @@ proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool =
     of IkGeneStartDefault, IkGeneAddChild, IkGeneAdd,
        IkGeneSetProp, IkGeneSetPropValue, IkGenePropsSpread, IkGeneEnd:
       discard
+    of IkVar, IkVarAssign:
+      discard  # Local variable ops — handled in convertInstruction
+    of IkIncVar, IkDecVar:
+      discard  # Increment/decrement — handled in convertInstruction
+    of IkNot, IkAnd, IkOr:
+      discard  # Boolean ops — handled in convertInstruction
+    of IkLoopStart, IkLoopEnd, IkContinue, IkBreak:
+      discard  # Loop control — handled in convertInstruction
+    of IkPushNil, IkDup:
+      discard  # Stack ops — handled in convertInstruction
     of IkStart, IkJumpIfFalse, IkJump, IkJumpIfMatchSuccess,
        IkAdd, IkSub, IkMul, IkDiv, IkMod, IkNeg,
        IkLt, IkLe, IkGt, IkGe, IkEq, IkNe,

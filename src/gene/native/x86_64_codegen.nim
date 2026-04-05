@@ -500,6 +500,15 @@ proc genConstI64*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitMovRegImm64(RAX, op.constI64)
   ctx.storeReg(op.dest, RAX)
 
+proc genConstBool*(ctx: CodegenContext, op: HirOp) =
+  let val: int64 = if op.constBool: 1 else: 0
+  ctx.buf.emitMovRegImm64(RAX, val)
+  ctx.storeReg(op.dest, RAX)
+
+proc genCopy*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.unaryArg)
+  ctx.storeReg(op.dest, RAX)
+
 proc genAddI64*(ctx: CodegenContext, op: HirOp) =
   ctx.loadReg(RAX, op.binLeft)
   ctx.loadReg(RCX, op.binRight)
@@ -763,6 +772,8 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   case op.kind
   of HokConstI64: ctx.genConstI64(op)
   of HokConstF64: ctx.genConstF64(op)
+  of HokConstBool: ctx.genConstBool(op)
+  of HokCopy: ctx.genCopy(op)
   of HokAddI64: ctx.genAddI64(op)
   of HokSubI64: ctx.genSubI64(op)
   of HokMulI64: ctx.genMulI64(op)

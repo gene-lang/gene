@@ -240,7 +240,7 @@ proc allocReg*(b: HirBuilder): HirReg =
   result = newHirReg(b.nextReg)
   b.nextReg.inc
 
-proc emit(b: HirBuilder, op: HirOp) =
+proc emit*(b: HirBuilder, op: HirOp) =
   b.currentBlockRef.ops.add(op)
 
 # ==================== Emit Operations ====================
