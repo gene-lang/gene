@@ -5553,17 +5553,18 @@ proc exec*(self: ptr VirtualMachine): Value =
         when not defined(release):
           if call_info.hasBase and call_info.count != 0:
             raise new_exception(types.Exception, fmt"IkUnifiedMethodCall0 expected 0 args, got {call_info.count}")
-        let method_name = inst.arg0.str
+        let method_key_0 = cast[Key](inst.arg0)
+        template method_name_0(): string = inst.arg0.str  # computed only when used
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, @[], @[]):
+          if call_super_method(self, obj, method_name_0(), @[], @[]):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
         if obj.kind == VkAdapter:
-          self.frame.push(dispatch_adapter_method(self, obj, method_name, @[]))
+          self.frame.push(dispatch_adapter_method(self, obj, method_name_0(), @[]))
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -5579,7 +5580,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             if cache.class != nil and cache.class == value_class and cache.class_version == value_class.version and cache.cached_method != nil:
               meth = cache.cached_method
             else:
-              meth = value_class.get_method(method_name)
+              meth = value_class.get_method(method_key_0)
               if meth != nil:
                 cache.class = value_class
                 cache.class_version = value_class.version
@@ -5591,7 +5592,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               inst = self.cu.instructions[self.pc].addr
               continue
 
-          if call_value_method(self, obj, method_name, []):
+          if call_value_method(self, obj, method_name_0(), []):
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
@@ -5611,10 +5612,10 @@ proc exec*(self: ptr VirtualMachine): Value =
             meth = cache.cached_method
           else:
             # CACHE MISS: Look up method and cache it
-            meth = class.get_method(method_name)
+            meth = class.get_method(method_key_0)
             if meth != nil:
               cache.class = class
-              cache.class_version = class.version
+              cache.class_version = cache.class.version
               cache.cached_method = meth
 
           if meth != nil:
@@ -5693,28 +5694,26 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
-            if self.call_missing_method(obj, class, method_name, @[], @[]):
+            if self.call_missing_method(obj, class, method_name_0(), @[], @[]):
               inst = self.cu.instructions[self.pc].addr
               continue
-            not_allowed("Method " & method_name & " not found on instance")
+            not_allowed("Method " & method_name_0() & " not found on instance")
         of VkString, VkArray, VkMap, VkRange, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
-          # Use template to get class
+          # Use template to get class (dead code for value types — handled by fast path above)
           let value_class = get_value_class(obj)
           if value_class == nil:
             not_allowed($obj.kind & " class not initialized")
 
-          let method_key = method_name.to_key()
-          if value_class.methods.hasKey(method_key):
-            let meth = value_class.methods[method_key]
+          if value_class.methods.hasKey(method_key_0):
+            let meth = value_class.methods[method_key_0]
             case meth.callable.kind:
             of VkNativeFn:
-              # Method call with self as first argument
               let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
               self.frame.push(result)
             else:
               not_allowed($obj.kind & " method must be a native function")
           else:
-            not_allowed("Method " & method_name & " not found on " & $obj.kind)
+            not_allowed("Method " & method_name_0() & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
@@ -5726,19 +5725,20 @@ proc exec*(self: ptr VirtualMachine): Value =
         when not defined(release):
           if call_info.hasBase and call_info.count != 1:
             raise new_exception(types.Exception, fmt"IkUnifiedMethodCall1 expected 1 arg, got {call_info.count}")
-        let method_name = inst.arg0.str
+        let method_key_1 = cast[Key](inst.arg0)
+        template method_name_1(): string = inst.arg0.str
         let arg = self.frame.pop()
         let obj = self.frame.pop()
         if obj.kind == VkSuper:
           let saved_frame = self.frame
-          if call_super_method(self, obj, method_name, [arg], @[]):
+          if call_super_method(self, obj, method_name_1(), [arg], @[]):
             if self.frame == saved_frame:
               self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
 
         if obj.kind == VkAdapter:
-          self.frame.push(dispatch_adapter_method(self, obj, method_name, @[arg]))
+          self.frame.push(dispatch_adapter_method(self, obj, method_name_1(), @[arg]))
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -5754,7 +5754,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             if cache.class != nil and cache.class == value_class and cache.class_version == value_class.version and cache.cached_method != nil:
               meth = cache.cached_method
             else:
-              meth = value_class.get_method(method_name)
+              meth = value_class.get_method(method_key_1)
               if meth != nil:
                 cache.class = value_class
                 cache.class_version = value_class.version
@@ -5766,7 +5766,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               inst = self.cu.instructions[self.pc].addr
               continue
 
-          if call_value_method(self, obj, method_name, [arg]):
+          if call_value_method(self, obj, method_name_1(), [arg]):
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
@@ -5786,7 +5786,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             meth = cache.cached_method
           else:
             # CACHE MISS: Look up method and cache it
-            meth = class.get_method(method_name)
+            meth = class.get_method(method_key_1)
             if meth != nil:
               cache.class = class
               cache.class_version = class.version
@@ -5877,17 +5877,17 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
-            if self.call_missing_method(obj, class, method_name, [arg], @[]):
+            if self.call_missing_method(obj, class, method_name_1(), [arg], @[]):
               inst = self.cu.instructions[self.pc].addr
               continue
-            not_allowed("Method " & method_name & " not found on instance")
+            not_allowed("Method " & method_name_1() & " not found on instance")
         of VkString, VkArray, VkMap, VkRange, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
-          # Use template to get class
+          # Use template to get class (dead code — handled by fast path above)
           let value_class = get_value_class(obj)
           if value_class == nil:
             not_allowed($obj.kind & " class not initialized")
 
-          let method_key = method_name.to_key()
+          let method_key = method_key_1
           if value_class.methods.hasKey(method_key):
             let meth = value_class.methods[method_key]
             case meth.callable.kind:
@@ -5898,7 +5898,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed($obj.kind & " method must be a native function")
           else:
-            not_allowed("Method " & method_name & " not found on " & $obj.kind)
+            not_allowed("Method " & method_name_1() & " not found on " & $obj.kind)
         else:
           not_allowed("Unified method call not supported for " & $obj.kind)
         {.pop}
