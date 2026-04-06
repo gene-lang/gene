@@ -379,6 +379,10 @@ proc emitBoxI64*(b: HirBuilder, value: HirReg): HirReg =
   result = b.allocReg()
   b.emit(HirOp(kind: HokBoxI64, dest: result, destType: HtValue, unaryArg: value))
 
+proc emitBoxF64*(b: HirBuilder, value: HirReg): HirReg =
+  result = b.allocReg()
+  b.emit(HirOp(kind: HokBoxF64, dest: result, destType: HtValue, unaryArg: value))
+
 proc emitUnboxI64*(b: HirBuilder, value: HirReg): HirReg =
   result = b.allocReg()
   b.emit(HirOp(kind: HokUnboxI64, dest: result, destType: HtI64, unaryArg: value))

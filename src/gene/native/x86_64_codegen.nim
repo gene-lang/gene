@@ -768,6 +768,19 @@ proc genUnboxString*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitAndRegReg(RAX, RCX)
   ctx.storeReg(op.dest, RAX)
 
+proc genBoxI64*(ctx: CodegenContext, op: HirOp) =
+  const SMALL_INT_TAG_U64 = 0xFFF2_0000_0000_0000'u64
+  ctx.loadReg(RAX, op.unaryArg)
+  ctx.buf.emitMovRegImm64(RCX, cast[int64](PAYLOAD_MASK_U64))
+  ctx.buf.emitAndRegReg(RAX, RCX)
+  ctx.buf.emitMovRegImm64(RCX, cast[int64](SMALL_INT_TAG_U64))
+  ctx.buf.emitOrRegReg(RAX, RCX)
+  ctx.storeReg(op.dest, RAX)
+
+proc genBoxF64*(ctx: CodegenContext, op: HirOp) =
+  ctx.loadReg(RAX, op.unaryArg)
+  ctx.storeReg(op.dest, RAX)
+
 proc genOp*(ctx: CodegenContext, op: HirOp) =
   case op.kind
   of HokConstI64: ctx.genConstI64(op)
@@ -805,6 +818,8 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokCallVM: ctx.genCallVM(op)
   of HokBoxString: ctx.genBoxString(op)
   of HokUnboxString: ctx.genUnboxString(op)
+  of HokBoxI64: ctx.genBoxI64(op)
+  of HokBoxF64: ctx.genBoxF64(op)
   else:
     raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
 

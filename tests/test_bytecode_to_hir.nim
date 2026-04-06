@@ -133,8 +133,8 @@ proc main() =
     const MAP_JIT_FLAG = when defined(macosx): 0x800.cint else: 0.cint
 
     when defined(macosx):
+      proc sys_icache_invalidate(start: pointer, size: csize_t) {.importc, header: "<libkern/OSCacheControl.h>".}
       proc pthread_jit_write_protect_np(enable: cint) {.importc.}
-    proc clear_cache(start, `end`: ptr char) {.importc: "__builtin___clear_cache".}
 
     type FibFunc = proc(ctx: ptr NativeContext, n: int64): int64 {.cdecl.}
 
@@ -149,12 +149,10 @@ proc main() =
     else:
       when defined(macosx):
         pthread_jit_write_protect_np(0)
-      # Copy code to executable memory
       copyMem(mem, machineCode[0].unsafeAddr, codeSize)
       when defined(macosx):
         pthread_jit_write_protect_np(1)
-
-      clear_cache(cast[ptr char](mem), cast[ptr char](cast[uint64](mem) + uint64(codeSize)))
+        sys_icache_invalidate(mem, codeSize.csize_t)
 
       # Cast to function pointer and call
       let fib = cast[FibFunc](mem)

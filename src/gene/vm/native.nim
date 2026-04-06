@@ -7,20 +7,27 @@ proc native_arg_type_id(f: Function, idx: int): TypeId {.inline.} =
   else:
     result = NO_TYPE_ID
 
-# Convert args to int64 (uniform ABI: floats bitcast; strings pass payload pointer).
+# Convert args to int64 (uniform ABI: floats bitcast; strings pass payload pointer;
+# arrays/maps/other pass raw NaN-boxed bits).
 proc arg_to_i64(v: Value, tid: TypeId): int64 {.inline.} =
   case tid
   of BUILTIN_TYPE_FLOAT_ID:
     result = cast[int64](v.to_float())
   of BUILTIN_TYPE_STRING_ID:
     result = cast[int64](cast[uint64](v) and PAYLOAD_MASK)
+  of BUILTIN_TYPE_INT_ID:
+    result = v.to_int()
+  of BUILTIN_TYPE_ARRAY_ID, BUILTIN_TYPE_MAP_ID:
+    # Pass raw NaN-boxed Value bits for compound types
+    result = cast[int64](v.raw)
   else:
+    # For unknown types or dynamic dispatch, pass raw bits
     if v.kind == VkFloat:
       result = cast[int64](v.to_float())
-    elif v.kind == VkString:
-      result = cast[int64](cast[uint64](v) and PAYLOAD_MASK)
-    else:
+    elif v.kind == VkInt:
       result = v.to_int()
+    else:
+      result = cast[int64](v.raw)
 
 type
   NativeFn0 = proc(ctx: ptr NativeContext): int64 {.cdecl.}

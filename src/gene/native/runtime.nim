@@ -28,18 +28,24 @@ when defined(posix):
   import std/posix
   when defined(macosx):
     proc sys_icache_invalidate(start: pointer, size: csize_t) {.importc, header: "<libkern/OSCacheControl.h>".}
-  proc clear_cache(start, `end`: ptr char) {.inline.} =
-    when defined(macosx):
+    proc clear_cache(start, `end`: ptr char) {.inline.} =
       sys_icache_invalidate(start, cast[uint](`end`) - cast[uint](start))
-    elif defined(amd64):
-      # x86_64 maintains cache coherency in hardware — no flush needed
-      discard
-    else:
-      # ARM/other: use __builtin___clear_cache (available on GCC/Clang for ARM)
-      proc builtin_clear_cache(start, `end`: pointer) {.importc: "__builtin___clear_cache", nodecl.}
-      builtin_clear_cache(start, `end`)
-  when defined(macosx):
     proc pthread_jit_write_protect_np(enable: cint) {.importc.}
+  elif defined(amd64):
+    proc clear_cache(start, `end`: ptr char) {.inline.} =
+      discard  # x86_64 maintains cache coherency in hardware
+  elif defined(arm64) or defined(aarch64):
+    # Linux ARM64: use compiler built-in via C header
+    {.emit: """
+static inline void gene_clear_icache(char* start, char* end) {
+  __builtin___clear_cache(start, end);
+}
+""".}
+    proc gene_clear_icache(start, `end`: ptr char) {.importc, nodecl.}
+    proc clear_cache(start, `end`: ptr char) {.inline.} =
+      gene_clear_icache(start, `end`)
+  else:
+    {.error: "Native codegen: unsupported platform for cache flush".}
 
 proc validate_hir(fn: HirFunction): bool =
   for blk in fn.blocks:
@@ -50,7 +56,8 @@ proc validate_hir(fn: HirFunction): bool =
          HokLeI64, HokLtI64, HokGeI64, HokGtI64, HokEqI64, HokNeI64,
          HokAddF64, HokSubF64, HokMulF64, HokDivF64, HokModF64, HokNegF64,
          HokLeF64, HokLtF64, HokGeF64, HokGtF64, HokEqF64, HokNeF64,
-         HokBr, HokJump, HokRet, HokCall, HokCallVM, HokBoxString, HokUnboxString:
+         HokBr, HokJump, HokRet, HokCall, HokCallVM,
+         HokBoxString, HokUnboxString, HokBoxI64, HokBoxF64:
         if op.kind == HokCall and op.callTarget != fn.name:
           return false
       else:

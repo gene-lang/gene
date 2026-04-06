@@ -20,6 +20,7 @@ type
   StackSlot = object
     reg: HirReg
     typ: HirType
+    typeId: TypeId       ## Original TypeId (preserves Array/Map for method resolution)
     fnName: string
     callable: Value
 
@@ -36,6 +37,9 @@ type
 
     # Map variable index -> HIR type (from parameter annotations)
     varTypes: Table[int32, HirType]
+
+    # Map variable index -> original TypeId (preserves Array/Map distinction lost by HtValue)
+    varTypeIds: Table[int32, TypeId]
 
     # Abstract stack simulation
     stack: seq[StackSlot]
@@ -188,7 +192,10 @@ proc getDescriptorIndex(ctx: ConversionContext, callable: Value,
 # ==================== Stack Operations ====================
 
 proc push(ctx: ConversionContext, reg: HirReg, typ: HirType, fnName: string = "", callable: Value = NIL) =
-  ctx.stack.add(StackSlot(reg: reg, typ: typ, fnName: fnName, callable: callable))
+  ctx.stack.add(StackSlot(reg: reg, typ: typ, typeId: NO_TYPE_ID, fnName: fnName, callable: callable))
+
+proc pushTyped(ctx: ConversionContext, reg: HirReg, typ: HirType, tid: TypeId) =
+  ctx.stack.add(StackSlot(reg: reg, typ: typ, typeId: tid))
 
 proc pop(ctx: ConversionContext): StackSlot =
   if ctx.stack.len == 0:
@@ -322,6 +329,10 @@ proc ensureValueReg(ctx: ConversionContext, slot: StackSlot): HirReg =
     slot.reg
   of HtString:
     ctx.builder.emitBoxString(slot.reg)
+  of HtI64, HtBool:
+    ctx.builder.emitBoxI64(slot.reg)
+  of HtF64:
+    ctx.builder.emitBoxF64(slot.reg)
   else:
     raise newException(ValueError, "Cannot box HIR type to Value: " & $slot.typ)
 
@@ -379,6 +390,24 @@ proc resolveClassForType(typ: HirType): Class =
   else:
     nil
 
+proc resolveClassForTypeId(tid: TypeId): Class =
+  ## Resolve class from TypeId — handles Array/Map which map to HtValue
+  case tid
+  of BUILTIN_TYPE_INT_ID:
+    if App.app.int_class.kind == VkClass: App.app.int_class.ref.class else: nil
+  of BUILTIN_TYPE_FLOAT_ID:
+    if App.app.float_class.kind == VkClass: App.app.float_class.ref.class else: nil
+  of BUILTIN_TYPE_STRING_ID:
+    if App.app.string_class.kind == VkClass: App.app.string_class.ref.class else: nil
+  of BUILTIN_TYPE_BOOL_ID:
+    if App.app.bool_class.kind == VkClass: App.app.bool_class.ref.class else: nil
+  of BUILTIN_TYPE_ARRAY_ID:
+    if App.app.array_class.kind == VkClass: App.app.array_class.ref.class else: nil
+  of BUILTIN_TYPE_MAP_ID:
+    if App.app.map_class.kind == VkClass: App.app.map_class.ref.class else: nil
+  else:
+    nil
+
 proc emitResolvedCall(ctx: ConversionContext,
                       callable: Value,
                       args: seq[StackSlot],
@@ -392,7 +421,10 @@ proc emitResolvedCall(ctx: ConversionContext,
   ctx.pushCallResult(resultReg, rawType, desiredType)
 
 proc emitMethodCall(ctx: ConversionContext, obj: StackSlot, methodName: string, args: seq[StackSlot]) =
-  let cls = resolveClassForType(obj.typ)
+  var cls = resolveClassForType(obj.typ)
+  # For HtValue receivers, try resolving from the original TypeId (Array, Map, etc.)
+  if cls.is_nil and obj.typeId != NO_TYPE_ID:
+    cls = resolveClassForTypeId(obj.typeId)
   if cls.is_nil:
     raise newException(ValueError, "Method call receiver type not natively resolvable: " & $obj.typ)
   let meth = cls.get_method(methodName)
@@ -623,7 +655,8 @@ proc convertInstruction(ctx: ConversionContext, pc: var int): bool =
     let varIdx = inst.arg0.int64.int
     let paramReg = newHirReg(varIdx.int32)
     let vt = ctx.varType(varIdx.int32)
-    ctx.push(paramReg, vt)
+    let tid = if ctx.varTypeIds.hasKey(varIdx.int32): ctx.varTypeIds[varIdx.int32] else: NO_TYPE_ID
+    ctx.pushTyped(paramReg, vt, tid)
 
   of IkVarResolveInherited:
     let varIdx = inst.arg0.int64.int32
@@ -1062,8 +1095,14 @@ proc bytecodeToHir*(cu: CompilationUnit, fn: Function): HirFunction =
 
   # Build variable type map from parameters
   var varTypes = initTable[int32, HirType]()
+  var varTypeIds = initTable[int32, TypeId]()
   for i, param in info.params:
     varTypes[i.int32] = param.typ
+  # Preserve original TypeIds from matcher for method resolution on HtValue params
+  if cu.matcher != nil:
+    for i, child in cu.matcher.children:
+      if child.type_id != NO_TYPE_ID:
+        varTypeIds[i.int32] = child.type_id
 
   # Create conversion context
   let ctx = ConversionContext(
@@ -1076,6 +1115,7 @@ proc bytecodeToHir*(cu: CompilationUnit, fn: Function): HirFunction =
     ns: if fn != nil: fn.ns else: nil,
     scopeTracker: if fn != nil: fn.scope_tracker else: nil,
     varTypes: varTypes,
+    varTypeIds: varTypeIds,
     stack: @[],
     geneCallActive: false,
     geneCallTarget: StackSlot(reg: newHirReg(-1), typ: HtValue, fnName: "", callable: NIL),
@@ -1120,8 +1160,8 @@ proc isNativeEligible*(cu: CompilationUnit, fn: Function): bool =
     if child.type_id == NO_TYPE_ID:
       return false
     let hirType = typeIdToHir(child.type_id)
-    if hirType notin {HtI64, HtF64, HtString}:
-      return false  # Non-primitive type
+    if hirType notin {HtI64, HtF64, HtString, HtValue}:
+      return false  # Unsupported type
 
   for inst in cu.instructions:
     case inst.kind

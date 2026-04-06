@@ -746,6 +746,22 @@ proc genUnboxString*(ctx: CodegenContext, op: HirOp) =
   ctx.buf.emitAndRegReg(X0, X0, X1)
   ctx.cachedStore(op.dest, X0)
 
+proc genBoxI64*(ctx: CodegenContext, op: HirOp) =
+  ## Box int64 to NaN-boxed Value: SMALL_INT_TAG | (val & PAYLOAD_MASK)
+  const SMALL_INT_TAG_U64 = 0xFFF2_0000_0000_0000'u64
+  ctx.cachedLoad(X0, op.unaryArg)
+  ctx.buf.emitMovImm64(X1, cast[int64](PAYLOAD_MASK_U64))
+  ctx.buf.emitAndRegReg(X0, X0, X1)
+  ctx.buf.emitMovImm64(X1, cast[int64](SMALL_INT_TAG_U64))
+  ctx.buf.emitOrrRegReg(X0, X0, X1)
+  ctx.cachedStore(op.dest, X0)
+
+proc genBoxF64*(ctx: CodegenContext, op: HirOp) =
+  ## Box float64 to NaN-boxed Value: float bits ARE the Value (non-NaN)
+  ## The float is stored as int64 on the HIR stack, so just copy.
+  ctx.cachedLoad(X0, op.unaryArg)
+  ctx.cachedStore(op.dest, X0)
+
 proc genOp*(ctx: CodegenContext, op: HirOp) =
   case op.kind
   of HokConstI64: ctx.genConstI64(op)
@@ -783,6 +799,8 @@ proc genOp*(ctx: CodegenContext, op: HirOp) =
   of HokCallVM: ctx.genCallVM(op)
   of HokBoxString: ctx.genBoxString(op)
   of HokUnboxString: ctx.genUnboxString(op)
+  of HokBoxI64: ctx.genBoxI64(op)
+  of HokBoxF64: ctx.genBoxF64(op)
   else:
     raise newException(ValueError, "Unsupported HIR op: " & $op.kind)
 
