@@ -7,11 +7,12 @@ proc new_enum*(name: string): EnumDef =
     members: initTable[string, EnumMember]()
   )
 
-proc new_enum_member*(parent: Value, name: string, value: int): EnumMember =
+proc new_enum_member*(parent: Value, name: string, value: int, fields: seq[string] = @[]): EnumMember =
   return EnumMember(
     parent: parent,
     name: name,
-    value: value
+    value: value,
+    fields: fields,
   )
 
 proc to_value*(e: EnumDef): Value =
@@ -24,11 +25,17 @@ proc to_value*(m: EnumMember): Value =
   r.enum_member = m
   return r.to_ref_value()
 
-proc add_member*(self: Value, name: string, value: int) =
+proc add_member*(self: Value, name: string, value: int, fields: seq[string] = @[]) =
   if self.kind != VkEnum:
     not_allowed("add_member can only be called on enums")
-  let member = new_enum_member(self, name, value)
+  let member = new_enum_member(self, name, value, fields)
   self.ref.enum_def.members[name] = member
+
+proc new_enum_value*(variant: Value, data: seq[Value]): Value =
+  let r = new_ref(VkEnumValue)
+  r.ev_variant = variant
+  r.ev_data = data
+  return r.to_ref_value()
 
 proc `[]`*(self: Value, name: string): Value =
   if self.kind != VkEnum:

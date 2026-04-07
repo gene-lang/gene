@@ -1190,24 +1190,54 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
     var i = start_idx
     while i < gene.children.len:
       let member = gene.children[i]
-      if member.kind != VkSymbol:
-        not_allowed("enum member must be a symbol")
-      
-      # Check if next child is '=' for custom value
-      if i + 2 < gene.children.len and 
-         gene.children[i + 1].kind == VkSymbol and 
-         gene.children[i + 1].str == "=":
-        # Custom value provided
-        i += 2
-        if gene.children[i].kind != VkInt:
-          not_allowed("enum member value must be an integer")
-        value = gene.children[i].int64.int
-      
-      # Push member name and value
-      self.emit(Instruction(kind: IkPushValue, arg0: member.str.to_value()))
-      self.emit(Instruction(kind: IkPushValue, arg0: value.to_value()))
-      self.emit(Instruction(kind: IkEnumAddMember))
-      
+      if member.kind == VkSymbol:
+        # Unit variant: (enum Color red green blue)
+        # Check if next child is '=' for custom value
+        if i + 2 < gene.children.len and
+           gene.children[i + 1].kind == VkSymbol and
+           gene.children[i + 1].str == "=":
+          # Custom value provided
+          i += 2
+          if gene.children[i].kind != VkInt:
+            not_allowed("enum member value must be an integer")
+          value = gene.children[i].int64.int
+
+        # Push member name, value, and empty fields array
+        self.emit(Instruction(kind: IkPushValue, arg0: member.str.to_value()))
+        self.emit(Instruction(kind: IkPushValue, arg0: value.to_value()))
+        self.emit(Instruction(kind: IkPushValue, arg0: new_array_value(@[])))
+        self.emit(Instruction(kind: IkEnumAddMember))
+      elif member.kind == VkGene:
+        # Data variant: (Circle radius) or (Rect width: Int height: Int)
+        let variant_gene = member.gene
+        if variant_gene.type.kind != VkSymbol:
+          not_allowed("enum data variant name must be a symbol")
+        let variant_name = variant_gene.type.str
+
+        # Extract field names from children (ignore type annotations for now)
+        var fields: seq[Value] = @[]
+        for child in variant_gene.children:
+          if child.kind == VkSymbol:
+            let s = child.str
+            # Skip type annotations (symbols that follow "name: Type" pattern)
+            # The parser produces "name:" as a keyword and Type as next child
+            if not s.endsWith(":"):
+              fields.add(s.to_value())
+          # Also handle "name: Type" where name has the colon
+
+        # Also check props for keyword-style field declarations (name: Type)
+        for k, v in variant_gene.props:
+          let field_name = cast[Value](k).str
+          fields.add(field_name.to_value())
+
+        let fields_arr = new_array_value(fields)
+        self.emit(Instruction(kind: IkPushValue, arg0: variant_name.to_value()))
+        self.emit(Instruction(kind: IkPushValue, arg0: value.to_value()))
+        self.emit(Instruction(kind: IkPushValue, arg0: fields_arr))
+        self.emit(Instruction(kind: IkEnumAddMember))
+      else:
+        not_allowed("enum member must be a symbol or data variant (Name field1 field2)")
+
       value.inc()
       i.inc()
   

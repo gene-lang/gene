@@ -399,6 +399,18 @@ proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
                    a.ref.time_microsecond == b.ref.time_microsecond and
                    a.ref.time_tz_offset == b.ref.time_tz_offset and
                    a.ref.time_tz_name == b.ref.time_tz_name
+          of VkEnumMember:
+            return a.ref.enum_member == b.ref.enum_member
+          of VkEnumValue:
+            # Compare variant by EnumMember identity (same object pointer)
+            if a.ref.ev_variant.ref.enum_member != b.ref.ev_variant.ref.enum_member:
+              return false
+            if a.ref.ev_data.len != b.ref.ev_data.len:
+              return false
+            for i in 0 ..< a.ref.ev_data.len:
+              if a.ref.ev_data[i] != b.ref.ev_data[i]:
+                return false
+            return true
           else:
             return a.ref == b.ref
       # Only references can be equal with different bit patterns
@@ -740,6 +752,12 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         result = self.ref.enum_def.name
       of VkEnumMember:
         result = self.ref.enum_member.parent.ref.enum_def.name & "/" & self.ref.enum_member.name
+      of VkEnumValue:
+        let variant = self.ref.ev_variant.ref.enum_member
+        result = "(" & variant.parent.ref.enum_def.name & "/" & variant.name
+        for i, v in self.ref.ev_data:
+          result &= " " & $v
+        result &= ")"
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = self.ref.custom_data.materialize_hook(self.ref.custom_data).str_no_quotes()
@@ -841,6 +859,12 @@ proc `$`*(self: Value): string {.gcsafe.} =
         result = self.ref.enum_def.name
       of VkEnumMember:
         result = self.ref.enum_member.parent.ref.enum_def.name & "/" & self.ref.enum_member.name
+      of VkEnumValue:
+        let variant = self.ref.ev_variant.ref.enum_member
+        result = "(" & variant.parent.ref.enum_def.name & "/" & variant.name
+        for i, v in self.ref.ev_data:
+          result &= " " & $v
+        result &= ")"
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = $self.ref.custom_data.materialize_hook(self.ref.custom_data)

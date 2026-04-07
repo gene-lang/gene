@@ -571,7 +571,7 @@ proc compile*(self: Compiler, input: Value) =
       of VkFunction:
         # Functions should be compiled as literals
         self.compile_literal(input)
-      of VkDate, VkDateTime, VkTime, VkBytes:
+      of VkDate, VkDateTime, VkTime, VkBytes, VkEnumValue:
         self.compile_literal(input)
       else:
         not_allowed("Unsupported syntax: cannot compile value of type " & $input.kind)

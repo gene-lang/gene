@@ -1,0 +1,94 @@
+# Enum and ADT tests
+
+# Simple enum (backward compatible)
+(enum Color red green blue)
+(assert (Color/red == Color/red))
+(assert (Color/red != Color/blue))
+(println "Simple enum ok")
+# Expected: Simple enum ok
+
+# Enum display
+(var c Color/red)
+(println c)
+# Expected: Color/red
+
+# Data variant definition and construction
+(enum Shape
+  (Circle radius)
+  (Rect width height)
+  Point)
+
+(var circle (Shape/Circle 5.0))
+(assert ((typeof circle) == "VkEnumValue"))
+(println "Data variant construction ok")
+# Expected: Data variant construction ok
+
+# Field access
+(assert ((circle .radius) == 5.0))
+(var rect (Shape/Rect 10 20))
+(assert ((rect .width) == 10))
+(assert ((rect .height) == 20))
+(println "Field access ok")
+# Expected: Field access ok
+
+# Display
+(println circle)
+# Expected: (Shape/Circle 5.0)
+
+(println rect)
+# Expected: (Shape/Rect 10 20)
+
+# Unit variant
+(var p Shape/Point)
+(assert ((typeof p) == "VkEnumMember"))
+(println p)
+# Expected: Shape/Point
+
+# Data variant equality (structural)
+(var c1 (Shape/Circle 5))
+(var c2 (Shape/Circle 5))
+(var c3 (Shape/Circle 3))
+(assert (c1 == c2))
+(assert (c1 != c3))
+(var r1 (Shape/Rect 1 2))
+(var r2 (Shape/Rect 1 2))
+(var r3 (Shape/Rect 1 3))
+(assert (r1 == r2))
+(assert (r1 != r3))
+(println "Equality ok")
+# Expected: Equality ok
+
+# Unit variant equality
+(var p1 Shape/Point)
+(var p2 Shape/Point)
+(assert (p1 == p2))
+(println "Unit equality ok")
+# Expected: Unit equality ok
+
+# Different variants are not equal
+(assert (c1 != p1))
+(println "Cross-variant inequality ok")
+# Expected: Cross-variant inequality ok
+
+# Enum with Result-like pattern
+(enum Result
+  (Ok value)
+  (Err message))
+
+(var ok (Result/Ok 42))
+(var err (Result/Err "not found"))
+(assert ((ok .value) == 42))
+(assert ((err .message) == "not found"))
+(println "Result-like enum ok")
+# Expected: Result-like enum ok
+
+# Enum with Option-like pattern
+(enum Option
+  (Some value)
+  None)
+
+(var some (Option/Some "hello"))
+(var none Option/None)
+(assert ((some .value) == "hello"))
+(println "Option-like enum ok")
+# Expected: Option-like enum ok

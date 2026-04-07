@@ -1907,6 +1907,21 @@ proc exec*(self: ptr VirtualMachine): Value =
               g.gene.type = gene_type
               self.frame.push(g)
 
+          of VkEnumMember:
+            # Data variant constructor: collect args then create VkEnumValue in IkGeneEnd
+            let member = gene_type.ref.enum_member
+            if member.fields.len > 0:
+              # Data variant: collect args via gene children, convert in IkGeneEnd
+              var g = new_gene_value()
+              g.gene.type = gene_type
+              self.frame.push(g)
+            else:
+              # Unit variant called with args — error
+              # But first push gene for the args to be collected, error at IkGeneEnd
+              var g = new_gene_value()
+              g.gene.type = gene_type
+              self.frame.push(g)
+
           else:
             # For non-callable types (like integers, strings, etc.),
             # create a gene with this value as the type
@@ -2298,9 +2313,21 @@ proc exec*(self: ptr VirtualMachine): Value =
                 not_allowed("Unsupported native frame kind: " & $frame.kind)
 
           else:
-            # Check if this is a gene with a generator function as its type
+            # Check if this is a gene with an enum variant as its type
             let value = self.frame.current()
-            if value.kind == VkGene and (inst.arg1 and 2'i32) != 0:
+            if value.kind == VkGene and value.gene.type.kind == VkEnumMember:
+              let member = value.gene.type.ref.enum_member
+              if member.fields.len > 0:
+                if member.fields.len != value.gene.children.len:
+                  not_allowed("Variant " & member.name & " expects " & $member.fields.len &
+                              " arguments, got " & $value.gene.children.len)
+                self.frame.replace(new_enum_value(value.gene.type, value.gene.children))
+              elif value.gene.children.len == 0:
+                # (Shape/Point) — unit variant in parens, just return the member
+                self.frame.replace(value.gene.type)
+              else:
+                not_allowed("Unit variant " & member.name & " cannot be called with arguments")
+            elif value.kind == VkGene and (inst.arg1 and 2'i32) != 0:
               value.gene.frozen = true
             if value.kind == VkGene and (inst.arg1 and 1'i32) != 0:
               discard
@@ -3086,6 +3113,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.push(enum_def.to_value())
 
       of IkEnumAddMember:
+        let fields_arr = self.frame.pop()
         let value = self.frame.pop()
         let name = self.frame.pop()
         let enum_val = self.frame.current()
@@ -3095,7 +3123,11 @@ proc exec*(self: ptr VirtualMachine): Value =
           not_allowed("enum member value must be an integer")
         if enum_val.kind != VkEnum:
           not_allowed("can only add members to enums")
-        enum_val.add_member(name.str, value.int64.int)
+        var fields: seq[string] = @[]
+        if fields_arr.kind == VkArray:
+          for f in array_data(fields_arr):
+            fields.add(f.str)
+        enum_val.add_member(name.str, value.int64.int, fields)
 
       of IkCompileInit:
         let input = self.frame.pop()
@@ -4359,47 +4391,65 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkTryUnwrap:
         # ? operator: unwrap Ok/Some or return early with Err/None
+        # Success variants have ordinal 0, failure variants have ordinal != 0
         {.push checks: off}
         let val = self.frame.pop()
 
-        # Check if it's a Gene value (Ok, Err, Some, None are Gene values)
-        if val.kind == VkGene and val.gene != nil:
-          let gene = val.gene
-          if gene.`type`.kind == VkSymbol:
-            let type_name = gene.`type`.str
-            case type_name:
-              of "Ok", "Some":
-                # Unwrap: push the inner value
-                if gene.children.len > 0:
-                  self.frame.push(gene.children[0])
-                else:
-                  self.frame.push(NIL)
-              of "Err", "None":
-                # Early return with this value
-                # Same logic as IkReturn but simplified
-                if self.frame.caller_frame == nil:
-                  self.frame.push(val)
-                else:
-                  var return_value = val
-                  self.validate_return_type_constraint(return_value)
-                  # Profile function exit if needed
-                  if self.profiling:
-                    self.exit_function()
+        var is_success = false
+        var inner_value = NIL
 
-                  # Restore to caller frame using caller_address
-                  self.cu = self.frame.caller_address.cu
-                  self.pc = self.frame.caller_address.pc
-                  inst = self.cu.instructions[self.pc].addr
-                  self.frame.update(self.frame.caller_frame)
-                  self.frame.ref_count.dec()
-                  self.frame.push(return_value)  # Push the Err/None as return value
-                  continue
-              else:
-                # Not a Result/Option, just push it back (no-op)
-                self.frame.push(val)
+        # Enum-based Result/Option — check parent enum identity + ordinal
+        if val.kind == VkEnumValue:
+          let member = val.ref.ev_variant.ref.enum_member
+          let parent = member.parent
+          if parent.ref.enum_def == App.app.result_enum.ref.enum_def or
+             parent.ref.enum_def == App.app.option_enum.ref.enum_def:
+            if member.value == 0:  # Ok/Some
+              is_success = true
+              inner_value = if val.ref.ev_data.len > 0: val.ref.ev_data[0] else: NIL
+          else:
+            # Not Result/Option enum — pass through
+            self.frame.push(val)
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+        elif val.kind == VkEnumMember:
+          let member = val.ref.enum_member
+          let parent = member.parent
+          if parent.ref.enum_def == App.app.result_enum.ref.enum_def or
+             parent.ref.enum_def == App.app.option_enum.ref.enum_def:
+            # Unit variant (None) — ordinal != 0, early return
+            discard
+          else:
+            self.frame.push(val)
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
         else:
-          # Not a Gene, just push it back
+          # Not a Result/Option, just push it back (no-op)
           self.frame.push(val)
+          self.pc.inc()
+          inst = self.cu.instructions[self.pc].addr
+          continue
+
+        if is_success:
+          self.frame.push(inner_value)
+        else:
+          # Early return with Err/None value
+          if self.frame.caller_frame == nil:
+            self.frame.push(val)
+          else:
+            var return_value = val
+            self.validate_return_type_constraint(return_value)
+            if self.profiling:
+              self.exit_function()
+            self.cu = self.frame.caller_address.cu
+            self.pc = self.frame.caller_address.pc
+            inst = self.cu.instructions[self.pc].addr
+            self.frame.update(self.frame.caller_frame)
+            self.frame.ref_count.dec()
+            self.frame.push(return_value)
+            continue
         {.pop.}
 
       of IkVmDurationStart:
@@ -4415,15 +4465,20 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.push(elapsed.to_value())
 
       of IkMatchGeneType:
-        # Pattern matching: check if value matches Gene type
-        # arg0 = type symbol to match (e.g., "Ok", "Err", "Some", "None")
+        # Pattern matching: check if value matches a variant name
+        # Supports both old Gene-based ADTs and new enum-based ADTs
         {.push checks: off.}
         let val = self.frame.pop()
         let expected_type = inst.arg0.str  # Symbol string
 
         var matched = false
-        # Handle None as both symbol and Gene
-        if expected_type == "None":
+        # New enum-based matching
+        if val.kind == VkEnumValue:
+          matched = val.ref.ev_variant.ref.enum_member.name == expected_type
+        elif val.kind == VkEnumMember:
+          matched = val.ref.enum_member.name == expected_type
+        # Legacy Gene-based matching (for backward compat during migration)
+        elif expected_type == "None":
           if val.kind == VkSymbol and val.str == "None":
             matched = true
           elif val.kind == VkGene and val.gene != nil:
@@ -4438,12 +4493,14 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkGetGeneChild:
-        # Get gene.children[arg0]
+        # Get child/field at index from Gene or EnumValue
         {.push checks: off.}
         let val = self.frame.pop()
         let idx = inst.arg0.int64.int
 
-        if val.kind == VkGene and val.gene != nil and idx < val.gene.children.len:
+        if val.kind == VkEnumValue and idx < val.ref.ev_data.len:
+          self.frame.push(val.ref.ev_data[idx])
+        elif val.kind == VkGene and val.gene != nil and idx < val.gene.children.len:
           self.frame.push(val.gene.children[idx])
         else:
           self.frame.push(NIL)
@@ -4949,6 +5006,15 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.push(arg)
           exec_adapter(self)
 
+        of VkEnumMember:
+          # Data variant constructor with 1 arg
+          let member = target.ref.enum_member
+          if member.fields.len == 0:
+            not_allowed("Unit variant " & member.name & " cannot be called with arguments")
+          if member.fields.len != 1:
+            not_allowed("Variant " & member.name & " expects " & $member.fields.len & " arguments, got 1")
+          self.frame.push(new_enum_value(target, @[arg]))
+
         else:
           not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
         {.pop}
@@ -5104,6 +5170,15 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkInterception:
           let result = self.run_intercepted_method(target.ref.interception, NIL, args, @[])
           self.frame.push(result)
+
+        of VkEnumMember:
+          # Data variant constructor with multiple args
+          let member = target.ref.enum_member
+          if member.fields.len == 0:
+            not_allowed("Unit variant " & member.name & " cannot be called with arguments")
+          if member.fields.len != args.len:
+            not_allowed("Variant " & member.name & " expects " & $member.fields.len & " arguments, got " & $args.len)
+          self.frame.push(new_enum_value(target, args))
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
@@ -5779,6 +5854,18 @@ proc exec*(self: ptr VirtualMachine): Value =
               inst = self.cu.instructions[self.pc].addr
               continue
             not_allowed("Method " & method_name_0() & " not found on instance")
+        of VkEnumValue:
+          # Field access on enum value: (circle .radius)
+          let variant = obj.ref.ev_variant.ref.enum_member
+          let field_name = method_name_0()
+          var found = false
+          for i, f in variant.fields:
+            if f == field_name:
+              self.frame.push(obj.ref.ev_data[i])
+              found = true
+              break
+          if not found:
+            not_allowed("Variant " & variant.name & " has no field " & field_name)
         of VkString, VkArray, VkMap, VkRange, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
           # Fallback for value types when fast path didn't fire (e.g. method not found)
           let value_class = get_value_class(obj)

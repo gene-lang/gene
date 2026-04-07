@@ -30,6 +30,7 @@ type
     parent*: Value  # The enum this member belongs to
     name*: string
     value*: int
+    fields*: seq[string]       # field names for data variants, empty for unit variants
     module_path*: string
     internal_path*: string
 
@@ -213,6 +214,7 @@ type
     VkCast               # Type casting
     VkEnum
     VkEnumMember
+    VkEnumValue          # Instantiated data variant with payload
     VkInterface          # Interface definition
     VkAdapter            # Adapter wrapper
     VkAdapterInternal    # Adapter internal data accessor
@@ -416,6 +418,8 @@ type
     selector_class* : Value
     exception_class*: Value
     class_class*    : Value
+    result_enum*    : Value   # Built-in Result enum
+    option_enum*    : Value   # Built-in Option enum
     mixin_class*    : Value
     application_class*: Value
     package_class*  : Value

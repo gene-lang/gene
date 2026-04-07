@@ -1,6 +1,5 @@
 # Result and Option type tests
-# NOTE: Multi-branch match on Result/Option is postponed
-# For now, test constructors and basic usage
+# Result and Option are built-in enums
 
 # Ok and Err constructors
 (var ok_val (Ok 42))
@@ -12,16 +11,16 @@
 
 # Print constructed values
 (println "ok_val = " ok_val)
-# Expected: ok_val = (Ok 42)
+# Expected: ok_val = (Result/Ok 42)
 
 (println "err_val = " err_val)
-# Expected: err_val = (Err "something went wrong")
+# Expected: err_val = (Result/Err "something went wrong")
 
 (println "some_val = " some_val)
-# Expected: some_val = (Some "hello")
+# Expected: some_val = (Option/Some "hello")
 
 (println "none_val = " none_val)
-# Expected: none_val = (None)
+# Expected: none_val = Option/None
 
 # Function returning Result
 (fn divide [a b]
@@ -37,23 +36,23 @@
   else
     None))
 
-# Test divide - just verify it returns something
+# Test divide
 (var result1 (divide 10 2))
 (println "divide(10, 2) = " result1)
-# Expected: divide(10, 2) = (Ok 5.0)
+# Expected: divide(10, 2) = (Result/Ok 5.0)
 
 (var result2 (divide 10 0))
 (println "divide(10, 0) = " result2)
-# Expected: divide(10, 0) = (Err "division by zero")
+# Expected: divide(10, 0) = (Result/Err "division by zero")
 
 # Test find_positive
 (var opt1 (find_positive 5))
 (println "find_positive(5) = " opt1)
-# Expected: find_positive(5) = (Some 5)
+# Expected: find_positive(5) = (Option/Some 5)
 
 (var opt2 (find_positive -3))
 (println "find_positive(-3) = " opt2)
-# Expected: find_positive(-3) = (None)
+# Expected: find_positive(-3) = Option/None
 
 # For loop test
 (var sum 0)
@@ -83,7 +82,7 @@
   val)
 
 (println "early_return_err() = " (early_return_err))
-# Expected: early_return_err() = (Err "error")
+# Expected: early_return_err() = (Result/Err "error")
 
 (fn unwrap_some []
   (var val ((Some "hello") ?))
@@ -98,7 +97,7 @@
   val)
 
 (println "early_return_none() = " (early_return_none))
-# Expected: early_return_none() = (None)
+# Expected: early_return_none() = Option/None
 
 (println "Result/Option tests completed")
 # Expected: Result/Option tests completed

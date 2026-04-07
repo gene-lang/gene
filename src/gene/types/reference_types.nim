@@ -160,6 +160,9 @@ type
         enum_def*: EnumDef
       of VkEnumMember:
         enum_member*: EnumMember
+      of VkEnumValue:
+        ev_variant*: Value        # → VkEnumMember (which variant)
+        ev_data*: seq[Value]      # payload values, positional
       of VkInterface:
         gene_interface*: GeneInterface
       of VkAdapter:
