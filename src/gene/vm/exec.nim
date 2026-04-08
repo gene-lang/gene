@@ -509,7 +509,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             if f2.body_compiled == nil:
               f2.compile()
 
-            if is_function_like(self.frame.kind) and f2.body_compiled != nil:
+            if is_function_like(self.frame.kind):
               discard self.frame.pop()
               # Transfer return info from current frame to new frame
               tco_frame2.caller_frame = self.frame.caller_frame
