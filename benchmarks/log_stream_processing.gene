@@ -1,0 +1,21 @@
+# Benchmark: Stream-parse 100K log lines, count INFO by child[1]
+# Tests: streaming parser, callback dispatch, structural access
+# No full file in memory — parser reads expression by expression
+
+(var start (time/now_us))
+
+(var count 0)
+(var line_count 0)
+
+(gene/parse_file "benchmarks/fixtures/sample_100k.glog" (fn [entry]
+  (line_count += 1)
+  (if (entry/1 == `INFO)
+    (count += 1))))
+
+(var total_time (- (time/now_us) start))
+
+(println "Log stream-parse benchmark:")
+(println "  Total lines:" line_count)
+(println "  INFO lines:" count)
+(println "  Total time:" total_time "us")
+(println "  Per line:" (total_time / line_count) "us")

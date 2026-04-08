@@ -3458,6 +3458,34 @@ proc vm_parse(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count
     else:
       not_allowed("$parse expects a string argument")
 
+proc vm_parse_file(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  ## (gene/parse_file path callback) — stream-parse a file, call callback for each expression
+  ## (gene/parse_file path) — parse all expressions, return as array
+  let pos_count = get_positional_count(arg_count, has_keyword_args)
+  if pos_count < 1:
+    not_allowed("gene/parse_file requires at least 1 argument (path)")
+  let path_arg = get_positional_arg(args, 0, has_keyword_args)
+  if path_arg.kind != VkString:
+    not_allowed("gene/parse_file path must be a string")
+
+  let read_result = host_read_text_file(path_arg.str)
+  if not read_result.ok:
+    not_allowed("Failed to read file '" & path_arg.str & "': " & read_result.error)
+
+  if pos_count >= 2:
+    # Streaming mode: call callback for each expression
+    let callback = get_positional_arg(args, 1, has_keyword_args)
+    var parser = new_parser()
+    {.cast(gcsafe).}:
+      parser.read_stream(read_result.content, proc(node: Value) =
+        discard vm_exec_callable(vm, callback, @[node])
+      )
+    return NIL
+  else:
+    # Batch mode: return all expressions as array
+    let parsed = read_all(read_result.content)
+    return new_array_value(parsed)
+
 proc vm_with(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   # $with sets self to the first argument and executes the body, returns the original value
   if arg_count < 2:
@@ -3830,6 +3858,7 @@ proc init_gene_core_functions() =
   App.app.gene_ns.ns["ns".to_key()] = current_ns
   # not and ... are now handled by compile-time instructions, no need to register
   App.app.gene_ns.ns["parse".to_key()] = vm_parse.to_value()  # $parse resolves via global parse
+  App.app.gene_ns.ns["parse_file".to_key()] = NativeFn(vm_parse_file).to_value()
   App.app.gene_ns.ns["with".to_key()] = vm_with.to_value()    # $with resolves via global with
   App.app.gene_ns.ns["tap".to_key()] = vm_tap.to_value()      # $tap resolves via global tap
   App.app.gene_ns.ns["eval".to_key()] = vm_eval.to_value()    # eval function
