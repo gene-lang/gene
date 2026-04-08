@@ -122,13 +122,13 @@ NaN-boxed 8-byte values, pooled stack frames, reference counting, and computed-g
 
 (fn handler [req]
   (case req/path
-    when "/"      (respond 200 "Welcome")
-    when "/users" (respond 200 (users_json))
-    else          (respond 404 "Not found")))
+    when "/"      (http/respond 200 "Welcome")
+    when "/users" (http/respond 200 (users_json))
+    else          (http/respond 404 "Not found")))
 
-(var server (http/start_server 8080 handler))
+(http/start_server 8080 handler)
 (println "Server running on :8080")
-(run_forever)
+(gene/run_forever)
 ```
 
 It reads like a scripting language but compiles to bytecode. S-expressions give structure; method calls give ergonomics; properties give expressiveness.
@@ -147,7 +147,7 @@ $env/HOME       # Environment variable
 path/to/module  # Module path
 ```
 
-And `/.` for no-arg method calls: `obj/.method` → `(obj .method)`
+And `/.method` for no-arg method calls: `obj/.method` → `(obj .method)`
 
 ### Graceful Complexity Curve
 
@@ -176,7 +176,7 @@ And `/.` for no-arg method calls: `obj/.method` → `(obj .method)`
 
 # Contract: pre/postconditions
 (fn withdraw [account amount]
-  ^pre [(amount > 0) (/balance >= amount)]
+  ^pre  [(amount > 0) (/balance >= amount)]
   ^post [(/balance >= 0)]
   (/balance = (/balance - amount)))
 ```
@@ -217,7 +217,7 @@ Both build on homoiconic cores. But Gene's data model (type + props + children) 
 
 ### Long-Term (Making It Special)
 11. **Effect system** — track side effects in function signatures
-12. **AI-native features** — tool definitions, code introspection, observability
+12. **AI-friendly features** — tool definitions, code introspection, observability
 13. **Native JIT** — hot-path compilation for competitive performance
 14. **WASM target** — run Gene in the browser (runtime already exists)
 

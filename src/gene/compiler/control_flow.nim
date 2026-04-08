@@ -270,9 +270,9 @@ proc compile_case(self: Compiler, gene: ptr Gene) =
 
   self.end_scope()
 
-proc compile_var(self: Compiler, gene: ptr Gene) =
+proc compile_var(self: Compiler, gene: ptr Gene, immutable: bool = false) =
   if gene.children.len == 0:
-    not_allowed("var requires a name")
+    not_allowed((if immutable: "let" else: "var") & " requires a name")
   apply_container_to_child(gene, 0)
   let container_expr = gene.props.getOrDefault(container_key(), NIL)
   var explicit_type_id: TypeId = NO_TYPE_ID
@@ -531,6 +531,9 @@ proc compile_var(self: Compiler, gene: ptr Gene) =
   if self.declared_names.len > 0:
     self.declared_names[^1][key] = true
 
+  if immutable:
+    self.scope_tracker.immutable_vars[key] = true
+
 proc compile_container_assignment(self: Compiler, container_expr: Value, name_sym: Value, operator: string, rhs: Value) =
   if name_sym.kind != VkSymbol:
     not_allowed("Container assignment target must resolve to a symbol")
@@ -621,6 +624,15 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
       not_allowed(message)
   
   if `type`.kind == VkSymbol:
+    # Check immutability for let bindings (walk scope chain)
+    block:
+      let assign_key = `type`.str.to_key()
+      var tracker = self.scope_tracker
+      while tracker != nil:
+        if tracker.immutable_vars.hasKey(assign_key):
+          not_allowed("Cannot reassign 'let' binding '" & `type`.str & "'")
+        tracker = tracker.parent
+
     if `type`.str.starts_with("$") and `type`.str.len > 1 and `type`.str != "$ns":
       let name_sym = `type`.str[1..^1].to_symbol_value()
       self.compile_container_assignment(App.app.global_ns, name_sym, operator, gene.children[1])

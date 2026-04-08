@@ -1197,6 +1197,9 @@ proc compile_gene(self: Compiler, input: Value) =
       of "var":
         self.compile_var(gene)
         return
+      of "let":
+        self.compile_var(gene, immutable = true)
+        return
       of "loop":
         self.compile_loop(gene)
         return

@@ -317,6 +317,7 @@ type
     parent_index_max*: int16
     next_index*: int16      # If next_index is 0, the scope is empty
     mappings*: Table[Key, int16]
+    immutable_vars*: Table[Key, bool]  # Variables declared with 'let'
     scope_started*: bool    # Track if we've added a ScopeStart instruction
     type_expectation_ids*: seq[TypeId]
 

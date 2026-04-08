@@ -1,0 +1,61 @@
+# let - immutable variable binding
+
+# Basic let
+(let x 42)
+(assert (x == 42))
+(println "Basic let ok")
+# Expected: Basic let ok
+
+# let with type annotation
+(let y: Int 100)
+(assert (y == 100))
+(println "Typed let ok")
+# Expected: Typed let ok
+
+# let allows value mutation (binding immutability, not deep freeze)
+(let items [1 2 3])
+(items .push 4)
+(assert ((items .size) == 4))
+(println "Value mutation ok")
+# Expected: Value mutation ok
+
+# var remains mutable
+(var count 0)
+(count = (count + 1))
+(count += 1)
+(assert (count == 2))
+(println "Var mutable ok")
+# Expected: Var mutable ok
+
+# let in nested scope
+(do
+  (let inner 99)
+  (assert (inner == 99))
+)
+(println "Nested let ok")
+# Expected: Nested let ok
+
+# let with different value types
+(let name "Alice")
+(let pi 3.14)
+(let flag true)
+(let nothing nil)
+(assert (name == "Alice"))
+(assert (pi == 3.14))
+(assert (flag == true))
+(assert (nothing == nil))
+(println "Let types ok")
+# Expected: Let types ok
+
+# let with computed value
+(let sum (1 + 2 + 3))
+(assert (sum == 6))
+(println "Computed let ok")
+# Expected: Computed let ok
+
+# let with function result
+(fn double [x] (x * 2))
+(let result (double 21))
+(assert (result == 42))
+(println "Function let ok")
+# Expected: Function let ok
