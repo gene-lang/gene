@@ -1213,9 +1213,10 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
     for member in array_data(values_array):
       if member.kind != VkSymbol:
         not_allowed("enum member must be a symbol")
-      # Push member name and value
+      # Push member name, value, and empty fields array
       self.emit(Instruction(kind: IkPushValue, arg0: member.str.to_value()))
       self.emit(Instruction(kind: IkPushValue, arg0: value.to_value()))
+      self.emit(Instruction(kind: IkPushValue, arg0: new_array_value(@[])))
       self.emit(Instruction(kind: IkEnumAddMember))
       value.inc()
   else:
