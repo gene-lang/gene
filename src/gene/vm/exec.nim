@@ -500,12 +500,38 @@ proc exec*(self: ptr VirtualMachine): Value =
               inst = self.cu.instructions[self.pc].addr
               continue
 
-        # Not optimizable — temporarily patch instruction in-place and re-dispatch
+        # Cross-function tail call — replace current frame with new frame
+        if tco_value.kind == VkFrame:
+          let tco_frame2 = tco_value.ref.frame
+          if tco_frame2.kind in {FkFunction, FkMethod, FkMacroMethod}:
+            let f2 = tco_frame2.target.ref.fn
+            if f2.body_compiled == nil:
+              f2.compile()
+
+            if is_function_like(self.frame.kind):
+              discard self.frame.pop()
+              # Transfer return info from current frame to new frame
+              tco_frame2.caller_frame = self.frame.caller_frame
+              tco_frame2.caller_address = self.frame.caller_address
+              tco_frame2.ns = f2.ns
+
+              if not f2.matcher.is_empty():
+                process_args(f2.matcher, tco_frame2.args, tco_frame2.scope)
+
+              if self.profiling:
+                self.exit_function()
+                let func_name = if f2.name != "": f2.name else: "<anonymous>"
+                self.enter_function(func_name)
+
+              self.frame = tco_frame2
+              self.cu = f2.body_compiled
+              self.pc = 0
+              inst = self.cu.instructions[self.pc].addr
+              continue
+
+        # Not optimizable — fall back to regular IkGeneEnd
         self.cu.instructions[self.pc].kind = IkGeneEnd
         inst = self.cu.instructions[self.pc].addr
-        # Note: instruction stays as IkGeneEnd permanently for this call site.
-        # This is safe because IkGeneEnd is a strict superset of IkTailCall behavior,
-        # and the TCO opportunity is only lost for this specific call site.
         continue
         {.pop}
 

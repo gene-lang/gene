@@ -1,0 +1,49 @@
+# Cross-function tail call optimization
+
+# Mutual recursion: is_even / is_odd
+(fn is_even [n]
+  (if (n == 0) true
+  else (is_odd (n - 1))))
+(fn is_odd [n]
+  (if (n == 0) false
+  else (is_even (n - 1))))
+
+# 100,000 deep — would stack overflow without cross-function TCO
+(assert (is_even 100000))
+(assert (is_odd 99999))
+(assert (not (is_even 99999)))
+(assert (not (is_odd 100000)))
+(println "Mutual recursion ok")
+# Expected: Mutual recursion ok
+
+# Ping-pong with return value
+(fn ping [n]
+  (if (n <= 0) "pong"
+  else (pong (n - 1))))
+(fn pong [n]
+  (if (n <= 0) "ping"
+  else (ping (n - 1))))
+
+(assert ((ping 100000) == "pong"))
+(assert ((ping 99999) == "ping"))
+(println "Ping-pong ok")
+# Expected: Ping-pong ok
+
+# Self-recursion still works
+(fn count_down [n]
+  (if (n <= 0) "done"
+  else (count_down (n - 1))))
+(assert ((count_down 100000) == "done"))
+(println "Self TCO ok")
+# Expected: Self TCO ok
+
+# Accumulator with cross-function helper
+(fn sum_helper [n acc]
+  (if (n <= 0) acc
+  else (sum_step (n - 1) (acc + n))))
+(fn sum_step [n acc]
+  (sum_helper n acc))
+
+(assert ((sum_helper 100000 0) == 5000050000))
+(println "Cross accumulator ok")
+# Expected: Cross accumulator ok

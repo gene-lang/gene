@@ -58,7 +58,7 @@ When a function call is in tail position, the compiler emits `IkTailCall` instea
 ## Scope
 
 - **Self-recursion**: Optimized. The VM detects calls to the same function and reuses the frame.
-- **Cross-function tail calls**: Not optimized. `(fn a [] (b))` where `b` is a different function still allocates a new frame. The `IkTailCall` handler falls back to regular call behavior in this case.
+- **Cross-function tail calls**: Optimized. `(fn a [] (b))` where `b` is a different function replaces the current frame instead of stacking a new one. Enables O(1) stack for mutual recursion patterns like `is_even`/`is_odd`.
 - **Method calls**: Not currently optimized. Only the `IkGeneEnd`/`IkTailCall` call path (general gene expression calls) participates. The `IkUnifiedCall*` fast paths do not emit `IkTailCall`.
 
 ## Implementation
