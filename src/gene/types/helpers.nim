@@ -99,16 +99,48 @@ proc init_app_and_vm*() =
   App.app.gene_ns.ref.ns["app".to_key()] = App
   App.app.gene_ns.ref.ns["$app".to_key()] = App
 
-  # Create built-in GeneException class
-  # TODO: Rename to Exception once symbol collision is fixed
-  let exception_class = new_class("GeneException")
+  # Built-in Exception class hierarchy
+  let exception_class = new_class("Exception")
   let exception_ref = new_ref(VkClass)
   exception_ref.class = exception_class
   let exception_class_val = exception_ref.to_ref_value()
-  # Store in App for easy access
   App.app.exception_class = exception_class_val
-  # Add to global namespace so it's accessible everywhere
+  App.app.global_ns.ref.ns["Exception".to_key()] = exception_class_val
+  # Keep GeneException as alias during migration
   App.app.global_ns.ref.ns["GeneException".to_key()] = exception_class_val
+
+  # Exception subclass helper
+  proc def_exception_subclass(name: string, parent: Class = exception_class): Value =
+    let cls = new_class(name)
+    cls.parent = parent
+    let r = new_ref(VkClass)
+    r.class = cls
+    let val = r.to_ref_value()
+    App.app.global_ns.ref.ns[name.to_key()] = val
+    return val
+
+  # Core hierarchy
+  discard def_exception_subclass("RuntimeException")
+  discard def_exception_subclass("TypeException")
+  discard def_exception_subclass("ArgumentException")
+  discard def_exception_subclass("IOError")
+  discard def_exception_subclass("ParseException")
+  discard def_exception_subclass("AssertionException")
+
+  # Concurrency hierarchy
+  let concurrency_cls = new_class("ConcurrencyException")
+  concurrency_cls.parent = exception_class
+  let concurrency_ref = new_ref(VkClass)
+  concurrency_ref.class = concurrency_cls
+  let concurrency_val = concurrency_ref.to_ref_value()
+  App.app.global_ns.ref.ns["ConcurrencyException".to_key()] = concurrency_val
+  discard def_exception_subclass("TimeoutException", concurrency_cls)
+  discard def_exception_subclass("CancellationException", concurrency_cls)
+  discard def_exception_subclass("ThreadException", concurrency_cls)
+
+  # External system hierarchy
+  discard def_exception_subclass("NetworkException")
+  discard def_exception_subclass("ProviderException")
 
   # Add genex to global namespace (similar to gene-new)
   App.app.global_ns.ref.ns["genex".to_key()] = App.app.genex_ns
