@@ -1,4 +1,4 @@
-import os, tables
+import os, tables, strutils
 
 import ./type_defs
 import ./core
@@ -236,15 +236,42 @@ init_values()
 
 #################### Exception Wrapping ####################
 
+proc infer_exception_class*(message: string): Class =
+  ## Infer the most specific exception subclass from error message content.
+  let lower = message.toLowerAscii()
+  let base = core.`ref`(App.app.exception_class).class
+
+  proc lookup(name: string): Class =
+    let val = App.app.global_ns.ref.ns.get_or_default(name.to_key(), NIL)
+    if val != NIL and val.kind == VkClass:
+      return val.ref.class
+    return base
+
+  if lower.contains("division by zero") or lower.contains("integer overflow") or
+     lower.contains("modulo by zero") or lower.contains("stack overflow"):
+    return lookup("RuntimeException")
+  if lower.contains("type mismatch") or lower.contains("type error") or
+     lower.contains("cannot compare") or lower.contains("not supported for"):
+    return lookup("TypeException")
+  if lower.contains("requires") or lower.contains("expects") or
+     lower.contains("invalid") and (lower.contains("argument") or lower.contains("parameter")):
+    return lookup("ArgumentException")
+  if lower.contains("file not found") or lower.contains("failed to read") or
+     lower.contains("failed to write") or lower.contains("failed to open"):
+    return lookup("IOError")
+  if lower.contains("timeout"):
+    return lookup("TimeoutException")
+  if lower.contains("cancelled") or lower.contains("cancellation"):
+    return lookup("CancellationException")
+  return base
+
 proc wrap_nim_exception*(ex: ref CatchableError, location: string = ""): Value =
   ## Wrap a Nim exception into a Gene exception instance with structured data.
-  ## The instance has properties: message, nim_type, nim_stack, location
   let exception_class_val = App.app.exception_class
   if exception_class_val == NIL:
-    # Fallback to string if exception class not initialized
     return ex.msg.to_value()
 
-  let cls = core.`ref`(exception_class_val).class
+  let cls = infer_exception_class(ex.msg)
   var props = initTable[Key, Value]()
   props["message".to_key()] = ex.msg.to_value()
   # Keep wrapping allocation-light to avoid cascading failures while handling
