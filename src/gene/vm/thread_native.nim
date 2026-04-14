@@ -80,7 +80,26 @@ type
     thread*: system.Thread[int]
     channel*: ThreadChannel
 
-var THREAD_DATA*: array[MAX_THREADS, ThreadDataObj]  # Shared across threads (channels are thread-safe)
+var THREAD_DATA*: ptr UncheckedArray[ThreadDataObj] =
+  cast[ptr UncheckedArray[ThreadDataObj]](
+    allocShared0(sizeof(ThreadDataObj) * DEFAULT_MAX_THREADS))
+  ## Shared across threads (channels are thread-safe). Resized to g_max_threads in init_thread_pool().
+  ## Manually-managed storage (not a seq) so gcsafe procs can access it.
+
+proc resize_thread_storage(new_cap: int) =
+  ## Reallocate THREADS and THREAD_DATA to new_cap entries.
+  ## Must be called before any worker threads exist for the new slots.
+  if new_cap == g_max_threads and THREADS != nil and THREAD_DATA != nil:
+    return
+  if THREADS != nil:
+    deallocShared(THREADS)
+  if THREAD_DATA != nil:
+    deallocShared(THREAD_DATA)
+  THREADS = cast[ptr UncheckedArray[ThreadMetadata]](
+    allocShared0(sizeof(ThreadMetadata) * new_cap))
+  THREAD_DATA = cast[ptr UncheckedArray[ThreadDataObj]](
+    allocShared0(sizeof(ThreadDataObj) * new_cap))
+  g_max_threads = new_cap
 var THREAD_CLASS_VALUE*: Value  # Cached thread class value for quick access across threads
 var THREAD_MESSAGE_CLASS_VALUE*: Value
 
@@ -89,13 +108,16 @@ var thread_pool_lock: Lock
 var next_message_id* {.threadvar.}: int
 
 proc init_thread_pool*() =
-  ## Initialize the thread pool (call once from main thread)
+  ## Initialize the thread pool (call once from main thread).
+  ## Reads GENE_MAX_THREADS env var to determine pool size.
   randomize()  # Initialize random number generator
   initLock(thread_pool_lock)
   next_message_id = 0
 
-  # Terminate and clean up any existing worker threads/channels
-  for i in 1..<MAX_THREADS:
+  # Terminate and clean up any existing worker threads/channels.
+  # Iterate over current slot count (may differ from target on re-init).
+  let current_cap = g_max_threads
+  for i in 1..<current_cap:
     if THREAD_DATA[i].channel != nil:
       # Ask the worker to exit and wait for it to finish
       var term: ThreadMessage
@@ -112,18 +134,15 @@ proc init_thread_pool*() =
         joinThread(THREAD_DATA[i].thread)
       close(THREAD_DATA[i].channel)
       THREAD_DATA[i].channel = nil
-    # Reset metadata
-    THREADS[i].id = i
-    THREADS[i].state = TsFree
-    THREADS[i].in_use = false
-    THREADS[i].parent_id = 0
-    THREADS[i].parent_secret = 0
-    THREADS[i].secret = 0
 
   # Reset main thread channel if it was previously opened
   if THREAD_DATA[0].channel != nil:
     close(THREAD_DATA[0].channel)
     THREAD_DATA[0].channel = nil
+
+  # Resolve pool size from env var and reallocate backing storage.
+  # Does nothing if the requested cap equals the current cap.
+  resize_thread_storage(resolve_max_threads())
 
   # Initialize thread 0 as main thread
   THREADS[0].id = 0
@@ -136,10 +155,13 @@ proc init_thread_pool*() =
   THREAD_DATA[0].channel.open(CHANNEL_LIMIT)
 
   # Initialize other thread slots as free
-  for i in 1..<MAX_THREADS:
+  for i in 1..<g_max_threads:
     THREADS[i].id = i
     THREADS[i].state = TsFree
     THREADS[i].in_use = false
+    THREADS[i].parent_id = 0
+    THREADS[i].parent_secret = 0
+    THREADS[i].secret = 0
 
 proc get_free_thread*(): int =
   ## Find and allocate a free thread slot
@@ -147,7 +169,7 @@ proc get_free_thread*(): int =
   acquire(thread_pool_lock)
   defer: release(thread_pool_lock)
 
-  for i in 1..<MAX_THREADS:
+  for i in 1..<g_max_threads:
     if not THREADS[i].in_use and THREADS[i].state == TsFree:
       THREADS[i].in_use = true
       THREADS[i].state = TsBusy
@@ -256,7 +278,7 @@ proc init_thread_class*() =
     let thread_secret = thread_arg.ref.thread.secret
 
     # Validate thread
-    if thread_id < 0 or thread_id >= MAX_THREADS:
+    if thread_id < 0 or thread_id >= g_max_threads:
       raise new_exception(types.Exception, "Invalid thread ID")
     if not THREADS[thread_id].in_use or THREADS[thread_id].secret != thread_secret:
       raise new_exception(types.Exception, "Thread is no longer valid")

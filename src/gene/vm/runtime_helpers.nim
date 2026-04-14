@@ -248,7 +248,7 @@ when not defined(gene_wasm):
     let thread_id = get_free_thread()
 
     if thread_id == -1:
-      raise newException(ValueError, "Thread pool exhausted (max " & $MAX_THREADS & " threads)")
+      raise newException(ValueError, "Thread pool exhausted (max " & $g_max_threads & " threads; set GENE_MAX_THREADS to raise)")
 
     # Initialize thread
     let parent_id = current_thread_id

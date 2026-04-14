@@ -86,10 +86,56 @@ var App*: Value
 
 # Threading support
 const CHANNEL_LIMIT* = 1000  # Maximum messages in channel
-const MAX_THREADS* = 64      # Maximum number of threads in pool
 
-# Thread pool is shared across all threads (protected by thread_pool_lock in vm/thread.nim)
-var THREADS*: array[MAX_THREADS, ThreadMetadata]
+# Absolute safety ceiling. Env var GENE_MAX_THREADS is clamped to this.
+const HARD_MAX_THREADS* = 4096
+
+# Compile-time default thread cap, chosen per platform/arch.
+# Overridable at runtime via GENE_MAX_THREADS env var.
+const DEFAULT_MAX_THREADS* =
+  when defined(gene_wasm) or defined(emscripten) or defined(js):
+    1
+  elif sizeof(pointer) == 4:
+    64
+  elif defined(macosx):
+    512
+  elif defined(linux):
+    1024
+  elif defined(windows):
+    512
+  else:
+    256
+
+# Runtime-resolved thread cap. Set by init_thread_pool() from env var
+# (falls back to DEFAULT_MAX_THREADS). Stays in sync with the allocated
+# size of THREADS / THREAD_DATA.
+var g_max_threads*: int = DEFAULT_MAX_THREADS
+
+# Thread pool is shared across all threads (protected by thread_pool_lock in vm/thread.nim).
+# Backed by manually-managed storage (not a seq) so {.gcsafe.} procs like
+# thread_send_internal can access it without a GC-safety workaround.
+# Pre-allocated to DEFAULT_MAX_THREADS at module load so THREADS[0] is valid
+# before init_thread_pool() runs; resized on init via resize_thread_storage.
+var THREADS*: ptr UncheckedArray[ThreadMetadata] =
+  cast[ptr UncheckedArray[ThreadMetadata]](
+    allocShared0(sizeof(ThreadMetadata) * DEFAULT_MAX_THREADS))
+
+proc resolve_max_threads*(): int =
+  ## Read GENE_MAX_THREADS env var, clamp to [1, HARD_MAX_THREADS].
+  ## Returns DEFAULT_MAX_THREADS if unset or invalid.
+  ## On WASM targets, always returns 1 regardless of env.
+  when defined(gene_wasm) or defined(emscripten) or defined(js):
+    return 1
+  else:
+    result = DEFAULT_MAX_THREADS
+    let env_val = getEnv("GENE_MAX_THREADS")
+    if env_val.len > 0:
+      try:
+        let n = parseInt(env_val)
+        if n >= 1:
+          result = min(n, HARD_MAX_THREADS)
+      except ValueError:
+        discard  # Keep default on parse error
 
 var VmCreatedCallbacks*: seq[VmCallback] = @[]
 
