@@ -24,31 +24,17 @@ proc init_string_class*(object_class: Class) =
 
   string_class.def_native_constructor(string_constructor)
 
-  proc ensure_mutable_string(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
-    ## Return the receiver string ready for in-place mutation.
-    ## IkPushValue always copies string literals on push so each variable binding
-    ## gets a private ptr String (ref_count=1 at the alloc site). The interned
-    ## instruction constant is therefore never reachable here.
-    ## A ref_count > 1 check is incorrect: Nim's =copy hook retains Values when
-    ## they are stored in the temporary arg seq (invoke_method_value), so an
-    ## ordinary local variable appears shared during the call even though it is not.
-    let self_index = if has_keyword_args: 1 else: 0
-    return args[self_index]
-
   proc string_append(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let pos_count = get_positional_count(arg_count, has_keyword_args)
     if pos_count < 2:
       not_allowed("String.append requires a value to append")
 
-    var self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       not_allowed("append must be called on a string")
 
-    self_arg = ensure_mutable_string(vm, args, has_keyword_args)
-    let ptr_addr = cast[uint64](self_arg) and PAYLOAD_MASK
-    if ptr_addr == 0:
-      not_allowed("append must be called on a string")
-    let str_ref = cast[ptr String](ptr_addr)
+    var buffer = newStringOfCap(self_arg.str.len + 16)
+    buffer.add(self_arg.str)
     var i = 1
     while i < pos_count:
       let append_arg = get_positional_arg(args, i, has_keyword_args)
@@ -56,9 +42,9 @@ proc init_string_class*(object_class: Class) =
         append_arg.str
       else:
         display_value(append_arg, true)
-      str_ref.str.add(addition)
+      buffer.add(addition)
       i.inc()
-    self_arg
+    buffer.to_value()
 
   var append_fn = new_ref(VkNativeFn)
   append_fn.native_fn = string_append

@@ -58,6 +58,7 @@ suite "GIR CLI":
     createDir(parentDir(gir_path))
     gir.save_gir(compiled, gir_path)
     let loaded = gir.load_gir(gir_path)
+    check loaded.inline_caches.len == loaded.instructions.len
 
     proc find_node(nodes: seq[ModuleTypeNode], path: seq[string]): ModuleTypeNode =
       if path.len == 0:
@@ -739,6 +740,9 @@ suite "GIR CLI":
     check ctor_fn.body_compiled != nil
     check method_fn.body_compiled != nil
     check init_fn.body_compiled != nil
+    check ctor_fn.body_compiled.inline_caches.len == ctor_fn.body_compiled.instructions.len
+    check method_fn.body_compiled.inline_caches.len == method_fn.body_compiled.instructions.len
+    check init_fn.body_compiled.inline_caches.len == init_fn.body_compiled.instructions.len
     check ctor_loads == 1
     check method_loads == 1
     check init_loads == 1

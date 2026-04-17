@@ -1,4 +1,4 @@
-import os, tables, strutils
+import os, tables, strutils, locks
 
 import ./type_defs
 import ./core
@@ -7,6 +7,39 @@ import ../wasm_host_abi
 
 proc refresh_env_map*()
 proc set_program_args*(program: string, args: seq[string])
+
+var body_publication_lock*: Lock
+var native_publication_lock*: Lock
+initLock(body_publication_lock)
+initLock(native_publication_lock)
+
+proc ensure_inline_caches_ready*(cu: CompilationUnit) {.inline.} =
+  if cu != nil and cu.inline_caches.len != cu.instructions.len:
+    cu.inline_caches.setLen(cu.instructions.len)
+
+proc publish_compiled_body*(f: Function, cu: CompilationUnit) =
+  if f == nil or cu == nil:
+    return
+  acquire(body_publication_lock)
+  defer: release(body_publication_lock)
+  if f.body_compiled == nil:
+    ensure_inline_caches_ready(cu)
+    f.body_compiled = cu
+    f.body_compiled.matcher = f.matcher
+  else:
+    ensure_inline_caches_ready(f.body_compiled)
+
+proc publish_compiled_body*(b: Block, cu: CompilationUnit) =
+  if b == nil or cu == nil:
+    return
+  acquire(body_publication_lock)
+  defer: release(body_publication_lock)
+  if b.body_compiled == nil:
+    ensure_inline_caches_ready(cu)
+    b.body_compiled = cu
+    b.body_compiled.matcher = b.matcher
+  else:
+    ensure_inline_caches_ready(b.body_compiled)
 
 #################### VM ##########################
 

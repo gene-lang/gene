@@ -504,34 +504,18 @@ proc init_string_class(object_class: Class) =
 
   string_class.def_native_constructor(string_constructor)
 
-  proc ensure_mutable_string(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
-    ## Return the string value (all strings are now mutable heap allocations)
-    let self_index = if has_keyword_args: 1 else: 0
-    let original = args[self_index]
-    let raw = cast[uint64](original)
-    let tag = raw and 0xFFFF_0000_0000_0000u64
-
-    case tag
-    of STRING_TAG:
-      return original  # All strings use the same representation, no conversion needed
-    else:
-      return original
-
   # append method
   proc string_append(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     let pos_count = get_positional_count(arg_count, has_keyword_args)
     if pos_count < 2:
       not_allowed("String.append requires a value to append")
 
-    var self_arg = get_positional_arg(args, 0, has_keyword_args)
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
       not_allowed("append must be called on a string")
 
-    self_arg = ensure_mutable_string(vm, args, has_keyword_args)
-    let ptr_addr = cast[uint64](self_arg) and PAYLOAD_MASK
-    if ptr_addr == 0:
-      not_allowed("append must be called on a string")
-    let str_ref = cast[ptr String](ptr_addr)
+    var buffer = newStringOfCap(self_arg.str.len + 16)
+    buffer.add(self_arg.str)
     var i = 1
     while i < pos_count:
       let append_arg = get_positional_arg(args, i, has_keyword_args)
@@ -539,9 +523,9 @@ proc init_string_class(object_class: Class) =
         append_arg.str
       else:
         display_value(append_arg, true)
-      str_ref.str.add(addition)
+      buffer.add(addition)
       i.inc()
-    self_arg
+    buffer.to_value()
 
   var append_fn = new_ref(VkNativeFn)
   append_fn.native_fn = string_append
@@ -3116,7 +3100,19 @@ proc resolve_advice_callable(callable_val: Value, caller_frame: Frame): Value =
     return callable_val
   of VkSymbol:
     let key = callable_val.str.to_key()
-    var resolved = if caller_frame.ns != nil: caller_frame.ns[key] else: NIL
+    var resolved = NIL
+    if caller_frame != nil and caller_frame.scope != nil and caller_frame.scope.tracker != nil:
+      let found = caller_frame.scope.tracker.locate(key)
+      if found.local_index >= 0:
+        var scope = caller_frame.scope
+        var parent_index = found.parent_index
+        while parent_index > 0 and scope != nil:
+          parent_index.dec()
+          scope = scope.parent
+        if scope != nil and found.local_index < scope.members.len:
+          resolved = scope.members[found.local_index]
+    if resolved == NIL:
+      resolved = if caller_frame.ns != nil: caller_frame.ns[key] else: NIL
     if resolved == NIL:
       resolved = App.app.global_ns.ref.ns[key]
     if resolved == NIL:

@@ -844,6 +844,7 @@ proc load_gir*(path: string): CompilationUnit =
   let gir_file = load_gir_file(path)
   result = new_compilation_unit()
   result.instructions = gir_file.instructions
+  result.inline_caches.setLen(result.instructions.len)
   result.ensure_trace_capacity()
 
   if gir_file.kind.len > 0:

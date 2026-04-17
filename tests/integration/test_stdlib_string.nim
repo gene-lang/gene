@@ -260,10 +260,15 @@ test_vm """
 
 test_vm """
   (var s "a")
-  (s .append "b")
-  (s .append "c")
-  s
-""", "abc"
+  (var t (s .append "b"))
+  (var u (t .append "c"))
+  [s t u]
+""", proc(result: Value) =
+  check result.kind == VkArray
+  check array_data(result).len == 3
+  check array_data(result)[0].str == "a"
+  check array_data(result)[1].str == "ab"
+  check array_data(result)[2].str == "abc"
 
 test_vm """
   ("aabc" .replace "a" "A")

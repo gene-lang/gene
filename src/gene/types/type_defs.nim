@@ -106,6 +106,7 @@ type
     MtSendExpectReply # Send data, expect reply
     MtRun           # Run code, no reply expected
     MtRunExpectReply  # Run code, expect reply
+    MtRegisterCallback # Register a message callback on the target thread
     MtReply         # Reply to previous message
     MtTerminate     # Terminate thread
 

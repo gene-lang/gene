@@ -44,7 +44,19 @@ proc resolve_advice_callable(callable_val: Value, caller_frame: Frame): Value =
     return callable_val
   of VkSymbol:
     let key = callable_val.str.to_key()
-    var resolved = if caller_frame.ns != nil: caller_frame.ns[key] else: NIL
+    var resolved = NIL
+    if caller_frame != nil and caller_frame.scope != nil and caller_frame.scope.tracker != nil:
+      let found = caller_frame.scope.tracker.locate(key)
+      if found.local_index >= 0:
+        var scope = caller_frame.scope
+        var parent_index = found.parent_index
+        while parent_index > 0 and scope != nil:
+          parent_index.dec()
+          scope = scope.parent
+        if scope != nil and found.local_index < scope.members.len:
+          resolved = scope.members[found.local_index]
+    if resolved == NIL:
+      resolved = if caller_frame.ns != nil: caller_frame.ns[key] else: NIL
     if resolved == NIL:
       resolved = App.app.global_ns.ref.ns[key]
     if resolved == NIL:

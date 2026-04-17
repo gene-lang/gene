@@ -350,8 +350,35 @@ proc init_thread_class*() =
     if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock}:
       raise new_exception(types.Exception, "on_message callback must be a function or block")
 
-    # Add callback to VM's message_callbacks list
-    vm.message_callbacks.add(callback_arg)
+    let thread_id = thread_arg.ref.thread.id
+    let thread_secret = thread_arg.ref.thread.secret
+
+    if thread_id < 0 or thread_id >= g_max_threads:
+      raise new_exception(types.Exception, "Invalid thread ID")
+    if not THREADS[thread_id].in_use or THREADS[thread_id].secret != thread_secret:
+      raise new_exception(types.Exception, "Thread is no longer valid")
+
+    if thread_id == current_thread_id:
+      vm.message_callbacks.add(callback_arg)
+      return NIL
+
+    # Cross-thread callback registration is only safe for native callbacks.
+    # Function/block values capture thread-owned scope/frame state and cannot be
+    # shared across worker VMs without a deeper ownership model.
+    if callback_arg.kind != VkNativeFn:
+      raise new_exception(types.Exception, "remote on_message registration requires a native function")
+
+    var msg: ThreadMessage
+    new(msg)
+    msg.id = next_message_id
+    msg.msg_type = MtRegisterCallback
+    msg.payload = callback_arg
+    msg.payload_bytes = ThreadPayload(bytes: @[])
+    msg.code = NIL
+    msg.from_thread_id = current_thread_id
+    msg.from_thread_secret = THREADS[current_thread_id].secret
+    next_message_id += 1
+    THREAD_DATA[thread_id].channel.send(msg)
 
     return NIL
 

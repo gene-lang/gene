@@ -1,5 +1,4 @@
 import std/unittest
-import std/strutils
 import std/tables
 
 import gene/types except Exception  # Avoid collision with system.Exception
@@ -7,6 +6,36 @@ import gene/compiler
 import gene/vm
 import gene/vm/thread
 from gene/parser import read
+
+proc reply_plus_one_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    return NIL
+
+  let msg_arg = get_positional_arg(args, 0, has_keyword_args)
+  if msg_arg.kind != VkThreadMessage:
+    return NIL
+
+  let msg = msg_arg.ref.thread_message
+  let payload = msg.payload
+
+  var reply: ThreadMessage
+  new(reply)
+  reply.id = next_message_id
+  reply.msg_type = MtReply
+  reply.payload =
+    if payload.kind == VkInt:
+      (payload.int64 + 1).to_value()
+    else:
+      NIL
+  reply.payload_bytes = ThreadPayload(bytes: @[])
+  reply.from_message_id = msg.id
+  reply.from_thread_id = current_thread_id
+  reply.from_thread_secret = THREADS[current_thread_id].secret
+  next_message_id += 1
+
+  THREAD_DATA[msg.from_thread_id].channel.send(reply)
+  msg.handled = true
+  return NIL
 
 # Threading tests for bytecode VM
 # Adapted for current implementation which uses:
@@ -19,6 +48,7 @@ suite "Threading Support":
     init_thread_pool()
     init_app_and_vm()
     init_stdlib()  # Initialize stdlib for await support
+    App.app.gene_ns.ref.ns["reply_plus_one".to_key()] = reply_plus_one_native.to_value()
 
   test "Basic spawn - thread executes code":
     let code = """
@@ -180,6 +210,60 @@ suite "Threading Support":
           (keep_alive)
         )))
         (await (send_expect_reply worker 41))
+      )
+    """
+    let ast = read(code)
+    let cu = compile_init(ast)
+
+    VM.cu = cu
+    VM.pc = 0
+    VM.frame = new_frame()
+    VM.frame.stack_index = 0
+    VM.frame.scope = new_scope(new_scope_tracker())
+    VM.frame.ns = App.app.gene_ns.ref.ns
+
+    let result = VM.exec()
+    check result.kind == VkInt
+    check result.int64 == 42
+
+  test "send_expect_reply from worker thread polls its own channel":
+    let code = """
+      (await
+        (spawn_return
+          (do
+            (var worker (spawn (do
+              (thread .on_message (fn [msg]
+                (msg .reply (+ (msg .payload) 1))
+              ))
+              (keep_alive)
+            )))
+            (await ^timeout 200 (send_expect_reply worker 41))
+          )
+        )
+      )
+    """
+    let ast = read(code)
+    let cu = compile_init(ast)
+
+    VM.cu = cu
+    VM.pc = 0
+    VM.frame = new_frame()
+    VM.frame.stack_index = 0
+    VM.frame.scope = new_scope(new_scope_tracker())
+    VM.frame.ns = App.app.gene_ns.ref.ns
+
+    let result = VM.exec()
+    check result.kind == VkInt
+    check result.int64 == 42
+
+  test "Thread.on_message can register a native callback on the target worker":
+    let code = """
+      (do
+        (var worker (spawn (do
+          (keep_alive)
+        )))
+        (worker .on_message reply_plus_one)
+        (await ^timeout 200 (send_expect_reply worker 41))
       )
     """
     let ast = read(code)

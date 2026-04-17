@@ -96,22 +96,25 @@ proc prepare_native_ctx(self: ptr VirtualMachine, f: Function, out_ctx: var Nati
   if f.is_generator or f.async or f.is_macro_like:
     return false
   if not f.native_ready:
-    if f.native_failed:
-      return false
-    if f.body_compiled == nil:
-      f.compile()
-    let compiled = compile_to_native(f)
-    if not compiled.ok:
-      f.native_failed = true
-      return false
-    if f.native_descriptors.len > 0:
-      release_descriptors(f.native_descriptors)
-    f.native_entry = compiled.entry
-    f.native_ready = true
-    f.native_return_float = compiled.returnFloat
-    f.native_return_string = compiled.returnString
-    f.native_return_value = compiled.returnValue
-    f.native_descriptors = compiled.descriptors
+    acquire(native_publication_lock)
+    defer: release(native_publication_lock)
+    if not f.native_ready:
+      if f.native_failed:
+        return false
+      if f.body_compiled == nil:
+        f.compile()
+      let compiled = compile_to_native(f)
+      if not compiled.ok:
+        f.native_failed = true
+        return false
+      if f.native_descriptors.len > 0:
+        release_descriptors(f.native_descriptors)
+      f.native_entry = compiled.entry
+      f.native_return_float = compiled.returnFloat
+      f.native_return_string = compiled.returnString
+      f.native_return_value = compiled.returnValue
+      f.native_descriptors = compiled.descriptors
+      f.native_ready = true
 
   out_ctx = NativeContext(
     vm: self,

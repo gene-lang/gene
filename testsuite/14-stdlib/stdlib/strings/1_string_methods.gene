@@ -3,7 +3,7 @@
 # Expected: HELLO
 # Expected: hello
 # Expected: helloworld
-# Expected: helloworld
+# Expected: hello
 # Expected: Äbc
 # Expected: b你a
 # Expected: true

@@ -2,14 +2,11 @@
 ## Included from vm.nim — shares its scope.
 
 template get_inline_cache(cu: CompilationUnit, pc: int): ptr InlineCache =
-  ## Fast inline cache access. Pre-allocated CUs hit the first branch;
-  ## dynamically compiled CUs fall back to on-demand growth.
-  if pc < cu.inline_caches.len:
-    cu.inline_caches[pc].addr
-  else:
-    while cu.inline_caches.len <= pc:
-      cu.inline_caches.add(InlineCache())
-    cu.inline_caches[pc].addr
+  ## Fast inline cache access. Compilation units must be published with
+  ## caches pre-sized to `instructions.len`.
+  if pc >= cu.inline_caches.len:
+    raise new_exception(types.Exception, "Inline cache not initialized for published compilation unit")
+  cu.inline_caches[pc].addr
 
 proc resolve_local_lookup_value(self: ptr VirtualMachine, key: Key): Value {.inline.} =
   if self == nil or self.frame == nil or self.frame.scope == nil or self.frame.scope.tracker == nil:
@@ -1516,13 +1513,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkPushValue:
-        if inst.arg0.kind == VkString:
-          # Always copy string literals on push so each variable binding gets a
-          # private ref_count=1 object that is safe to mutate via .append etc.
-          # The interned instruction constant is unaffected.
-          self.frame.push(new_str_value(inst.arg0.str))
-        else:
-          self.frame.push(inst.arg0)
+        self.frame.push(inst.arg0)
       of IkPushNil:
         self.frame.push(NIL)
       of IkPushTypeValue:
@@ -3318,7 +3309,10 @@ proc exec*(self: ptr VirtualMachine): Value =
             not_allowed("Cannot access namespace member on value of type: " & $obj.kind)
 
         self.pc.inc()
-        self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc))
+        let init_scope = self.frame.scope
+        if init_scope != nil:
+          init_scope.ref_count.inc()
+        self.frame = new_frame(self.frame, Address(cu: self.cu, pc: self.pc), init_scope)
         # Pass the class/namespace as args so methods can access it
         let args_gene = new_gene(NIL)
         args_gene.children.add(obj)
@@ -3392,7 +3386,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           else:
             scope_tracker_obj = new_scope_tracker(info.scope_tracker)
           if info.compiled_body.kind == VkCompiledUnit:
-            f.body_compiled = info.compiled_body.ref.cu
+            publish_compiled_body(f, info.compiled_body.ref.cu)
             # Store input back to function for reflection (already parsed above)
         of VkScopeTracker:
           scope_tracker_obj = new_scope_tracker(data_value.ref.scope_tracker)
@@ -3425,6 +3419,8 @@ proc exec*(self: ptr VirtualMachine): Value =
             define_in_ns = false
           if info.input.gene.children.len > 0 and info.input.gene.children[0].kind == VkArray:
             define_in_ns = false
+        if not define_in_ns and self.cu != nil and self.cu.kind == CkModule:
+          define_in_ns = true
 
         # Handle namespaced function definitions
         if define_in_ns:
@@ -3605,7 +3601,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let v = r.to_ref_value()
 
         # Store in appropriate parent unless local-only
-        if not local_def:
+        if (not local_def) or (self.cu != nil and self.cu.kind == CkModule):
           if parent_ns != nil:
             parent_ns[cast[Key](name.raw)] = v
           else:
@@ -3697,7 +3693,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        if not local_def:
+        if (not local_def) or (self.cu != nil and self.cu.kind == CkModule):
           target_ns.members[class_key] = v
         self.frame.push(v)
 
@@ -3851,7 +3847,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        if not local_def:
+        if (not local_def) or (self.cu != nil and self.cu.kind == CkModule):
           target_ns.members[class_key] = v
         self.frame.push(v)
 

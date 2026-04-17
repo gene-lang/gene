@@ -1,6 +1,6 @@
 {.push warning[ResultShadowed]: off, warning[UnreachableCode]: off, warning[UnusedImport]: off.}
 
-import tables, strutils, strformat, algorithm, options, streams
+import tables, strutils, strformat, algorithm, options, streams, locks
 import times, os
 import asyncdispatch  # For event loop polling in async support
 

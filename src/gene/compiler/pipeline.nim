@@ -55,6 +55,7 @@ proc compile_init*(input: Value, local_defs = false, module_path = "",
   self.output.optimize_noops()  # Optimize BEFORE resolving jumps
   self.output.peephole_optimize()  # Apply peephole optimizations
   self.output.update_jumps()
+  self.output.inline_caches.setLen(self.output.instructions.len)
   result = self.output
 
 proc remap_checker_type_id(checker_type_id: TypeId,
@@ -448,7 +449,6 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   )
   self.output.module_path = module_path_from_source(filename)
   self.preserve_root_scope = module_mode
-  self.local_definitions = module_mode
   self.output.type_check = type_check
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
@@ -693,8 +693,9 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
   )
   self.output.module_path = module_path_from_source(filename)
   self.preserve_root_scope = module_mode
+  self.local_definitions = module_mode
   self.output.type_check = type_check
-  self.output.instructions.add(Instruction(kind: IkStart))
+  self.emit(Instruction(kind: IkStart))
   self.start_scope()
 
   var is_first = true
@@ -727,7 +728,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
     self.output.module_types = collect_module_types(normalized)
     for node in normalized:
       if not is_first and prev_pushed:
-        self.output.instructions.add(Instruction(kind: IkPop))
+        self.emit(Instruction(kind: IkPop))
 
       self.last_error_trace = nil
       if checker != nil:
@@ -772,7 +773,7 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
         if node != PARSER_IGNORE:
           # Pop previous result before compiling next item (except for first)
           if not is_first and prev_pushed:
-            self.output.instructions.add(Instruction(kind: IkPop))
+            self.emit(Instruction(kind: IkPop))
 
           self.last_error_trace = nil
           if checker != nil:
@@ -815,16 +816,18 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
 
   # Finalize compilation
   self.end_scope()
-  self.output.instructions.add(Instruction(kind: IkEnd))
+  self.emit(Instruction(kind: IkEnd))
   self.output.optimize_noops()
   self.output.peephole_optimize()
   self.output.update_jumps()
+  self.output.inline_caches.setLen(self.output.instructions.len)
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
   if checker != nil:
     merge_checker_type_descriptors(self.output.type_descriptors, checker.type_descriptors())
   if module_mode:
     self.output.kind = CkModule
+  self.output.type_registry = populate_registry(self.output.type_descriptors, self.output.module_path)
 
   return self.output
 

@@ -1,4 +1,4 @@
-import tables, strutils, streams
+import tables, strutils, streams, locks
 
 import ./types
 import ./parser
@@ -624,7 +624,10 @@ proc compile*(input: seq[Value]): CompilationUnit =
   compile(input, false)
 
 proc compile*(f: Function, eager_functions: bool) =
+  acquire(body_publication_lock)
+  defer: release(body_publication_lock)
   if f.body_compiled != nil:
+    ensure_inline_caches_ready(f.body_compiled)
     return
 
   var self = Compiler(
@@ -710,7 +713,10 @@ proc compile*(f: Function) =
   compile(f, false)
 
 proc compile*(b: Block, eager_functions: bool) =
+  acquire(body_publication_lock)
+  defer: release(body_publication_lock)
   if b.body_compiled != nil:
+    ensure_inline_caches_ready(b.body_compiled)
     return
 
   var self = Compiler(

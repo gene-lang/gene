@@ -144,10 +144,11 @@ proc poll_event_loop*(self: ptr VirtualMachine) =
 
     when not defined(gene_wasm):
       # Check for thread replies (non-blocking)
-      # Only check if we're the main thread (thread 0)
-      if THREADS[0].in_use:
+      let poll_thread_id = current_thread_id
+      if poll_thread_id >= 0 and poll_thread_id < g_max_threads and
+         THREADS[poll_thread_id].in_use and THREAD_DATA[poll_thread_id].channel != nil:
         while true:
-          let msg_opt = THREAD_DATA[0].channel.try_recv()
+          let msg_opt = THREAD_DATA[poll_thread_id].channel.try_recv()
           if msg_opt.isNone():
             break
 
