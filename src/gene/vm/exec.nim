@@ -547,35 +547,38 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.frame.push(r.to_ref_value())
           else:
             let name = cast[Key](inst.arg0)
-
-            # Inline cache implementation (pre-allocated at compile time)
-            let cache = get_inline_cache(self.cu, self.pc)
-            if cache.ns != nil and cache.version == cache.ns.version and name in cache.ns.members:
-              # Cache hit - use cached value
-              self.frame.push(cache.ns.members[name])
+            if name == "$ex".to_key():
+              let raw_ex = if self.current_exception != NIL: self.current_exception else: self.repl_exception
+              self.frame.push(raw_ex)
             else:
-              # Cache miss - do full lookup
-              let resolved = resolve_namespace_value(self.frame.ns, name)
-              var found = resolved.found
-              var value = resolved.value
-              var found_ns = resolved.owner
-              if not found:
-                # Try thread-local namespace first (for $thread, $main_thread, etc.)
-                if self.thread_local_ns != nil:
-                  let thread_resolved = resolve_namespace_value(self.thread_local_ns, name)
-                  found = thread_resolved.found
-                  value = thread_resolved.value
-                  found_ns = thread_resolved.owner
-              if not found:
-                let symbol_name = get_symbol(symbol_index(name))
-                not_allowed(symbol_name & " is not defined")
-              # Update cache
-              if found_ns != nil:
-                cache.ns = found_ns
-                cache.version = found_ns.version
-                cache.value = value
+              # Inline cache implementation (pre-allocated at compile time)
+              let cache = get_inline_cache(self.cu, self.pc)
+              if cache.ns != nil and cache.version == cache.ns.version and name in cache.ns.members:
+                # Cache hit - use cached value
+                self.frame.push(cache.ns.members[name])
+              else:
+                # Cache miss - do full lookup
+                let resolved = resolve_namespace_value(self.frame.ns, name)
+                var found = resolved.found
+                var value = resolved.value
+                var found_ns = resolved.owner
+                if not found:
+                  # Try thread-local namespace first (for $thread, $main_thread, etc.)
+                  if self.thread_local_ns != nil:
+                    let thread_resolved = resolve_namespace_value(self.thread_local_ns, name)
+                    found = thread_resolved.found
+                    value = thread_resolved.value
+                    found_ns = thread_resolved.owner
+                if not found:
+                  let symbol_name = get_symbol(symbol_index(name))
+                  not_allowed(symbol_name & " is not defined")
+                # Update cache
+                if found_ns != nil:
+                  cache.ns = found_ns
+                  cache.version = found_ns.version
+                  cache.value = value
 
-              self.frame.push(value)
+                self.frame.push(value)
 
       of IkSelf:
         # Get self from first argument
@@ -848,7 +851,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               let raw_ex = if self.current_exception != NIL: self.current_exception else: self.repl_exception
               self.frame.push(raw_ex)
             else:
-              var member = value.ref.ns[name]
+              var member = value.ref.ns.members.getOrDefault(name, NIL)
               if member == NIL:
                 let sym_name = get_symbol(symbol_index(name))
                 member = try_member_missing_handlers(self, value.ref.ns, sym_name)
@@ -1007,7 +1010,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 let elapsed = now_us - self.duration_start_us
                 self.frame.push(elapsed.to_value())
               else:
-                var member = target.ref.ns[key]
+                var member = target.ref.ns.members.getOrDefault(key, NIL)
                 if member == NIL:
                   let prop_name = case prop.kind:
                     of VkString, VkSymbol: prop.str
@@ -1197,7 +1200,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 retain(member)
                 self.frame.push(member)
               else:
-                var member = target.ref.ns[key]
+                var member = target.ref.ns.members.getOrDefault(key, NIL)
                 if member == NIL:
                   let prop_name = case prop.kind:
                     of VkString, VkSymbol: prop.str
@@ -3413,13 +3416,25 @@ proc exec*(self: ptr VirtualMachine): Value =
         let v = r.to_ref_value()
 
         var define_in_ns = true
+        let main_module_scope =
+          self.cu != nil and self.cu.kind == CkModule and
+          self.frame != nil and self.frame.ns != nil and
+          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) == TRUE
         if info.input.kind == VkGene and info.input.gene != nil:
           let local_key = "local_def".to_key()
           if info.input.gene.props.has_key(local_key) and info.input.gene.props[local_key] == TRUE:
             define_in_ns = false
           if info.input.gene.children.len > 0 and info.input.gene.children[0].kind == VkArray:
             define_in_ns = false
-        if not define_in_ns and self.cu != nil and self.cu.kind == CkModule:
+          elif main_module_scope:
+            let first = info.input.gene.children[0]
+            if first.kind in {VkSymbol, VkString} and first.str != "__init__":
+              define_in_ns = false
+        let imported_module_scope =
+          self.cu != nil and self.cu.kind == CkModule and
+          self.frame != nil and self.frame.ns != nil and
+          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) != TRUE
+        if not define_in_ns and imported_module_scope:
           define_in_ns = true
 
         # Handle namespaced function definitions
@@ -3601,7 +3616,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         let v = r.to_ref_value()
 
         # Store in appropriate parent unless local-only
-        if (not local_def) or (self.cu != nil and self.cu.kind == CkModule):
+        let imported_module_scope =
+          self.cu != nil and self.cu.kind == CkModule and
+          self.frame != nil and self.frame.ns != nil and
+          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) != TRUE
+        if (not local_def) or imported_module_scope:
           if parent_ns != nil:
             parent_ns[cast[Key](name.raw)] = v
           else:
@@ -3693,7 +3712,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        if (not local_def) or (self.cu != nil and self.cu.kind == CkModule):
+        let imported_module_scope =
+          self.cu != nil and self.cu.kind == CkModule and
+          self.frame != nil and self.frame.ns != nil and
+          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) != TRUE
+        if (not local_def) or imported_module_scope:
           target_ns.members[class_key] = v
         self.frame.push(v)
 
@@ -3847,7 +3870,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         let r = new_ref(VkClass)
         r.class = class
         let v = r.to_ref_value()
-        if (not local_def) or (self.cu != nil and self.cu.kind == CkModule):
+        let imported_module_scope =
+          self.cu != nil and self.cu.kind == CkModule and
+          self.frame != nil and self.frame.ns != nil and
+          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) != TRUE
+        if (not local_def) or imported_module_scope:
           target_ns.members[class_key] = v
         self.frame.push(v)
 
@@ -5892,6 +5919,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             else:
               not_allowed("Method must be a function or native function")
           else:
+            if obj.kind == VkInstance and instance_props(obj).hasKey(method_key_0):
+              let member = instance_props(obj)[method_key_0]
+              retain(member)
+              self.frame.push(member)
+              self.pc.inc()
+              inst = self.cu.instructions[self.pc].addr
+              continue
             if self.call_missing_method(obj, class, method_name_0(), @[], @[]):
               inst = self.cu.instructions[self.pc].addr
               continue

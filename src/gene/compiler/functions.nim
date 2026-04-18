@@ -218,10 +218,15 @@ proc compile_ns(self: Compiler, gene: ptr Gene) =
 
   # Handle namespace body if present
   if gene.children.len > 1:
+    var parent_scope_tracker = self.scope_tracker
+    if parent_scope_tracker != nil:
+      parent_scope_tracker = copy_scope_tracker(parent_scope_tracker)
+      parent_scope_tracker.mappings.del("self".to_key())
     let body = new_stream_value(gene.children[1..^1])
     let compiled = compile_init(body,
       local_defs = true,
       module_path = self.output.module_path,
+      parent_scope_tracker = parent_scope_tracker,
       inherited_type_descriptors = self.output.type_descriptors,
       inherited_type_aliases = self.output.type_aliases)
     let r = new_ref(VkCompiledUnit)
@@ -457,6 +462,10 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
 
   # Compile class body if present
   if gene.children.len > body_start or implemented_interfaces.len > 0:
+    var parent_scope_tracker = self.scope_tracker
+    if parent_scope_tracker != nil:
+      parent_scope_tracker = copy_scope_tracker(parent_scope_tracker)
+      parent_scope_tracker.mappings.del("self".to_key())
     let body = new_stream_value()
     for iface in implemented_interfaces:
       var implement_gene = new_gene("implement".to_symbol_value())
@@ -470,6 +479,7 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
     let compiled = compile_init(body,
       local_defs = true,
       module_path = self.output.module_path,
+      parent_scope_tracker = parent_scope_tracker,
       inherited_type_descriptors = self.output.type_descriptors,
       inherited_type_aliases = self.output.type_aliases)
     let r = new_ref(VkCompiledUnit)

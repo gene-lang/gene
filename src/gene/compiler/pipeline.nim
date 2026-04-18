@@ -449,6 +449,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   )
   self.output.module_path = module_path_from_source(filename)
   self.preserve_root_scope = module_mode
+  self.local_definitions = module_mode
   self.output.type_check = type_check
   self.emit(Instruction(kind: IkStart))
   self.start_scope()
@@ -574,6 +575,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.output.optimize_noops()
   self.output.peephole_optimize()
   self.output.update_jumps()
+  self.output.inline_caches.setLen(self.output.instructions.len)
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
   if checker != nil:
@@ -666,6 +668,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.output.optimize_noops()
   self.output.peephole_optimize()
   self.output.update_jumps()
+  self.output.inline_caches.setLen(self.output.instructions.len)
   self.output.ensure_trace_capacity()
   self.output.trace_root = parser.trace_root
   if checker != nil:

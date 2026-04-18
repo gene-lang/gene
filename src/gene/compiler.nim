@@ -346,6 +346,8 @@ proc translate_symbol(input: Value): Value =
         # Special case for $ns - translate to special symbol
         if s == "$ns":
           result = cast[Value](SYM_NS)
+        elif s == "$ex":
+          result = input
         else:
           result = @["SPECIAL_GLOBAL", s[1..^1]].to_complex_symbol()
       else:
@@ -357,6 +359,8 @@ proc translate_symbol(input: Value): Value =
         r.csymbol[0] = "self"
       elif r.csymbol[0] == "$ns":
         r.csymbol[0] = "SPECIAL_NS"
+      elif r.csymbol[0] == "$ex":
+        discard
       elif r.csymbol[0].starts_with("$") and r.csymbol[0].len > 1:
         let stripped = r.csymbol[0][1..^1]
         r.csymbol[0] = "SPECIAL_GLOBAL"

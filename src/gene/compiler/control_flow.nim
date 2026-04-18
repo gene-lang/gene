@@ -745,10 +745,19 @@ proc compile_assignment(self: Compiler, gene: ptr Gene) =
     # Load the target object first (for both regular and compound assignment)
     if r.csymbol[0] == "SPECIAL_NS":
       self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](SYM_NS)))
-    elif self.scope_tracker.mappings.has_key(key):
-      self.emit(Instruction(kind: IkVarResolve, arg0: self.scope_tracker.mappings[key].to_value()))
+    elif r.csymbol[0] == "SPECIAL_GLOBAL":
+      self.emit(Instruction(kind: IkPushValue, arg0: App.app.global_ns))
     else:
-      self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
+      let found = self.scope_tracker.locate(key)
+      if found.local_index >= 0:
+        if found.parent_index == 0:
+          self.emit(Instruction(kind: IkVarResolve, arg0: found.local_index.to_value()))
+        else:
+          self.emit(Instruction(kind: IkVarResolveInherited, arg0: found.local_index.to_value(), arg1: found.parent_index))
+      elif r.csymbol[0] == "self":
+        self.emit(Instruction(kind: IkSelf))
+      else:
+        self.emit(Instruction(kind: IkResolveSymbol, arg0: cast[Value](key)))
       
     # Navigate to parent object (if nested property access)
     if r.csymbol.len > 2:
