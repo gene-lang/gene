@@ -1,6 +1,12 @@
 ## GC infrastructure: NaN boxing constants, destroy procs, retain/release,
 ## lifecycle hooks (=destroy, =copy, =sink, =default).
 ## Included from type_defs.nim — shares its scope.
+##
+## Shared-RC publication invariant:
+## `(freeze v)` and bootstrap publication must set the managed header's
+## shared bit before publishing the pointer across threads. Readers only branch
+## to atomic RC after they can observe the published pointer, so any
+## cross-thread observer must also observe `shared == true`.
 
 # Global list of scheduler poll callbacks - extensions register handlers here
 var scheduler_callbacks*: seq[SchedulerCallback] = @[]
@@ -17,6 +23,7 @@ proc register_scheduler_callback*(callback: SchedulerCallback) =
 # NaN Boxing constants
 const PAYLOAD_MASK* = 0x0000_FFFF_FFFF_FFFFu64
 const TAG_SHIFT* = 48
+const RC_SHARED_BIT = 0b0000_0010'u8
 
 # Primary type tags in NaN space (reorganized for GC)
 # DESIGN: All managed types (need ref-counting) have tags >= 0xFFF8
@@ -74,6 +81,52 @@ proc destroy_instance(inst: ptr InstanceObj) =
 proc destroy_reference(ref_obj: ptr Reference) =
   destroyAndDealloc(ref_obj)
 
+when defined(phase1_rc_branch_probe):
+  type RcBranchOp* = enum
+    RcPlainInc,
+    RcAtomicInc,
+    RcPlainDec,
+    RcAtomicDec
+
+  var rcBranchProbeEnabled {.global.} = true
+  var rcBranchCounts {.global.}: array[RcBranchOp, int]
+
+  proc resetRcBranchProbe*() =
+    for op in RcBranchOp:
+      rcBranchCounts[op] = 0
+
+  proc rcBranchProbeCount*(op: RcBranchOp): int =
+    rcBranchCounts[op]
+
+  proc setRcBranchProbeEnabled*(enabled: bool) =
+    rcBranchProbeEnabled = enabled
+
+  template recordRcBranch(op: static RcBranchOp) =
+    if rcBranchProbeEnabled:
+      rcBranchCounts[op].inc()
+else:
+  template recordRcBranch(op: untyped) =
+    discard
+
+template incRc(hdr, shared: untyped) =
+  if shared:
+    recordRcBranch(RcAtomicInc)
+    atomicInc(hdr.ref_count)
+  else:
+    recordRcBranch(RcPlainInc)
+    hdr.ref_count.inc()
+
+template decRc(hdr, shared: untyped): int =
+  (block:
+    if shared:
+      recordRcBranch(RcAtomicDec)
+      atomicDec(hdr.ref_count)
+    else:
+      recordRcBranch(RcPlainDec)
+      let old_count = hdr.ref_count
+      hdr.ref_count.dec()
+      old_count)
+
 # Core GC operations
 proc retainManaged*(raw: uint64) {.gcsafe.} =
   ## Increment reference count for a managed value
@@ -85,27 +138,28 @@ proc retainManaged*(raw: uint64) {.gcsafe.} =
     of 0xFFF8:  # ARRAY_TAG
       let arr = cast[ptr ArrayObj](raw and PAYLOAD_MASK)
       if arr != nil:
-        atomicInc(arr.ref_count)
+        incRc(arr, (arr.flags and RC_SHARED_BIT) != 0)
     of 0xFFF9:  # MAP_TAG
       let m = cast[ptr MapObj](raw and PAYLOAD_MASK)
       if m != nil:
-        atomicInc(m.ref_count)
+        incRc(m, (m.flags and RC_SHARED_BIT) != 0)
     of 0xFFFA:  # INSTANCE_TAG
       let inst = cast[ptr InstanceObj](raw and PAYLOAD_MASK)
       if inst != nil:
+        recordRcBranch(RcAtomicInc)
         atomicInc(inst.ref_count)
     of 0xFFFB:  # GENE_TAG
       let g = cast[ptr Gene](raw and PAYLOAD_MASK)
       if g != nil:
-        atomicInc(g.ref_count)
+        incRc(g, (g.flags and RC_SHARED_BIT) != 0)
     of 0xFFFC:  # REF_TAG
       let ref_obj = cast[ptr Reference](raw and PAYLOAD_MASK)
       if ref_obj != nil:
-        atomicInc(ref_obj.ref_count)
+        incRc(ref_obj, (ref_obj.flags and RC_SHARED_BIT) != 0)
     of 0xFFFD:  # STRING_TAG
       let s = cast[ptr String](raw and PAYLOAD_MASK)
       if s != nil:
-        atomicInc(s.ref_count)
+        incRc(s, (s.flags and RC_SHARED_BIT) != 0)
     else:
       discard
 
@@ -139,32 +193,33 @@ proc releaseManaged*(raw: uint64) {.gcsafe.} =
   case tag:
     of 0xFFF8:  # ARRAY_TAG
       let arr = cast[ptr ArrayObj](payload)
-      let old_count = atomicDec(arr.ref_count)
+      let old_count = decRc(arr, (arr.flags and RC_SHARED_BIT) != 0)
       if old_count == 1:
         destroy_array(arr)
     of 0xFFF9:  # MAP_TAG
       let m = cast[ptr MapObj](payload)
-      let old_count = atomicDec(m.ref_count)
+      let old_count = decRc(m, (m.flags and RC_SHARED_BIT) != 0)
       if old_count == 1:
         destroy_map(m)
     of 0xFFFA:  # INSTANCE_TAG
       let inst = cast[ptr InstanceObj](payload)
+      recordRcBranch(RcAtomicDec)
       let old_count = atomicDec(inst.ref_count)
       if old_count == 1:
         destroy_instance(inst)
     of 0xFFFB:  # GENE_TAG
       let g = cast[ptr Gene](payload)
-      let old_count = atomicDec(g.ref_count)
+      let old_count = decRc(g, (g.flags and RC_SHARED_BIT) != 0)
       if old_count == 1:
         destroy_gene(g)
     of 0xFFFC:  # REF_TAG
       let ref_obj = cast[ptr Reference](payload)
-      let old_count = atomicDec(ref_obj.ref_count)
+      let old_count = decRc(ref_obj, (ref_obj.flags and RC_SHARED_BIT) != 0)
       if old_count == 1:
         destroy_reference(ref_obj)
     of 0xFFFD:  # STRING_TAG
       let s = cast[ptr String](payload)
-      let old_count = atomicDec(s.ref_count)
+      let old_count = decRc(s, (s.flags and RC_SHARED_BIT) != 0)
       if old_count == 1:
         destroy_string(s)
     else:
