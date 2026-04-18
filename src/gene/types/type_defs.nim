@@ -348,6 +348,7 @@ type
   Gene* = object
     ref_count*: int
     frozen*: bool
+    flags*: uint8
     `type`*: Value
     trace*: SourceTrace
     props*: Table[Key, Value]
@@ -355,6 +356,7 @@ type
 
   String* = object
     ref_count*: int
+    flags*: uint8
     str*: string
 
   Document* = ref object

@@ -6,6 +6,11 @@
 proc bytes_len*(v: Value): int {.inline.}
 proc bytes_at*(v: Value, i: int): uint8 {.inline.}
 
+const
+  DeepFrozenBit*: uint8 = 0b0000_0001
+  SharedBit*: uint8 = 0b0000_0010
+  # bits 2..7 reserved for future phases
+
 #################### Common ######################
 
 template `==`*(a, b: Key): bool =
@@ -203,6 +208,136 @@ proc hash_map_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
 proc ensure_mutable_hash_map*(v: Value, op_name = "mutate"): void {.inline, gcsafe.} =
   if hash_map_is_frozen(v):
     not_allowed("Cannot " & op_name & " immutable hash map")
+
+proc deep_frozen*(v: Value): bool {.inline, noSideEffect.} =
+  let u = cast[uint64](v)
+  if (u and NAN_MASK) != NAN_MASK:
+    return true
+
+  let tag = u and 0xFFFF_0000_0000_0000u64
+  case tag:
+    of ARRAY_TAG:
+      let arr = cast[ptr ArrayObj](u and PAYLOAD_MASK)
+      return arr != nil and (arr.flags and DeepFrozenBit) != 0
+    of MAP_TAG:
+      let m = cast[ptr MapObj](u and PAYLOAD_MASK)
+      return m != nil and (m.flags and DeepFrozenBit) != 0
+    of INSTANCE_TAG:
+      let inst = cast[ptr InstanceObj](u and PAYLOAD_MASK)
+      return inst != nil and (inst.flags and DeepFrozenBit) != 0
+    of GENE_TAG:
+      let g = cast[ptr Gene](u and PAYLOAD_MASK)
+      return g != nil and (g.flags and DeepFrozenBit) != 0
+    of STRING_TAG:
+      let s = cast[ptr String](u and PAYLOAD_MASK)
+      return s.is_nil or (s.flags and DeepFrozenBit) != 0
+    of REF_TAG:
+      let r = cast[ptr Reference](u and PAYLOAD_MASK)
+      return r != nil and (r.flags and DeepFrozenBit) != 0
+    of SMALL_INT_TAG, SYMBOL_TAG, BYTES_TAG, BYTES6_TAG, SPECIAL_TAG, POINTER_TAG:
+      return true
+    else:
+      return true
+
+proc shared*(v: Value): bool {.inline, noSideEffect.} =
+  let u = cast[uint64](v)
+  if (u and NAN_MASK) != NAN_MASK:
+    return false
+
+  let tag = u and 0xFFFF_0000_0000_0000u64
+  case tag:
+    of ARRAY_TAG:
+      let arr = cast[ptr ArrayObj](u and PAYLOAD_MASK)
+      return arr != nil and (arr.flags and SharedBit) != 0
+    of MAP_TAG:
+      let m = cast[ptr MapObj](u and PAYLOAD_MASK)
+      return m != nil and (m.flags and SharedBit) != 0
+    of INSTANCE_TAG:
+      let inst = cast[ptr InstanceObj](u and PAYLOAD_MASK)
+      return inst != nil and (inst.flags and SharedBit) != 0
+    of GENE_TAG:
+      let g = cast[ptr Gene](u and PAYLOAD_MASK)
+      return g != nil and (g.flags and SharedBit) != 0
+    of STRING_TAG:
+      let s = cast[ptr String](u and PAYLOAD_MASK)
+      return not s.is_nil and (s.flags and SharedBit) != 0
+    of REF_TAG:
+      let r = cast[ptr Reference](u and PAYLOAD_MASK)
+      return r != nil and (r.flags and SharedBit) != 0
+    of SMALL_INT_TAG, SYMBOL_TAG, BYTES_TAG, BYTES6_TAG, SPECIAL_TAG, POINTER_TAG:
+      return false
+    else:
+      return false
+
+proc setDeepFrozen*(v: Value) {.inline.} =
+  let u = cast[uint64](v)
+  if (u and NAN_MASK) != NAN_MASK:
+    return
+
+  let tag = u and 0xFFFF_0000_0000_0000u64
+  case tag:
+    of ARRAY_TAG:
+      let arr = cast[ptr ArrayObj](u and PAYLOAD_MASK)
+      if arr != nil:
+        arr.flags = arr.flags or DeepFrozenBit
+    of MAP_TAG:
+      let m = cast[ptr MapObj](u and PAYLOAD_MASK)
+      if m != nil:
+        m.flags = m.flags or DeepFrozenBit
+    of INSTANCE_TAG:
+      let inst = cast[ptr InstanceObj](u and PAYLOAD_MASK)
+      if inst != nil:
+        inst.flags = inst.flags or DeepFrozenBit
+    of GENE_TAG:
+      let g = cast[ptr Gene](u and PAYLOAD_MASK)
+      if g != nil:
+        g.flags = g.flags or DeepFrozenBit
+    of STRING_TAG:
+      let s = cast[ptr String](u and PAYLOAD_MASK)
+      if not s.is_nil:
+        s.flags = s.flags or DeepFrozenBit
+    of REF_TAG:
+      let r = cast[ptr Reference](u and PAYLOAD_MASK)
+      if r != nil:
+        r.flags = r.flags or DeepFrozenBit
+    else:
+      discard
+
+proc setShared*(v: Value) {.inline.} =
+  let u = cast[uint64](v)
+  if (u and NAN_MASK) != NAN_MASK:
+    not_allowed("Cannot mark non-heap value as shared")
+
+  let tag = u and 0xFFFF_0000_0000_0000u64
+  case tag:
+    of ARRAY_TAG:
+      let arr = cast[ptr ArrayObj](u and PAYLOAD_MASK)
+      if arr != nil:
+        arr.flags = arr.flags or SharedBit
+    of MAP_TAG:
+      let m = cast[ptr MapObj](u and PAYLOAD_MASK)
+      if m != nil:
+        m.flags = m.flags or SharedBit
+    of INSTANCE_TAG:
+      let inst = cast[ptr InstanceObj](u and PAYLOAD_MASK)
+      if inst != nil:
+        inst.flags = inst.flags or SharedBit
+    of GENE_TAG:
+      let g = cast[ptr Gene](u and PAYLOAD_MASK)
+      if g != nil:
+        g.flags = g.flags or SharedBit
+    of STRING_TAG:
+      let s = cast[ptr String](u and PAYLOAD_MASK)
+      if s.is_nil:
+        not_allowed("Cannot mark non-heap value as shared")
+      s.flags = s.flags or SharedBit
+    of REF_TAG:
+      let r = cast[ptr Reference](u and PAYLOAD_MASK)
+      if r == nil:
+        not_allowed("Cannot mark non-heap value as shared")
+      r.flags = r.flags or SharedBit
+    else:
+      not_allowed("Cannot mark non-heap value as shared")
 
 #################### Value ######################
 

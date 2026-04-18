@@ -11,6 +11,7 @@ type
   # Extended Reference type supporting all ValueKind variants
   Reference* = object
     ref_count*: int  # Reference count for GC
+    flags*: uint8
     case kind*: ValueKind
       # Basic string-like types
       of VkString, VkSymbol:
@@ -221,15 +222,18 @@ type
   ArrayObj* = object
     ref_count*: int
     frozen*: bool
+    flags*: uint8
     arr*: seq[Value]
 
   MapObj* = object
     ref_count*: int
     frozen*: bool
+    flags*: uint8
     map*: Table[Key, Value]
 
   InstanceObj* = object
     ref_count*: int
+    flags*: uint8
     instance_class*: Class
     instance_props*: Table[Key, Value]
     module_path*: string
