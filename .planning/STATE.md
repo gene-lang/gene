@@ -1,40 +1,61 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-04-19T00:38:12.423Z"
+last_activity: 2026-04-19
+progress:
+  total_phases: 2
+  completed_phases: 1
+  total_plans: 11
+  completed_plans: 9
+  percent: 82
+---
+
 # Project State
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-17)
 
-**Core value:** Phase 0 must make Gene's runtime ownership and publication
-semantics safe enough for later actor work without destabilizing the existing
-VM.
-**Current focus:** Phase 0 (unify-lifetime-and-publication-semantics)
+**Core value:** Phase 1 introduces the deep-frozen bit, shared-heap allocation
+path, and `(freeze v)` stdlib operation that every subsequent actor-runtime
+phase depends on, without adding a new concurrency API.
+**Current focus:** Phase 01 — deep-frozen-bit-shared-heap-freeze
 
 ## Current Position
 
-Phase: 0 of 1 (unify-lifetime-and-publication-semantics)
-Plan: 0 of 5 in current phase
+Phase: 01 (deep-frozen-bit-shared-heap-freeze) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-04-17 - Bootstrapped actor-design Phase 0 roadmap,
-context, and plan files from `docs/proposals/actor-design.md`
+Last activity: 2026-04-19
+scope-in from `docs/proposals/actor-design.md:687-718`
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
+
+- Total plans completed: 5
 - Average duration: -
-- Total execution time: 0.0 hours
+- Total execution time: not recorded
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 0 | 0 | 0 | - |
+| 0 | 5 | - | - |
+| 1 | 0 | - | - |
 
 **Recent Trend:**
-- Last 5 plans: none
+
+- Last 5 plans: 00-01, 00-02, 00-03, 00-04, 00-05 all complete 2026-04-17..18
 - Trend: Stable
+
+| Phase 01 P03 | 25m | 4 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -43,12 +64,22 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Phase 0]: Proposal numbering is preserved locally; only Phase 0 is tracked
-  in ROADMAP.md for now.
-- [Phase 0]: P0.1-P0.5 are mirrored as five plans so each sub-phase can be
-  tested and rolled back independently.
-- [Phase 0]: P0.4 uses return-new-string semantics for `String.append`;
-  `StringBuilder` remains deferred.
+- [Phase 0]: Proposal numbering is preserved locally; Phase 1 now scope-in.
+- [Phase 0]: Closed with commit e2e776c — atomic managed RC, reader-side
+  publication helpers, native publication snapshots, inline-cache write race
+  removed, bootstrap freeze boundary at end of `init_stdlib`.
+
+- [Phase 0]: Legacy `.planning/phases/01-architecture-comparison/` moved to
+  `.planning/archive/01-architecture-comparison-legacy/` so the `01-` slot is
+  usable for the real Phase 1.
+
+- [Phase 1]: `--skip-research` route selected — planner uses the default
+  decisions documented in Phase 1 CONTEXT.md (header-bit placement, in-place
+  tag freeze semantics, tag-on-existing-heap allocator, atomic-vs-plain RC
+  branch, MVP container scope, Phase 1.5 split).
+
+- [Phase 01]: Guard the actual mutation opcode handlers in exec.nim, including current-map/current-gene builder opcodes, instead of relying on higher-level surface syntax alone.
+- [Phase 01]: Keep the existing shallow frozen checks intact and add deep-frozen guards ahead of the writes.
 
 ### Pending Todos
 
@@ -56,20 +87,22 @@ None yet.
 
 ### Blockers/Concerns
 
-- Existing `.planning/phases/01-architecture-comparison/` artifacts are
-  preserved but not mapped into the new roadmap. Do not rename or reuse that
-  directory during Phase 0 execution without explicit triage.
+- `gsd-sdk` is not installed on this machine; the plan-phase workflow's INIT
+  JSON parse path is bypassed and phase variables are wired manually.
 
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| Concurrency | Deep-frozen/shared heap and `(freeze v)` | Deferred to future actor phase after Phase 0 | 2026-04-17 |
-| Concurrency | Actor scheduler, port actors, and thread API deprecation | Deferred until Phase 0 verification passes | 2026-04-17 |
+| Concurrency | Freezable closures (Phase 1.5 — hard prerequisite for Phase 2) | Deferred until Phase 1 closes | 2026-04-18 |
+| Concurrency | Actor scheduler, tiered send, reply futures, stop semantics (Phase 2) | Deferred until Phase 1 verification passes | 2026-04-18 |
+| Concurrency | Port-actor protocol for extensions (Phase 3) | Deferred | 2026-04-17 |
+| Concurrency | Thread API deprecation / `GENE_WORKERS` rename (Phase 4) | Deferred | 2026-04-17 |
+| Perf | Move-semantics `send!`, work-stealing scheduler, `^frozen-default` class annotation | Deferred indefinitely per proposal | 2026-04-17 |
 
 ## Session Continuity
 
-Last session: 2026-04-17 12:00
-Stopped at: Phase 0 planning artifacts created; next step is executing Plan
-00-01 or Plan 00-03
+Last session: 2026-04-19T00:38:12.420Z
+Stopped at: Completed 01-03-PLAN.md
+step is spawning `gsd-planner` for Phase 1
 Resume file: None

@@ -5,50 +5,89 @@
 semantics safe enough for later actor work without destabilizing the existing
 VM.
 
-## v1 Requirements
+## v1 Requirements (Phase 0 — Complete)
 
 ### Lifetime Semantics
 
-- [ ] **LIFE-01**: `Value` ownership uses a single ref-counting source of truth
+- [x] **LIFE-01**: `Value` ownership uses a single ref-counting source of truth
   across manual VM writes, Nim `=copy` / `=destroy` hooks, and
   function/native-trampoline boundaries.
 
 ### Publication Safety
 
-- [ ] **PUB-01**: Lazy function and block compilation no longer publish
+- [x] **PUB-01**: Lazy function and block compilation no longer publish
   `body_compiled` through unsynchronized writes.
-- [ ] **PUB-02**: Inline cache storage is pre-sized or synchronized so runtime
+- [x] **PUB-02**: Inline cache storage is pre-sized or synchronized so runtime
   execution does not grow `inline_caches` opportunistically.
-- [ ] **PUB-03**: Native code publication exposes `native_entry` only after
+- [x] **PUB-03**: Native code publication exposes `native_entry` only after
   `native_ready` is visible with release/acquire semantics or an equivalent
   eager-initialization guarantee.
 
 ### Thread Correctness
 
-- [ ] **THR-01**: `poll_event_loop` drains the caller's thread channel rather
+- [x] **THR-01**: `poll_event_loop` drains the caller's thread channel rather
   than hard-coding thread 0.
-- [ ] **THR-02**: `Thread.on_message` installs callbacks on the target thread VM
+- [x] **THR-02**: `Thread.on_message` installs callbacks on the target thread VM
   rather than the caller VM.
 
 ### String Immutability
 
-- [ ] **STR-01**: `String.append` and related mutators stop mutating shared
+- [x] **STR-01**: `String.append` and related mutators stop mutating shared
   storage in place and return new strings instead.
-- [ ] **STR-02**: `IkPushValue` no longer copies string literals defensively
+- [x] **STR-02**: `IkPushValue` no longer copies string literals defensively
   before pushing them on the VM stack.
 
 ### Bootstrap Publication
 
-- [ ] **BOOT-01**: Bootstrap-shared runtime artifacts have an explicit
+- [x] **BOOT-01**: Bootstrap-shared runtime artifacts have an explicit
   publication/freeze boundary that excludes runtime-created namespaces and
   classes.
 
-## v2 Requirements
+## v2 Requirements (Phase 1 — Active)
+
+### Deep-Frozen Bit and Shared Heap
+
+- [ ] **FRZ-01**: `Value` header carries a `deep_frozen` bit readable without
+  heap allocation on both payload and managed reference types.
+- [ ] **FRZ-02**: `Value` header carries a `shared` bit readable without heap
+  allocation, orthogonal to `deep_frozen` at the bit level but set in lockstep
+  by the freeze path for Phase 1 MVP scope.
+- [x] **FRZ-03**: Stdlib `(freeze v)` transitions `array`, `map`, `hash_map`,
+  `gene`, and `bytes` values to `deep_frozen`, recursively tagging nested
+  containers in MVP scope.
+- [x] **FRZ-04**: `(freeze v)` applied to a value whose MVP scope cannot be
+  satisfied (non-freezable kinds, or nested non-freezable payload) fails with
+  a typed error rather than partial tagging or a silent no-op.
+
+### Shared-Heap Allocation
+
+- [ ] **HEAP-01**: Frozen values are reachable from any thread through the same
+  heap without per-actor cloning, with documented invariants for pointer
+  sharing distinct from owned-heap values.
+
+### Refcount Branch
+
+- [ ] **RC-02**: Retain and release branch on the `shared` bit: shared values
+  continue to use atomic increments and decrements; owned (non-shared) values
+  may use plain increments and decrements where the lifetime is provably
+  thread-local, restoring the owned-side refcount performance Phase 0 traded
+  for uniformity.
+
+### Naming
+
+- [ ] **NAME-01**: The two-level naming ("sealed" for shallow `#[]` / `#{}` /
+  `#()` literals, "frozen" for deep `(freeze v)` output) is finalized with
+  matching error messages, stdlib names, and documentation.
+
+## v3 Requirements (Deferred Actor Work)
+
+### Freezable Closures (Phase 1.5 — Hard Prerequisite for Phase 2)
+
+- **CLO-01**: Closures with freezable captured environments can be frozen and
+  sent by pointer across actor boundaries.
 
 ### Actor Runtime
 
-- **ACT-01**: Add deep-frozen/shared heap support and `(freeze v)` for
-  pointer-shareable cross-actor data.
 - **ACT-02**: Add actor scheduler, tiered send, reply futures, and actor stop
   semantics.
 - **ACT-03**: Migrate process-global native resources behind port actors.
@@ -67,21 +106,33 @@ VM.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LIFE-01 | Phase 0 | Pending |
-| PUB-01 | Phase 0 | Pending |
-| PUB-02 | Phase 0 | Pending |
-| PUB-03 | Phase 0 | Pending |
-| THR-01 | Phase 0 | Pending |
-| THR-02 | Phase 0 | Pending |
-| STR-01 | Phase 0 | Pending |
-| STR-02 | Phase 0 | Pending |
-| BOOT-01 | Phase 0 | Pending |
+| LIFE-01 | Phase 0 | Complete (commit e2e776c) |
+| PUB-01 | Phase 0 | Complete |
+| PUB-02 | Phase 0 | Complete |
+| PUB-03 | Phase 0 | Complete |
+| THR-01 | Phase 0 | Complete |
+| THR-02 | Phase 0 | Complete |
+| STR-01 | Phase 0 | Complete |
+| STR-02 | Phase 0 | Complete |
+| BOOT-01 | Phase 0 | Complete (commit e2e776c) |
+| FRZ-01 | Phase 1 | Pending |
+| FRZ-02 | Phase 1 | Pending |
+| FRZ-03 | Phase 1 | Complete |
+| FRZ-04 | Phase 1 | Complete |
+| HEAP-01 | Phase 1 | Pending |
+| RC-02 | Phase 1 | Pending |
+| NAME-01 | Phase 1 | Pending |
+| CLO-01 | Phase 1.5 | Deferred |
+| ACT-02 | Phase 2 | Deferred |
+| ACT-03 | Phase 3 | Deferred |
+| ACT-04 | Phase 4 | Deferred |
 
 **Coverage:**
-- v1 requirements: 9 total
-- Mapped to phases: 9
+- v1 requirements (Phase 0): 9 complete
+- v2 requirements (Phase 1): 7 pending
+- v3 requirements (Phase 1.5+): 4 deferred
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-17*
-*Last updated: 2026-04-17 after actor-design Phase 0 bootstrap*
+*Last updated: 2026-04-18 after Phase 0 closeout and Phase 1 scope-in*
