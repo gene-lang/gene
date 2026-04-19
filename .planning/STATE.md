@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01.5-01-PLAN.md
-last_updated: "2026-04-19T20:36:58.028Z"
-last_activity: 2026-04-19 -- Completed 01.5-01 closure freeze walker
+status: verifying
+stopped_at: Completed 01.5-02-PLAN.md
+last_updated: "2026-04-19T20:51:57.522Z"
+last_activity: 2026-04-19
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 13
-  completed_plans: 12
-  percent: 92
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -29,8 +29,8 @@ phase depends on, without adding a new concurrency API.
 
 Phase: 01.5 (freezable-closures) — EXECUTING
 Plan: 2 of 2
-Status: Plan 01 complete; Plan 02 pending
-Last activity: 2026-04-19 -- Completed 01.5-01 closure freeze walker
+Status: Phase complete — ready for verification
+Last activity: 2026-04-19
 Depends on the verified Phase 1 substrate across `f153f95`..`a36452b`
 
 Progress: [█████████░] 92%
@@ -58,6 +58,7 @@ Progress: [█████████░] 92%
 | Phase 01 P03 | 25m | 4 tasks | 3 files |
 | Phase 01 P05 | 7m | 5 tasks | 4 files |
 | Phase 01.5 P01 | 5m | 2 tasks | 2 files |
+| Phase 01.5 P02 | 37m | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,9 @@ Recent decisions affecting current work:
 - [Phase 01.5]: Freeze VkFunction values through Function.parent_scope and Scope.parent traversal instead of transport-specific logic
 - [Phase 01.5]: Derive closure freeze failure paths from ScopeTracker mappings with slot fallback for deterministic diagnostics
 - [Phase 01.5]: Keep legacy serializer and thread transport behavior unchanged while Phase 1.5 establishes the closure freeze invariant
+- [Phase 01.5]: Treat the namespace-valued self capture on VM-created closures as redundant metadata, not part of the freezable closure environment.
+- [Phase 01.5]: Prove closure pointer-safety by publishing frozen VkFunction values through the same Atomic[uint64] slot pattern used for Phase 1 shared graphs.
+- [Phase 01.5]: Document spawn/thread surfaces as migration boundaries only; Phase 2 consumes frozen closures, and Phase 4 retires the legacy thread-first API.
 
 ### Pending Todos
 
@@ -114,7 +118,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-19T20:36:58.025Z
-Stopped at: Completed 01.5-01-PLAN.md
+Last session: 2026-04-19T20:51:57.518Z
+Stopped at: Completed 01.5-02-PLAN.md
 Next step: Execute `01.5-02-PLAN.md`
 Resume file: None
