@@ -3,6 +3,8 @@ import std/[sets, tables]
 import ../types
 
 type
+  ## Raised when `(freeze)` is asked to produce a frozen value outside the
+  ## Phase 1 MVP container scope.
   FreezeScopeError* = object of CatchableError
     offending_kind*: ValueKind
     path*: string
@@ -21,7 +23,8 @@ proc append_path(path, segment: string): string =
 proc reject_freeze(v: Value, path: string) {.noreturn.} =
   let err = newException(
     FreezeScopeError,
-    "freeze does not support " & $v.kind & " at " & path
+    "freeze cannot make " & $v.kind & " frozen at " & path &
+      "; Phase 1 only deep-freezes MVP containers, and sealed non-MVP values stay shallow"
   )
   err.offending_kind = v.kind
   err.path = path
@@ -111,6 +114,8 @@ proc tag_for_freeze*(v: Value, visited: var HashSet[uint64]) =
   else:
     discard
 
+## Recursively deep-freezes a value over the Phase 1 MVP container scope.
+## Sealed literals stay shallow until user code explicitly calls `(freeze v)`.
 proc freeze_value*(v: Value): Value =
   if v.deep_frozen:
     return v
@@ -129,6 +134,8 @@ proc core_freeze_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
 
   freeze_value(get_positional_arg(args, 0, has_keyword_args))
 
+## Stdlib entry point for `(freeze v)`: produce a fully frozen graph while
+## keeping shallow sealed literals as a separate concept.
 proc core_freeze*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   {.cast(gcsafe).}:
     core_freeze_impl(vm, args, arg_count, has_keyword_args)

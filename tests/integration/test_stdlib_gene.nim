@@ -53,7 +53,7 @@ suite "Immutable gene guards":
       discard VM.exec("(var g #(1 ^a 2 3)) (g .set \"a\" 4)", "immutable_gene_set.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable gene")
+      check e.msg.contains("sealed gene")
       check e.msg.contains("set property on")
     check raised
 
@@ -63,7 +63,7 @@ suite "Immutable gene guards":
       discard VM.exec("(var g #(1 ^a 2 3)) (g/a = 4)", "immutable_gene_assign.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable gene")
+      check e.msg.contains("sealed gene")
       check e.msg.contains("set property on")
     check raised
 
@@ -73,7 +73,7 @@ suite "Immutable gene guards":
       discard VM.exec("(var g #(1 2 3)) (g/0 = 4)", "immutable_gene_child_assign.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable gene")
+      check e.msg.contains("sealed gene")
       check e.msg.contains("set child on")
     check raised
 
@@ -83,7 +83,7 @@ suite "Immutable gene guards":
       discard VM.exec("(var g #(1 2 3)) (g .add_child 4)", "immutable_gene_add_child.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable gene")
+      check e.msg.contains("sealed gene")
       check e.msg.contains("append child to")
     check raised
 
@@ -93,6 +93,6 @@ suite "Immutable gene guards":
       discard VM.exec("(var g #(1 2 3)) (g .set_genetype 9)", "immutable_gene_set_type.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable gene")
+      check e.msg.contains("sealed gene")
       check e.msg.contains("set type on")
     check raised

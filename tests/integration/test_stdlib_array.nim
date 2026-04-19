@@ -134,7 +134,7 @@ suite "Immutable array guards":
       discard VM.exec("(var xs #[1 2]) (xs .add 3)", "immutable_array_add.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable array")
+      check e.msg.contains("sealed array")
       check e.msg.contains("append to")
     check raised
 
@@ -144,7 +144,7 @@ suite "Immutable array guards":
       discard VM.exec("(var xs #[1 2]) (xs .push 3)", "immutable_array_push.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable array")
+      check e.msg.contains("sealed array")
       check e.msg.contains("push to")
     check raised
 
@@ -154,6 +154,6 @@ suite "Immutable array guards":
       discard VM.exec("(var xs #[1 2]) (xs/0 = 9)", "immutable_array_assign.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable array")
+      check e.msg.contains("sealed array")
       check e.msg.contains("set item on")
     check raised

@@ -68,10 +68,11 @@ snapshot of `v`. The snapshot is safe to share by pointer across actors.
 Users call `freeze` when they know a value is (a) shared across actors and
 (b) hot enough that the clone cost in Rule 3 matters.
 
-The existing shallow `frozen` bit (`src/gene/types/core/value_ops.nim:145-176`)
-is extended to a deep `deep_frozen` bit: a container is `deep_frozen` iff it
-is frozen AND all reachable substructure is `deep_frozen`. Computed once at
-`freeze` time; not walked on every check.
+Terminology in this document is fixed as follows: existing `#[]` / `#{}` /
+`#()` literals are **sealed** (the shallow, existing on-disk `frozen` field);
+`(freeze v)` produces **frozen** values (`deep_frozen`). A container is
+`deep_frozen` iff it is frozen and all reachable substructure is
+`deep_frozen`. Computed once at `freeze` time; not walked on every check.
 
 Mutable values stay **actor-local**: the runtime guarantees (via Rule 3) that
 no mutable storage is ever observable from more than one actor.
@@ -183,15 +184,16 @@ path. Every mutator (`.put`, `.add`, `.set`, `.delete`, field-set, `[]=`)
 checks the bit and raises on a frozen target.
 
 - **Enforcement**: branch in every mutator. Gene already does this for the
-  shallow `frozen` bit (`src/gene/types/core/value_ops.nim:149, 166, 174`);
-  extension to `deep_frozen` is structural, not algorithmic.
+  shallow sealed marker (stored in the existing `frozen` field at
+  `src/gene/types/core/value_ops.nim:149, 166, 174`); extending that to
+  `deep_frozen` is structural, not algorithmic.
 - **Failure mode**: backdoor mutator corrupts shared state.
 
 ### I4. Refcount is atomic for shared values, plain for owned values
 
 Only deep-frozen values ever cross a boundary by pointer (by I2). Frozen
-values are allocated on the shared heap with `allocShared0` at `freeze`
-time; their `shared` flag is set on first send. `retain`/`release` branches
+values stay on the existing managed heap and become pointer-shareable when
+`freeze` tags them `shared == true` before publication. `retain`/`release` branches
 on `shared`: shared → `atomicInc`/`atomicDec` with release-acquire ordering;
 owned → plain `inc`/`dec` (current behavior at
 `src/gene/types/core/value_ops.nim:57-134`).
@@ -279,22 +281,21 @@ Ordered from structural prerequisites to surface-level API changes.
 ### A. Data model: deep-frozen bit and user-facing `freeze`
 
 **Change**: add `deep_frozen: bool` to every heap value kind that currently
-carries the shallow `frozen` bit (Array, Map, Gene) and to the kinds that
-don't (Instance, Reference-backed HashMap/Set, Class, BoundMethod, closures).
-Literal construction is unchanged: mutable by default, `frozen=false`,
-`deep_frozen=false`.
+carries the shallow sealed marker (the existing `frozen` field on Array, Map,
+and Gene) and to the kinds that don't (Instance, Reference-backed HashMap/Set,
+Class, BoundMethod, closures). Literal construction is unchanged: mutable by
+default, not sealed, and `deep_frozen=false`.
 
 **Files affected**:
 - `src/gene/types/type_defs.nim:347-353` (Gene), the corresponding ArrayObj /
   MapObj / InstanceObj definitions, and the `Reference` union for
   HashMap/Set/Closure.
 - `src/gene/types/core/value_ops.nim:145-176` — add deep variants of
-  `array_is_frozen`, `map_is_frozen`, `gene_is_frozen`; the existing shallow
+  `array_is_frozen`, `map_is_frozen`, `gene_is_frozen`; the existing sealed
   `ensure_mutable_*` checks continue to guard `.put`/`.add`/`[]=` paths.
 - `src/gene/types/core/constructors.nim` — no change to default construction.
-  A new `freeze` routine walks `v` once, allocates a deep-frozen graph in
-  the shared heap, sets `deep_frozen` and `shared`. Idempotent on
-  already-deep-frozen values.
+  A new `freeze` routine walks `v` once, tags the existing graph
+  deep-frozen/shared in place, and is idempotent on already-frozen values.
 
 **User API**: `(freeze v)` is a stdlib function, not syntax. There is **no
 mutable-literal marker**; literals are already mutable. Existing Gene
@@ -541,7 +542,7 @@ singleton reference. Replace the `global_llm_op_lock` pattern with
 
 - **No stdlib rename.** Existing method names (`"add"`, `"put"`, `"set"`,
   `"delete"`, `"merge"`, `"pop"`, `"push"`, `"clear"`) stay. Mutators
-  operate on mutable values as today; they raise on frozen values.
+  operate on mutable values as today; they raise on sealed or frozen values.
 - **No persistent data structures required.** Mutable collections remain
   the idiom. A persistent HAMT/RRB is a nice-to-have for users who want
   cheap copy-on-update, not a prerequisite.
@@ -720,9 +721,9 @@ before a freeze bit is meaningful); `Class` and `BoundMethod` freezing
 (collides with I5's "actor-local runtime-defined classes" — needs
 publication-protocol design first).
 
-The two-freeze-level naming (shallow "sealed" for existing `#[]` /
-`#{}` / `#()`, deep "frozen" for `(freeze v)` output) is finalized in
-this phase.
+The two-freeze-level naming is finalized in this phase: shallow `#[]` /
+`#{}` / `#()` literals are **sealed**, while `(freeze v)` produces
+**frozen** values.
 
 Deliverable: programs can opt into frozen values over the container
 spine. No new concurrency API yet. Existing thread code unaffected.
@@ -854,7 +855,8 @@ These require explicit decisions before or during implementation.
   `retainManaged` / `releaseManaged` and `=copy` / `=destroy` / `=sink`
   hooks; sole RC source of truth after P0.1.
 - `src/gene/types/core/value_ops.nim:145-176` — shallow frozen checks;
-  generalized to deep-frozen in Phase 1.
+  generalized to deep-frozen in Phase 1 while keeping the shallow surface
+  user-facing as "sealed".
 - `src/gene/types/core/constructors.nim:64, 134, 203, 248, 434` — all
   `alloc0` sites; shared-heap variants added in Phase 1.
 - `src/gene/vm/exec.nim:4-12` — lazy inline-cache growth (race hazard);
@@ -899,12 +901,12 @@ Sign-off recorded:
   narrowed bootstrap-freeze invariant. Source-compat break is limited
   to the string mutator API (P0.4).
 - **Approved.** Two freeze levels. Existing `#[]` / `#{}` / `#()` keep
-  their current shallow-frozen semantics ("sealed": the container is
+  their current shallow semantics ("sealed": the container is
   immutable but children may mutate through aliases). The new
   `(freeze v)` operation produces deep-frozen values. Only deep-frozen
   values are sendable by pointer across actors; sealed-but-not-frozen
-  values go through `deep_clone`. Naming ("sealed" vs "frozen", or a
-  single word with a `deep` qualifier) to be finalized in Phase 1.
+  values go through `deep_clone`. The naming is now final: "sealed" for
+  the shallow literal form, "frozen" for `(freeze v)` output.
 - **Approved.** Strings become immutable with shared-by-pointer
   semantics. Scheduled as P0.4 because (a) it is cheaper before actors
   than after, (b) it unlocks I5's "code images read-only" for interned

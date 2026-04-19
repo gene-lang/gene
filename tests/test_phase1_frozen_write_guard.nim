@@ -43,7 +43,7 @@ proc expect_frozen_write(
     fail()
   except CatchableError as err:
     caught = true
-    check err.msg.contains("cannot mutate deep-frozen " & $kind & " via " & op_name)
+    check err.msg.contains("cannot mutate frozen " & $kind & " via " & op_name)
 
   check caught
 

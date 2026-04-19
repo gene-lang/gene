@@ -38,6 +38,8 @@ proc not_allowed*() =
   not_allowed("Error: should not arrive here.")
 
 type
+  ## Raised when code tries to mutate a frozen value. Sealed literals still use
+  ## the shallow mutability guards below.
   FrozenWriteError* = object of CatchableError
     target_kind*: ValueKind
     op*: string
@@ -45,7 +47,7 @@ type
 proc raise_frozen_write*(op: string, target: Value) {.noinline, noreturn.} =
   var err = new_exception(
     FrozenWriteError,
-    "cannot mutate deep-frozen " & $target.kind & " via " & op
+    "cannot mutate frozen " & $target.kind & " via " & op
   )
   err.target_kind = target.kind
   err.op = op
@@ -99,7 +101,7 @@ proc array_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
 
 proc ensure_mutable_array*(v: Value, op_name = "mutate"): void {.inline.} =
   if array_is_frozen(v):
-    not_allowed("Cannot " & op_name & " immutable array")
+    not_allowed("Cannot " & op_name & " sealed array")
 
 proc map_ptr*(v: Value): ptr MapObj {.inline.} =
   let u = cast[uint64](v)
@@ -116,7 +118,7 @@ proc map_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
 
 proc ensure_mutable_map*(v: Value, op_name = "mutate"): void {.inline.} =
   if map_is_frozen(v):
-    not_allowed("Cannot " & op_name & " immutable map")
+    not_allowed("Cannot " & op_name & " sealed map")
 
 proc gene_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
   let u = cast[uint64](v)
@@ -124,7 +126,7 @@ proc gene_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
 
 proc ensure_mutable_gene*(v: Value, op_name = "mutate"): void {.inline.} =
   if gene_is_frozen(v):
-    not_allowed("Cannot " & op_name & " immutable gene")
+    not_allowed("Cannot " & op_name & " sealed gene")
 
 proc instance_ptr*(v: Value): ptr InstanceObj {.inline.} =
   let u = cast[uint64](v)
@@ -221,7 +223,7 @@ proc hash_map_is_frozen*(v: Value): bool {.inline, gcsafe, noSideEffect.} =
 
 proc ensure_mutable_hash_map*(v: Value, op_name = "mutate"): void {.inline, gcsafe.} =
   if hash_map_is_frozen(v):
-    not_allowed("Cannot " & op_name & " immutable hash map")
+    not_allowed("Cannot " & op_name & " sealed hash map")
 
 proc deep_frozen*(v: Value): bool {.inline, noSideEffect.} =
   let u = cast[uint64](v)

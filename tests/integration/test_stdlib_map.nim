@@ -64,7 +64,7 @@ suite "Immutable map guards":
       discard VM.exec("(var m #{^a 1}) (m .set \"a\" 2)", "immutable_map_set.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable map")
+      check e.msg.contains("sealed map")
       check e.msg.contains("set item on")
     check raised
 
@@ -74,7 +74,7 @@ suite "Immutable map guards":
       discard VM.exec("(var m #{^a 1}) (m/a = 2)", "immutable_map_assign.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable map")
+      check e.msg.contains("sealed map")
       check e.msg.contains("set item on")
     check raised
 
@@ -84,7 +84,7 @@ suite "Immutable map guards":
       discard VM.exec("(var m #{^a 1}) (m .del \"a\")", "immutable_map_del.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable map")
+      check e.msg.contains("sealed map")
       check e.msg.contains("delete from")
     check raised
 
@@ -94,7 +94,7 @@ suite "Immutable map guards":
       discard VM.exec("(var m #{^a 1}) (m .merge {^b 2})", "immutable_map_merge.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable map")
+      check e.msg.contains("sealed map")
       check e.msg.contains("merge into")
     check raised
 
@@ -104,6 +104,6 @@ suite "Immutable map guards":
       discard VM.exec("(var m #{^a 1}) (m .clear)", "immutable_map_clear.gene")
     except CatchableError as e:
       raised = true
-      check e.msg.contains("immutable map")
+      check e.msg.contains("sealed map")
       check e.msg.contains("clear")
     check raised
