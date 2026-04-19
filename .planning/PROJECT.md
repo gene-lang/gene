@@ -4,7 +4,7 @@
 
 This workstream ports the approved actor-based concurrency design in
 `docs/proposals/actor-design.md` into the existing `gene-old` runtime. Phase 0
-(substrate cleanup) is complete. Phase 1 introduces the runtime machinery —
+(substrate cleanup) is complete. Phase 1 introduced the runtime machinery —
 deep-frozen and shared header bits on `Value`, a shared-heap allocation path,
 an atomic-vs-plain refcount branch, and the user-facing `(freeze v)` stdlib
 operation over the MVP container scope — that every later actor-runtime phase
@@ -12,7 +12,7 @@ depends on, without adding a new concurrency API.
 
 ## Core Value
 
-Phase 1 delivers the deep-frozen / shared-heap runtime substrate and the
+Phase 1 delivered the deep-frozen / shared-heap runtime substrate and the
 `(freeze v)` user surface that every subsequent actor phase (scheduler, tiered
 send, port actors) requires, without destabilizing the existing VM or shipping
 a new concurrency API.
@@ -29,19 +29,17 @@ a new concurrency API.
   publication for lazy bodies and native entry, shared-inline-cache mutation
   removed, immutable strings and removed literal copies, bootstrap freeze
   boundary with init-time namespace snapshots *(commit e2e776c, 2026-04-18)*.
+- ✓ Phase 1 substrate: header bits, `(freeze v)`, deep-frozen write guards,
+  shared-vs-owned RC branching, shared-heap verification, and sealed-vs-frozen
+  naming all landed and verified *(commits `f153f95`..`a36452b`, verified
+  2026-04-19)*.
 
 ### Active
 
-- [ ] Add `deep_frozen` and `shared` bits on `Value` that are readable without
-  heap allocation and round-trip through managed assignment hooks.
-- [ ] Add a shared-heap allocation path for frozen values that is pointer-
-  shareable across threads without per-actor cloning.
-- [ ] Branch retain/release on the `shared` bit — atomic for shared, plain for
-  provably thread-local owned values — to restore owned-side RC performance.
-- [ ] Add a stdlib `(freeze v)` operation over the MVP container scope (array,
-  map, hash_map, gene, bytes) with typed errors for non-MVP kinds.
-- [ ] Finalize the "sealed" (shallow) vs "frozen" (deep) naming across user-
-  facing APIs, errors, and documentation.
+- [ ] Plan Phase 1.5 (freezable closures) as the next hard prerequisite for
+  Phase 2 actor scheduling.
+- [ ] Scope Phase 2 actor runtime work on top of the now-verified Phase 1
+  substrate.
 
 ### Out of Scope
 
@@ -111,4 +109,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-19 after Phase 1 completion and verification pass*
+*Last updated: 2026-04-19 after Phase 1 completion, verification pass, and planning closeout*
