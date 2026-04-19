@@ -29,6 +29,18 @@ slot can be used for the real Phase 1.
   header bits, shared-heap allocation path, atomic-vs-plain refcount branch,
   and the user-facing `(freeze v)` stdlib operation over the MVP container
   scope *(completed 2026-04-19, commits `f153f95`..`a36452b`)*
+- [ ] **Phase 1.5: Freezable closures** - Make closures with freezable
+  captured environments deep-freezable and pointer-shareable so Phase 2 actor
+  scheduling can use the same send semantics for callable payloads
+- [ ] **Phase 2: Actor runtime** - Add actor scheduler, tiered send semantics,
+  reply futures, stop semantics, and the user-facing actor API on top of the
+  Phase 0/1 substrate
+- [ ] **Phase 3: Port actors for extensions** - Migrate process-global native
+  resources and extension-side concurrency behind actor/port boundaries
+- [ ] **Phase 4: Remove legacy thread-first concurrency surfaces** - Deprecate
+  and remove the legacy thread API once actor support is verified, including
+  `GENE_WORKERS` naming cleanup and other thread-centric concurrency entry
+  points that should no longer be primary
 
 ## Phase Details
 
@@ -79,3 +91,68 @@ Plans:
 |-------|----------------|--------|-----------|
 | 0. Unify lifetime and publication semantics | 5/5 | Complete | 2026-04-18 |
 | 1. Deep-frozen bit, shared heap, and `(freeze v)` | 6/6 | Complete | 2026-04-19 |
+| 1.5. Freezable closures | 0/2 | Planned | - |
+| 2. Actor runtime | 0/? | Unplanned | - |
+| 3. Port actors for extensions | 0/? | Unplanned | - |
+| 4. Remove legacy thread-first concurrency surfaces | 0/? | Unplanned | - |
+
+### Phase 1.5: Freezable closures
+**Goal**: Allow closures whose captured environments are themselves freezable to
+be deep-frozen and pointer-shared, closing the last major gap before the actor
+scheduler lands.
+**Depends on**: Phase 1
+**Requirements**: [CLO-01]
+**Success Criteria** (what must be TRUE):
+  1. Closures with freezable captured environments can be frozen and sent by
+     pointer without cloning their environment.
+  2. Non-freezable closures fail with typed errors that surface the offending
+     capture path or kind.
+  3. The closure-freeze rules compose with the existing Phase 1 `(freeze v)`
+     contract and do not regress Phase 0/1 acceptance sweeps.
+**Plans**: 2 plans
+
+Plans:
+- [ ] 01.5-01-PLAN.md — Extend the two-pass freeze walker to `VkFunction`
+  capture graphs and lock the typed failure contract with focused tests
+- [ ] 01.5-02-PLAN.md — Prove frozen closures are actor-ready after scope
+  teardown, add shared-pointer stress coverage, and document the migration
+  boundary to Phase 2 / later thread-surface removal
+
+### Phase 2: Actor runtime
+**Goal**: Deliver the actual actor model on top of the verified substrate:
+scheduler, tiered send behavior, reply futures, actor stop semantics, and the
+user-facing actor API.
+**Depends on**: Phase 1.5
+**Requirements**: [ACT-02]
+**Success Criteria** (what must be TRUE):
+  1. Actor spawn/scheduling works without reusing the legacy thread API as the
+     primary concurrency surface.
+  2. Send semantics distinguish primitive, frozen, and mutable payload paths as
+     described in the approved proposal.
+  3. Reply futures and actor stop behavior are validated under concurrent load.
+**Plans**: TBD
+
+### Phase 3: Port actors for extensions
+**Goal**: Move process-global native resources and extension-side concurrency to
+actor/port boundaries so external systems stop bypassing the actor model.
+**Depends on**: Phase 2
+**Requirements**: [ACT-03]
+**Success Criteria** (what must be TRUE):
+  1. Process-global or stateful extensions expose actor/port boundaries instead
+     of ad hoc shared mutable runtime state.
+  2. The actor runtime can safely isolate resource ownership for external
+     systems such as HTTP/LLM integrations.
+**Plans**: TBD
+
+### Phase 4: Remove legacy thread-first concurrency surfaces
+**Goal**: Finish the migration by deprecating and then removing the legacy
+thread-first concurrency APIs once actors are proven out.
+**Depends on**: Phase 2, Phase 3
+**Requirements**: [ACT-04]
+**Success Criteria** (what must be TRUE):
+  1. The actor API is the primary supported concurrency surface.
+  2. Legacy thread APIs and related naming (`GENE_WORKERS`, thread-centric entry
+     points) are deprecated or removed with migration guidance.
+  3. Other concurrent features that duplicate actor behavior are either routed
+     through actors or explicitly retired.
+**Plans**: TBD
