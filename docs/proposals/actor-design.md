@@ -307,7 +307,13 @@ Not required for MVP.
 
 ### B. Heap allocation: shared-heap path and atomic refcount
 
-**Change**: introduce a second allocation path for values produced by
+**Phase 1 realization**: "shared heap" is semantic, not physical. `(freeze v)`
+sets `deep_frozen` and `shared` on values that stay on the existing managed
+heap, and the runtime treats any `shared == true` object as pointer-shareable
+across threads. A dedicated shared-pool allocator remains a deferred
+performance follow-up after the Phase 2 actor send path ships.
+
+**Change**: introduce a shared-heap publication path for values produced by
 `freeze`.
 
 **Files affected**:
@@ -318,15 +324,19 @@ Not required for MVP.
   `shared` flag: atomic for shared, plain for owned.
 
 **Allocation strategy**:
-- Mutable values → thread-local (`alloc0`). Never escape by pointer.
-- Deep-frozen values (produced by `freeze`) → shared heap (`allocShared0`).
-  Any frozen subgraph embedded in a mutable value is already shared-heap
-  (must be — it was produced by a prior `freeze`), so clone only walks the
-  mutable spine.
+- Mutable values → thread-local / owned managed heap (`alloc0`). Never escape
+  by pointer.
+- Deep-frozen values (produced by `freeze`) → same managed heap, but published
+  with `shared == true` so retain/release switches to atomic RC and readers on
+  other threads may dereference them safely.
+- Dedicated shared-pool allocation is deferred. If Phase 2 profiling shows
+  allocator contention or locality problems, the pool allocator can slot in
+  under the same `shared` semantic contract without changing the `Value` tag
+  space.
 
-**No rehome cost**: a value becomes shared only by going through `freeze`,
-which allocates in the shared heap from the start. The runtime never
-re-homes an existing value between heaps.
+**No rehome cost in Phase 1**: a value becomes shared only by going through
+`freeze`, which tags the existing graph in place before publication. The
+runtime does not migrate objects between physical heaps in this phase.
 
 ### C. Scheduler: actor state machine on top of existing thread pool
 
@@ -916,4 +926,3 @@ migrate to a uniform port protocol.
 Remaining Open Questions (#3–#9, #11) still need answers but do not block
 Phase 0 kickoff. They are scoped to their respective phases in the
 migration plan.
-

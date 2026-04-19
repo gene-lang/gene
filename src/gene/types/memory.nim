@@ -3,10 +3,14 @@
 ## Included from type_defs.nim — shares its scope.
 ##
 ## Shared-RC publication invariant:
-## `(freeze v)` and bootstrap publication must set the managed header's
-## shared bit before publishing the pointer across threads. Readers only branch
-## to atomic RC after they can observe the published pointer, so any
-## cross-thread observer must also observe `shared == true`.
+## - Any managed value observed with `shared == true` must have been published
+##   by `(freeze v)` or bootstrap publication, with the header bit written
+##   under the same publication barrier as the pointer store.
+## - Readers on other threads may only dereference managed values reached
+##   through `shared == true` pointers, or through the same-thread owned heap.
+## - Passing a managed value across threads while `shared == false` is a bug;
+##   debug retain/release assertions and the shared-heap regression test are
+##   expected to catch that violation.
 
 # Global list of scheduler poll callbacks - extensions register handlers here
 var scheduler_callbacks*: seq[SchedulerCallback] = @[]
