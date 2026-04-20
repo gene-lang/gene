@@ -10,6 +10,8 @@ suite "Extended Type System":
     check VkRegex.ord > VkComplexSymbol.ord
     check VkDate.ord > VkTimezone.ord - 4  # Date comes before timezone
     check VkThread.ord >= VkFuture.ord
+    check VkActor.ord == VkThreadMessage.ord + 1
+    check VkActorContext.ord == VkActor.ord + 1
     check VkException.ord == 128  # Exceptions start at 128
   
   test "Value kind detection":
