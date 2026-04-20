@@ -40,8 +40,10 @@ a new concurrency API.
   Phase 2 actor scheduling.
 - [x] Scope and execute Phase 2 actor runtime work on top of the verified
   Phase 1.5 substrate.
-- [ ] Plan Phase 3 extension migration on top of the now-verified Phase 2
+- [x] Plan Phase 3 extension migration on top of the now-verified Phase 2
   actor runtime.
+- [ ] Execute Phase 3 extension migration and port the first stateful
+  extensions behind actor-owned boundaries.
 
 ### Out of Scope
 
@@ -94,6 +96,7 @@ Phase 0 without renumbering or rewriting historical exploratory docs.
 | Split freezable closures into Phase 1.5 (not Phase 1) | Closure captured-env analysis is its own workstream; holding Phase 1 to containers keeps the scope testable | ✓ Complete — Phase 1.5 shipped across commits `9e9a97a`..`cfb9140` |
 | Keep legacy thread-first concurrency surfaces unchanged during Phase 1.5 | Closure freezeability is the last substrate gate; actor scheduling and thread-surface removal belong to later phases | ✓ Complete — Phase 1.5 docs/tests fence migration boundaries explicitly |
 | Phase 2 keeps actor replies on the existing Future runtime | Reusing `FutureObj`/`MtReply` avoids a second await subsystem and keeps callbacks/timeouts consistent | ✓ Complete |
+| Phase 3 uses `genex/llm` as the singleton-port proof and `genex/http` / AI bindings as the first pool-or-factory migrations | These are the clearest remaining extension-side concurrency surfaces after Phase 2 | ✓ Planned |
 
 ## Evolution
 

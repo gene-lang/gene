@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: complete
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-04-20T15:51:41Z"
+status: planning
+stopped_at: Planned Phase 03
+last_updated: "2026-04-20T18:20:00Z"
 last_activity: 2026-04-20
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 18
+  total_plans: 22
   completed_plans: 18
-  percent: 100
+  percent: 82
 ---
 
 # Project State
@@ -23,17 +23,17 @@ See: .planning/PROJECT.md (updated 2026-04-17)
 **Core value:** Phase 1 introduced the deep-frozen bit, shared-heap allocation
 path, and `(freeze v)` stdlib operation that every subsequent actor-runtime
 phase depends on, without adding a new concurrency API.
-**Current focus:** Phase 02 — actor-runtime (complete)
+**Current focus:** Phase 03 — port-actors-for-extensions
 
 ## Current Position
 
-Phase: 02 (actor-runtime) — COMPLETE
-Plan: 5 of 5
-Status: Verified and closed
+Phase: 03 (port-actors-for-extensions) — PLANNED
+Plan: 0 of 4
+Status: Ready for execution planning
 Last activity: 2026-04-20
-Depends on the verified Phase 1.5 substrate across `9e9a97a`..`cfb9140`
+Depends on the verified Phase 2 actor runtime across `d3822be`..`46cada9`
 
-Progress: [██████████] 100%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100%
 | 1 | 6 | - | - |
 | 1.5 | 2 | - | - |
 | 2 | 5 | - | - |
+| 3 | 0 | - | - |
 
 **Recent Trend:**
 
@@ -108,6 +109,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Keep actor replies on the existing `FutureObj` / `MtReply` runtime path instead of creating a second await subsystem.
 - [Phase 02]: Stop semantics fail queued reply waiters immediately and fail the current in-flight reply future if stop wins before an explicit reply.
 - [Phase 02]: Public docs now treat actors as the primary concurrency API while threads remain a Phase 2 compatibility boundary.
+- [Phase 03]: `genex/llm` is the singleton-port proof migration because its global locks and registries are the clearest remaining process-global ownership debt.
+- [Phase 03]: `genex/http` and AI bindings are the next migration targets because they still own extension-local worker or callback state outside the actor runtime.
+- [Phase 03]: Thread API removal remains Phase 4 work; Phase 3 only moves extension concurrency behind actor/port boundaries.
 
 ### Pending Todos
 
@@ -124,13 +128,13 @@ None yet.
 |----------|------|--------|-------------|
 | Concurrency | Freezable closures (Phase 1.5 — hard prerequisite for Phase 2) | Complete | 2026-04-19 |
 | Concurrency | Actor scheduler, tiered send, reply futures, stop semantics (Phase 2) | Complete | 2026-04-20 |
-| Concurrency | Port-actor protocol for extensions (Phase 3) | Deferred | 2026-04-17 |
+| Concurrency | Port-actor protocol for extensions (Phase 3) | Planned | 2026-04-20 |
 | Concurrency | Thread API deprecation / `GENE_WORKERS` rename (Phase 4) | Deferred | 2026-04-17 |
 | Perf | Move-semantics `send!`, work-stealing scheduler, `^frozen-default` class annotation | Deferred indefinitely per proposal | 2026-04-17 |
 
 ## Session Continuity
 
-Last session: 2026-04-20T15:51:41.000Z
-Stopped at: Completed 02-05-PLAN.md
-Next step: Plan Phase 3 extension migration
+Last session: 2026-04-20T18:20:00.000Z
+Stopped at: Planned Phase 03
+Next step: Execute Phase 3 with `$gsd-execute-phase 03`
 Resume file: None

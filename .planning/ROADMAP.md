@@ -94,7 +94,7 @@ Plans:
 | 1. Deep-frozen bit, shared heap, and `(freeze v)` | 6/6 | Complete | 2026-04-19 |
 | 1.5. Freezable closures | 2/2 | Complete | 2026-04-19 |
 | 2. Actor runtime | 5/5 | Complete | 2026-04-20 |
-| 3. Port actors for extensions | 0/? | Unplanned | - |
+| 3. Port actors for extensions | 0/4 | Planned | - |
 | 4. Remove legacy thread-first concurrency surfaces | 0/? | Unplanned | - |
 
 ### Phase 1.5: Freezable closures *(complete)*
@@ -150,7 +150,13 @@ actor/port boundaries so external systems stop bypassing the actor model.
      of ad hoc shared mutable runtime state.
   2. The actor runtime can safely isolate resource ownership for external
      systems such as HTTP/LLM integrations.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Define extension port registration and actor-backed port materialization
+- [ ] 03-02-PLAN.md — Migrate `genex/llm` to the singleton-port ownership model
+- [ ] 03-03-PLAN.md — Move HTTP and AI extension concurrency onto port pool/factory boundaries
+- [ ] 03-04-PLAN.md — Publish migration guidance and run Phase 3 verification
 
 ### Phase 4: Remove legacy thread-first concurrency surfaces
 **Goal**: Finish the migration by deprecating and then removing the legacy
