@@ -341,6 +341,21 @@ proc actor_finish_turn(record: ActorRuntimeRecord) =
   if wake_thread_id != -1:
     actor_wake_worker(wake_thread_id, wake_actor_id)
 
+proc stop_actor_record(record: ActorRuntimeRecord): seq[ActorMailboxMessage] =
+  acquire(record.lock)
+  record.stopped = true
+  for msg in record.mailbox:
+    if msg.reply_requested:
+      result.add(msg)
+  for msg in record.pending_sends:
+    if msg.reply_requested:
+      result.add(msg)
+  record.mailbox.setLen(0)
+  record.pending_sends.setLen(0)
+  record.dispatched = false
+  broadcast(record.cond)
+  release(record.lock)
+
 proc send_actor_reply(msg: ActorMailboxMessage, payload: Value) {.gcsafe.} =
   if msg.from_thread_id < 0 or msg.from_thread_id >= g_max_threads:
     return
@@ -419,8 +434,11 @@ proc actor_process_message(msg: ThreadMessage) =
     let is_stopped = record.stopped
     release(record.lock)
 
-    if mailbox_msg.reply_requested and not current_actor_reply_sent and not is_stopped:
-      send_actor_reply(mailbox_msg, NIL)
+    if mailbox_msg.reply_requested and not current_actor_reply_sent:
+      if is_stopped:
+        send_actor_failure(mailbox_msg, "Actor is stopped")
+      else:
+        send_actor_reply(mailbox_msg, NIL)
   except CatchableError as exc:
     if mailbox_msg.reply_requested and not current_actor_reply_sent:
       send_actor_failure(mailbox_msg, exc.msg)
@@ -571,9 +589,9 @@ proc actor_spawn_native*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value]
 
 proc actor_stop_impl(args: ptr UncheckedArray[Value], has_keyword_args: bool): Value =
   let record = actor_record_from_value(get_self(args, has_keyword_args))
-  acquire(record.lock)
-  record.stopped = true
-  release(record.lock)
+  let failed = stop_actor_record(record)
+  for msg in failed:
+    send_actor_failure(msg, "Actor is stopped")
   NIL
 
 proc actor_stop_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
@@ -620,9 +638,9 @@ proc actor_context_reply_native(vm: ptr VirtualMachine, args: ptr UncheckedArray
 
 proc actor_context_stop_impl(): Value =
   if current_actor_record != nil:
-    acquire(current_actor_record.lock)
-    current_actor_record.stopped = true
-    release(current_actor_record.lock)
+    let failed = stop_actor_record(current_actor_record)
+    for msg in failed:
+      send_actor_failure(msg, "Actor is stopped")
   NIL
 
 proc actor_context_stop_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
