@@ -1,13 +1,10 @@
-import std/[tables, times, unittest]
+import std/[os, tables, times, unittest]
 
 import ../src/gene/types except Exception
 import ../src/gene/stdlib/freeze
 import ../src/gene/vm
 import ../src/gene/vm/actor
 import ../src/gene/vm/thread
-
-proc exec_gene(code: string, trace_name: string): Value =
-  VM.exec(code, trace_name)
 
 proc raw_id(v: Value): uint64 =
   cast[uint64](v) and PAYLOAD_MASK
@@ -57,6 +54,60 @@ proc build_frozen_closure(): Value =
     body: @[]
   )
   freeze_value(fn_ref.to_ref_value())
+
+proc actor_message(kind: string): Value =
+  new_map_value({
+    "kind".to_key(): kind.to_value()
+  }.toTable())
+
+proc actor_message_kind(msg: Value): string =
+  if msg.kind != VkMap:
+    return ""
+  let kind = map_data(msg).getOrDefault("kind".to_key(), NIL)
+  if kind.kind != VkString:
+    return ""
+  kind.str
+
+proc await_actor_future(future_value: Value, timeout_ms = 2_000): Value =
+  let deadline = epochTime() + (timeout_ms.float / 1000.0)
+  let future = future_value.ref.future
+  while future.state == FsPending and epochTime() < deadline:
+    VM.event_loop_counter = 100
+    VM.poll_event_loop()
+    sleep(10)
+
+  check future.state != FsPending
+  check future.state == FsSuccess
+  future.value
+
+proc target_handler(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                    has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  discard arg_count
+  let ctx = get_positional_arg(args, 0, has_keyword_args)
+  let msg = get_positional_arg(args, 1, has_keyword_args)
+  let state = get_positional_arg(args, 2, has_keyword_args)
+
+  case actor_message_kind(msg)
+  of "hold":
+    sleep(200)
+    (state.int64 + 1).to_value()
+  of "get":
+    {.cast(gcsafe).}:
+      actor_reply_for_test(ctx, state)
+    state
+  else:
+    (state.int64 + 1).to_value()
+
+proc forwarder_handler(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                       has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  discard arg_count
+  let ctx = get_positional_arg(args, 0, has_keyword_args)
+  let target = get_positional_arg(args, 2, has_keyword_args)
+
+  {.cast(gcsafe).}:
+    discard actor_send_value(vm, target, actor_message("queued"))
+    actor_reply_for_test(ctx, "continued".to_value())
+  target
 
 suite "Phase 2 actor send tiers":
   test "primitive payloads route by value":
@@ -129,50 +180,26 @@ suite "Phase 2 actor send tiers":
     init_stdlib()
     init_actor_runtime()
     set_actor_mailbox_limit_for_test(1)
+    actor_enable_for_test(2)
 
-    discard exec_gene("""
-      (do
-        (gene/actor/enable ^workers 2)
+    let target = actor_spawn_value(NativeFn(target_handler).to_value(), 0.to_value())
+    let forwarder = actor_spawn_value(NativeFn(forwarder_handler).to_value(), target)
 
-        (var target
-          (gene/actor/spawn
-            ^state 0
-            (fn [ctx msg state]
-              (case msg/kind
-              when "hold"
-                (keep_alive 200)
-                (+ state 1)
-              when "get"
-                (ctx .reply state)
-                state
-              else
-                (+ state 1)))))
-
-        (var forwarder
-          (gene/actor/spawn
-            ^state target
-            (fn [ctx msg state]
-              (state .send {^kind "queued"})
-              (ctx .reply "continued")
-              state)))
-
-        (target .send {^kind "hold"})
-        (target .send {^kind "queued"})
-        true)
-    """, "phase2_actor_send_tiers_setup.gene")
+    discard actor_send_value(VM, target, actor_message("hold"))
+    discard actor_send_value(VM, target, actor_message("queued"))
 
     let started = epochTime()
-    let forward_result = exec_gene("""
-      (await (forwarder .send_expect_reply {^kind "forward"}))
-    """, "phase2_actor_send_tiers_forward.gene")
+    let forward_result = await_actor_future(
+      actor_send_value(VM, forwarder, actor_message("forward"), true)
+    )
     let elapsed_ms = (epochTime() - started) * 1000.0
 
     check forward_result == "continued".to_value()
     check elapsed_ms < 150.0
 
-    discard exec_gene("(keep_alive 300)", "phase2_actor_send_tiers_drain.gene")
-    let processed = exec_gene("""
-      (await (target .send_expect_reply {^kind "get"}))
-    """, "phase2_actor_send_tiers_get.gene")
+    sleep(300)
+    let processed = await_actor_future(
+      actor_send_value(VM, target, actor_message("get"), true)
+    )
 
     check processed == 3.to_value()

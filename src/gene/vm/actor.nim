@@ -1,12 +1,23 @@
 import locks, tables, osproc
+import std/exitprocs
 
 import ../types
-import ../serdes
 import ../stdlib/freeze
 import ./thread
-import ./utils
 
 type
+  ActorSendTier* = enum
+    AstByValue
+    AstSharedFrozen
+    AstClonedMutable
+
+  ActorMailboxMessage = ref object
+    payload: Value
+    reply_requested: bool
+    from_message_id: int
+    from_thread_id: int
+    from_thread_secret: int
+
   ActorRuntimeRecord = ref object
     actor: Actor
     thread_id: int
@@ -14,6 +25,13 @@ type
     state: Value
     stopped: bool
     lock: Lock
+    cond: Cond
+    mailbox: seq[ActorMailboxMessage]
+    pending_sends: seq[ActorMailboxMessage]
+    mailbox_limit: int
+    dispatched: bool
+
+const DEFAULT_ACTOR_MAILBOX_LIMIT* = 10_000
 
 var actor_runtime_lock: Lock
 var actor_system_enabled = false
@@ -22,14 +40,19 @@ var actor_next_id = 1
 var actor_worker_ids: seq[int] = @[]
 var actor_registry = initTable[int, ActorRuntimeRecord]()
 var actor_rr_index = 0
+var actor_mailbox_limit = DEFAULT_ACTOR_MAILBOX_LIMIT
+var actor_cleanup_registered = false
 
 var current_actor_record {.threadvar.}: ActorRuntimeRecord
-var current_actor_message {.threadvar.}: ThreadMessage
+var current_actor_message {.threadvar.}: ActorMailboxMessage
 var current_actor_reply_sent {.threadvar.}: bool
 
 initLock(actor_runtime_lock)
 
 proc init_actor_class*()
+proc actor_worker_handler(thread_id: int) {.thread.}
+proc actor_record_from_value(value: Value): ActorRuntimeRecord
+proc shutdown_actor_runtime*()
 
 proc actor_thread_namespace(thread_id: int): Namespace =
   let thread_ns = new_namespace("thread_local")
@@ -50,11 +73,110 @@ proc actor_thread_namespace(thread_id: int): Namespace =
 
   thread_ns
 
-proc actor_envelope_actor_id_key(): Key {.inline.} =
-  "__actor_id__".to_key()
+proc actor_transport_error(payload: Value): ref types.Exception {.noinline.} =
+  new_exception(
+    types.Exception,
+    "Actor messages cannot transport " & $payload.kind &
+      "; only primitives, deep-frozen/shared graphs, frozen closures, and mutable ordinary data are allowed"
+  )
 
-proc actor_envelope_payload_key(): Key {.inline.} =
-  "payload".to_key()
+proc clone_actor_payload(payload: Value, seen: var Table[uint64, Value]): Value {.gcsafe.}
+
+proc prepare_actor_payload_for_send*(payload: Value): tuple[tier: ActorSendTier, value: Value] {.gcsafe.} =
+  case payload.kind
+  of VkNil, VkBool, VkInt, VkFloat, VkChar, VkSymbol:
+    (AstByValue, payload)
+  of VkBytes:
+    if not isManaged(payload):
+      return (AstByValue, payload)
+    if payload.deep_frozen and payload.shared:
+      return (AstSharedFrozen, payload)
+
+    var cloned: seq[uint8] = @[]
+    for i in 0..<bytes_len(payload):
+      cloned.add(bytes_at(payload, i))
+    (AstClonedMutable, new_bytes_value(cloned))
+  of VkString:
+    if payload.deep_frozen and payload.shared:
+      return (AstSharedFrozen, payload)
+    (AstClonedMutable, payload.str.to_value())
+  of VkFunction:
+    if payload.deep_frozen and payload.shared:
+      return (AstSharedFrozen, payload)
+    raise actor_transport_error(payload)
+  of VkArray, VkMap, VkGene:
+    if payload.deep_frozen and payload.shared:
+      return (AstSharedFrozen, payload)
+    var seen = initTable[uint64, Value]()
+    (AstClonedMutable, clone_actor_payload(payload, seen))
+  else:
+    raise actor_transport_error(payload)
+
+proc actor_payload_clone_id(payload: Value): uint64 {.inline.} =
+  cast[uint64](payload) and PAYLOAD_MASK
+
+proc clone_actor_payload(payload: Value, seen: var Table[uint64, Value]): Value {.gcsafe.} =
+  case payload.kind
+  of VkNil, VkBool, VkInt, VkFloat, VkChar, VkSymbol:
+    payload
+  of VkBytes:
+    if not isManaged(payload):
+      return payload
+    if payload.deep_frozen and payload.shared:
+      return payload
+    var cloned: seq[uint8] = @[]
+    for i in 0..<bytes_len(payload):
+      cloned.add(bytes_at(payload, i))
+    new_bytes_value(cloned)
+  of VkString:
+    if payload.deep_frozen and payload.shared:
+      return payload
+    payload.str.to_value()
+  of VkFunction:
+    if payload.deep_frozen and payload.shared:
+      return payload
+    raise actor_transport_error(payload)
+  of VkArray:
+    if payload.deep_frozen and payload.shared:
+      return payload
+    let payload_id = actor_payload_clone_id(payload)
+    if seen.hasKey(payload_id):
+      return seen[payload_id]
+    let cloned = new_array_value()
+    seen[payload_id] = cloned
+    for item in array_data(payload):
+      array_data(cloned).add(clone_actor_payload(item, seen))
+    cloned
+  of VkMap:
+    if payload.deep_frozen and payload.shared:
+      return payload
+    let payload_id = actor_payload_clone_id(payload)
+    if seen.hasKey(payload_id):
+      return seen[payload_id]
+    let cloned = new_map_value()
+    seen[payload_id] = cloned
+    for key, value in map_data(payload):
+      map_data(cloned)[key] = clone_actor_payload(value, seen)
+    cloned
+  of VkGene:
+    if payload.deep_frozen and payload.shared:
+      return payload
+    let payload_id = actor_payload_clone_id(payload)
+    if seen.hasKey(payload_id):
+      return seen[payload_id]
+    let cloned =
+      if payload.gene.type == NIL:
+        new_gene_value()
+      else:
+        new_gene_value(clone_actor_payload(payload.gene.type, seen))
+    seen[payload_id] = cloned
+    for key, value in payload.gene.props:
+      cloned.gene.props[key] = clone_actor_payload(value, seen)
+    for child in payload.gene.children:
+      cloned.gene.children.add(clone_actor_payload(child, seen))
+    cloned
+  else:
+    raise actor_transport_error(payload)
 
 proc ensure_actor_frame_pool() =
   if FRAMES.len == 0:
@@ -69,7 +191,157 @@ proc setup_actor_thread_vm(thread_id: int) =
   ensure_actor_frame_pool()
   VM.thread_local_ns = actor_thread_namespace(thread_id)
 
-proc send_actor_reply(msg: ThreadMessage, payload: Value) =
+proc set_actor_mailbox_limit_for_test*(limit: int) =
+  if limit <= 0:
+    raise new_exception(types.Exception, "actor mailbox limit must be positive")
+  actor_mailbox_limit = limit
+
+proc actor_wake_worker(thread_id, actor_id: int) =
+  if thread_id <= 0 or thread_id >= g_max_threads:
+    return
+  if THREAD_DATA[thread_id].channel == nil:
+    return
+
+  var wake: ThreadMessage
+  new(wake)
+  wake.id = next_message_id
+  wake.msg_type = MtSend
+  wake.payload = actor_id.to_value()
+  wake.payload_bytes = ThreadPayload(bytes: @[])
+  wake.from_thread_id = current_thread_id
+  wake.from_thread_secret = THREADS[current_thread_id].secret
+  next_message_id.inc()
+  THREAD_DATA[thread_id].channel.send(wake)
+
+proc actor_signal_space(record: ActorRuntimeRecord) =
+  while record.mailbox.len < record.mailbox_limit and record.pending_sends.len > 0:
+    record.mailbox.add(record.pending_sends[0])
+    record.pending_sends.delete(0)
+  broadcast(record.cond)
+
+proc actor_enqueue_message(record: ActorRuntimeRecord, msg: ActorMailboxMessage, from_actor: bool) =
+  var wake_thread_id = -1
+  var wake_actor_id = -1
+
+  acquire(record.lock)
+  while not from_actor and record.mailbox.len >= record.mailbox_limit and not record.stopped:
+    wait(record.cond, record.lock)
+
+  if record.stopped:
+    release(record.lock)
+    raise new_exception(types.Exception, "Actor is stopped")
+
+  if from_actor and record.mailbox.len >= record.mailbox_limit:
+    record.pending_sends.add(msg)
+    release(record.lock)
+    return
+
+  record.mailbox.add(msg)
+  if not record.dispatched:
+    record.dispatched = true
+    wake_thread_id = record.thread_id
+    wake_actor_id = record.actor.id
+  release(record.lock)
+
+  if wake_thread_id != -1:
+    actor_wake_worker(wake_thread_id, wake_actor_id)
+
+proc actor_enable_workers(worker_count: int) =
+  acquire(actor_runtime_lock)
+  defer: release(actor_runtime_lock)
+
+  if actor_system_enabled:
+    raise new_exception(types.Exception, "gene/actor/enable can only be called once")
+  if actor_spawned:
+    raise new_exception(types.Exception, "gene/actor/enable must run before actors are spawned")
+
+  let available_workers = max(0, g_max_threads - 1)
+  if available_workers == 0:
+    raise new_exception(types.Exception, "Actor runtime requires at least one worker thread")
+  if worker_count <= 0:
+    raise new_exception(types.Exception, "gene/actor/enable requires at least one worker")
+  if worker_count > available_workers:
+    raise new_exception(types.Exception, "gene/actor/enable exceeds the configured worker pool")
+
+  actor_worker_ids.setLen(0)
+  for _ in 0..<worker_count:
+    let thread_id = get_free_thread()
+    if thread_id == -1:
+      raise new_exception(types.Exception, "Actor worker pool exhausted")
+    init_thread(thread_id, current_thread_id)
+    createThread(THREAD_DATA[thread_id].thread, actor_worker_handler, thread_id)
+    actor_worker_ids.add(thread_id)
+
+  if not actor_cleanup_registered:
+    actor_cleanup_registered = true
+    addExitProc(shutdown_actor_runtime)
+
+  actor_system_enabled = true
+
+proc actor_spawn_value*(handler: Value, state: Value = NIL): Value =
+  acquire(actor_runtime_lock)
+  defer: release(actor_runtime_lock)
+
+  if not actor_system_enabled:
+    raise new_exception(types.Exception, "gene/actor/spawn requires gene/actor/enable first")
+  if actor_worker_ids.len == 0:
+    raise new_exception(types.Exception, "Actor runtime has no available workers")
+  if handler.kind notin {VkFunction, VkNativeFn, VkBlock}:
+    raise new_exception(types.Exception, "gene/actor/spawn expects a callable handler")
+  if handler.kind == VkFunction:
+    discard freeze_value(handler)
+
+  let worker_id = actor_worker_ids[actor_rr_index mod actor_worker_ids.len]
+  actor_rr_index.inc()
+
+  let actor_handle = Actor(id: actor_next_id)
+  actor_next_id.inc()
+  let record = ActorRuntimeRecord(
+    actor: actor_handle,
+    thread_id: worker_id,
+    handler: handler,
+    state: state,
+    stopped: false,
+    mailbox: @[],
+    pending_sends: @[],
+    mailbox_limit: actor_mailbox_limit,
+    dispatched: false
+  )
+  initLock(record.lock)
+  initCond(record.cond)
+  actor_registry[actor_handle.id] = record
+  actor_spawned = true
+  actor_handle.to_value()
+
+proc actor_pop_message(record: ActorRuntimeRecord): ActorMailboxMessage =
+  acquire(record.lock)
+  if record.stopped or record.mailbox.len == 0:
+    record.dispatched = false
+    release(record.lock)
+    return nil
+
+  result = record.mailbox[0]
+  record.mailbox.delete(0)
+  actor_signal_space(record)
+  release(record.lock)
+
+proc actor_finish_turn(record: ActorRuntimeRecord) =
+  var wake_thread_id = -1
+  var wake_actor_id = -1
+
+  acquire(record.lock)
+  actor_signal_space(record)
+  if record.stopped or record.mailbox.len == 0:
+    record.dispatched = false
+  else:
+    wake_thread_id = record.thread_id
+    wake_actor_id = record.actor.id
+  release(record.lock)
+
+  if wake_thread_id != -1:
+    actor_wake_worker(wake_thread_id, wake_actor_id)
+
+proc send_actor_reply(msg: ActorMailboxMessage, payload: Value) {.gcsafe.} =
   if msg.from_thread_id < 0 or msg.from_thread_id >= g_max_threads:
     return
   if THREAD_DATA[msg.from_thread_id].channel == nil:
@@ -82,35 +354,19 @@ proc send_actor_reply(msg: ThreadMessage, payload: Value) =
   reply.payload = NIL
   reply.payload_bytes = ThreadPayload(bytes: @[])
   if payload != NIL:
-    let serialized = serialize_literal(payload)
-    reply.payload_bytes.bytes = string_to_bytes(serialized.to_s())
-  reply.from_message_id = msg.id
+    let routed = prepare_actor_payload_for_send(payload)
+    reply.payload = routed.value
+  reply.from_message_id = msg.from_message_id
   reply.from_thread_id = current_thread_id
   reply.from_thread_secret = THREADS[current_thread_id].secret
   next_message_id.inc()
   THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
-proc send_actor_failure(msg: ThreadMessage, message: string) =
+proc send_actor_failure(msg: ActorMailboxMessage, message: string) {.gcsafe.} =
   let error_payload = new_map_value()
   map_data(error_payload)["__thread_error__".to_key()] = true.to_value()
   map_data(error_payload)["message".to_key()] = message.to_value()
   send_actor_reply(msg, error_payload)
-
-proc decode_actor_payload(msg: ThreadMessage): tuple[actor_id: int, payload: Value] =
-  var envelope = msg.payload
-  if msg.payload_bytes.bytes.len > 0:
-    envelope = deserialize_literal(bytes_to_string(msg.payload_bytes.bytes))
-  if envelope.kind != VkMap:
-    raise new_exception(types.Exception, "Actor message envelope must be a map")
-  let actor_id_key = actor_envelope_actor_id_key()
-  let payload_key = actor_envelope_payload_key()
-  if not map_data(envelope).hasKey(actor_id_key):
-    raise new_exception(types.Exception, "Actor message envelope missing actor id")
-  let actor_id_value = map_data(envelope)[actor_id_key]
-  if actor_id_value.kind != VkInt:
-    raise new_exception(types.Exception, "Actor message envelope actor id must be an int")
-  result.actor_id = actor_id_value.int64.int
-  result.payload = map_data(envelope).getOrDefault(payload_key, NIL)
 
 proc actor_lookup(actor_id: int): ActorRuntimeRecord =
   acquire(actor_runtime_lock)
@@ -118,25 +374,32 @@ proc actor_lookup(actor_id: int): ActorRuntimeRecord =
   actor_registry.getOrDefault(actor_id)
 
 proc actor_process_message(msg: ThreadMessage) =
-  let (actor_id, payload) = decode_actor_payload(msg)
+  if msg.payload.kind != VkInt:
+    return
+
+  let actor_id = msg.payload.int64.int
   let record = actor_lookup(actor_id)
   if record == nil:
-    if msg.msg_type == MtSendExpectReply:
-      send_actor_failure(msg, "Actor is no longer valid")
+    return
+
+  let mailbox_msg = actor_pop_message(record)
+  if mailbox_msg == nil:
     return
 
   acquire(record.lock)
-  if record.stopped:
-    release(record.lock)
-    if msg.msg_type == MtSendExpectReply:
-      send_actor_failure(msg, "Actor is stopped")
-    return
   let actor_state = record.state
   let handler = record.handler
+  let is_stopped = record.stopped
   release(record.lock)
 
+  if is_stopped:
+    if mailbox_msg.reply_requested:
+      send_actor_failure(mailbox_msg, "Actor is stopped")
+    actor_finish_turn(record)
+    return
+
   current_actor_record = record
-  current_actor_message = msg
+  current_actor_message = mailbox_msg
   current_actor_reply_sent = false
 
   let ctx = ActorContext(actor: record.actor)
@@ -145,9 +408,9 @@ proc actor_process_message(msg: ThreadMessage) =
     let next_state =
       case handler.kind
       of VkFunction, VkBlock:
-        vm_exec_callable(VM, handler, @[ctx.to_value(), payload, actor_state])
+        vm_exec_callable(VM, handler, @[ctx.to_value(), mailbox_msg.payload, actor_state])
       of VkNativeFn:
-        call_native_fn(handler.ref.native_fn, VM, @[ctx.to_value(), payload, actor_state])
+        call_native_fn(handler.ref.native_fn, VM, @[ctx.to_value(), mailbox_msg.payload, actor_state])
       else:
         raise new_exception(types.Exception, "Actor handler must be callable")
 
@@ -156,15 +419,16 @@ proc actor_process_message(msg: ThreadMessage) =
     let is_stopped = record.stopped
     release(record.lock)
 
-    if msg.msg_type == MtSendExpectReply and not current_actor_reply_sent and not is_stopped:
-      send_actor_reply(msg, NIL)
+    if mailbox_msg.reply_requested and not current_actor_reply_sent and not is_stopped:
+      send_actor_reply(mailbox_msg, NIL)
   except CatchableError as exc:
-    if msg.msg_type == MtSendExpectReply and not current_actor_reply_sent:
-      send_actor_failure(msg, exc.msg)
+    if mailbox_msg.reply_requested and not current_actor_reply_sent:
+      send_actor_failure(mailbox_msg, exc.msg)
   finally:
     current_actor_record = nil
     current_actor_message = nil
     current_actor_reply_sent = false
+    actor_finish_turn(record)
 
 proc actor_worker_handler(thread_id: int) {.thread.} =
   {.cast(gcsafe).}:
@@ -195,14 +459,9 @@ proc actor_record_from_value(value: Value): ActorRuntimeRecord =
     raise new_exception(types.Exception, "Actor is no longer valid")
   record
 
-proc actor_send_internal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
-                         has_keyword_args: bool, reply_requested: bool): Value =
-  if get_method_arg_count(arg_count, has_keyword_args) < 1:
-    raise new_exception(types.Exception, "Actor.send requires a message")
-
-  let self_arg = get_self(args, has_keyword_args)
-  let payload = get_method_arg(args, 0, has_keyword_args)
-  let record = actor_record_from_value(self_arg)
+proc actor_send_value*(vm: ptr VirtualMachine, actor_value: Value, payload: Value,
+                       reply_requested = false): Value =
+  let record = actor_record_from_value(actor_value)
 
   acquire(record.lock)
   let is_stopped = record.stopped
@@ -216,27 +475,13 @@ proc actor_send_internal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value]
   if THREAD_DATA[thread_id].channel == nil:
     raise new_exception(types.Exception, "Actor worker is unavailable")
 
-  let envelope = new_map_value()
-  map_data(envelope)[actor_envelope_actor_id_key()] = record.actor.id.to_value()
-  map_data(envelope)[actor_envelope_payload_key()] = payload
-  let serialized = serialize_literal(envelope)
+  let routed = prepare_actor_payload_for_send(payload)
 
-  var msg: ThreadMessage
-  new(msg)
-  msg.id = next_message_id
-  msg.msg_type = if reply_requested: MtSendExpectReply else: MtSend
-  msg.payload = NIL
-  msg.payload_bytes = ThreadPayload(bytes: string_to_bytes(serialized.to_s()))
-  msg.code = NIL
-  msg.from_thread_id = current_thread_id
-  msg.from_thread_secret = THREADS[current_thread_id].secret
   let message_id = next_message_id
-  next_message_id.inc()
-
-  THREAD_DATA[thread_id].channel.send(msg)
-
+  var future_obj: FutureObj = nil
+  let future_val = new_ref(VkFuture)
   if reply_requested:
-    let future_obj = FutureObj(
+    future_obj = FutureObj(
       state: FsPending,
       value: NIL,
       success_callbacks: @[],
@@ -245,12 +490,36 @@ proc actor_send_internal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value]
     )
     vm.thread_futures[message_id] = future_obj
     vm.poll_enabled = true
-
-    let future_val = new_ref(VkFuture)
     future_val.future = future_obj
-    return future_val.to_ref_value()
 
+  let msg = ActorMailboxMessage(
+    payload: routed.value,
+    reply_requested: reply_requested,
+    from_message_id: message_id,
+    from_thread_id: current_thread_id,
+    from_thread_secret: THREADS[current_thread_id].secret
+  )
+  next_message_id.inc()
+
+  try:
+    actor_enqueue_message(record, msg, current_actor_record != nil)
+  except CatchableError:
+    if reply_requested:
+      vm.thread_futures.del(message_id)
+    raise
+
+  if reply_requested:
+    return future_val.to_ref_value()
   NIL
+
+proc actor_send_internal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                         has_keyword_args: bool, reply_requested: bool): Value =
+  if get_method_arg_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Actor.send requires a message")
+
+  let self_arg = get_self(args, has_keyword_args)
+  let payload = get_method_arg(args, 0, has_keyword_args)
+  actor_send_value(vm, self_arg, payload, reply_requested)
 
 proc actor_send_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                        has_keyword_args: bool): Value {.gcsafe.} =
@@ -265,39 +534,14 @@ proc actor_send_expect_reply_native(vm: ptr VirtualMachine, args: ptr UncheckedA
 proc actor_enable_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                        has_keyword_args: bool): Value =
   discard vm
-  acquire(actor_runtime_lock)
-  defer: release(actor_runtime_lock)
-
-  if actor_system_enabled:
-    raise new_exception(types.Exception, "gene/actor/enable can only be called once")
-  if actor_spawned:
-    raise new_exception(types.Exception, "gene/actor/enable must run before actors are spawned")
-
   let available_workers = max(0, g_max_threads - 1)
-  if available_workers == 0:
-    raise new_exception(types.Exception, "Actor runtime requires at least one worker thread")
-
   var worker_count = min(available_workers, max(1, countProcessors()))
   if has_keyword_args and has_keyword_arg(args, "workers"):
     let workers_arg = get_keyword_arg(args, "workers")
     if workers_arg.kind != VkInt:
       raise new_exception(types.Exception, "gene/actor/enable ^workers expects an integer")
     worker_count = workers_arg.int64.int
-  if worker_count <= 0:
-    raise new_exception(types.Exception, "gene/actor/enable requires at least one worker")
-  if worker_count > available_workers:
-    raise new_exception(types.Exception, "gene/actor/enable exceeds the configured worker pool")
-
-  actor_worker_ids.setLen(0)
-  for _ in 0..<worker_count:
-    let thread_id = get_free_thread()
-    if thread_id == -1:
-      raise new_exception(types.Exception, "Actor worker pool exhausted")
-    init_thread(thread_id, current_thread_id)
-    createThread(THREAD_DATA[thread_id].thread, actor_worker_handler, thread_id)
-    actor_worker_ids.add(thread_id)
-
-  actor_system_enabled = true
+  actor_enable_workers(worker_count)
   NIL
 
 proc actor_enable_native*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
@@ -305,47 +549,20 @@ proc actor_enable_native*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value
   {.cast(gcsafe).}:
     actor_enable_impl(vm, args, arg_count, has_keyword_args)
 
+proc actor_enable_for_test*(workers: int) =
+  actor_enable_workers(workers)
+
 proc actor_spawn_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                       has_keyword_args: bool): Value =
   discard vm
   if get_positional_count(arg_count, has_keyword_args) != 1:
     raise new_exception(types.Exception, "gene/actor/spawn expects exactly one handler")
 
-  acquire(actor_runtime_lock)
-  defer: release(actor_runtime_lock)
-
-  if not actor_system_enabled:
-    raise new_exception(types.Exception, "gene/actor/spawn requires gene/actor/enable first")
-  if actor_worker_ids.len == 0:
-    raise new_exception(types.Exception, "Actor runtime has no available workers")
-
   let handler = get_positional_arg(args, 0, has_keyword_args)
-  if handler.kind notin {VkFunction, VkNativeFn, VkBlock}:
-    raise new_exception(types.Exception, "gene/actor/spawn expects a callable handler")
-
-  if handler.kind == VkFunction:
-    discard freeze_value(handler)
-
   let state =
     if has_keyword_args and has_keyword_arg(args, "state"): get_keyword_arg(args, "state")
     else: NIL
-
-  let worker_id = actor_worker_ids[actor_rr_index mod actor_worker_ids.len]
-  actor_rr_index.inc()
-
-  let actor_handle = Actor(id: actor_next_id)
-  actor_next_id.inc()
-  let record = ActorRuntimeRecord(
-    actor: actor_handle,
-    thread_id: worker_id,
-    handler: handler,
-    state: state,
-    stopped: false
-  )
-  initLock(record.lock)
-  actor_registry[actor_handle.id] = record
-  actor_spawned = true
-  actor_handle.to_value()
+  actor_spawn_value(handler, state)
 
 proc actor_spawn_native*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                          has_keyword_args: bool): Value {.gcsafe, nimcall.} =
@@ -379,15 +596,20 @@ proc actor_context_actor_native(vm: ptr VirtualMachine, args: ptr UncheckedArray
   {.cast(gcsafe).}:
     actor_context_actor_impl(args, has_keyword_args)
 
-proc actor_context_reply_impl(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-  if get_method_arg_count(arg_count, has_keyword_args) < 1:
-    raise new_exception(types.Exception, "ActorContext.reply requires a value")
-  if current_actor_message == nil or current_actor_message.msg_type != MtSendExpectReply:
+proc actor_reply_for_test*(ctx: Value, value: Value) {.gcsafe.} =
+  if ctx.kind != VkActorContext or ctx.ref.actor_context == nil:
+    raise new_exception(types.Exception, "actor reply helper requires an ActorContext")
+  if current_actor_message == nil or not current_actor_message.reply_requested:
     raise new_exception(types.Exception, "ActorContext.reply requires send_expect_reply")
   if current_actor_reply_sent:
     raise new_exception(types.Exception, "ActorContext.reply can only be called once per message")
-  send_actor_reply(current_actor_message, get_method_arg(args, 0, has_keyword_args))
+  send_actor_reply(current_actor_message, value)
   current_actor_reply_sent = true
+
+proc actor_context_reply_impl(args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_method_arg_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "ActorContext.reply requires a value")
+  actor_reply_for_test(get_self(args, has_keyword_args), get_method_arg(args, 0, has_keyword_args))
   NIL
 
 proc actor_context_reply_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
@@ -413,6 +635,7 @@ proc actor_context_stop_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[
     actor_context_stop_impl()
 
 proc init_actor_runtime*() =
+  shutdown_actor_runtime()
   acquire(actor_runtime_lock)
   defer: release(actor_runtime_lock)
   actor_system_enabled = false
@@ -421,6 +644,38 @@ proc init_actor_runtime*() =
   actor_worker_ids = @[]
   actor_registry = initTable[int, ActorRuntimeRecord]()
   actor_rr_index = 0
+  actor_mailbox_limit = DEFAULT_ACTOR_MAILBOX_LIMIT
+
+proc shutdown_actor_runtime*() =
+  var worker_ids: seq[int] = @[]
+
+  acquire(actor_runtime_lock)
+  worker_ids = actor_worker_ids
+  actor_worker_ids = @[]
+  actor_registry = initTable[int, ActorRuntimeRecord]()
+  actor_system_enabled = false
+  actor_spawned = false
+  actor_rr_index = 0
+  release(actor_runtime_lock)
+
+  for thread_id in worker_ids:
+    if thread_id <= 0 or thread_id >= g_max_threads:
+      continue
+    if THREAD_DATA[thread_id].channel == nil:
+      continue
+
+    var term: ThreadMessage
+    new(term)
+    term.id = next_message_id
+    term.msg_type = MtTerminate
+    term.payload = NIL
+    term.payload_bytes = ThreadPayload(bytes: @[])
+    term.from_thread_id = current_thread_id
+    term.from_thread_secret = THREADS[current_thread_id].secret
+    next_message_id.inc()
+    THREAD_DATA[thread_id].channel.send(term)
+    joinThread(THREAD_DATA[thread_id].thread)
+    THREAD_DATA[thread_id].channel = nil
 
 proc init_actor_class*() =
   if not gene_namespace_initialized:
