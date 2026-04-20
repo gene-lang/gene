@@ -98,6 +98,40 @@ Current keywords:
 
 The current example is [examples/http_server.gene](../examples/http_server.gene).
 
+Actor-backed example:
+
+```gene
+(import genex/http)
+
+(gene/actor/enable ^workers 4)
+
+(var worker
+  (gene/actor/spawn
+    ^state 0
+    (fn [ctx msg state]
+      (case msg/kind
+      when "job"
+        (do
+          (println #"actor #{state} started job #{msg/job_id}")
+          (sleep 250)
+          (+ state 1))
+      else
+        state))))
+
+(fn app [req]
+  (if (req/path == "/enqueue")
+    (do
+      (worker .send {^kind "job" ^job_id 1})
+      (respond 202 "queued"))
+  else
+    (respond 200 "ok")))
+
+(start_server 8087 app)
+(run_forever)
+```
+
+See [examples/http_actor_server.gene](../examples/http_actor_server.gene) for a slightly fuller sample with a small actor pool and a `/stats` endpoint.
+
 ### `gene/ServerRequest`
 
 Handlers receive a `gene/ServerRequest`. Current methods:

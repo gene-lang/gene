@@ -1,0 +1,64 @@
+#!/usr/bin/env gene run
+
+(import genex/http)
+
+(var actor_count 4)
+(gene/actor/enable ^workers actor_count)
+
+(fn spawn_http_worker [worker_id]
+  (gene/actor/spawn
+    ^state {^id worker_id ^completed 0}
+    (fn [ctx msg state]
+      (case msg/kind
+      when "job"
+        (println #"actor #{state/id} started job #{msg/job_id}")
+        (sleep 250)
+        (println #"actor #{state/id} finished job #{msg/job_id}")
+        {^id state/id ^completed (+ state/completed 1)}
+      else
+        state))))
+
+(var workers [])
+(repeat actor_count
+  (workers .append (spawn_http_worker (len workers))))
+
+(var next_worker 0)
+(var queued_jobs 0)
+
+(fn choose_worker []
+  (var index (next_worker % (len workers)))
+  (next_worker += 1)
+  {^actor workers/<index> ^id index})
+
+(fn app [req]
+  (if (req/path == "/")
+    (respond 200
+      (++
+        "actor-backed http job server\n"
+        "routes:\n"
+        "  /health\n"
+        "  /enqueue\n"
+        "  /stats\n"))
+  elif (req/path == "/health")
+    (respond 200 "{\"ok\": true}" {^Content-Type "application/json"})
+  elif (req/path == "/stats")
+    (respond 200
+      #"queued_jobs=#{queued_jobs}\nactor_count=#{actor_count}"
+      {^Content-Type "text/plain"})
+  elif (req/path == "/enqueue")
+    (var selected (choose_worker))
+    (queued_jobs += 1)
+    (selected/actor .send {^kind "job" ^job_id queued_jobs})
+    (respond 202
+      #"queued job #{queued_jobs} on actor #{selected/id}"
+      {^Content-Type "text/plain"})
+  else
+    (respond 404 "not found" {^Content-Type "text/plain"}))
+)
+
+(println "Listening on http://127.0.0.1:8087")
+(println "This sample keeps genex/http on the front door and routes background work through Gene actors.")
+(println "Try /health, /enqueue, and /stats")
+
+(start_server 8087 app)
+(run_forever)
