@@ -54,6 +54,9 @@ proc actor_worker_handler(thread_id: int) {.thread.}
 proc actor_record_from_value(value: Value): ActorRuntimeRecord
 proc shutdown_actor_runtime*()
 
+proc actor_runtime_active*(): bool =
+  actor_system_enabled
+
 proc actor_thread_namespace(thread_id: int): Namespace =
   let thread_ns = new_namespace("thread_local")
 

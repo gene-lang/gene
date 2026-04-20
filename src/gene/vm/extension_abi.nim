@@ -18,6 +18,9 @@ type
   GeneHostLogFn* = proc(level: int32, logger_name: cstring, message: cstring) {.cdecl, gcsafe.}
   GeneHostSchedulerTickFn* = proc(vm_user_data: pointer, callback_user_data: pointer) {.cdecl, gcsafe.}
   GeneHostRegisterSchedulerCallbackFn* = proc(callback: GeneHostSchedulerTickFn, callback_user_data: pointer): int32 {.cdecl, gcsafe.}
+  GeneHostRegisterPortFn* = proc(name: cstring, kind: int32, pool_size: int32,
+                                 handler: Value, init_state: Value,
+                                 out_handle: ptr Value): int32 {.cdecl, gcsafe.}
 
   GeneHostAbi* {.bycopy.} = object
     abi_version*: uint32
@@ -26,6 +29,7 @@ type
     symbols_data*: pointer         ## ptr ManagedSymbols
     log_message_fn*: GeneHostLogFn
     register_scheduler_callback_fn*: GeneHostRegisterSchedulerCallbackFn
+    register_port_fn*: GeneHostRegisterPortFn
     result_namespace*: ptr Namespace
 
   GeneExtensionInitFn* = proc(host: ptr GeneHostAbi): int32 {.cdecl.}
@@ -60,3 +64,33 @@ proc run_extension_vm_created_callbacks*() =
   ## Execute extension-local VM-created callbacks after host context is applied.
   for callback in VmCreatedCallbacks:
     callback()
+
+proc register_extension_port*(host: ptr GeneHostAbi, name: string,
+                              kind: ExtensionPortKind, handler: Value,
+                              init_state: Value = NIL, pool_size = 1,
+                              out_handle: ptr Value = nil): GeneExtStatus =
+  if host == nil or host.register_port_fn == nil or name.len == 0:
+    return GeneExtErr
+  let status = host.register_port_fn(
+    name.cstring,
+    int32(kind.ord),
+    int32(pool_size),
+    handler,
+    init_state,
+    out_handle
+  )
+  cast[GeneExtStatus](status)
+
+proc register_singleton_port*(host: ptr GeneHostAbi, name: string,
+                              handler: Value, init_state: Value = NIL,
+                              out_handle: ptr Value = nil): GeneExtStatus =
+  register_extension_port(host, name, EpkSingleton, handler, init_state, 1, out_handle)
+
+proc register_port_pool*(host: ptr GeneHostAbi, name: string, pool_size: int,
+                         handler: Value, init_state: Value = NIL,
+                         out_handle: ptr Value = nil): GeneExtStatus =
+  register_extension_port(host, name, EpkPool, handler, init_state, pool_size, out_handle)
+
+proc register_port_factory*(host: ptr GeneHostAbi, name: string,
+                            handler: Value): GeneExtStatus =
+  register_extension_port(host, name, EpkFactory, handler, NIL, 1, nil)

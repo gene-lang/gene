@@ -107,6 +107,11 @@ type
   ActorContext* = ref object
     actor*: Actor
 
+  ExtensionPortKind* = enum
+    EpkSingleton
+    EpkPool
+    EpkFactory
+
   ThreadMessageType* = enum
     MtSend          # Send data, no reply expected
     MtSendExpectReply # Send data, expect reply
