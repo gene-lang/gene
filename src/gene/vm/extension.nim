@@ -1,5 +1,5 @@
 when not defined(gene_wasm):
-  import strutils, os, tables
+  import strutils, os, tables, times
 
 import ../types
 import ../logging_core
@@ -195,6 +195,28 @@ proc host_register_port_bridge*(name: cstring, kind: int32, pool_size: int32,
     except CatchableError:
       int32(GeneExtErr)
 
+proc host_call_port_bridge*(port_handle: Value, msg: Value, timeout_ms: int32,
+                            out_value: ptr Value): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    if VM == nil:
+      return int32(GeneExtErr)
+    try:
+      let future = actor_send_value(VM, port_handle, msg, true)
+      let deadline = epochTime() + (float(timeout_ms) / 1000.0)
+      let future_obj = future.ref.future
+      while future_obj.state == FsPending and epochTime() < deadline:
+        VM.event_loop_counter = 100
+        vm_poll_event_loop(VM)
+        sleep(10)
+
+      if future_obj.state != FsSuccess:
+        return int32(GeneExtErr)
+      if out_value != nil:
+        out_value[] = future_obj.value
+      int32(GeneExtOk)
+    except CatchableError:
+      int32(GeneExtErr)
+
 proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a dynamic library extension and return its namespace
   when defined(gene_wasm):
@@ -245,6 +267,7 @@ proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
       log_message_fn: host_log_message_bridge,
       register_scheduler_callback_fn: host_register_scheduler_callback_bridge,
       register_port_fn: host_register_port_bridge,
+      call_port_fn: host_call_port_bridge,
       result_namespace: addr ext_ns
     )
 

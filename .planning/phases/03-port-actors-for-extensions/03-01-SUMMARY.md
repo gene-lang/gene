@@ -30,11 +30,13 @@ completed: 2026-04-20T19:24:46Z
 
 - Added `ExtensionPortKind` to the shared type layer so the runtime and extension ABI speak the same port-shape language.
 - Extended `GeneHostAbi` with a port-registration callback and added extension-side wrappers for singleton, pool, and factory registration.
+- Extended `GeneHostAbi` with a host-side port call bridge so an extension can synchronously invoke a registered singleton port and receive a reply through the host runtime.
 - Added runtime-backed registration/materialization helpers in `src/gene/vm/extension.nim` that create singleton and pool actor handles immediately and can spawn factory-backed handles on demand.
 - Added [test_extension_ports.nim](/Users/gcao/gene-workspace/gene-old/tests/integration/test_extension_ports.nim) to prove:
   - registration fails until the actor runtime is enabled
   - singleton ports materialize as `VkActor`
   - pool ports materialize as arrays of independent `VkActor` handles
+  - the host ABI can call a registered singleton port and get a reply
   - factory registrations can spawn fresh actor-backed handles later
 
 ## Decisions Made

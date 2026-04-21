@@ -21,6 +21,8 @@ type
   GeneHostRegisterPortFn* = proc(name: cstring, kind: int32, pool_size: int32,
                                  handler: Value, init_state: Value,
                                  out_handle: ptr Value): int32 {.cdecl, gcsafe.}
+  GeneHostCallPortFn* = proc(port_handle: Value, msg: Value, timeout_ms: int32,
+                             out_value: ptr Value): int32 {.cdecl, gcsafe.}
 
   GeneHostAbi* {.bycopy.} = object
     abi_version*: uint32
@@ -30,6 +32,7 @@ type
     log_message_fn*: GeneHostLogFn
     register_scheduler_callback_fn*: GeneHostRegisterSchedulerCallbackFn
     register_port_fn*: GeneHostRegisterPortFn
+    call_port_fn*: GeneHostCallPortFn
     result_namespace*: ptr Namespace
 
   GeneExtensionInitFn* = proc(host: ptr GeneHostAbi): int32 {.cdecl.}
@@ -94,3 +97,13 @@ proc register_port_pool*(host: ptr GeneHostAbi, name: string, pool_size: int,
 proc register_port_factory*(host: ptr GeneHostAbi, name: string,
                             handler: Value): GeneExtStatus =
   register_extension_port(host, name, EpkFactory, handler, NIL, 1, nil)
+
+proc call_extension_port*(host: ptr GeneHostAbi, port_handle: Value, msg: Value,
+                          timeout_ms = 2000): Value =
+  if host == nil or host.call_port_fn == nil:
+    return NIL
+  var result = NIL
+  let status = host.call_port_fn(port_handle, msg, int32(timeout_ms), addr result)
+  if status != int32(GeneExtOk):
+    return NIL
+  result

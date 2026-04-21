@@ -63,6 +63,7 @@ proc build_host(): GeneHostAbi =
     log_message_fn: nil,
     register_scheduler_callback_fn: nil,
     register_port_fn: host_register_port_bridge,
+    call_port_fn: host_call_port_bridge,
     result_namespace: nil
   )
 
@@ -124,6 +125,22 @@ suite "Extension port registration":
     discard actor_send_value(VM, array_data(pool)[0], port_message("increment"))
     check await_vm_future(actor_send_value(VM, array_data(pool)[0], port_message("get"), true)) == 6.to_value()
     check await_vm_future(actor_send_value(VM, array_data(pool)[1], port_message("get"), true)) == 5.to_value()
+
+  test "host ABI can call a registered singleton port and receive a reply":
+    actor_enable_for_test(1)
+
+    var host = build_host()
+    var singleton = NIL
+    check register_singleton_port(
+      addr host,
+      "test/callable",
+      NativeFn(port_handler).to_value(),
+      port_state(7),
+      addr singleton
+    ) == GeneExtOk
+
+    let result = call_extension_port(addr host, singleton, port_message("get"))
+    check result == 7.to_value()
 
   test "factory registrations spawn fresh actor-backed handles on demand":
     actor_enable_for_test(2)
