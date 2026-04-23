@@ -1,0 +1,33 @@
+#!/usr/bin/env gene run
+
+(import genex/http)
+
+(var port 8089)
+(var sleep_ms 200)
+(var actor_workers 10)
+
+(gene/actor/enable ^workers actor_workers)
+
+(fn app [req]
+  (if (req/path == "/")
+    (respond 200
+      (++
+        "http ab actor demo\n"
+        "routes:\n"
+        "  /health\n"
+        "  /slow\n"))
+  elif (req/path == "/health")
+    (respond 200 "{\"ok\": true}" {^Content-Type "application/json"})
+  elif (req/path == "/slow")
+    (sleep sleep_ms)
+    (respond 200 "slow ok" {^Content-Type "text/plain"})
+  else
+    (respond 404 "not found" {^Content-Type "text/plain"}))
+)
+
+(println #"Listening on http://127.0.0.1:#{port}")
+(println #"Blocking /slow handler sleeps #{sleep_ms}ms per request")
+(println #"Actor-backed concurrent mode enabled with #{actor_workers} workers")
+
+(start_server port app ^concurrent true ^workers actor_workers)
+(run_forever)

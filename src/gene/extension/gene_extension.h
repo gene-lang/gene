@@ -47,7 +47,7 @@ typedef uint64_t Key;
 
 /* ========== ABI Types ========== */
 
-#define GENE_EXT_ABI_VERSION 3u
+#define GENE_EXT_ABI_VERSION 7u
 
 typedef enum GeneExtStatus {
     GENE_EXT_OK = 0,
@@ -62,6 +62,11 @@ typedef int32_t (*GeneHostRegisterPortFn)(const char* name, int32_t kind, int32_
                                           Value handler, Value init_state, Value* out_handle);
 typedef int32_t (*GeneHostCallPortFn)(Value port_handle, Value msg, int32_t timeout_ms,
                                       Value* out_value);
+typedef int32_t (*GeneHostCallPortAsyncFn)(Value port_handle, Value msg,
+                                           Value* out_future);
+typedef int32_t (*GeneHostActorReplyFn)(Value ctx, Value payload);
+typedef int32_t (*GeneHostActorReplySerializedFn)(Value ctx, const char* payload_ser);
+typedef int32_t (*GeneHostPollVmFn)(void* vm_user_data);
 
 /**
  * Host ABI passed to gene_init.
@@ -75,6 +80,10 @@ typedef struct GeneHostAbi {
     GeneHostRegisterSchedulerCallbackFn register_scheduler_callback_fn; /* optional scheduler registration hook */
     GeneHostRegisterPortFn register_port_fn; /* optional extension port registration hook */
     GeneHostCallPortFn call_port_fn;         /* optional extension port call hook */
+    GeneHostCallPortAsyncFn call_port_async_fn; /* optional async extension port call hook */
+    GeneHostActorReplyFn actor_reply_fn; /* optional host actor reply hook */
+    GeneHostActorReplySerializedFn actor_reply_serialized_fn; /* optional host actor reply hook for serialized payloads */
+    GeneHostPollVmFn poll_vm_fn; /* optional host VM/event-loop poll hook */
     Namespace** result_namespace;  /* extension sets this to its namespace */
 } GeneHostAbi;
 

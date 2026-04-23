@@ -6,6 +6,7 @@ import ../asynchttpserver
 import asyncdispatch, asyncnet
 import asyncfutures  # Import asyncfutures explicitly
 import nativesockets, net
+import times
 import cgi
 import websocket as ws_module
 
@@ -138,26 +139,6 @@ proc get_native_client(req_val: Value): AsyncSocket =
     raise new_exception(types.Exception, "respond_sse request client pointer is nil")
   cast[AsyncSocket](req_ptr)
 
-proc http_actor_method(vm: ptr VirtualMachine, actor_handle: Value, method_name: string,
-                       args: seq[Value]): Value {.gcsafe.} =
-  {.cast(gcsafe).}:
-    if actor_handle.kind != VkActor:
-      raise new_exception(types.Exception, "HTTP concurrent worker handle is not an actor")
-    if App == NIL or App.kind != VkApplication or App.app.actor_class.kind != VkClass:
-      raise new_exception(types.Exception, "HTTP concurrent mode requires gene/actor/enable first")
-    let actor_class = App.app.actor_class.ref.class
-    let key = method_name.to_key()
-    if not actor_class.methods.hasKey(key):
-      raise new_exception(types.Exception, "Actor method not available: " & method_name)
-    let callable = actor_class.methods[key].callable
-    case callable.kind
-    of VkNativeFn:
-      call_native_fn(callable.ref.native_fn, vm, @[actor_handle] & args)
-    of VkNativeMethod:
-      call_native_fn(callable.ref.native_method, vm, @[actor_handle] & args)
-    else:
-      vm.exec_method(callable, actor_handle, args)
-
 proc ensure_http_request_ports(worker_count: int): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if http_request_ports.kind == VkArray:
@@ -191,7 +172,22 @@ proc dispatch_to_http_actor(vm: ptr VirtualMachine, request_data: Value): Value 
     let handles = array_data(ports)
     let actor_idx = next_http_port_idx mod handles.len
     next_http_port_idx.inc()
-    http_actor_method(vm, handles[actor_idx], "send_expect_reply", @[request_data])
+    let future = call_extension_port_async(addr http_extension_host, handles[actor_idx], request_data)
+    if future.kind != VkFuture:
+      raise new_exception(types.Exception, "HTTP concurrent dispatch did not return a Future")
+    future
+
+proc http_reply_from_context(ctx: Value, payload: Value) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if http_extension_host_ready:
+      let payload_ser = serialize_literal(payload).to_s()
+      let serialized_status = reply_from_extension_context_serialized(addr http_extension_host, ctx, payload_ser)
+      if serialized_status == GeneExtOk:
+        return
+      let status = reply_from_extension_context(addr http_extension_host, ctx, payload)
+      if status == GeneExtOk:
+        return
+    actor_reply_for_test(ctx, payload)
 
 proc reset_http_concurrent_state_for_test*() {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -1006,12 +1002,12 @@ proc http_actor_handle_request(vm: ptr VirtualMachine, args: ptr UncheckedArray[
       let result = execute_gene_function(vm, gene_handler_global, @[request])
       let literal_result = response_to_literal(result)
       if not is_literal_value(literal_result):
-        actor_reply_for_test(ctx, literal_error_response("Internal Server Error: response is not literal"))
+        http_reply_from_context(ctx, literal_error_response("Internal Server Error: response is not literal"))
       else:
-        actor_reply_for_test(ctx, literal_result)
+        http_reply_from_context(ctx, literal_result)
     except CatchableError as e:
       http_log(LlError, "Actor handler error: " & e.msg)
-      actor_reply_for_test(ctx, literal_error_response("Internal Server Error: " & e.msg))
+      http_reply_from_context(ctx, literal_error_response("Internal Server Error: " & e.msg))
     state
 
 # HTTP Server implementation
@@ -1230,6 +1226,17 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
   await sleepAsync(1)
 
   {.cast(gcsafe).}:
+    var held_response = NIL
+    template track_response(value_expr: untyped) =
+      if held_response != NIL and isManaged(held_response):
+        release(held_response)
+      held_response = value_expr
+      if held_response != NIL and isManaged(held_response):
+        retain(held_response)
+    defer:
+      if held_response != NIL and isManaged(held_response):
+        release(held_response)
+
     # --- WebSocket upgrade detection ---
     let is_ws_upgrade = req.headers.hasKey("Upgrade") and
                         req.headers["Upgrade"].toLowerAscii() == "websocket"
@@ -1280,34 +1287,58 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
         var future: Value
         try:
           future = dispatch_to_http_actor(gene_vm_global, req_literal)
+          track_response(future)
         except CatchableError as e:
           await req.respond(Http500, "Concurrent dispatch error: " & e.msg)
           return
 
-        try:
-          let nim_fut = future.ref.future.nim_future
-          if nim_fut.isNil:
-            raise new_exception(types.Exception, "Actor reply future is missing async bridge state")
-
-          await sleepAsync(1)
-          response = await nim_fut
-
-          # Convert literal response map to instance if needed
-          if response.kind == VkMap:
-            response = literal_to_server_response(response)
-        except CatchableError as e:
-          http_log(LlError, "Concurrent actor error: " & e.msg)
-          await req.respond(Http500, "Concurrent actor error: " & e.msg)
-          return
+        response = future
+        track_response(response)
       else:
         # NON-CONCURRENT MODE: execute the Gene handler inline.
         # This keeps request handling functional even when extension-local
         # scheduler callbacks are not wired into the host scheduler.
         try:
           response = execute_gene_function(gene_vm_global, gene_handler_global, @[gene_req])
+          track_response(response)
         except CatchableError as e:
           await req.respond(Http500, "Internal Server Error: " & e.msg)
           return
+
+    if response.kind == VkFuture:
+      try:
+        let future_obj = response.ref.future
+        let deadline = epochTime() + 10.0
+        while future_obj.state == FsPending and epochTime() < deadline:
+          if not http_extension_host_ready or http_extension_host.poll_vm_fn == nil:
+            await req.respond(Http500, "Future response is missing the host poll callback")
+            return
+          discard http_extension_host.poll_vm_fn(http_extension_host.user_data)
+          await sleepAsync(1)
+
+        case future_obj.state
+        of FsSuccess:
+          response = future_obj.value
+          track_response(response)
+          if response.kind == VkMap:
+            response = literal_to_server_response(response)
+            track_response(response)
+        of FsFailure:
+          let err = future_obj.value
+          if err.kind == VkInstance:
+            let msg = instance_props(err).getOrDefault("message".to_key(), NIL)
+            if msg.kind == VkString:
+              raise new_exception(types.Exception, msg.str)
+          elif err.kind == VkString:
+            raise new_exception(types.Exception, err.str)
+          raise new_exception(types.Exception, "Async response failed")
+        of FsCancelled:
+          raise new_exception(types.Exception, "Async response cancelled")
+        of FsPending:
+          raise new_exception(types.Exception, "Async response timed out")
+      except CatchableError as e:
+        await req.respond(Http500, "Async response error: " & e.msg)
+        return
 
     # Handle the response
     if response == NIL:

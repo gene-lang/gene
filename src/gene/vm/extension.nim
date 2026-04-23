@@ -686,6 +686,51 @@ proc host_call_port_bridge*(port_handle: Value, msg: Value, timeout_ms: int32,
     except CatchableError:
       int32(GeneExtErr)
 
+proc host_call_port_async_bridge*(port_handle: Value, msg: Value,
+                                  out_future: ptr Value): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    if VM == nil:
+      return int32(GeneExtErr)
+    try:
+      let future = actor_send_value(VM, port_handle, msg, true)
+      if out_future != nil:
+        out_future[] = future
+      int32(GeneExtOk)
+    except CatchableError:
+      int32(GeneExtErr)
+
+proc host_actor_reply_bridge*(ctx: Value, payload: Value): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    try:
+      actor_reply_for_test(ctx, payload)
+      int32(GeneExtOk)
+    except CatchableError:
+      int32(GeneExtErr)
+
+proc host_actor_reply_serialized_bridge*(ctx: Value, payload_ser: cstring): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    if payload_ser == nil:
+      return int32(GeneExtErr)
+    try:
+      actor_reply_for_test(ctx, deserialize_literal($payload_ser))
+      int32(GeneExtOk)
+    except CatchableError:
+      int32(GeneExtErr)
+
+proc host_poll_vm_bridge*(vm_user_data: pointer): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    let vm = cast[ptr VirtualMachine](vm_user_data)
+    if vm == nil:
+      return int32(GeneExtErr)
+    try:
+      vm.event_loop_counter = 100
+      if vm_poll_event_loop_hook.isNil:
+        return int32(GeneExtErr)
+      vm_poll_event_loop_hook(vm)
+      int32(GeneExtOk)
+    except CatchableError:
+      int32(GeneExtErr)
+
 proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
   ## Load a dynamic library extension and return its namespace
   when defined(gene_wasm):
@@ -737,6 +782,10 @@ proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
       register_scheduler_callback_fn: host_register_scheduler_callback_bridge,
       register_port_fn: host_register_port_bridge,
       call_port_fn: host_call_port_bridge,
+      call_port_async_fn: host_call_port_async_bridge,
+      actor_reply_fn: host_actor_reply_bridge,
+      actor_reply_serialized_fn: host_actor_reply_serialized_bridge,
+      poll_vm_fn: host_poll_vm_bridge,
       result_namespace: addr ext_ns
     )
 

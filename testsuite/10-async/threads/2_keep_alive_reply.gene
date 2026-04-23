@@ -1,15 +1,12 @@
 # Expected: 42
 
 (do
+  (gene/actor/enable ^workers 1)
   (var worker
-    (spawn
-      (do
-        (thread .on_message (fn [msg]
-          (msg .reply (+ (msg .payload) 1))
-        ))
-        (keep_alive)
-      )
-    )
-  )
+    (gene/actor/spawn
+      (fn [ctx msg state]
+        (ctx .reply (+ msg 1))
+        state)
+    ))
   (println (await (worker .send_expect_reply 41)))
 )

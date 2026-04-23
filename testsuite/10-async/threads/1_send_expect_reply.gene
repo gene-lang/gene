@@ -1,14 +1,12 @@
 # Expected: {^a 1 ^b 2}
 
 (do
+  (gene/actor/enable ^workers 1)
   (var worker
-    (spawn
-      (do
-        (thread .on_message (fn [msg]
-          (msg .reply (msg .payload))
-        ))
-      )
-    )
-  )
+    (gene/actor/spawn
+      (fn [ctx msg state]
+        (ctx .reply msg)
+        state)
+    ))
   (println (await (worker .send_expect_reply {^a 1 ^b 2})))
 )

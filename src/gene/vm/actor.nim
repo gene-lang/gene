@@ -1,4 +1,4 @@
-import locks, tables, osproc
+import locks, tables, osproc, os, times
 import asyncfutures
 import std/exitprocs
 
@@ -565,6 +565,55 @@ proc actor_send_expect_reply_native(vm: ptr VirtualMachine, args: ptr UncheckedA
   {.cast(gcsafe).}:
     actor_send_internal(vm, args, arg_count, has_keyword_args, true)
 
+proc actor_send_expect_reply_sync_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                                       has_keyword_args: bool): Value =
+  if get_method_arg_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Actor.send_expect_reply_sync requires a message")
+
+  var timeout_ms = 2_000
+  if has_keyword_args and has_keyword_arg(args, "timeout"):
+    let timeout_arg = get_keyword_arg(args, "timeout")
+    case timeout_arg.kind
+    of VkInt:
+      timeout_ms = max(0, timeout_arg.int64.int)
+    of VkFloat:
+      timeout_ms = max(0, (timeout_arg.float64 * 1000.0).int)
+    else:
+      raise new_exception(types.Exception, "Actor.send_expect_reply_sync ^timeout expects int milliseconds or float seconds")
+
+  let future_value = actor_send_value(vm, get_self(args, has_keyword_args), get_method_arg(args, 0, has_keyword_args), true)
+  let future_obj = future_value.ref.future
+  let deadline = epochTime() + (timeout_ms.float / 1000.0)
+
+  while future_obj.state == FsPending and epochTime() < deadline:
+    vm.event_loop_counter = 100
+    if vm_poll_event_loop_hook.isNil:
+      raise new_exception(types.Exception, "Actor.send_expect_reply_sync requires the VM poll hook")
+    vm_poll_event_loop_hook(vm)
+    sleep(1)
+
+  case future_obj.state
+  of FsSuccess:
+    future_obj.value
+  of FsFailure:
+    let err = future_obj.value
+    if err.kind == VkInstance:
+      let msg = instance_props(err).getOrDefault("message".to_key(), NIL)
+      if msg.kind == VkString:
+        raise new_exception(types.Exception, msg.str)
+    elif err.kind == VkString:
+      raise new_exception(types.Exception, err.str)
+    raise new_exception(types.Exception, "Actor.send_expect_reply_sync failed")
+  of FsCancelled:
+    raise new_exception(types.Exception, "Actor.send_expect_reply_sync cancelled")
+  of FsPending:
+    raise new_exception(types.Exception, "Actor.send_expect_reply_sync timed out")
+
+proc actor_send_expect_reply_sync_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                                         has_keyword_args: bool): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    actor_send_expect_reply_sync_impl(vm, args, arg_count, has_keyword_args)
+
 proc actor_enable_impl(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                        has_keyword_args: bool): Value =
   discard vm
@@ -717,6 +766,7 @@ proc init_actor_class*() =
     actor_class.parent = App.app.object_class.ref.class
   actor_class.def_native_method("send", actor_send_native)
   actor_class.def_native_method("send_expect_reply", actor_send_expect_reply_native)
+  actor_class.def_native_method("send_expect_reply_sync", actor_send_expect_reply_sync_native)
   actor_class.def_native_method("stop", actor_stop_native)
 
   let actor_class_ref = new_ref(VkClass)

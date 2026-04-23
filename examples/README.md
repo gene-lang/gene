@@ -33,6 +33,8 @@ The goal is to keep examples small, current, and runnable against the codebase a
 - `html.gene` - HTML generation with `genex/html/tags`
 - `http_server.gene` - Minimal HTTP server using `genex/http`
 - `http_actor_server.gene` - Actor-backed HTTP job server using `genex/http` plus a small Gene actor pool
+- `http_ab_demo.gene` - Slow concurrent HTTP demo for `ab` benchmarking
+- `http_ab_actor_demo.gene` - Actor-backed end-to-end `ab` benchmark using 10 Gene actor workers behind the HTTP front door
 - `openai_chat.gene` - OpenAI-compatible chat example using `genex/ai`
 
 ## Shell Integration
@@ -59,6 +61,6 @@ Some examples depend on extension modules:
 nimble buildext
 ```
 
-That is required for `html.gene`, `http_server.gene`, `http_actor_server.gene`, `sqlite.gene`, and `openai_chat.gene`.
+That is required for `html.gene`, `http_server.gene`, `http_actor_server.gene`, `http_ab_demo.gene`, `http_ab_actor_demo.gene`, `sqlite.gene`, and `openai_chat.gene`.
 
-`http_server.gene` and `http_actor_server.gene` are long-running by design. `openai_chat.gene` also requires `OPENAI_API_KEY`.
+`http_server.gene`, `http_actor_server.gene`, `http_ab_demo.gene`, and `http_ab_actor_demo.gene` are long-running by design. `openai_chat.gene` also requires `OPENAI_API_KEY`.

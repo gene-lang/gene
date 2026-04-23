@@ -7,7 +7,7 @@ import ../types
 import ../logging_core
 
 const
-  GENE_EXT_ABI_VERSION* = 3'u32
+  GENE_EXT_ABI_VERSION* = 7'u32
 
 type
   GeneExtStatus* = enum
@@ -23,6 +23,11 @@ type
                                  out_handle: ptr Value): int32 {.cdecl, gcsafe.}
   GeneHostCallPortFn* = proc(port_handle: Value, msg: Value, timeout_ms: int32,
                              out_value: ptr Value): int32 {.cdecl, gcsafe.}
+  GeneHostCallPortAsyncFn* = proc(port_handle: Value, msg: Value,
+                                  out_future: ptr Value): int32 {.cdecl, gcsafe.}
+  GeneHostActorReplyFn* = proc(ctx: Value, payload: Value): int32 {.cdecl, gcsafe.}
+  GeneHostActorReplySerializedFn* = proc(ctx: Value, payload_ser: cstring): int32 {.cdecl, gcsafe.}
+  GeneHostPollVmFn* = proc(vm_user_data: pointer): int32 {.cdecl, gcsafe.}
 
   GeneHostAbi* {.bycopy.} = object
     abi_version*: uint32
@@ -33,6 +38,10 @@ type
     register_scheduler_callback_fn*: GeneHostRegisterSchedulerCallbackFn
     register_port_fn*: GeneHostRegisterPortFn
     call_port_fn*: GeneHostCallPortFn
+    call_port_async_fn*: GeneHostCallPortAsyncFn
+    actor_reply_fn*: GeneHostActorReplyFn
+    actor_reply_serialized_fn*: GeneHostActorReplySerializedFn
+    poll_vm_fn*: GeneHostPollVmFn
     result_namespace*: ptr Namespace
 
   GeneExtensionInitFn* = proc(host: ptr GeneHostAbi): int32 {.cdecl.}
@@ -107,3 +116,22 @@ proc call_extension_port*(host: ptr GeneHostAbi, port_handle: Value, msg: Value,
   if status != int32(GeneExtOk):
     return NIL
   res
+
+proc call_extension_port_async*(host: ptr GeneHostAbi, port_handle: Value, msg: Value): Value =
+  if host == nil or host.call_port_async_fn == nil:
+    return NIL
+  var res = NIL
+  let status = host.call_port_async_fn(port_handle, msg, addr res)
+  if status != int32(GeneExtOk):
+    return NIL
+  res
+
+proc reply_from_extension_context*(host: ptr GeneHostAbi, ctx: Value, payload: Value): GeneExtStatus =
+  if host == nil or host.actor_reply_fn == nil:
+    return GeneExtErr
+  cast[GeneExtStatus](host.actor_reply_fn(ctx, payload))
+
+proc reply_from_extension_context_serialized*(host: ptr GeneHostAbi, ctx: Value, payload_ser: string): GeneExtStatus =
+  if host == nil or host.actor_reply_serialized_fn == nil:
+    return GeneExtErr
+  cast[GeneExtStatus](host.actor_reply_serialized_fn(ctx, payload_ser.cstring))

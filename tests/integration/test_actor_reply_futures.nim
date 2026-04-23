@@ -108,3 +108,15 @@ suite "Actor reply futures":
     """, "actor_reply_timeout.gene")
 
     check result == "timed_out".to_value()
+
+  test "send_expect_reply_sync waits for the actor result inline":
+    actor_enable_for_test(1)
+    let actor = actor_spawn_value(NativeFn(lifecycle_handler).to_value(), 11.to_value())
+    App.app.gene_ns.ref.ns["reply_target".to_key()] = actor
+    App.app.global_ns.ref.ns["reply_target".to_key()] = actor
+
+    let result = exec_gene("""
+      (reply_target .send_expect_reply_sync {^kind "get"})
+    """, "actor_reply_sync.gene")
+
+    check result == 11.to_value()

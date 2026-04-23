@@ -21,6 +21,7 @@ proc build_host(): GeneHostAbi =
     register_scheduler_callback_fn: nil,
     register_port_fn: host_register_port_bridge,
     call_port_fn: host_call_port_bridge,
+    call_port_async_fn: host_call_port_async_bridge,
     result_namespace: nil
   )
 
