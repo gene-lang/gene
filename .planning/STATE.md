@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Core Stabilization + Package MVP"
-status: ready
-stopped_at: Phase 06 ready for planning
-last_updated: "2026-04-24T02:47:26Z"
-last_activity: 2026-04-24 -- Completed Phase 05 feature status matrix and stable-core boundary
+status: ready_to_execute
+stopped_at: Phase 06 planned and ready for execution
+last_updated: "2026-04-24T13:01:45Z"
+last_activity: 2026-04-24 -- Planned Phase 06 core semantics tightening
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 1
+  total_plans: 2
   completed_plans: 1
   percent: 25
 ---
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-04-24)
 
 ## Current Position
 
-Phase: 06 (core-semantics-tightening) - READY
-Plan: Not started
-Status: Ready to plan Phase 06
-Last activity: 2026-04-24 -- Completed Phase 05 feature status matrix and stable-core boundary
+Phase: 06 (core-semantics-tightening) - READY TO EXECUTE
+Plan: 06-01-PLAN.md
+Status: Ready to execute Phase 06
+Last activity: 2026-04-24 -- Planned Phase 06 core semantics tightening
 Depends on completed actor migration milestone through Phase 04
 
 Progress: [##--------] 25%
@@ -49,7 +49,7 @@ Progress: [##--------] 25%
 | 3 | 4 | - | - |
 | 4 | 3 | - | - |
 | 5 | 1 | 3 min | 3 min |
-| 6 | TBD | - | - |
+| 6 | 1 | - | - |
 | 7 | TBD | - | - |
 | 8 | TBD | - | - |
 
@@ -143,7 +143,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-24T02:47:26Z
-Stopped at: Phase 06 ready for planning
-Next step: Plan Phase 06 core semantics tightening
+Last session: 2026-04-24T13:01:45Z
+Stopped at: Phase 06 planned and ready for execution
+Next step: Execute Phase 06 core semantics tightening
 Resume file: None

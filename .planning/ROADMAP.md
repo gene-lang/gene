@@ -80,7 +80,7 @@ and tests for the stable core.
   4. Pattern matching has a stable subset and known-gap list backed by runnable
      tests or focused Nim tests.
 
-**Plans**: TBD
+**Plans**: [06-01-PLAN.md](phases/06-core-semantics-tightening/06-01-PLAN.md)
 
 ### Phase 7: Package/module MVP
 
@@ -139,7 +139,7 @@ instruction metadata scope is agreed.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 5. Feature status matrix and stable-core boundary | 1/1 | Complete | 2026-04-24 |
-| 6. Core semantics tightening | 0/TBD | Not started | - |
+| 6. Core semantics tightening | 0/1 | Planned | - |
 | 7. Package/module MVP | 0/TBD | Not started | - |
 | 8. VM correctness harness | 0/TBD | Not started | - |
 
