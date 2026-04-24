@@ -17,12 +17,45 @@ proc reset_module_cache() =
 proc write_package(root: string, name: string, index_body: string, main_rel = "src/main.gene", main_body = "") =
   createDir(root)
   createDir(root / "src")
-  writeFile(root / "package.gene", "^name \"" & name & "\"\n^version \"0.1.0\"\n")
+  writeFile(root / "package.gene",
+    "^name \"" & name & "\"\n" &
+    "^version \"0.1.0\"\n" &
+    "^source-dir \"src\"\n" &
+    "^main-module \"main\"\n" &
+    "^test-dir \"tests\"\n")
   writeFile(root / "src" / "index.gene", index_body)
   if main_body.len > 0:
     let main_path = root / main_rel
     createDir(parentDir(main_path))
     writeFile(main_path, main_body)
+
+proc package_metadata_assertions(name: string, root: string): seq[string] =
+  let expected_dir = normalizedPath(absolutePath(root))
+  let expected_real_dir =
+    if dirExists(root) or fileExists(root):
+      expandFilename(root)
+    elif dirExists(parentDir(root)):
+      expandFilename(parentDir(root)) / lastPathPart(root)
+    else:
+      expected_dir
+  @[
+    "(var current_pkg $pkg/.name)",
+    "(ifel (current_pkg == \"" & name & "\") 1 (throw \"bad pkg\"))",
+    "(var current_pkg_version $pkg/.version)",
+    "(ifel (current_pkg_version == \"0.1.0\") 1 (throw \"bad pkg version\"))",
+    "(var current_pkg_dir $pkg/.dir)",
+    "(ifel ((current_pkg_dir == \"" & expected_dir & "\") || (current_pkg_dir == \"" & expected_real_dir & "\")) 1 (throw \"bad pkg dir\"))",
+    "(var current_pkg_source_dir $pkg/.source_dir)",
+    "(ifel (current_pkg_source_dir == \"src\") 1 (throw \"bad pkg source dir\"))",
+    "(var current_pkg_main_module $pkg/.main_module)",
+    "(ifel (current_pkg_main_module == \"main\") 1 (throw \"bad pkg main module\"))",
+    "(var current_pkg_test_dir $pkg/.test_dir)",
+    "(ifel (current_pkg_test_dir == \"tests\") 1 (throw \"bad pkg test dir\"))",
+    "(var app_pkg $app/.pkg/.name)",
+    "(ifel (app_pkg == \"" & name & "\") 1 (throw \"bad app pkg\"))",
+    "(var app_pkg_version $app/.pkg/.version)",
+    "(ifel (app_pkg_version == \"0.1.0\") 1 (throw \"bad app pkg version\"))",
+  ]
 
 proc restore_env(name: string, value: string, had_value: bool) =
   if had_value:
@@ -57,10 +90,7 @@ suite "CLI package context":
       "x/geneclaw",
       "(fn version [] 42)\n",
       main_body = "(ifel ((cwd) == \"" & launch_cwd & "\") 1 (throw \"bad cwd\"))\n" &
-                  "(var current_pkg $pkg/.name)\n" &
-                  "(ifel (current_pkg == \"x/geneclaw\") 1 (throw \"bad pkg\"))\n" &
-                  "(var app_pkg $app/.pkg/.name)\n" &
-                  "(ifel (app_pkg == \"x/geneclaw\") 1 (throw \"bad app pkg\"))\n"
+                  package_metadata_assertions("x/geneclaw", package_root).join("\n") & "\n"
     )
 
     let result = run_command.handle("run", @["--pkg", "x/geneclaw", "src/main.gene"])
@@ -90,10 +120,7 @@ suite "CLI package context":
       "--pkg", package_root,
       "(import answer from \"index\")",
       "(ifel ((cwd) == \"" & launch_cwd & "\") 1 (throw \"bad cwd\"))",
-      "(var current_pkg $pkg/.name)",
-      "(ifel (current_pkg == \"x/evalpkg\") 1 (throw \"bad pkg\"))",
-      "(var app_pkg $app/.pkg/.name)",
-      "(ifel (app_pkg == \"x/evalpkg\") 1 (throw \"bad app pkg\"))",
+    ] & package_metadata_assertions("x/evalpkg", package_root) & @[
       "(ifel ((answer) == 7) 1 (throw \"bad import\"))",
     ])
     if not result.success:
@@ -120,10 +147,7 @@ suite "CLI package context":
     let result = eval_command.handle("eval", @[
       "(import answer from \"index\")",
       "(ifel ((cwd) == \"" & launch_cwd & "\") 1 (throw \"bad cwd\"))",
-      "(var current_pkg $pkg/.name)",
-      "(ifel (current_pkg == \"x/autoeval\") 1 (throw \"bad pkg\"))",
-      "(var app_pkg $app/.pkg/.name)",
-      "(ifel (app_pkg == \"x/autoeval\") 1 (throw \"bad app pkg\"))",
+    ] & package_metadata_assertions("x/autoeval", package_root) & @[
       "(ifel ((answer) == 9) 1 (throw \"bad import\"))",
     ])
     if not result.success:
@@ -169,10 +193,7 @@ suite "CLI package context":
     let result = run_repl_script(VM, @[
       "(import answer from \"index\")",
       "(ifel ((cwd) == \"" & launch_cwd & "\") 1 (throw \"bad cwd\"))",
-      "(var current_pkg $pkg/.name)",
-      "(ifel (current_pkg == \"x/replpkg\") 1 (throw \"bad pkg\"))",
-      "(var app_pkg $app/.pkg/.name)",
-      "(ifel (app_pkg == \"x/replpkg\") 1 (throw \"bad app pkg\"))",
+    ] & package_metadata_assertions("x/replpkg", package_root) & @[
       "(ifel ((answer) == 5) 1 (throw \"bad import\"))",
     ], scope_tracker, scope, ns, module_name)
 

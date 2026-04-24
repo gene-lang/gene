@@ -397,9 +397,66 @@ proc init_gene_and_meta_classes*(object_class: Class) =
       not_allowed("Package.name must be called on a package")
     self_arg.ref.pkg.name.to_value()
 
+  proc package_version_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                              arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Package.version requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkPackage or self_arg.ref.pkg == nil:
+      not_allowed("Package.version must be called on a package")
+    self_arg.ref.pkg.version
+
+  proc package_dir_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                          arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Package.dir requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkPackage or self_arg.ref.pkg == nil:
+      not_allowed("Package.dir must be called on a package")
+    if self_arg.ref.pkg.dir.len == 0:
+      return NIL
+    self_arg.ref.pkg.dir.to_value()
+
+  proc package_source_dir_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                 arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Package.source_dir requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkPackage or self_arg.ref.pkg == nil:
+      not_allowed("Package.source_dir must be called on a package")
+    self_arg.ref.pkg.src_path.to_value()
+
+  proc package_main_module_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                  arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Package.main_module requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkPackage or self_arg.ref.pkg == nil:
+      not_allowed("Package.main_module must be called on a package")
+    let main_module = self_arg.ref.pkg.props.getOrDefault("main-module".to_key(), NIL)
+    case main_module.kind
+    of VkString, VkSymbol:
+      main_module.str.to_value()
+    else:
+      "index".to_value()
+
+  proc package_test_dir_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                               arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Package.test_dir requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkPackage or self_arg.ref.pkg == nil:
+      not_allowed("Package.test_dir must be called on a package")
+    self_arg.ref.pkg.test_path.to_value()
+
   let package_class = new_class("Package")
   package_class.parent = object_class
   package_class.def_native_method("name", package_name_method)
+  package_class.def_native_method("version", package_version_method)
+  package_class.def_native_method("dir", package_dir_method)
+  package_class.def_native_method("source_dir", package_source_dir_method)
+  package_class.def_native_method("main_module", package_main_module_method)
+  package_class.def_native_method("test_dir", package_test_dir_method)
   r = new_ref(VkClass)
   r.class = package_class
   App.app.package_class = r.to_ref_value()
