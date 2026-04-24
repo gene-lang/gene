@@ -24,15 +24,15 @@ Requirements for the current milestone. Each maps to exactly one roadmap phase.
 - [x] **CORE-01**: User can read a crisp stable-core definition covering
   syntax, values, variables, functions, lexical scope, macros, modules/imports,
   errors, collections, async futures, and actor-first concurrency.
-- [ ] **CORE-02**: User can distinguish `nil` from `void` consistently across
+- [x] **CORE-02**: User can distinguish `nil` from `void` consistently across
   selectors, maps, arrays, objects, Gene properties, failed lookup, and function
   return behavior.
-- [ ] **CORE-03**: User can understand when Gene expression properties are
+- [x] **CORE-03**: User can understand when Gene expression properties are
   metadata, when children are evaluated, and what structure macros receive.
-- [ ] **CORE-04**: User can identify the stable subset and known gaps of pattern
+- [x] **CORE-04**: User can identify the stable subset and known gaps of pattern
   matching, including destructuring, ADTs, branch failure, arity, and
   exhaustiveness behavior.
-- [ ] **CORE-05**: Core semantic claims are backed by runnable tests or focused
+- [x] **CORE-05**: Core semantic claims are backed by runnable tests or focused
   Nim tests for the stable subset.
 
 ### Package MVP
@@ -108,10 +108,10 @@ Deferred to later milestones.
 | STAT-02 | Phase 5 | Complete |
 | STAT-03 | Phase 5 | Complete |
 | CORE-01 | Phase 5 | Complete |
-| CORE-02 | Phase 6 | Pending |
-| CORE-03 | Phase 6 | Pending |
-| CORE-04 | Phase 6 | Pending |
-| CORE-05 | Phase 6 | Pending |
+| CORE-02 | Phase 6 | Complete |
+| CORE-03 | Phase 6 | Complete |
+| CORE-04 | Phase 6 | Complete |
+| CORE-05 | Phase 6 | Complete |
 | PKG-01 | Phase 7 | Pending |
 | PKG-02 | Phase 7 | Pending |
 | PKG-03 | Phase 7 | Pending |
@@ -131,4 +131,4 @@ Deferred to later milestones.
 
 ---
 *Requirements defined: 2026-04-24*
-*Last updated: 2026-04-24 after Phase 05 completion*
+*Last updated: 2026-04-24 after Phase 06 completion*

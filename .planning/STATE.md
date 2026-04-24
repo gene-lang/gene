@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Core Stabilization + Package MVP"
-status: ready_to_execute
-stopped_at: Phase 06 planned and ready for execution
-last_updated: "2026-04-24T13:01:45Z"
-last_activity: 2026-04-24 -- Planned Phase 06 core semantics tightening
+status: ready_to_plan
+stopped_at: Phase 06 complete; Phase 07 ready to plan
+last_updated: "2026-04-24T13:30:53Z"
+last_activity: 2026-04-24 -- Completed Phase 06 core semantics tightening
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 2
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State
@@ -21,23 +21,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-24)
 
 **Core value:** Gene should feel trustworthy to build on: users can tell what is stable, import packages deterministically, and rely on VM invariants being actively checked.
-**Current focus:** Phase 06 - Core semantics tightening
+**Current focus:** Phase 07 - Package/module MVP
 
 ## Current Position
 
-Phase: 06 (core-semantics-tightening) - READY TO EXECUTE
-Plan: 06-01-PLAN.md
-Status: Ready to execute Phase 06
-Last activity: 2026-04-24 -- Planned Phase 06 core semantics tightening
+Phase: 07 (package-module-mvp) - READY TO PLAN
+Plan: TBD
+Status: Phase 06 complete; ready to plan Phase 07
+Last activity: 2026-04-24 -- Completed Phase 06 core semantics tightening
 Depends on completed actor migration milestone through Phase 04
 
-Progress: [##--------] 25%
+Progress: [#####-----] 50%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 25
+- Total plans completed: 26
+
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
@@ -103,18 +104,27 @@ Recent decisions affecting current work:
 - [Phase 03]: Thread API removal remains Phase 4 work; Phase 3 only moved extension concurrency behind actor/port boundaries.
 - [Milestone v1.1]: GPT Pro review triage became a focused stabilization
   milestone rather than a broad feature-sprawl response.
+
 - [Milestone v1.1]: Phase numbering continues from the actor migration track,
   so new work starts at Phase 05.
+
 - [Milestone v1.1]: Package MVP is local-first; registry, remote resolver, and
   full version solver are out of scope until deterministic local packages work.
+
 - [Milestone v1.1]: VM correctness instrumentation should be opt-in/debug-mode
   so optimized execution remains fast by default.
+
 - [Phase 05]: Use `docs/feature-status.md` as the public status hub and keep
   Phase 05 execution docs-only unless it uncovers runtime gaps that need a
   later implementation phase.
+
 - [Phase 05]: Public feature status and stable-core membership now live in
   `docs/feature-status.md`; Phase 06 should use that boundary when tightening
   core semantics.
+- [Phase 06]: `nil` is explicit data and `void` is the missing-result sentinel;
+  selector defaults consume only `void`.
+- [Phase 06]: Pattern matching stable claims are limited to the documented
+  tested subset; ADT/Option and `?` remain experimental.
 
 ### Pending Todos
 
@@ -143,7 +153,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-24T13:01:45Z
-Stopped at: Phase 06 planned and ready for execution
-Next step: Execute Phase 06 core semantics tightening
+Last session: 2026-04-24T13:30:53Z
+Stopped at: Phase 06 complete; Phase 07 ready to plan
+Next step: Plan Phase 07 package/module MVP
 Resume file: None
