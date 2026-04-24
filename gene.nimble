@@ -121,6 +121,7 @@ task testintegration, "Runs non-unit integration tests":
   exec "nim c -r tests/integration/test_cli_package_context.nim"
   exec "nim c -r tests/integration/test_future_callbacks.nim"
   exec "nim c -r tests/integration/test_deps_command.nim"
+  exec "nim c -r tests/integration/test_package_manifest.nim"
   exec "nim c -r tests/integration/test_generator.nim"
   exec "nim c -r tests/integration/test_module.nim"
   # Old file

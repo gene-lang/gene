@@ -2,6 +2,7 @@ import std/[algorithm, json, os, osproc, sequtils, strtabs, strutils, tables, te
 
 import ../gene/parser
 import ../gene/types except Exception
+import ../gene/vm/package_manifest
 import ./base
 
 const
@@ -19,26 +20,6 @@ type
     DaGc
     DaClean
     DaHelp
-
-  DependencySpec = object
-    name: string
-    version_expr: string
-    path: string
-    git: string
-    commit: string
-    tag: string
-    branch: string
-    subdir: string
-
-  PackageManifest = object
-    package_root: string
-    name: string
-    version: string
-    globals: seq[string]
-    singleton: bool
-    native: bool
-    native_build: seq[string]
-    dependencies: seq[DependencySpec]
 
   LockSource = object
     source_type: string
@@ -112,128 +93,6 @@ proc deps_error(msg: string) {.noreturn.} =
 
 proc normalize_rel_path(path: string): string =
   result = path.replace('\\', '/')
-
-proc key_to_symbol_name(k: Key): string =
-  get_symbol(symbol_index(k))
-
-proc value_as_string(v: Value, context: string): string =
-  case v.kind
-  of VkString:
-    v.str
-  of VkSymbol:
-    v.str
-  else:
-    deps_error(context & ": expected string/symbol, got " & $v.kind)
-
-proc value_as_bool(v: Value): bool =
-  case v.kind
-  of VkBool:
-    v == TRUE
-  of VkInt:
-    v.to_int() != 0
-  else:
-    false
-
-proc value_as_string_array(v: Value, context: string): seq[string] =
-  if v.kind != VkArray:
-    deps_error(context & ": expected array, got " & $v.kind)
-  for item in array_data(v):
-    result.add(value_as_string(item, context))
-
-proc normalize_manifest_key(raw: string): string =
-  if raw.len > 0 and raw[0] == '^':
-    raw[1 .. ^1]
-  else:
-    raw
-
-proc apply_manifest_pair(manifest: var PackageManifest, key: string, value: Value, context: string) =
-  case key
-  of "name":
-    manifest.name = value_as_string(value, context & " ^name")
-  of "version":
-    manifest.version = value_as_string(value, context & " ^version")
-  of "globals":
-    manifest.globals = value_as_string_array(value, context & " ^globals")
-  of "singleton":
-    manifest.singleton = value_as_bool(value)
-  of "native":
-    manifest.native = value_as_bool(value)
-  of "native-build":
-    manifest.native_build = value_as_string_array(value, context & " ^native-build")
-  of "dependencies":
-    if value.kind != VkArray:
-      deps_error(context & " ^dependencies: expected array, got " & $value.kind)
-    for item in array_data(value):
-      if item.kind != VkGene or item.gene.type.kind != VkSymbol or item.gene.type.str != "$dep":
-        deps_error(context & " ^dependencies: expected ($dep ...), got " & $item)
-      if item.gene.children.len < 1:
-        deps_error(context & " ^dependencies: $dep requires package name")
-      var dep = DependencySpec()
-      dep.name = value_as_string(item.gene.children[0], context & " dependency name")
-      if item.gene.children.len >= 2:
-        dep.version_expr = value_as_string(item.gene.children[1], context & " dependency version")
-
-      for k, v in item.gene.props:
-        let prop = key_to_symbol_name(k)
-        case prop
-        of "path":
-          dep.path = value_as_string(v, context & " dependency ^path")
-        of "git":
-          dep.git = value_as_string(v, context & " dependency ^git")
-        of "commit":
-          dep.commit = value_as_string(v, context & " dependency ^commit")
-        of "tag":
-          dep.tag = value_as_string(v, context & " dependency ^tag")
-        of "branch":
-          dep.branch = value_as_string(v, context & " dependency ^branch")
-        of "subdir":
-          dep.subdir = value_as_string(v, context & " dependency ^subdir")
-        else:
-          discard
-
-      manifest.dependencies.add(dep)
-  else:
-    discard
-
-proc parse_manifest(path: string, package_root: string): PackageManifest =
-  if not fileExists(path):
-    deps_error("Manifest not found: " & path)
-
-  result = PackageManifest(package_root: package_root)
-  let nodes = read_all(readFile(path))
-  if nodes.len == 0:
-    return
-
-  if nodes.len == 1 and nodes[0].kind == VkMap:
-    for k, v in map_data(nodes[0]):
-      let key = normalize_manifest_key(key_to_symbol_name(k))
-      apply_manifest_pair(result, key, v, path)
-    return
-
-  var i = 0
-  while i < nodes.len:
-    let key_node = nodes[i]
-    if key_node.kind == VkSymbol:
-      let key = normalize_manifest_key(key_node.str)
-      if i + 1 >= nodes.len:
-        deps_error(path & ": missing value for key " & key_node.str)
-      apply_manifest_pair(result, key, nodes[i + 1], path)
-      i += 2
-    else:
-      inc(i)
-
-proc find_package_root(start: string): string =
-  var dir = absolutePath(start)
-  if fileExists(dir):
-    dir = parentDir(dir)
-  while dir.len > 0:
-    if fileExists(joinPath(dir, "package.gene")):
-      return dir
-    let parent = parentDir(dir)
-    if parent.len == 0 or parent == dir:
-      break
-    dir = parent
-  return ""
 
 proc looks_like_gene_source_tree(path: string): bool =
   dirExists(joinPath(path, "src", "gene")) and fileExists(joinPath(path, "gene.nimble"))
@@ -526,7 +385,7 @@ proc existing_path_drift_warning(state: ResolverState, node: LockNode) =
   if old.source_type == "path" and old.sha256 != node.sha256:
     state.warnings.add("Path dependency drift: " & node.name & " (" & old.sha256 & " -> " & node.sha256 & ")")
 
-proc validate_dependency_source(dep: DependencySpec) =
+proc validate_dependency_source(dep: PackageDependencySpec) =
   if dep.subdir.len > 0 and dep.git.len > 0:
     deps_error("Dependency " & dep.name & " cannot combine ^subdir with ^git")
 
@@ -542,7 +401,7 @@ proc validate_dependency_source(dep: DependencySpec) =
   if (dep.path.len > 0 or dep.subdir.len > 0) and ref_count > 0:
     deps_error("Dependency " & dep.name & " cannot combine ^path/^subdir with ^commit/^tag/^branch")
 
-proc resolve_dependency(state: ResolverState, dep: DependencySpec, owner_root: string, stack: seq[string]): LockNode
+proc resolve_dependency(state: ResolverState, dep: PackageDependencySpec, owner_root: string, stack: seq[string]): LockNode
 proc verify_lock(root: string): string
 
 proc resolve_manifest_dependencies(state: ResolverState, manifest: PackageManifest, owner_root: string, owner_node: LockNode, stack: seq[string]) =
@@ -558,7 +417,7 @@ proc resolve_manifest_dependencies(state: ResolverState, manifest: PackageManife
     else:
       owner_node.dependencies[dep.name] = child.node_id
 
-proc resolve_dependency(state: ResolverState, dep: DependencySpec, owner_root: string, stack: seq[string]): LockNode =
+proc resolve_dependency(state: ResolverState, dep: PackageDependencySpec, owner_root: string, stack: seq[string]): LockNode =
   if dep.name.len == 0:
     deps_error("Dependency with empty name")
   validate_dependency_source(dep)
@@ -593,7 +452,7 @@ proc resolve_dependency(state: ResolverState, dep: DependencySpec, owner_root: s
     if not dirExists(source_abs):
       deps_error("Dependency source not found for " & dep.name & ": " & source_abs)
 
-    source_manifest = parse_manifest(joinPath(source_abs, "package.gene"), source_abs)
+    source_manifest = parse_package_manifest(joinPath(source_abs, "package.gene"), source_abs)
     if source_manifest.version.len > 0:
       resolved = source_manifest.version
     elif dep.version_expr.len > 0 and dep.version_expr != "*":
@@ -741,7 +600,7 @@ proc resolve_and_write_lock(root: string, allow_native: bool, update_target: str
     warnings: @[]
   )
 
-  let root_manifest = parse_manifest(joinPath(package_root, "package.gene"), package_root)
+  let root_manifest = parse_package_manifest(joinPath(package_root, "package.gene"), package_root)
   if update_target.len > 0:
     state.warnings.add("Targeted update is not yet selective; updating full dependency graph (requested: " & update_target & ")")
   resolve_manifest_dependencies(state, root_manifest, package_root, nil, @["<root>"])

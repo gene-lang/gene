@@ -4,6 +4,7 @@ import ../types
 import ../compiler
 import ../gir
 import ../parser
+import ./package_manifest
 when defined(gene_wasm):
   import ../wasm_host_abi
 when not defined(noExtensions):
@@ -211,42 +212,53 @@ proc find_package_root*(start_path: string): string =
     dir = parent
   return ""
 
-proc key_to_symbol_name(k: Key): string =
-  get_symbol(symbol_index(k))
-
 proc map_lookup(map_val: Value, key: string): Value =
   if map_val.kind != VkMap:
     return NIL
   map_data(map_val).getOrDefault(key.to_key(), NIL)
 
-proc value_as_string(v: Value): string =
+proc optional_string(v: Value): string =
   case v.kind
   of VkString, VkSymbol:
     v.str
   else:
     ""
 
-proc package_manifest_name(root: string): string =
+proc package_manifest_for_root(root: string): PackageManifest =
+  result = init_package_manifest(root)
+  if root.len == 0:
+    return
   let manifest_path = joinPath(root, "package.gene")
   if not fileExists(manifest_path):
-    return ""
+    return
   try:
-    let forms = read_all(readFile(manifest_path))
-    if forms.len == 0:
-      return ""
-    if forms.len == 1 and forms[0].kind == VkMap:
-      return value_as_string(map_lookup(forms[0], "name"))
-    var i = 0
-    while i + 1 < forms.len:
-      let key_node = forms[i]
-      if key_node.kind == VkSymbol and (key_node.str == "name" or key_node.str == "^name"):
-        return value_as_string(forms[i + 1])
-      inc(i)
+    result = parse_package_manifest(manifest_path, root)
   except CatchableError:
     discard
-  return ""
 
-proc build_package_value(name: string, root: string): Value =
+proc package_manifest_name(root: string): string =
+  package_manifest_for_root(root).name
+
+proc manifest_value(value: string): Value =
+  if value.len > 0: value.to_value() else: NIL
+
+proc build_package_value(manifest: PackageManifest, name: string, root: string): Value =
+  var props = initTable[Key, Value]()
+  for k, v in manifest.props:
+    props[k] = v
+  if manifest.main_module.len > 0 and not props.hasKey("main-module".to_key()):
+    props["main-module".to_key()] = manifest.main_module.to_value()
+
+  let resolved_src = if manifest.source_dir.len > 0: manifest.source_dir else: "src"
+  let resolved_test = if manifest.test_dir.len > 0: manifest.test_dir else: "tests"
+  let resolved_name =
+    if manifest.name.len > 0:
+      manifest.name
+    elif name.len > 0:
+      name
+    else:
+      "gene"
+
   let pkg = Package(
     dir: root,
     adhoc: root.len == 0,
@@ -254,18 +266,18 @@ proc build_package_value(name: string, root: string): Value =
       App.app.global_ns.ref.ns
     else:
       nil,
-    name: if name.len > 0: name else: "gene",
-    version: NIL,
-    license: NIL,
-    globals: @[],
-    homepage: "",
-    src_path: "src",
-    test_path: "tests",
+    name: resolved_name,
+    version: manifest_value(manifest.version),
+    license: manifest_value(manifest.license),
+    globals: manifest.globals,
+    homepage: manifest.homepage,
+    src_path: resolved_src,
+    test_path: resolved_test,
     asset_path: "assets",
     build_path: "build",
     load_paths: @[],
     init_modules: @[],
-    props: initTable[Key, Value](),
+    props: props,
   )
   let pkg_ref = new_ref(VkPackage)
   pkg_ref.pkg = pkg
@@ -287,15 +299,17 @@ proc package_value_for_module*(module_path: string, package_name = "", package_r
     if start_path.len > 0:
       resolved_root = find_package_root(start_path)
 
-  if resolved_root.len > 0:
-    let manifest_name = package_manifest_name(resolved_root)
-    if manifest_name.len > 0:
-      resolved_name = manifest_name
-
+  let manifest =
+    if resolved_root.len > 0:
+      package_manifest_for_root(resolved_root)
+    else:
+      init_package_manifest("")
+  if manifest.name.len > 0:
+    resolved_name = manifest.name
   if resolved_name.len == 0:
     resolved_name = "gene"
 
-  build_package_value(resolved_name, resolved_root)
+  build_package_value(manifest, resolved_name, resolved_root)
 
 proc bind_module_package_context*(ns: Namespace, module_path: string,
                                   package_name = "", package_root = "") =
@@ -359,7 +373,7 @@ proc parse_lock_graph(lock_path: string): LockGraph =
     if root_deps.kind == VkMap:
       for k, v in map_data(root_deps):
         let dep_name = key_to_symbol_name(k)
-        let node_id = value_as_string(v)
+        let node_id = optional_string(v)
         if dep_name.len > 0 and node_id.len > 0:
           result.root_dependencies[dep_name] = node_id
 
@@ -374,14 +388,14 @@ proc parse_lock_graph(lock_path: string): LockGraph =
       if node_id.len == 0:
         continue
       var node = LockPackageNode(
-        rel_dir: value_as_string(map_lookup(v, "dir")),
+        rel_dir: optional_string(map_lookup(v, "dir")),
         dependencies: initTable[string, string]()
       )
       let deps = map_lookup(v, "dependencies")
       if deps.kind == VkMap:
         for dep_key, dep_val in map_data(deps):
           let dep_name = key_to_symbol_name(dep_key)
-          let dep_node_id = value_as_string(dep_val)
+          let dep_node_id = optional_string(dep_val)
           if dep_name.len > 0 and dep_node_id.len > 0:
             node.dependencies[dep_name] = dep_node_id
       result.packages[node_id] = node
@@ -472,7 +486,7 @@ proc resolve_package_from_registry(package_name: string, importer_root: string, 
   if dep_entry.kind != VkMap:
     return ("", "dependency override entry for '" & package_name & "' must be a map")
 
-  let raw_path = value_as_string(map_lookup(dep_entry, "path"))
+  let raw_path = optional_string(map_lookup(dep_entry, "path"))
   if raw_path.len == 0:
     return ("", "dependency override for '" & package_name & "' is missing ^path")
 
