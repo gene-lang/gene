@@ -353,6 +353,20 @@ proc find_deps_root(start_path: string): string =
     dir = parent
   return ""
 
+proc find_lock_root(start_path: string): string =
+  var dir = if fileExists(start_path): parentDir(start_path) else: start_path
+  if dir.len == 0:
+    return ""
+  dir = absolutePath(dir)
+  while true:
+    if fileExists(joinPath(dir, "package.gene.lock")):
+      return dir
+    let parent = parentDir(dir)
+    if parent.len == 0 or parent == dir:
+      break
+    dir = parent
+  return ""
+
 proc init_lock_graph(): LockGraph =
   LockGraph(
     root_dependencies: initTable[string, string](),
@@ -404,10 +418,11 @@ proc parse_lock_graph(lock_path: string): LockGraph =
 
 proc resolve_package_from_lock(package_name: string, importer_root: string, importer_dir: string):
     tuple[root: string, issue: string] =
-  if importer_root.len == 0:
+  let lock_root = find_lock_root(importer_dir)
+  if lock_root.len == 0:
     return ("", "")
 
-  let lock_path = joinPath(importer_root, "package.gene.lock")
+  let lock_path = joinPath(lock_root, "package.gene.lock")
   let lock = parse_lock_graph(lock_path)
   if lock.root_dependencies.len == 0 and lock.packages.len == 0:
     return ("", "")
@@ -418,7 +433,7 @@ proc resolve_package_from_lock(package_name: string, importer_root: string, impo
   for node_id, node in lock.packages:
     if node.rel_dir.len == 0:
       continue
-    let node_abs = absolutePath(joinPath(importer_root, node.rel_dir))
+    let node_abs = absolutePath(joinPath(lock_root, node.rel_dir))
     if path_within(node_abs, importer_abs):
       if node_abs.len > best_match_len:
         best_match_len = node_abs.len
@@ -437,7 +452,7 @@ proc resolve_package_from_lock(package_name: string, importer_root: string, impo
   let dep_node = lock.packages[dep_node_id]
   if dep_node.rel_dir.len == 0:
     return ("", "lockfile package node '" & dep_node_id & "' has empty dir")
-  let dep_root = absolutePath(joinPath(importer_root, dep_node.rel_dir))
+  let dep_root = absolutePath(joinPath(lock_root, dep_node.rel_dir))
   if not fileExists(joinPath(dep_root, "package.gene")):
     return ("", "lockfile package root missing package.gene: " & dep_root)
   if not package_root_matches_name(dep_root, package_name):
@@ -503,32 +518,39 @@ proc resolve_package_from_registry(package_name: string, importer_root: string, 
     return ("", "dependency override path does not contain package.gene: " & base_path)
   (canonical_path(root), "")
 
+proc package_module_bases(package_root: string): seq[string]
+proc collect_resolve_candidates(base: string, module_path: string): seq[ResolvedModuleCandidate]
+
 proc resolve_package_entrypoint(root: string, importer_module = "", package_name = ""): tuple[path: string, is_gir: bool] =
-  ## Choose package entrypoint in priority order.
-  let idx = joinPath(root, "index.gene")
-  if fileExists(idx):
-    return (canonical_path(idx), false)
-  let srcIdx = joinPath(root, "src", "index.gene")
-  if fileExists(srcIdx):
-    return (canonical_path(srcIdx), false)
-  let libIdx = joinPath(root, "lib", "index.gene")
-  if fileExists(libIdx):
-    return (canonical_path(libIdx), false)
-  let girIdx = joinPath(root, "build", "index.gir")
-  if fileExists(girIdx):
-    return (canonical_path(girIdx), true)
+  ## Choose package entrypoint in manifest order, then the legacy index fallback.
+  let manifest = package_manifest_for_root(root)
+  var entry_modules: seq[string] = @[]
+  append_unique(entry_modules, if manifest.main_module.len > 0: manifest.main_module else: "index")
+  append_unique(entry_modules, "index")
+
+  for entry_module in entry_modules:
+    for base in package_module_bases(root):
+      for candidate in collect_resolve_candidates(base, entry_module):
+        return (candidate.path, candidate.is_gir)
+
+    if not entry_module.endsWith(".gene") and not entry_module.endsWith(".gir"):
+      let build_gir = joinPath(root, "build", entry_module & ".gir")
+      if fileExists(build_gir):
+        return (canonical_path(build_gir), true)
+
   raise_import_error(PACKAGE_ERR_NOT_FOUND, "Package entrypoint not found under " & root,
     importer_module = importer_module, package_name = package_name)
 
 proc package_module_bases(package_root: string): seq[string] =
   if package_root.len == 0:
     return @[]
-  @[
-    package_root,
-    joinPath(package_root, "src"),
-    joinPath(package_root, "lib"),
-    joinPath(package_root, "build"),
-  ]
+  let manifest = package_manifest_for_root(package_root)
+  let source_dir = if manifest.source_dir.len > 0: manifest.source_dir else: "src"
+  append_unique(result, package_root)
+  append_unique(result, joinPath(package_root, source_dir))
+  append_unique(result, joinPath(package_root, "src"))
+  append_unique(result, joinPath(package_root, "lib"))
+  append_unique(result, joinPath(package_root, "build"))
 
 proc collect_resolve_candidates(base: string, module_path: string): seq[ResolvedModuleCandidate] =
   if base.len == 0 or module_path.len == 0:

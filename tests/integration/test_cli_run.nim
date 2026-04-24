@@ -202,6 +202,199 @@ suite "Run CLI":
     let result = run_command.handle("run", @[app_src])
     check result.success
 
+  test "run resolves package main-module from manifest":
+    let root = createTempDir("gene_run_pkg_main_module_", "")
+    let app_src = root / "src" / "index.gene"
+    let dep_root = root / ".gene" / "deps" / "x" / "tool" / "1.0.0"
+    let lock_path = root / "package.gene.lock"
+
+    createDir(root / "src")
+    createDir(dep_root / "lib")
+    writeFile(root / "package.gene", """
+^name "x/app"
+^version "0.1.0"
+^dependencies [
+  ($dep "x/tool" "*" ^path "./vendor/tool")
+]
+""")
+    writeFile(app_src, """
+(import version from "index" ^pkg "x/tool")
+(version)
+""")
+    writeFile(dep_root / "package.gene", """
+^name "x/tool"
+^version "1.0.0"
+^source-dir "lib"
+^main-module "main"
+^dependencies []
+""")
+    writeFile(dep_root / "lib" / "main.gene", """
+(fn version [] 43)
+""")
+    writeFile(lock_path, """
+{
+  ^lock_version 1
+  ^root_dependencies {
+    ^x/tool "x/tool@1.0.0"
+  }
+  ^packages {
+    ^x/tool@1.0.0 {
+      ^name "x/tool"
+      ^resolved "1.0.0"
+      ^node_id "x/tool@1.0.0"
+      ^dir ".gene/deps/x/tool/1.0.0"
+      ^source {^type "path" ^path "./vendor/tool"}
+      ^sha256 "dummy"
+      ^singleton false
+      ^dependencies {}
+    }
+  }
+}
+""")
+
+    defer:
+      if dirExists(root):
+        removeDir(root)
+
+    let result = run_command.handle("run", @[app_src])
+    check result.success
+
+  test "run resolves package imports from manifest source-dir":
+    let root = createTempDir("gene_run_pkg_source_dir_", "")
+    let app_src = root / "src" / "index.gene"
+    let dep_root = root / ".gene" / "deps" / "x" / "tool" / "1.0.0"
+    let lock_path = root / "package.gene.lock"
+
+    createDir(root / "src")
+    createDir(dep_root / "source")
+    writeFile(root / "package.gene", """
+^name "x/app"
+^version "0.1.0"
+^dependencies [
+  ($dep "x/tool" "*" ^path "./vendor/tool")
+]
+""")
+    writeFile(app_src, """
+(import marker from "feature" ^pkg "x/tool")
+(marker)
+""")
+    writeFile(dep_root / "package.gene", """
+^name "x/tool"
+^version "1.0.0"
+^source-dir "source"
+^dependencies []
+""")
+    writeFile(dep_root / "source" / "feature.gene", """
+(fn marker [] 44)
+""")
+    writeFile(lock_path, """
+{
+  ^lock_version 1
+  ^root_dependencies {
+    ^x/tool "x/tool@1.0.0"
+  }
+  ^packages {
+    ^x/tool@1.0.0 {
+      ^name "x/tool"
+      ^resolved "1.0.0"
+      ^node_id "x/tool@1.0.0"
+      ^dir ".gene/deps/x/tool/1.0.0"
+      ^source {^type "path" ^path "./vendor/tool"}
+      ^sha256 "dummy"
+      ^singleton false
+      ^dependencies {}
+    }
+  }
+}
+""")
+
+    defer:
+      if dirExists(root):
+        removeDir(root)
+
+    let result = run_command.handle("run", @[app_src])
+    check result.success
+
+  test "transitive package import resolves through lockfile graph":
+    let root = createTempDir("gene_run_pkg_transitive_lock_", "")
+    let app_src = root / "src" / "index.gene"
+    let core_root = root / ".gene" / "deps" / "x" / "core" / "1.0.0"
+    let util_root = root / ".gene" / "deps" / "x" / "util" / "1.0.0"
+    let lock_path = root / "package.gene.lock"
+
+    createDir(root / "src")
+    createDir(core_root / "src")
+    createDir(util_root / "src")
+    writeFile(root / "package.gene", """
+^name "x/app"
+^version "0.1.0"
+^dependencies [
+  ($dep "x/core" "*" ^path "./vendor/core")
+]
+""")
+    writeFile(app_src, """
+(import answer from "index" ^pkg "x/core")
+(answer)
+""")
+    writeFile(core_root / "package.gene", """
+^name "x/core"
+^version "1.0.0"
+^dependencies [
+  ($dep "x/util" "*" ^path "../util")
+]
+""")
+    writeFile(core_root / "src" / "index.gene", """
+(import value from "index" ^pkg "x/util")
+(fn answer [] (value))
+""")
+    writeFile(util_root / "package.gene", """
+^name "x/util"
+^version "1.0.0"
+^dependencies []
+""")
+    writeFile(util_root / "src" / "index.gene", """
+(fn value [] 45)
+""")
+    writeFile(lock_path, """
+{
+  ^lock_version 1
+  ^root_dependencies {
+    ^x/core "x/core@1.0.0"
+  }
+  ^packages {
+    ^x/core@1.0.0 {
+      ^name "x/core"
+      ^resolved "1.0.0"
+      ^node_id "x/core@1.0.0"
+      ^dir ".gene/deps/x/core/1.0.0"
+      ^source {^type "path" ^path "./vendor/core"}
+      ^sha256 "dummy"
+      ^singleton false
+      ^dependencies {
+        ^x/util "x/util@1.0.0"
+      }
+    }
+    ^x/util@1.0.0 {
+      ^name "x/util"
+      ^resolved "1.0.0"
+      ^node_id "x/util@1.0.0"
+      ^dir ".gene/deps/x/util/1.0.0"
+      ^source {^type "path" ^path "./vendor/util"}
+      ^sha256 "dummy"
+      ^singleton false
+      ^dependencies {}
+    }
+  }
+}
+""")
+
+    defer:
+      if dirExists(root):
+        removeDir(root)
+
+    let result = run_command.handle("run", @[app_src])
+    check result.success
+
   test "run formats runtime diagnostics as Gene values":
     let source_path = absolutePath("tmp/run_cli_runtime_error.gene")
     createDir(parentDir(source_path))
