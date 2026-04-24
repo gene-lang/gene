@@ -75,6 +75,7 @@ task test, "Runs unit tests only":
   exec "nim c -r tests/test_parser_interpolation.nim"
   exec "nim c -r tests/test_stream_parser.nim"
   exec "nim c -r tests/test_opcode_dispatch.nim"
+  exec "nim c -r tests/test_instruction_metadata.nim"
   exec "nim c -r tests/test_extended_types.nim"
   exec "nim c -r tests/test_compile_eager.nim"
   exec "nim c -r tests/test_source_trace.nim"

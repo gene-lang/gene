@@ -2,11 +2,9 @@ import strformat
 
 import ./type_defs
 import ./core
+import ./instruction_metadata
 
 var LABEL_COUNTER {.threadvar.}: int16
-
-proc to_hex(i: int32): string {.inline.} =
-  fmt"{i:04X}"
 
 #################### COMPILER ####################
 
@@ -58,48 +56,7 @@ proc replace_traces_range*(self: CompilationUnit, start_pos, end_pos: int, repla
         self.instruction_traces.insert(nil, insert_pos)
 
 proc `$`*(self: Instruction): string =
-  case self.kind
-    of IkPushValue, IkPushTypeValue, IkVar, IkVarResolve, IkVarAssign,
-       IkVarDestructure,
-       IkAddValue, IkVarAddValue, IkVarSubValue, IkVarMulValue, IkVarDivValue, IkVarModValue,
-       IkIncVar, IkDecVar,
-       IkLtValue, IkVarLtValue, IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue,
-       IkMapSetProp, IkMapSetPropValue,
-       IkResolveSymbol, IkResolveMethod,
-       IkExport,
-       IkSetMember, IkGetMember, IkGetMemberOrNil, IkGetMemberDefault,
-       IkSetChild, IkGetChild,
-       IkTailCall:
-      if self.label.int > 0:
-        result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0}"
-      else:
-        result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0}"
-    of IkJump, IkJumpIfFalse, IkContinue, IkBreak:
-      let target_label = self.arg0.int64.Label
-      if self.label.int > 0:
-        result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {target_label.int:04X}"
-      else:
-        result = fmt"         {($self.kind)[2..^1]:<20} {target_label.int:04X}"
-    of IkJumpIfMatchSuccess:
-      let target_label = self.arg1.int64.Label
-      if self.label.int > 0:
-        result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0} {target_label.int:04X}"
-      else:
-        result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {target_label.int:04X}"
-    of IkCallSuperMethod, IkCallSuperMethodMacro, IkCallSuperMethodKw,
-       IkCallSuperCtor, IkCallSuperCtorMacro, IkCallSuperCtorKw:
-      if self.label.int > 0:
-        result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
-      else:
-        result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
-    of IkVarResolveInherited, IkVarAssignInherited:
-      result = fmt"         {($self.kind)[2..^1]:<20} {$self.arg0} {self.arg1}"
-
-    else:
-      if self.label.int > 0:
-        result = fmt"{self.label.int32.to_hex()} {($self.kind)[2..^1]}"
-      else:
-        result = fmt"         {($self.kind)[2..^1]}"
+  format_instruction_debug(self)
 
 proc `$`*(self: seq[Instruction]): string =
   var i = 0
