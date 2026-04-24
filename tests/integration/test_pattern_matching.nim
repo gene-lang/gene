@@ -144,9 +144,16 @@ test_vm_error """
   (var [... tail] [1 2])
 """
 
+# duplicate positional rest is rejected
 test_vm_error """
   (var [a... b...] [1 2 3])
 """
+
+# explicit nil default in destructuring stays NIL
+test_vm """
+  (var [value = nil] [])
+  value
+""", NIL
 
 # proc test_arg_matching*(pattern: string, input: string, callback: proc(result: MatchResult)) =
 #   var pattern = cleanup(pattern)

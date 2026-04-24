@@ -16,6 +16,7 @@ test_vm """
 """, "other"
 
 # Case without else returns nil
+# no-match case without else returns NIL
 test_vm """
   (case 5 when 1 "one" when 2 "two")
 """, NIL
