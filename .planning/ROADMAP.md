@@ -108,7 +108,7 @@ semantics.
   6. Package docs and tests state the MVP boundary and defer registry/version
      solver behavior explicitly.
 
-**Plans**: TBD
+**Plans**: [07-01-PLAN.md](phases/07-package-module-mvp/07-01-PLAN.md)
 
 ### Phase 8: VM correctness harness
 
@@ -140,7 +140,7 @@ instruction metadata scope is agreed.
 |-------|----------------|--------|-----------|
 | 5. Feature status matrix and stable-core boundary | 1/1 | Complete | 2026-04-24 |
 | 6. Core semantics tightening | 1/1 | Complete | 2026-04-24 |
-| 7. Package/module MVP | 0/TBD | Not started | - |
+| 7. Package/module MVP | 0/1 | Planned | - |
 | 8. VM correctness harness | 0/TBD | Not started | - |
 
 ## Coverage
