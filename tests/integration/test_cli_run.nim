@@ -9,6 +9,36 @@ proc skip_gir_string(stream: Stream) =
   if str_len > 0:
     discard stream.readStr(str_len.int)
 
+proc read_gir_string_payload(stream: Stream): tuple[offset: int, len: int, value: string] =
+  let str_len = stream.readUint32().int
+  result.offset = stream.getPosition().int
+  result.len = str_len
+  if str_len > 0:
+    result.value = stream.readStr(str_len)
+
+proc find_gir_compiler_version_payload(gir_path: string): tuple[offset: int, len: int, value: string] =
+  var reader = newFileStream(gir_path, fmRead)
+  doAssert reader != nil, "Failed to open GIR for compiler-version offset lookup"
+  defer:
+    reader.close()
+
+  var magic: array[4, char]
+  doAssert reader.readData(magic[0].addr, 4) == 4, "Failed to read GIR magic"
+  discard reader.readUint32()
+  result = read_gir_string_payload(reader)
+
+proc find_gir_vm_abi_payload(gir_path: string): tuple[offset: int, len: int, value: string] =
+  var reader = newFileStream(gir_path, fmRead)
+  doAssert reader != nil, "Failed to open GIR for VM ABI offset lookup"
+  defer:
+    reader.close()
+
+  var magic: array[4, char]
+  doAssert reader.readData(magic[0].addr, 4) == 4, "Failed to read GIR magic"
+  discard reader.readUint32()
+  discard read_gir_string_payload(reader)
+  result = read_gir_string_payload(reader)
+
 proc find_gir_source_hash_offset(gir_path: string): int =
   var reader = newFileStream(gir_path, fmRead)
   doAssert reader != nil, "Failed to open GIR for source-hash offset lookup"
@@ -34,6 +64,21 @@ proc overwrite_gir_source_hash(gir_path: string, new_hash: int64) =
 
   stream.setPosition(source_hash_offset)
   stream.write(new_hash)
+
+proc overwrite_gir_string_payload(gir_path: string, offset, expected_len: int, value: string) =
+  doAssert value.len == expected_len, "replacement GIR string must preserve encoded length"
+  var stream = newFileStream(gir_path, fmReadWriteExisting)
+  doAssert stream != nil, "Failed to open GIR for string overwrite"
+  defer:
+    stream.close()
+
+  stream.setPosition(offset)
+  stream.write(value)
+
+proc alternate_same_len_digits(value: string): string =
+  result = repeat("9", value.len)
+  if result == value:
+    result = repeat("8", value.len)
 
 suite "Run CLI":
   test "run falls back to source when cached GIR is unreadable":
@@ -84,6 +129,100 @@ suite "Run CLI":
 
     let refreshed = load_gir_file(gir_path)
     check refreshed.header.version == GIR_VERSION
+
+  test "run invalidates stale GIR compiler version caches and recompiles":
+    let source_path = absolutePath("tmp/run_cli_compiler_invalidation.gene")
+    createDir(parentDir(source_path))
+    writeFile(source_path, "(var x 17)\nx")
+
+    let gir_path = get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let first = run_command.handle("run", @[source_path])
+    check first.success
+    check fileExists(gir_path)
+
+    let payload = find_gir_compiler_version_payload(gir_path)
+    let bad_version = alternate_same_len_digits(COMPILER_VERSION)
+    overwrite_gir_string_payload(gir_path, payload.offset, payload.len, bad_version)
+    check not is_gir_up_to_date(gir_path, source_path)
+
+    let second = run_command.handle("run", @[source_path])
+    check second.success
+
+    let refreshed = load_gir_file(gir_path)
+    check refreshed.header.compiler_version == COMPILER_VERSION
+
+  test "run invalidates stale GIR value ABI caches and recompiles":
+    let source_path = absolutePath("tmp/run_cli_value_abi_invalidation.gene")
+    createDir(parentDir(source_path))
+    writeFile(source_path, "(var x 19)\nx")
+
+    let gir_path = get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let first = run_command.handle("run", @[source_path])
+    check first.success
+    check fileExists(gir_path)
+
+    let payload = find_gir_vm_abi_payload(gir_path)
+    let current_marker = "valueabi" & $VALUE_ABI_VERSION
+    let bad_marker = "valueabi" & alternate_same_len_digits($VALUE_ABI_VERSION)
+    let bad_abi = payload.value.replace(current_marker, bad_marker)
+    overwrite_gir_string_payload(gir_path, payload.offset, payload.len, bad_abi)
+    check not is_gir_up_to_date(gir_path, source_path)
+
+    let second = run_command.handle("run", @[source_path])
+    check second.success
+
+    let refreshed = load_gir_file(gir_path)
+    check refreshed.header.vm_abi.contains("-valueabi" & $VALUE_ABI_VERSION)
+
+  test "run invalidates stale GIR instruction ABI caches and recompiles":
+    let source_path = absolutePath("tmp/run_cli_instruction_abi_invalidation.gene")
+    createDir(parentDir(source_path))
+    writeFile(source_path, "(var x 23)\nx")
+
+    let gir_path = get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let first = run_command.handle("run", @[source_path])
+    check first.success
+    check fileExists(gir_path)
+
+    let payload = find_gir_vm_abi_payload(gir_path)
+    let current_marker = "instabi" & $INSTRUCTION_ABI_VERSION
+    let bad_marker = "instabi" & alternate_same_len_digits($INSTRUCTION_ABI_VERSION)
+    let bad_abi = payload.value.replace(current_marker, bad_marker)
+    overwrite_gir_string_payload(gir_path, payload.offset, payload.len, bad_abi)
+    check not is_gir_up_to_date(gir_path, source_path)
+
+    let second = run_command.handle("run", @[source_path])
+    check second.success
+
+    let refreshed = load_gir_file(gir_path)
+    check refreshed.header.vm_abi.contains("-instabi" & $INSTRUCTION_ABI_VERSION)
 
   test "run accepts fresh GIR caches without recompiling":
     let source_path = absolutePath("tmp/run_cli_cache_reuse.gene")

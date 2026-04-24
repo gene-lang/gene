@@ -5,7 +5,7 @@ import ./types
 const
   GIR_MAGIC = "GENE"
   GIR_VERSION* = 22'u32
-  COMPILER_VERSION = "0.1.3"
+  COMPILER_VERSION* = "0.1.3"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   INSTRUCTION_ABI_VERSION* = 3'u32  # Version 3: HashMap opcodes added
 
@@ -14,6 +14,17 @@ proc current_vm_abi_marker(): string =
     "-" & $sizeof(pointer) & "bit" &
     "-valueabi" & $VALUE_ABI_VERSION &
     "-instabi" & $INSTRUCTION_ABI_VERSION
+
+proc magic_to_string(magic: array[4, char]): string =
+  result = newStringOfCap(4)
+  for ch in magic:
+    result.add(ch)
+
+proc gir_header_error(path, field, expected, got: string): ref types.Exception =
+  new_exception(types.Exception,
+    "Invalid GIR file: " & path & ": " & field &
+    " mismatch. Expected " & expected & " but got " & got &
+    ". Please recompile the source file.")
   
 type
   GirHeader* = object
@@ -735,28 +746,25 @@ proc load_gir_file*(path: string): GirFile =
   var header: GirHeader
   discard stream.readData(header.magic[0].addr, 4)
   if header.magic != ['G', 'E', 'N', 'E']:
-    raise new_exception(types.Exception, "Invalid GIR file: bad magic")
+    raise gir_header_error(path, "magic", GIR_MAGIC, magic_to_string(header.magic))
 
   header.version = stream.readUint32()
   if header.version != GIR_VERSION:
-    raise new_exception(types.Exception, "Unsupported GIR version: " & $header.version)
+    raise gir_header_error(path, "GIR_VERSION", $GIR_VERSION, $header.version)
 
   header.compiler_version = stream.read_string()
+  if header.compiler_version != COMPILER_VERSION:
+    raise gir_header_error(path, "COMPILER_VERSION", COMPILER_VERSION, header.compiler_version)
+
   header.vm_abi = stream.read_string()
 
   # Validate ABI markers to prevent loading incompatible GIR files.
   let expected_abi_marker = "-valueabi" & $VALUE_ABI_VERSION
   if not header.vm_abi.contains(expected_abi_marker):
-    raise new_exception(types.Exception,
-      "Incompatible GIR file: VALUE_ABI mismatch. " &
-      "Expected valueabi" & $VALUE_ABI_VERSION & " but got: " & header.vm_abi &
-      ". Please recompile the source file.")
+    raise gir_header_error(path, "VALUE_ABI", expected_abi_marker, header.vm_abi)
   let expected_instruction_abi_marker = "-instabi" & $INSTRUCTION_ABI_VERSION
   if not header.vm_abi.contains(expected_instruction_abi_marker):
-    raise new_exception(types.Exception,
-      "Incompatible GIR file: INSTRUCTION_ABI mismatch. " &
-      "Expected instabi" & $INSTRUCTION_ABI_VERSION & " but got: " & header.vm_abi &
-      ". Please recompile the source file.")
+    raise gir_header_error(path, "INSTRUCTION_ABI", expected_instruction_abi_marker, header.vm_abi)
 
   header.timestamp = stream.readInt64()
   header.debug = stream.readBool()

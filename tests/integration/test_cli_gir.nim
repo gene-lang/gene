@@ -1,4 +1,4 @@
-import unittest, os, strutils, tables, osproc, locks
+import unittest, os, streams, strutils, tables, osproc, locks
 
 import gene/parser
 import gene/compiler
@@ -44,6 +44,61 @@ proc concurrent_compile_worker(job: ptr ConcurrentCompileJob) {.thread.} =
       free_vm_ptr(vm)
       VM = nil
 
+proc read_gir_string_payload(stream: Stream): tuple[offset: int, len: int, value: string] =
+  let str_len = stream.readUint32().int
+  result.offset = stream.getPosition().int
+  result.len = str_len
+  if str_len > 0:
+    result.value = stream.readStr(str_len)
+
+proc compiler_version_payload(gir_path: string): tuple[offset: int, len: int, value: string] =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for compiler-version offset lookup"
+  defer:
+    stream.close()
+
+  var magic: array[4, char]
+  doAssert stream.readData(magic[0].addr, 4) == 4, "Failed to read GIR magic"
+  discard stream.readUint32()
+  result = read_gir_string_payload(stream)
+
+proc vm_abi_payload(gir_path: string): tuple[offset: int, len: int, value: string] =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for VM ABI offset lookup"
+  defer:
+    stream.close()
+
+  var magic: array[4, char]
+  doAssert stream.readData(magic[0].addr, 4) == 4, "Failed to read GIR magic"
+  discard stream.readUint32()
+  discard read_gir_string_payload(stream)
+  result = read_gir_string_payload(stream)
+
+proc overwrite_gir_bytes(gir_path: string, offset: int, value: string) =
+  var stream = newFileStream(gir_path, fmReadWriteExisting)
+  doAssert stream != nil, "Failed to open GIR for byte overwrite"
+  defer:
+    stream.close()
+
+  stream.setPosition(offset)
+  stream.write(value)
+
+proc alternate_same_len_digits(value: string): string =
+  result = repeat("9", value.len)
+  if result == value:
+    result = repeat("8", value.len)
+
+proc expect_load_gir_error(gir_path: string, parts: openArray[string]) =
+  var raised = false
+  try:
+    discard gir.load_gir_file(gir_path)
+  except CatchableError as e:
+    raised = true
+    checkpoint e.msg
+    for part in parts:
+      check e.msg.contains(part)
+  check raised
+
 suite "GIR CLI":
   test "gir show renders instructions":
     let source_path = "examples/hello_world.gene"
@@ -66,6 +121,90 @@ suite "GIR CLI":
     check aliasResult.success
 
     removeFile(gir_path)
+
+  test "load_gir_file reports bad magic with path":
+    let gir_path = "build/tests/bad_magic.gir"
+    createDir(parentDir(gir_path))
+    writeFile(gir_path, "NOPE")
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [gir_path, "magic", "Expected GENE", "got NOPE"])
+
+  test "load_gir_file reports expected and actual version":
+    let compiled = compiler.parse_and_compile("(var x 1) x", "<gir-version-diagnostic>")
+    let gir_path = "build/tests/bad_version.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path)
+
+    var stream = newFileStream(gir_path, fmReadWriteExisting)
+    check stream != nil
+    stream.setPosition(4)
+    stream.write(1'u32)
+    stream.close()
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [gir_path, "GIR_VERSION", "Expected " & $GIR_VERSION, "got 1"])
+
+  test "load_gir_file reports compiler version mismatch":
+    let compiled = compiler.parse_and_compile("(var x 2) x", "<gir-compiler-diagnostic>")
+    let gir_path = "build/tests/bad_compiler_version.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path)
+
+    let payload = compiler_version_payload(gir_path)
+    let bad_version = alternate_same_len_digits(COMPILER_VERSION)
+    check bad_version.len == payload.len
+    overwrite_gir_bytes(gir_path, payload.offset, bad_version)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [gir_path, "COMPILER_VERSION", "Expected " & COMPILER_VERSION, "got " & bad_version])
+
+  test "load_gir_file reports value ABI mismatch":
+    let compiled = compiler.parse_and_compile("(var x 3) x", "<gir-value-abi-diagnostic>")
+    let gir_path = "build/tests/bad_value_abi.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path)
+
+    let payload = vm_abi_payload(gir_path)
+    let current_marker = "valueabi" & $VALUE_ABI_VERSION
+    let bad_marker = "valueabi" & alternate_same_len_digits($VALUE_ABI_VERSION)
+    let bad_abi = payload.value.replace(current_marker, bad_marker)
+    check bad_abi.len == payload.len
+    overwrite_gir_bytes(gir_path, payload.offset, bad_abi)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [gir_path, "VALUE_ABI", "Expected -valueabi" & $VALUE_ABI_VERSION, "got " & bad_abi])
+
+  test "load_gir_file reports instruction ABI mismatch":
+    let compiled = compiler.parse_and_compile("(var x 4) x", "<gir-instruction-abi-diagnostic>")
+    let gir_path = "build/tests/bad_instruction_abi.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path)
+
+    let payload = vm_abi_payload(gir_path)
+    let current_marker = "instabi" & $INSTRUCTION_ABI_VERSION
+    let bad_marker = "instabi" & alternate_same_len_digits($INSTRUCTION_ABI_VERSION)
+    let bad_abi = payload.value.replace(current_marker, bad_marker)
+    check bad_abi.len == payload.len
+    overwrite_gir_bytes(gir_path, payload.offset, bad_abi)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [gir_path, "INSTRUCTION_ABI", "Expected -instabi" & $INSTRUCTION_ABI_VERSION, "got " & bad_abi])
 
   test "gir show reports missing file":
     let result = gir_command.handle("gir", @["show", "build/does_not_exist.gir"])
