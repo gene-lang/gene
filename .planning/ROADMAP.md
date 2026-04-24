@@ -132,7 +132,7 @@ instruction metadata scope is agreed.
   5. Parser, serializer/deserializer, and GIR round-trip stress coverage exists
      for representative stable-core values and failure paths.
 
-**Plans**: TBD
+**Plans**: [08-01-PLAN.md](phases/08-vm-correctness-harness/08-01-PLAN.md)
 
 ## Progress
 
