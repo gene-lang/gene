@@ -135,6 +135,39 @@ proc overflow_forwarder_handler(vm: ptr VirtualMachine, args: ptr UncheckedArray
       actor_reply_for_test(ctx, exc.msg.to_value())
   target
 
+proc ordered_target_handler(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                            has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  discard vm
+  discard arg_count
+  let ctx = get_positional_arg(args, 0, has_keyword_args)
+  let msg = get_positional_arg(args, 1, has_keyword_args)
+  let state = get_positional_arg(args, 2, has_keyword_args)
+  let kind = actor_message_kind(msg)
+
+  case kind
+  of "hold":
+    array_data(state).add(kind.to_value())
+    sleep(200)
+    state
+  of "get":
+    {.cast(gcsafe).}:
+      actor_reply_for_test(ctx, state)
+    state
+  else:
+    array_data(state).add(kind.to_value())
+    state
+
+proc order_forwarder_handler(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                             has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  discard arg_count
+  let ctx = get_positional_arg(args, 0, has_keyword_args)
+  let target = get_positional_arg(args, 2, has_keyword_args)
+
+  {.cast(gcsafe).}:
+    discard actor_send_value(vm, target, actor_message("parked-one"))
+    actor_reply_for_test(ctx, "parked".to_value())
+  target
+
 suite "Phase 2 actor send tiers":
   test "primitive payloads route by value":
     let routed = prepare_actor_payload_for_send(42.to_value())
@@ -270,6 +303,37 @@ suite "Phase 2 actor send tiers":
     )
 
     check processed == 3.to_value()
+
+  test "parked actor sends promote in FIFO order after mailbox space opens":
+    init_thread_pool()
+    init_app_and_vm()
+    init_stdlib()
+    init_actor_runtime()
+    set_actor_mailbox_limit_for_test(1)
+    actor_enable_for_test(2)
+
+    let target = actor_spawn_value(NativeFn(ordered_target_handler).to_value(), new_array_value())
+    let forwarder = actor_spawn_value(NativeFn(order_forwarder_handler).to_value(), target)
+
+    discard actor_send_value(VM, target, actor_message("hold"))
+    discard actor_send_value(VM, target, actor_message("external-queued"))
+
+    let forward_result = await_actor_future(
+      actor_send_value(VM, forwarder, actor_message("forward"), true)
+    )
+
+    check forward_result == "parked".to_value()
+
+    sleep(400)
+    let processed = await_actor_future(
+      actor_send_value(VM, target, actor_message("get"), true)
+    )
+    let observed = array_data(processed)
+
+    check observed.len == 3
+    check observed[0] == "hold".to_value()
+    check observed[1] == "external-queued".to_value()
+    check observed[2] == "parked-one".to_value()
 
   test "actor-originated sends fail fast when parked send queue is full":
     init_thread_pool()

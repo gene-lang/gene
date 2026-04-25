@@ -5,6 +5,7 @@ import std/exitprocs
 import ../types
 import ../stdlib/freeze
 import ./thread
+import ./fifo_queue
 
 type
   ActorSendTier* = enum
@@ -27,8 +28,8 @@ type
     stopped: bool
     lock: Lock
     cond: Cond
-    mailbox: seq[ActorMailboxMessage]
-    pending_sends: seq[ActorMailboxMessage]
+    mailbox: FifoQueue[ActorMailboxMessage]
+    pending_sends: FifoQueue[ActorMailboxMessage]
     mailbox_limit: int
     dispatched: bool
 
@@ -209,8 +210,7 @@ proc actor_wake_worker(thread_id, actor_id: int) =
 
 proc actor_signal_space(record: ActorRuntimeRecord) =
   while record.mailbox.len < record.mailbox_limit and record.pending_sends.len > 0:
-    record.mailbox.add(record.pending_sends[0])
-    record.pending_sends.delete(0)
+    record.mailbox.add(record.pending_sends.popFront())
   broadcast(record.cond)
 
 proc actor_enqueue_message(record: ActorRuntimeRecord, msg: ActorMailboxMessage, from_actor: bool) =
@@ -302,8 +302,8 @@ proc actor_spawn_value*(handler: Value, state: Value = NIL): Value =
     handler: handler,
     state: routed_state.value,
     stopped: false,
-    mailbox: @[],
-    pending_sends: @[],
+    mailbox: initFifoQueue[ActorMailboxMessage](actor_mailbox_limit),
+    pending_sends: initFifoQueue[ActorMailboxMessage](actor_mailbox_limit),
     mailbox_limit: actor_mailbox_limit,
     dispatched: false
   )
@@ -320,8 +320,7 @@ proc actor_pop_message(record: ActorRuntimeRecord): ActorMailboxMessage =
     release(record.lock)
     return nil
 
-  result = record.mailbox[0]
-  record.mailbox.delete(0)
+  result = record.mailbox.popFront()
   actor_signal_space(record)
   release(record.lock)
 
@@ -350,8 +349,8 @@ proc stop_actor_record(record: ActorRuntimeRecord): seq[ActorMailboxMessage] =
   for msg in record.pending_sends:
     if msg.reply_requested:
       result.add(msg)
-  record.mailbox.setLen(0)
-  record.pending_sends.setLen(0)
+  record.mailbox.clear()
+  record.pending_sends.clear()
   record.dispatched = false
   broadcast(record.cond)
   release(record.lock)

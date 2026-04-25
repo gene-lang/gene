@@ -1,5 +1,6 @@
 import locks, random, options, os
 import ../types
+import ./fifo_queue
 
 # Simple channel implementation for MVP
 type
@@ -8,7 +9,7 @@ type
   ChannelObj*[T] = object
     lock: Lock
     cond: Cond
-    data: seq[T]
+    data: FifoQueue[T]
     capacity: int
     closed: bool
 
@@ -18,7 +19,7 @@ proc open*[T](ch: var Channel[T], capacity: int) =
   ch = cast[Channel[T]](alloc0(sizeof(ChannelObj[T])))
   initLock(ch.lock)
   initCond(ch.cond)
-  ch.data = newSeq[T](0)
+  ch.data = initFifoQueue[T](capacity)
   ch.capacity = capacity
   ch.closed = false
 
@@ -51,8 +52,7 @@ proc recv*[T](ch: Channel[T]): T =
     wait(ch.cond, ch.lock)
 
   if ch.data.len > 0:
-    result = ch.data[0]
-    ch.data.delete(0)
+    result = ch.data.popFront()
     signal(ch.cond)
 
   release(ch.lock)
@@ -62,8 +62,7 @@ proc try_recv*[T](ch: Channel[T]): Option[T] =
   acquire(ch.lock)
 
   if ch.data.len > 0:
-    result = some(ch.data[0])
-    ch.data.delete(0)
+    result = some(ch.data.popFront())
     signal(ch.cond)
   else:
     result = none(T)
