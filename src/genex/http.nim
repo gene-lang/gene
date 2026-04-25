@@ -23,6 +23,10 @@ type
 # ============ Actor-backed concurrent HTTP ownership ============
 
 const MAX_HTTP_WORKERS = 8
+const MAX_HTTP_QUEUE_LIMIT = DEFAULT_ACTOR_MAILBOX_LIMIT
+const MAX_HTTP_IN_FLIGHT = 10_000
+const DEFAULT_HTTP_OVERLOAD_STATUS = 503
+const DEFAULT_HTTP_OVERLOAD_BODY = "Service overloaded"
 const GenexHttpLogger = "genex/http"
 
 template http_log(level: LogLevel, message: untyped) =
@@ -34,6 +38,24 @@ var http_extension_host_ready = false
 var http_request_ports: Value = NIL
 var http_request_port_count = 0
 var next_http_port_idx = 0
+var http_queue_limit = DEFAULT_ACTOR_MAILBOX_LIMIT
+var http_max_in_flight = 0
+var http_in_flight = 0
+var http_overload_status = DEFAULT_HTTP_OVERLOAD_STATUS
+var http_overload_body = DEFAULT_HTTP_OVERLOAD_BODY
+
+type
+  HttpActorDispatchStatus* = enum
+    HadsAccepted
+    HadsOverloaded
+    HadsStopped
+    HadsInvalid
+    HadsLimitExceeded
+    HadsError
+
+  HttpActorDispatchResult* = object
+    status*: HttpActorDispatchStatus
+    future*: Value
 
 # Global variables to store classes
 var request_class_global: Class
@@ -139,6 +161,81 @@ proc get_native_client(req_val: Value): AsyncSocket =
     raise new_exception(types.Exception, "respond_sse request client pointer is nil")
   cast[AsyncSocket](req_ptr)
 
+proc validate_http_limit(name: string, value, max_value: int): int =
+  if value <= 0:
+    raise new_exception(types.Exception, "start_server ^" & name & " must be positive")
+  if value > max_value:
+    raise new_exception(types.Exception, "start_server ^" & name & " exceeds max " & $max_value)
+  value
+
+proc validate_http_overload_status(value: int): int =
+  if value < 400 or value > 599:
+    raise new_exception(types.Exception, "start_server ^overload_status expects an HTTP error status from 400 to 599")
+  value
+
+proc keyword_int_value(args: ptr UncheckedArray[Value], name: string): int =
+  let value = get_keyword_arg(args, name)
+  if value.kind != VkInt:
+    raise new_exception(types.Exception, "start_server ^" & name & " expects an integer")
+  value.int64.int
+
+proc apply_http_backpressure_config(queue_limit, max_in_flight_limit,
+                                    overload_status_value: int,
+                                    max_in_flight_specified: bool) =
+  http_queue_limit = validate_http_limit("queue_limit", queue_limit, MAX_HTTP_QUEUE_LIMIT)
+  if max_in_flight_specified:
+    http_max_in_flight = validate_http_limit("max_in_flight", max_in_flight_limit, MAX_HTTP_IN_FLIGHT)
+  else:
+    http_max_in_flight = 0
+  http_overload_status = validate_http_overload_status(overload_status_value)
+  http_overload_body = DEFAULT_HTTP_OVERLOAD_BODY
+
+proc parse_http_backpressure_keywords(args: ptr UncheckedArray[Value], has_keyword_args: bool) =
+  var queue_limit = DEFAULT_ACTOR_MAILBOX_LIMIT
+  var max_in_flight_limit = 0
+  var max_in_flight_specified = false
+  var overload_status_value = DEFAULT_HTTP_OVERLOAD_STATUS
+
+  if has_keyword_args:
+    if has_keyword_arg(args, "queue_limit"):
+      queue_limit = keyword_int_value(args, "queue_limit")
+    if has_keyword_arg(args, "max_in_flight"):
+      max_in_flight_limit = keyword_int_value(args, "max_in_flight")
+      max_in_flight_specified = true
+    if has_keyword_arg(args, "overload_status"):
+      overload_status_value = keyword_int_value(args, "overload_status")
+
+  apply_http_backpressure_config(
+    queue_limit,
+    max_in_flight_limit,
+    overload_status_value,
+    max_in_flight_specified
+  )
+
+proc try_acquire_http_in_flight(): bool {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if http_max_in_flight > 0 and http_in_flight >= http_max_in_flight:
+      return false
+    inc http_in_flight
+    true
+
+proc release_http_in_flight() {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if http_in_flight > 0:
+      dec http_in_flight
+
+proc map_extension_dispatch_status(status: GeneExtStatus): HttpActorDispatchStatus =
+  case status
+  of GeneExtOk: HadsAccepted
+  of GeneExtOverloaded: HadsOverloaded
+  of GeneExtStopped: HadsStopped
+  of GeneExtInvalidTarget: HadsInvalid
+  of GeneExtLimitExceeded: HadsLimitExceeded
+  else: HadsError
+
+proc overload_response_body(): string =
+  http_overload_body
+
 proc ensure_http_request_ports(worker_count: int): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if http_request_ports.kind == VkArray:
@@ -154,7 +251,8 @@ proc ensure_http_request_ports(worker_count: int): Value {.gcsafe.} =
       requested,
       NativeFn(http_actor_handle_request).to_value(),
       NIL,
-      addr handle
+      addr handle,
+      http_queue_limit
     )
     if status != GeneExtOk or handle.kind != VkArray:
       raise new_exception(types.Exception, "HTTP concurrent mode requires gene/actor/enable before start_server ^concurrent true")
@@ -164,18 +262,46 @@ proc ensure_http_request_ports(worker_count: int): Value {.gcsafe.} =
     next_http_port_idx = 0
     handle
 
-proc dispatch_to_http_actor(vm: ptr VirtualMachine, request_data: Value): Value {.gcsafe.} =
+proc try_dispatch_to_http_actor(vm: ptr VirtualMachine, request_data: Value): HttpActorDispatchResult {.gcsafe.} =
+  discard vm
   {.cast(gcsafe).}:
+    result = HttpActorDispatchResult(status: HadsError, future: NIL)
     let ports = ensure_http_request_ports(if http_request_port_count > 0: http_request_port_count else: 1)
     if ports.kind != VkArray or array_data(ports).len == 0:
-      raise new_exception(types.Exception, "HTTP concurrent worker ports are not available")
+      result.status = HadsInvalid
+      return
     let handles = array_data(ports)
-    let actor_idx = next_http_port_idx mod handles.len
-    next_http_port_idx.inc()
-    let future = call_extension_port_async(addr http_extension_host, handles[actor_idx], request_data)
-    if future.kind != VkFuture:
-      raise new_exception(types.Exception, "HTTP concurrent dispatch did not return a Future")
-    future
+    let start_idx = next_http_port_idx mod handles.len
+    var last_status = HadsOverloaded
+
+    for attempt in 0..<handles.len:
+      let actor_idx = (start_idx + attempt) mod handles.len
+      let dispatch = call_extension_port_async_status(addr http_extension_host, handles[actor_idx], request_data)
+      let mapped = map_extension_dispatch_status(dispatch.status)
+      if mapped == HadsAccepted and dispatch.future.kind == VkFuture:
+        next_http_port_idx = (actor_idx + 1) mod handles.len
+        result.status = HadsAccepted
+        result.future = dispatch.future
+        return
+      last_status = mapped
+
+    result.status = last_status
+
+proc dispatch_to_http_actor(vm: ptr VirtualMachine, request_data: Value): Value {.gcsafe.} =
+  let dispatch = try_dispatch_to_http_actor(vm, request_data)
+  case dispatch.status
+  of HadsAccepted:
+    dispatch.future
+  of HadsOverloaded:
+    raise new_exception(types.Exception, "HTTP concurrent dispatch overloaded")
+  of HadsStopped:
+    raise new_exception(types.Exception, "HTTP concurrent worker is stopped")
+  of HadsInvalid:
+    raise new_exception(types.Exception, "HTTP concurrent worker target is invalid")
+  of HadsLimitExceeded:
+    raise new_exception(types.Exception, "HTTP concurrent in-flight limit exceeded")
+  of HadsError:
+    raise new_exception(types.Exception, "HTTP concurrent dispatch failed")
 
 proc http_reply_from_context(ctx: Value, payload: Value) {.gcsafe.} =
   {.cast(gcsafe).}:
@@ -194,6 +320,11 @@ proc reset_http_concurrent_state_for_test*() {.gcsafe.} =
     http_request_ports = NIL
     http_request_port_count = 0
     next_http_port_idx = 0
+    http_queue_limit = DEFAULT_ACTOR_MAILBOX_LIMIT
+    http_max_in_flight = 0
+    http_in_flight = 0
+    http_overload_status = DEFAULT_HTTP_OVERLOAD_STATUS
+    http_overload_body = DEFAULT_HTTP_OVERLOAD_BODY
     concurrent_mode = false
     gene_handler_global = NIL
     gene_vm_global = nil
@@ -205,6 +336,32 @@ proc configure_http_handler_for_test*(vm: ptr VirtualMachine, handler: Value) {.
 
 proc ensure_http_request_ports_for_test*(worker_count: int): Value {.gcsafe.} =
   ensure_http_request_ports(worker_count)
+
+proc configure_http_backpressure_for_test*(queue_limit, max_in_flight_limit,
+                                           overload_status_value: int) {.gcsafe.} =
+  {.cast(gcsafe).}:
+    apply_http_backpressure_config(
+      queue_limit,
+      max_in_flight_limit,
+      overload_status_value,
+      true
+    )
+
+proc http_backpressure_status_for_test*(): tuple[queue_limit: int, max_in_flight: int,
+                                                in_flight: int, overload_status: int,
+                                                overload_body: string] {.gcsafe.} =
+  {.cast(gcsafe).}:
+    (http_queue_limit, http_max_in_flight, http_in_flight, http_overload_status, http_overload_body)
+
+proc try_begin_http_in_flight_for_test*(): HttpActorDispatchStatus {.gcsafe.} =
+  if try_acquire_http_in_flight(): HadsAccepted else: HadsLimitExceeded
+
+proc finish_http_in_flight_for_test*() {.gcsafe.} =
+  release_http_in_flight()
+
+proc try_dispatch_http_concurrent_request_for_test*(vm: ptr VirtualMachine,
+                                                    request_data: Value): HttpActorDispatchResult {.gcsafe.} =
+  try_dispatch_to_http_actor(vm, request_data)
 
 proc dispatch_http_concurrent_request_for_test*(vm: ptr VirtualMachine, request_data: Value): Value {.gcsafe.} =
   dispatch_to_http_actor(vm, request_data)
@@ -1237,6 +1394,11 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
       if held_response != NIL and isManaged(held_response):
         release(held_response)
 
+    var concurrent_in_flight_acquired = false
+    defer:
+      if concurrent_in_flight_acquired:
+        release_http_in_flight()
+
     # --- WebSocket upgrade detection ---
     let is_ws_upgrade = req.headers.hasKey("Upgrade") and
                         req.headers["Upgrade"].toLowerAscii() == "websocket"
@@ -1283,17 +1445,23 @@ proc handle_request(req: asynchttpserver.Request) {.async, gcsafe.} =
         # CONCURRENT MODE: dispatch request execution through actor-backed ports.
         let req_literal = server_request_to_literal(gene_req)
 
-        # Dispatch to actor-backed worker and await the attached Nim future.
-        var future: Value
-        try:
-          future = dispatch_to_http_actor(gene_vm_global, req_literal)
-          track_response(future)
-        except CatchableError as e:
-          await req.respond(Http500, "Concurrent dispatch error: " & e.msg)
+        if not try_acquire_http_in_flight():
+          await req.respond(HttpCode(http_overload_status), overload_response_body())
           return
+        concurrent_in_flight_acquired = true
 
-        response = future
-        track_response(response)
+        let dispatch = try_dispatch_to_http_actor(gene_vm_global, req_literal)
+        case dispatch.status
+        of HadsAccepted:
+          response = dispatch.future
+          track_response(response)
+        of HadsOverloaded, HadsLimitExceeded:
+          await req.respond(HttpCode(http_overload_status), overload_response_body())
+          return
+        of HadsStopped, HadsInvalid, HadsError:
+          http_log(LlError, "HTTP concurrent dispatch failed with status " & $dispatch.status)
+          await req.respond(Http500, "Concurrent dispatch failed")
+          return
       else:
         # NON-CONCURRENT MODE: execute the Gene handler inline.
         # This keeps request handling functional even when extension-local
@@ -1411,6 +1579,8 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
       if handler_val.kind != VkNil:
         ws_handler_global = handler_val
 
+    parse_http_backpressure_keywords(args, has_keyword_args)
+
   # Check for ^concurrent option and ^workers count
   {.cast(gcsafe).}:
     let concurrent_val = if has_keyword_args: get_keyword_arg(args, "concurrent") else: NIL
@@ -1421,7 +1591,10 @@ proc vm_start_server(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
       let workers_val = if has_keyword_args: get_keyword_arg(args, "workers") else: NIL
       let worker_count = if workers_val.kind == VkInt: workers_val.int64.int else: 4
 
-      http_log(LlDebug, "Concurrent mode enabled with " & $worker_count & " actor-backed HTTP workers")
+      http_log(LlDebug, "Concurrent mode enabled with " & $worker_count &
+        " actor-backed HTTP workers, queue_limit=" & $http_queue_limit &
+        ", max_in_flight=" & (if http_max_in_flight > 0: $http_max_in_flight else: "unlimited") &
+        ", overload_status=" & $http_overload_status)
       discard ensure_http_request_ports(worker_count)
 
   # Store the handler

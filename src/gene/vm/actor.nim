@@ -13,6 +13,16 @@ type
     AstSharedFrozen
     AstClonedMutable
 
+  ActorTrySendStatus* = enum
+    AtsAccepted
+    AtsFull
+    AtsStopped
+    AtsInvalidTarget
+
+  ActorTrySendResult* = object
+    status*: ActorTrySendStatus
+    future*: Value
+
   ActorMailboxMessage = ref object
     payload: Value
     reply_requested: bool
@@ -243,6 +253,29 @@ proc actor_enqueue_message(record: ActorRuntimeRecord, msg: ActorMailboxMessage,
   if wake_thread_id != -1:
     actor_wake_worker(wake_thread_id, wake_actor_id)
 
+proc actor_try_enqueue_message(record: ActorRuntimeRecord, msg: ActorMailboxMessage): ActorTrySendStatus =
+  var wake_thread_id = -1
+  var wake_actor_id = -1
+
+  acquire(record.lock)
+  if record.stopped:
+    release(record.lock)
+    return AtsStopped
+  if record.mailbox.len >= record.mailbox_limit:
+    release(record.lock)
+    return AtsFull
+
+  record.mailbox.add(msg)
+  if not record.dispatched:
+    record.dispatched = true
+    wake_thread_id = record.thread_id
+    wake_actor_id = record.actor.id
+  release(record.lock)
+
+  if wake_thread_id != -1:
+    actor_wake_worker(wake_thread_id, wake_actor_id)
+  AtsAccepted
+
 proc actor_enable_workers(worker_count: int) =
   acquire(actor_runtime_lock)
   defer: release(actor_runtime_lock)
@@ -275,7 +308,7 @@ proc actor_enable_workers(worker_count: int) =
 
   actor_system_enabled = true
 
-proc actor_spawn_value*(handler: Value, state: Value = NIL): Value =
+proc actor_spawn_value*(handler: Value, state: Value = NIL, mailbox_limit = 0): Value =
   acquire(actor_runtime_lock)
   defer: release(actor_runtime_lock)
 
@@ -287,9 +320,12 @@ proc actor_spawn_value*(handler: Value, state: Value = NIL): Value =
     raise new_exception(types.Exception, "gene/actor/spawn does not accept block handlers; use fn")
   if handler.kind notin {VkFunction, VkNativeFn}:
     raise new_exception(types.Exception, "gene/actor/spawn expects a callable handler")
+  if mailbox_limit < 0:
+    raise new_exception(types.Exception, "actor mailbox limit must be positive")
   if handler.kind == VkFunction:
     discard freeze_value(handler)
   let routed_state = prepare_actor_payload_for_send(state)
+  let effective_mailbox_limit = if mailbox_limit > 0: mailbox_limit else: actor_mailbox_limit
 
   let worker_id = actor_worker_ids[actor_rr_index mod actor_worker_ids.len]
   actor_rr_index.inc()
@@ -302,9 +338,9 @@ proc actor_spawn_value*(handler: Value, state: Value = NIL): Value =
     handler: handler,
     state: routed_state.value,
     stopped: false,
-    mailbox: initFifoQueue[ActorMailboxMessage](actor_mailbox_limit),
-    pending_sends: initFifoQueue[ActorMailboxMessage](actor_mailbox_limit),
-    mailbox_limit: actor_mailbox_limit,
+    mailbox: initFifoQueue[ActorMailboxMessage](effective_mailbox_limit),
+    pending_sends: initFifoQueue[ActorMailboxMessage](effective_mailbox_limit),
+    mailbox_limit: effective_mailbox_limit,
     dispatched: false
   )
   initLock(record.lock)
@@ -553,6 +589,69 @@ proc actor_send_value*(vm: ptr VirtualMachine, actor_value: Value, payload: Valu
   if reply_requested:
     return future_val.to_ref_value()
   NIL
+
+proc actor_try_send_value*(vm: ptr VirtualMachine, actor_value: Value, payload: Value,
+                           reply_requested = false): ActorTrySendResult =
+  result = ActorTrySendResult(status: AtsInvalidTarget, future: NIL)
+  if actor_value.kind != VkActor or actor_value.ref.actor == nil:
+    return
+  if reply_requested and vm == nil:
+    return
+
+  let record = actor_lookup(actor_value.ref.actor.id)
+  if record == nil:
+    return
+
+  acquire(record.lock)
+  let is_stopped = record.stopped
+  let thread_id = record.thread_id
+  release(record.lock)
+
+  if is_stopped:
+    result.status = AtsStopped
+    return
+  if thread_id <= 0 or thread_id >= g_max_threads:
+    return
+  if THREAD_DATA[thread_id].channel == nil:
+    return
+
+  var routed: tuple[tier: ActorSendTier, value: Value]
+  try:
+    routed = prepare_actor_payload_for_send(payload)
+  except CatchableError:
+    return
+
+  let message_id = next_thread_message_id()
+  var future_obj: FutureObj = nil
+  let future_val = new_ref(VkFuture)
+  if reply_requested:
+    let nim_fut = newFuture[Value]("actor_try_send_expect_reply")
+    future_obj = FutureObj(
+      state: FsPending,
+      value: NIL,
+      success_callbacks: @[],
+      failure_callbacks: @[],
+      nim_future: nim_fut
+    )
+    vm.thread_futures[message_id] = future_obj
+    vm.poll_enabled = true
+    future_val.future = future_obj
+
+  let msg = ActorMailboxMessage(
+    payload: routed.value,
+    reply_requested: reply_requested,
+    from_message_id: message_id,
+    from_thread_id: current_thread_id,
+    from_thread_secret: THREADS[current_thread_id].secret
+  )
+  result.status = actor_try_enqueue_message(record, msg)
+  if result.status != AtsAccepted:
+    if reply_requested:
+      vm.thread_futures.del(message_id)
+    return
+
+  if reply_requested:
+    result.future = future_val.to_ref_value()
 
 proc actor_send_internal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                          has_keyword_args: bool, reply_requested: bool): Value =

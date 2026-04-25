@@ -362,3 +362,39 @@ suite "Phase 2 actor send tiers":
     )
 
     check processed == 3.to_value()
+
+  test "try-send reports full mailboxes without blocking external senders":
+    init_thread_pool()
+    init_app_and_vm()
+    init_stdlib()
+    init_actor_runtime()
+    set_actor_mailbox_limit_for_test(1)
+    actor_enable_for_test(1)
+
+    let target = actor_spawn_value(NativeFn(target_handler).to_value(), 0.to_value())
+
+    discard actor_send_value(VM, target, actor_message("hold"))
+    sleep(50)
+
+    let queued = actor_try_send_value(VM, target, actor_message("queued"))
+    check queued.status == AtsAccepted
+
+    let started = epochTime()
+    let overloaded = actor_try_send_value(VM, target, actor_message("overloaded"))
+    let elapsed_ms = (epochTime() - started) * 1000.0
+
+    check overloaded.status == AtsFull
+    check overloaded.future == NIL
+    check elapsed_ms < 50.0
+
+  test "try-send reports invalid targets without raising":
+    init_thread_pool()
+    init_app_and_vm()
+    init_stdlib()
+    init_actor_runtime()
+    actor_enable_for_test(1)
+
+    let invalid = actor_try_send_value(VM, 42.to_value(), actor_message("invalid"))
+
+    check invalid.status == AtsInvalidTarget
+    check invalid.future == NIL

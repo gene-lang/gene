@@ -47,12 +47,16 @@ typedef uint64_t Key;
 
 /* ========== ABI Types ========== */
 
-#define GENE_EXT_ABI_VERSION 7u
+#define GENE_EXT_ABI_VERSION 8u
 
 typedef enum GeneExtStatus {
     GENE_EXT_OK = 0,
     GENE_EXT_ERR = 1,
-    GENE_EXT_ABI_MISMATCH = 2
+    GENE_EXT_ABI_MISMATCH = 2,
+    GENE_EXT_OVERLOADED = 3,
+    GENE_EXT_STOPPED = 4,
+    GENE_EXT_INVALID_TARGET = 5,
+    GENE_EXT_LIMIT_EXCEEDED = 6
 } GeneExtStatus;
 
 typedef void (*GeneHostLogFn)(int32_t level, const char* logger_name, const char* message);
@@ -60,6 +64,9 @@ typedef void (*GeneHostSchedulerTickFn)(void* vm_user_data, void* callback_user_
 typedef int32_t (*GeneHostRegisterSchedulerCallbackFn)(GeneHostSchedulerTickFn callback, void* callback_user_data);
 typedef int32_t (*GeneHostRegisterPortFn)(const char* name, int32_t kind, int32_t pool_size,
                                           Value handler, Value init_state, Value* out_handle);
+typedef int32_t (*GeneHostRegisterPortWithOptionsFn)(const char* name, int32_t kind, int32_t pool_size,
+                                                     Value handler, Value init_state,
+                                                     int32_t queue_limit, Value* out_handle);
 typedef int32_t (*GeneHostCallPortFn)(Value port_handle, Value msg, int32_t timeout_ms,
                                       Value* out_value);
 typedef int32_t (*GeneHostCallPortAsyncFn)(Value port_handle, Value msg,
@@ -79,6 +86,7 @@ typedef struct GeneHostAbi {
     GeneHostLogFn log_message_fn;  /* optional host logging callback */
     GeneHostRegisterSchedulerCallbackFn register_scheduler_callback_fn; /* optional scheduler registration hook */
     GeneHostRegisterPortFn register_port_fn; /* optional extension port registration hook */
+    GeneHostRegisterPortWithOptionsFn register_port_with_options_fn; /* optional extension port registration with queue limits */
     GeneHostCallPortFn call_port_fn;         /* optional extension port call hook */
     GeneHostCallPortAsyncFn call_port_async_fn; /* optional async extension port call hook */
     GeneHostActorReplyFn actor_reply_fn; /* optional host actor reply hook */

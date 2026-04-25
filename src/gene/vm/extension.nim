@@ -93,6 +93,7 @@ type
     handler*: Value
     init_state*: Value
     pool_size*: int
+    mailbox_limit*: int
     handles*: seq[Value]
 
   LlmHostBridge = ref object
@@ -590,11 +591,13 @@ proc clone_extension_port_state(init_state: Value): Value =
 
 proc register_extension_port_runtime*(name: string, kind: ExtensionPortKind,
                                       handler: Value, init_state: Value = NIL,
-                                      pool_size = 1): Value =
+                                      pool_size = 1, mailbox_limit = 0): Value =
   if name.len == 0:
     raise new_exception(types.Exception, "extension port name cannot be empty")
   if handler.kind notin {VkFunction, VkNativeFn, VkBlock}:
     raise new_exception(types.Exception, "extension port handler must be callable")
+  if mailbox_limit < 0:
+    raise new_exception(types.Exception, "extension port queue_limit must be positive")
   if kind != EpkFactory and not actor_runtime_active():
     raise new_exception(types.Exception, "extension ports require the actor runtime to be enabled")
   if registered_extension_ports.hasKey(name):
@@ -606,13 +609,14 @@ proc register_extension_port_runtime*(name: string, kind: ExtensionPortKind,
     handler: handler,
     init_state: init_state,
     pool_size: max(1, pool_size),
+    mailbox_limit: mailbox_limit,
     handles: @[]
   )
   registered_extension_ports[name] = reg
 
   case kind
   of EpkSingleton:
-    let actor = actor_spawn_value(handler, init_state)
+    let actor = actor_spawn_value(handler, init_state, mailbox_limit)
     reg.handles = @[actor]
     actor
   of EpkPool:
@@ -621,7 +625,7 @@ proc register_extension_port_runtime*(name: string, kind: ExtensionPortKind,
       let state_val =
         if i == 0: init_state
         else: clone_extension_port_state(init_state)
-      let actor = actor_spawn_value(handler, state_val)
+      let actor = actor_spawn_value(handler, state_val, mailbox_limit)
       reg.handles.add(actor)
       array_data(handles).add(actor)
     handles
@@ -639,7 +643,7 @@ proc spawn_registered_extension_factory_port*(name: string, init_state: Value = 
   let state_val =
     if init_state != NIL: init_state
     else: reg.init_state
-  actor_spawn_value(reg.handler, state_val)
+  actor_spawn_value(reg.handler, state_val, reg.mailbox_limit)
 
 proc clear_registered_extension_ports_for_test*() =
   registered_extension_ports.clear()
@@ -658,6 +662,34 @@ proc host_register_port_bridge*(name: cstring, kind: int32, pool_size: int32,
         of int32(EpkFactory.ord): EpkFactory
         else: return int32(GeneExtErr)
       let handle = register_extension_port_runtime($name, port_kind, handler, init_state, max(1, int(pool_size)))
+      if out_handle != nil:
+        out_handle[] = handle
+      int32(GeneExtOk)
+    except CatchableError:
+      int32(GeneExtErr)
+
+proc host_register_port_with_options_bridge*(name: cstring, kind: int32, pool_size: int32,
+                                             handler: Value, init_state: Value,
+                                             queue_limit: int32,
+                                             out_handle: ptr Value): int32 {.cdecl, gcsafe.} =
+  {.cast(gcsafe).}:
+    if name == nil or queue_limit < 0:
+      return int32(GeneExtErr)
+    try:
+      let port_kind =
+        case kind
+        of int32(EpkSingleton.ord): EpkSingleton
+        of int32(EpkPool.ord): EpkPool
+        of int32(EpkFactory.ord): EpkFactory
+        else: return int32(GeneExtErr)
+      let handle = register_extension_port_runtime(
+        $name,
+        port_kind,
+        handler,
+        init_state,
+        max(1, int(pool_size)),
+        int(queue_limit)
+      )
       if out_handle != nil:
         out_handle[] = handle
       int32(GeneExtOk)
@@ -691,13 +723,18 @@ proc host_call_port_async_bridge*(port_handle: Value, msg: Value,
   {.cast(gcsafe).}:
     if VM == nil:
       return int32(GeneExtErr)
-    try:
-      let future = actor_send_value(VM, port_handle, msg, true)
+    let sent = actor_try_send_value(VM, port_handle, msg, true)
+    case sent.status
+    of AtsAccepted:
       if out_future != nil:
-        out_future[] = future
+        out_future[] = sent.future
       int32(GeneExtOk)
-    except CatchableError:
-      int32(GeneExtErr)
+    of AtsFull:
+      int32(GeneExtOverloaded)
+    of AtsStopped:
+      int32(GeneExtStopped)
+    of AtsInvalidTarget:
+      int32(GeneExtInvalidTarget)
 
 proc host_actor_reply_bridge*(ctx: Value, payload: Value): int32 {.cdecl, gcsafe.} =
   {.cast(gcsafe).}:
@@ -781,6 +818,7 @@ proc load_extension*(vm: ptr VirtualMachine, path: string): Namespace =
       log_message_fn: host_log_message_bridge,
       register_scheduler_callback_fn: host_register_scheduler_callback_bridge,
       register_port_fn: host_register_port_bridge,
+      register_port_with_options_fn: host_register_port_with_options_bridge,
       call_port_fn: host_call_port_bridge,
       call_port_async_fn: host_call_port_async_bridge,
       actor_reply_fn: host_actor_reply_bridge,

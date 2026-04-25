@@ -7,13 +7,17 @@ import ../types
 import ../logging_core
 
 const
-  GENE_EXT_ABI_VERSION* = 7'u32
+  GENE_EXT_ABI_VERSION* = 8'u32
 
 type
   GeneExtStatus* = enum
     GeneExtOk = 0
     GeneExtErr = 1
     GeneExtAbiMismatch = 2
+    GeneExtOverloaded = 3
+    GeneExtStopped = 4
+    GeneExtInvalidTarget = 5
+    GeneExtLimitExceeded = 6
 
   GeneHostLogFn* = proc(level: int32, logger_name: cstring, message: cstring) {.cdecl, gcsafe.}
   GeneHostSchedulerTickFn* = proc(vm_user_data: pointer, callback_user_data: pointer) {.cdecl, gcsafe.}
@@ -21,6 +25,10 @@ type
   GeneHostRegisterPortFn* = proc(name: cstring, kind: int32, pool_size: int32,
                                  handler: Value, init_state: Value,
                                  out_handle: ptr Value): int32 {.cdecl, gcsafe.}
+  GeneHostRegisterPortWithOptionsFn* = proc(name: cstring, kind: int32, pool_size: int32,
+                                            handler: Value, init_state: Value,
+                                            queue_limit: int32,
+                                            out_handle: ptr Value): int32 {.cdecl, gcsafe.}
   GeneHostCallPortFn* = proc(port_handle: Value, msg: Value, timeout_ms: int32,
                              out_value: ptr Value): int32 {.cdecl, gcsafe.}
   GeneHostCallPortAsyncFn* = proc(port_handle: Value, msg: Value,
@@ -37,6 +45,7 @@ type
     log_message_fn*: GeneHostLogFn
     register_scheduler_callback_fn*: GeneHostRegisterSchedulerCallbackFn
     register_port_fn*: GeneHostRegisterPortFn
+    register_port_with_options_fn*: GeneHostRegisterPortWithOptionsFn
     call_port_fn*: GeneHostCallPortFn
     call_port_async_fn*: GeneHostCallPortAsyncFn
     actor_reply_fn*: GeneHostActorReplyFn
@@ -80,8 +89,26 @@ proc run_extension_vm_created_callbacks*() =
 proc register_extension_port*(host: ptr GeneHostAbi, name: string,
                               kind: ExtensionPortKind, handler: Value,
                               init_state: Value = NIL, pool_size = 1,
-                              out_handle: ptr Value = nil): GeneExtStatus =
-  if host == nil or host.register_port_fn == nil or name.len == 0:
+                              out_handle: ptr Value = nil,
+                              queue_limit = 0): GeneExtStatus =
+  if host == nil or name.len == 0:
+    return GeneExtErr
+  if queue_limit < 0:
+    return GeneExtErr
+  if queue_limit > 0:
+    if host.register_port_with_options_fn == nil:
+      return GeneExtErr
+    let status = host.register_port_with_options_fn(
+      name.cstring,
+      int32(kind.ord),
+      int32(pool_size),
+      handler,
+      init_state,
+      int32(queue_limit),
+      out_handle
+    )
+    return cast[GeneExtStatus](status)
+  if host.register_port_fn == nil:
     return GeneExtErr
   let status = host.register_port_fn(
     name.cstring,
@@ -95,13 +122,13 @@ proc register_extension_port*(host: ptr GeneHostAbi, name: string,
 
 proc register_singleton_port*(host: ptr GeneHostAbi, name: string,
                               handler: Value, init_state: Value = NIL,
-                              out_handle: ptr Value = nil): GeneExtStatus =
-  register_extension_port(host, name, EpkSingleton, handler, init_state, 1, out_handle)
+                              out_handle: ptr Value = nil, queue_limit = 0): GeneExtStatus =
+  register_extension_port(host, name, EpkSingleton, handler, init_state, 1, out_handle, queue_limit)
 
 proc register_port_pool*(host: ptr GeneHostAbi, name: string, pool_size: int,
                          handler: Value, init_state: Value = NIL,
-                         out_handle: ptr Value = nil): GeneExtStatus =
-  register_extension_port(host, name, EpkPool, handler, init_state, pool_size, out_handle)
+                         out_handle: ptr Value = nil, queue_limit = 0): GeneExtStatus =
+  register_extension_port(host, name, EpkPool, handler, init_state, pool_size, out_handle, queue_limit)
 
 proc register_port_factory*(host: ptr GeneHostAbi, name: string,
                             handler: Value): GeneExtStatus =
@@ -125,6 +152,15 @@ proc call_extension_port_async*(host: ptr GeneHostAbi, port_handle: Value, msg: 
   if status != int32(GeneExtOk):
     return NIL
   res
+
+proc call_extension_port_async_status*(host: ptr GeneHostAbi, port_handle: Value,
+                                       msg: Value): tuple[status: GeneExtStatus, future: Value] =
+  result = (GeneExtErr, NIL)
+  if host == nil or host.call_port_async_fn == nil:
+    return
+  var res = NIL
+  let status = cast[GeneExtStatus](host.call_port_async_fn(port_handle, msg, addr res))
+  result = (status, if status == GeneExtOk: res else: NIL)
 
 proc reply_from_extension_context*(host: ptr GeneHostAbi, ctx: Value, payload: Value): GeneExtStatus =
   if host == nil or host.actor_reply_fn == nil:

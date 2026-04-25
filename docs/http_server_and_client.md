@@ -94,12 +94,25 @@ Current keywords:
 
 - `^concurrent true|false`
 - `^workers <int>`
+- `^queue_limit <positive-int>`: actor-backed concurrent-mode mailbox capacity per HTTP request worker. Defaults to `10000`; values above `10000`, zero, negative values, and non-integers fail at server start.
+- `^max_in_flight <positive-int>`: optional cap for accepted actor-backed HTTP requests currently awaiting a worker reply. Omit it for the historical unlimited behavior; configured values must be `1..10000`.
+- `^overload_status <int>`: HTTP status returned for deterministic backpressure responses. Defaults to `503` and must be in the `400..599` range.
 - `^websocket {^path "/ws" ^handler handler}`
 
 Current ownership model:
 
 - `^concurrent true` routes request execution through actor-backed request
   ports instead of the older extension-local Gene thread pool.
+- Concurrent dispatch uses a non-blocking actor-port enqueue. If all request
+  workers are saturated, or if `^max_in_flight` has been reached, the server
+  returns the configured overload status immediately instead of waiting on actor
+  mailbox space.
+- The default overload response is status `503` with the small body
+  `Service overloaded`. The body is intentionally fixed and does not include
+  request bodies, tokens, or headers.
+- Stopped or invalid actor request ports fail closed with a safe `500` response;
+  detailed low-overhead counters/status are added by the later readiness
+  diagnostics work.
 - SSE and websocket upgrade handling stay on the live server-owner lane because
   they still require the live socket/client object.
 
