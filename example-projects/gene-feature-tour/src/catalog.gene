@@ -1,0 +1,215 @@
+# catalog.gene — domain module for the feature tour.
+# It models a small task catalog while demonstrating type aliases, enums,
+# classes, inheritance, interfaces/adapters, generators, macros, and exports.
+
+# ----------------------------------------------------------------------------
+# 1) Types, aliases, enums
+# ----------------------------------------------------------------------------
+
+(type /UserId Int)
+(type /DisplayName (String | Nil))
+
+# Generic functions are supported; generic classes are not currently a complete surface.
+(fn /identity:T [x: T] -> T x)
+# RECOMMENDATION: add generic class syntax, e.g. `(class Stack:T ...)`.
+# RECOMMENDATION: add type bounds, e.g. `(fn max:T ^where (Comparable T) [a: T b: T] ...)`.
+
+(enum /Priority low normal high urgent)
+# RECOMMENDATION: unify enums and ADTs so enum cases can optionally carry payload data.
+
+# ----------------------------------------------------------------------------
+# 2) Interfaces and adapters
+# ----------------------------------------------------------------------------
+
+(interface /Renderable
+  (method render)
+  (field title ^readonly true)
+)
+# RECOMMENDATION: interface declarations should enforce method arity, argument types,
+# return types, and field types, not only names.
+
+(interface /Scored
+  (method score)
+)
+
+# Inline implementation example.
+(class /Note
+  (implement Renderable
+    (method render [] #"NOTE: #{/text}")
+  )
+
+  (ctor [text: String]
+    (/title = "note")
+    (/text = text)
+  )
+)
+
+# External adapter example: Int can be viewed as Scored.
+(implement Scored for Int
+  (method score [] /_genevalue)
+)
+# RECOMMENDATION: add explicit adapter field/method rename/hide syntax.
+
+# ----------------------------------------------------------------------------
+# 3) Classes, fields, constructors, methods, contracts
+# ----------------------------------------------------------------------------
+
+(class /Task
+  ^fields {^id Int ^title String ^priority Priority ^owner DisplayName ^done Bool}
+
+  (ctor [id: UserId title: String priority owner]
+    (/id = id)
+    (/title = title)
+    (/priority = priority)
+    (/owner = owner)
+    (/done = false)
+  )
+
+  (method mark_done [] -> Bool
+    (/done = true)
+    /done
+  )
+
+  (method reopen [] -> Bool
+    (/done = false)
+    /done
+  )
+
+  (method done? [] -> Bool
+    /done
+  )
+
+  (method render [] -> String
+    (if (/owner != nil)
+      #"#{/id}: #{/title} [#{/priority}] owner=#{/owner}"
+    else
+      #"#{/id}: #{/title} [#{/priority}]"
+    )
+  )
+)
+
+# External implementation for the domain class.
+(implement Renderable for Task
+  (method render [] (/_genevalue .render))
+)
+
+(class /TimedTask < Task
+  ^fields {^due_at DateTime}
+
+  (ctor [id: UserId title: String priority owner due_at]
+    (super .ctor id title priority owner)
+    (/due_at = due_at)
+  )
+
+  (method render [] -> String
+    (var base (super .render))
+    #"#{base}; due=#{/due_at}"
+  )
+)
+
+(class /Backlog
+  ^fields {^items Array}
+
+  (ctor []
+    (/items = [])
+  )
+
+  (method add [task: Task] -> Task
+    (/items .add task)
+    task
+  )
+
+  (method all [] -> Array
+    /items
+  )
+
+  (method count [] -> Int
+    /items/.size
+  )
+
+  (method pending [] -> Array
+    (/items .filter (fn [t] (! t/.done?)))
+  )
+
+  (method titles [] -> Array
+    (/items .map (fn [t] t/title))
+  )
+
+  (method total_score [] -> Int
+    (/items .reduce 0 (fn [acc t] (acc + t/id)))
+  )
+)
+
+# Callable instance.
+(class /Multiplier
+  (ctor [factor: Int]
+    (/factor = factor)
+  )
+
+  (method call [x: Int] -> Int
+    (x * /factor)
+  )
+)
+# RECOMMENDATION: add static/class method syntax instead of requiring namespace functions.
+# RECOMMENDATION: add access control: private/protected/module-private fields and methods.
+# RECOMMENDATION: add class invariants checked after constructors/methods.
+
+# ----------------------------------------------------------------------------
+# 4) Exported constructors and helpers
+# ----------------------------------------------------------------------------
+
+(fn /make_task
+  [id: UserId title: String ^priority = Priority/normal ^owner = nil] -> Task
+  ^pre [(id > 0)]
+  ^post [(result is Task)]
+  (new Task id title priority owner)
+)
+
+(fn /make_counter [start: Int]
+  (var count start)
+  (fn []
+    (count += 1)
+    count
+  )
+)
+
+(fn /positive_add [a: Int b: Int] -> Int
+  ^pre [(a >= 0) (b >= 0)]
+  ^post [(result >= a) (result >= b)]
+  (a + b)
+)
+
+(fn /annotated_add [a b]
+  ^intent "Add two values"
+  ^examples [
+    [1 2] -> 3
+    [2 3] -> 5
+  ]
+  (a + b)
+)
+# RECOMMENDATION: expose a uniform reflection API for function metadata, classes, fields, and modules.
+
+# ----------------------------------------------------------------------------
+# 5) Generator functions
+# ----------------------------------------------------------------------------
+
+(fn /ids* [start: Int count: Int]
+  (var i 0)
+  (while (i < count)
+    (yield (start + i))
+    (i += 1)
+  )
+)
+# RECOMMENDATION: add `yield*` delegation and generator combinators: take, drop, chain, zip.
+# RECOMMENDATION: add async generators, e.g. `(fn stream* async [...] ...)` or `(async fn* ...)`.
+
+# ----------------------------------------------------------------------------
+# 6) Macro-like function
+# ----------------------------------------------------------------------------
+
+(fn /trace! [label expr]
+  (println "TRACE label:" label)
+  (println "TRACE AST:" expr)
+  ($caller_eval expr)
+)
+# RECOMMENDATION: add macro debugging/introspection tools and source spans in macro-expanded code.

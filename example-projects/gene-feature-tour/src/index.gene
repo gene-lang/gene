@@ -1,0 +1,869 @@
+#!/usr/bin/env gene run
+
+# index.gene — Complete Gene language feature tour.
+# Run from project root:
+#   ../../bin/gene run src/index.gene
+#
+# RECOMMENDATION: publish a generated language reference from parser + tests so syntax,
+# docs, and executable examples cannot drift.
+
+#<
+
+Block comments use #< ... >#.
+
+This file is deliberately broad. Some sections demonstrate beta or experimental
+surfaces; those are marked in comments.
+
+>#
+
+
+# ----------------------------------------------------------------------------
+# 0) Compile-time evaluation
+# ----------------------------------------------------------------------------
+
+(comptime
+  (var mode ($env "GENE_TOUR_MODE" "fast"))
+
+  (if (mode == "fast")
+    (fn generated_policy [] "fast")
+  else
+    (fn generated_policy [] "safe")
+  )
+)
+# `comptime` emits direct definitions/imports/classes/etc. into this compilation unit.
+# RECOMMENDATION: add `(emit form)` so dynamically constructed quoted AST can be emitted.
+# RECOMMENDATION: support loops, user-defined calls, limited file reads, and compiler reflection
+# inside comptime in a controlled/sandboxed way.
+
+
+# ----------------------------------------------------------------------------
+# 1) Modules, imports, aliases, nested namespace imports
+# ----------------------------------------------------------------------------
+
+(import a b from "./mathbits")
+(import ops/inc:inc1 from "./mathbits")
+(import ops/[double:twice triple:thrice] from "./mathbits")
+
+(import
+  UserId
+  DisplayName
+  Priority
+  Renderable
+  Scored
+  Note
+  Task
+  TimedTask
+  Backlog
+  Multiplier
+  make_task
+  make_counter
+  positive_add
+  annotated_add
+  identity
+  ids*
+  trace!
+  from "./catalog"
+)
+
+# Package-qualified import shape:
+# (import upcase from "index" ^pkg "x/some_lib")
+# (import value from "feature" of "x/some_lib")
+# RECOMMENDATION: add selective re-export syntax, e.g. `(export imported_name)`.
+# RECOMMENDATION: add dynamic/conditional imports with clear caching semantics.
+
+
+# ----------------------------------------------------------------------------
+# 2) Primitive literals, nil/void, symbols, strings, chars, numbers
+# ----------------------------------------------------------------------------
+
+(println "=== 2) literals ===")
+
+(var an_int 42)
+(var bigish_int 9223372036854775807)
+(var a_float 3.14159)
+(var a_bool true)
+(var no_value nil)
+(var missing_result void)
+(var a_char 'G')
+(var a_symbol `hello)
+(var a_string "Gene")
+(var interpolated #"Hello, #{a_string}; policy=#{generated_policy}")
+
+(println an_int a_float a_bool no_value missing_result a_char a_symbol)
+(println interpolated)
+
+# Integer overflow throws instead of promoting to bigint.
+# RECOMMENDATION: add BigInt for unbounded arithmetic and exact integer-heavy workloads.
+
+# Strings: newline-capable normal strings and interpolation.
+(var multiline "line one
+line two")
+(println multiline)
+
+# RECOMMENDATION: add raw strings, e.g. r"...", for regex patterns, Windows paths, and JSON snippets.
+
+
+# ----------------------------------------------------------------------------
+# 3) Date, DateTime, Time, Bytes, Regex literals
+# ----------------------------------------------------------------------------
+
+(println "=== 3) date/time/bytes/regex literals ===")
+
+(var d 2024-01-23)
+(var dt1 2024-01-23T20:10)
+(var dt2 2024-01-23T20:10:10.123)
+(var dtz 2024-01-23T20:10:10Z)
+(var t1 10:10)
+(var t2 10:10:10.123)
+
+(println d dt1 dt2 dtz t1 t2)
+(println "date fields:" (d .year) (d .month) (d .day))
+(println "date comparison:" (< 2024-01-01 2024-12-31))
+
+# RECOMMENDATION: consolidate DateTime docs/API: literals exist, but parsing, duration arithmetic,
+# timezone conversion, Period/Duration types, and stable timezone accessors need a clearer surface.
+
+(var bytes_bin 0!11110000)
+(var bytes_hex 0#a0ff)
+(var bytes_b64 0*AQID)
+(var hex_int 0xff) # Hex integer, not bytes.
+
+(println bytes_bin bytes_hex bytes_b64 hex_int)
+(println "bytes size/get/to_array:" (0#abcd .size) (0#abcd .get 0) (0#abcd .to_array))
+
+# RECOMMENDATION: add full Bytes API: concat, slice, compare, bitwise ops, decode-to-string, encode-from-array.
+
+(var digit_re #/(\d+)/)
+(var flagged_re #/pattern/i)
+(var replacement_re #/(\d)/[\\1]/)
+
+(println digit_re flagged_re replacement_re)
+# RECOMMENDATION: add regex interpolation and verbose `/x` mode:
+#   #/#{escaped_pattern}/i
+#   #/ verbose pattern /x
+
+
+# ----------------------------------------------------------------------------
+# 4) Gene data structure: type + props + children; quote/unquote/render
+# ----------------------------------------------------------------------------
+
+(println "=== 4) Gene data values ===")
+
+(var person_gene `(Person ^name "Ada" ^age 37 (Address ^city "London") "child-1" "child-2"))
+(println "gene type:" person_gene/.type)
+(println "gene props:" person_gene/.props)
+(println "gene children:" person_gene/.children)
+(println "gene property lookup:" person_gene/name)
+(println "gene child lookup:" person_gene/0)
+(println "missing gene prop:" person_gene/missing)
+
+(var title "Feature Tour")
+(var template `(section ^class "hero" (h1 %title)))
+(println "quoted template:" template)
+(println "rendered template:" ($render template))
+
+(var attrs {^class "card" ^id "intro"})
+(var children [`(h1 "Title") `(p "Body")])
+(var html_gene (`div ^...attrs children...))
+(println "gene prop/child spread:" html_gene)
+
+# RECOMMENDATION: add first-class source-span metadata for quoted forms for macro diagnostics.
+
+
+# ----------------------------------------------------------------------------
+# 5) Expressions, operators, assignment, precedence
+# ----------------------------------------------------------------------------
+
+(println "=== 5) expressions and operators ===")
+
+(var x 10)
+(println "arithmetic:" (10 + 3) (10 - 3) (10 * 3) (10 / 3) (10 % 3))
+(println "precedence:" (2 + 3 * 4))
+(println "comparison:" (3 == 3) (3 != 4) (5 > 2) (5 >= 5) (4 <= 3))
+(println "chained comparison:" (1 < 2 <= 3) (5 > 3 > 1))
+(println "logic:" (true && true) (true || false) (true &|& false) (! false))
+
+(x = 20)
+(x += 5)
+(x -= 2)
+(x *= 3)
+(x /= 2)
+(x %= 5)
+(println "assigned x:" x)
+
+(var do_result
+  (do
+    (var local_a 5)
+    (var local_b 8)
+    (local_a + local_b)
+  )
+)
+(println "do returns last expression:" do_result)
+
+(println "ifel:" (ifel (x > 10) "large" "small"))
+
+
+# ----------------------------------------------------------------------------
+# 6) Control flow
+# ----------------------------------------------------------------------------
+
+(println "=== 6) control flow ===")
+
+(var status "unknown")
+(if (x > 10)
+  (status = "big")
+elif (x == 10)
+  (status = "ten")
+else
+  (status = "small")
+)
+(println "if/elif/else status:" status)
+
+(var n 0)
+(while (n < 3)
+  (n += 1)
+)
+(println "while n:" n)
+
+(var loop_value
+  (loop
+    (if (n > 10) then (break "done"))
+    (n += 1)
+    (if (n == 5) then (continue))
+    (if (n >= 7) then (break n))
+  )
+)
+(println "loop break value:" loop_value)
+
+(repeat 2
+  (println "repeat body")
+)
+
+(var total 0)
+(for item in [1 2 3 4]
+  (total += item)
+)
+(println "for array total:" total)
+
+(for i value in [10 20 30]
+  (println "for index/value:" i value)
+)
+
+(for k v in {^alice 90 ^bob 85}
+  (println "for map key/value:" k v)
+)
+
+(var day 2)
+(var day_name
+  (case day
+    when 1 "Monday"
+    when 2 "Tuesday"
+    when 3 "Wednesday"
+    else "Other"
+  )
+)
+(println "case value:" day_name)
+
+(fn find_first [arr pred]
+  (for candidate in arr
+    (if (pred candidate) then (return candidate))
+  )
+  nil
+)
+(println "return from function:" (find_first [1 3 4 6] (fn [v] ((v % 2) == 0))))
+
+# RECOMMENDATION: add exhaustiveness checking for ADT/enum case expressions.
+# RECOMMENDATION: add loop labels for nested break/continue:
+#   (loop ^name outer ... (break ^from outer value))
+
+
+# ----------------------------------------------------------------------------
+# 7) Arrays, maps, ranges, collection methods, spread
+# ----------------------------------------------------------------------------
+
+(println "=== 7) collections ===")
+
+(var arr [1 2 3])
+(println "array:" arr arr/0 arr/-1 arr/99)
+(arr/0 = 99)
+(println "array after mutation:" arr)
+
+(var left [1 2])
+(var right [3 4])
+(var both [left... right...])
+(println "array spread:" both)
+
+(var matrix [[1 2] [3 4]])
+(println "nested array access:" matrix/1/0)
+
+(var popped (do
+  (var tmp [1 2 3])
+  (tmp .add 4)
+  (var last (tmp .pop))
+  [tmp last]
+))
+(println "array add/pop:" popped)
+
+(var nums [5 1 4 2 3])
+(println "array size/length/get:" nums/.size nums/.length (nums .get 0))
+(println "array map:" (nums .map (fn [v] (v * 2))))
+(println "array filter:" (nums .filter (fn [v] ((v % 2) == 0))))
+(println "array reduce:" (nums .reduce 0 (fn [acc v] (acc + v))))
+(println "array find:" (nums .find (fn [v] (v > 3))))
+(println "array zip:" (nums .zip ["a" "b" "c" "d" "e"]))
+(println "array reverse:" nums/.reverse)
+# (println "array sort:" nums/.sort)
+# (println "array slice:" (nums .slice 1 3))
+# RECOMMENDATION: clarify exact slice signature and add literal slice syntax: nums[1..3] or nums/1..3.
+# RECOMMENDATION: add tuple/fixed-array type for immutable fixed-size records.
+
+(var cfg {^host "localhost" ^port 8080 ^ssl false})
+(println "map:" cfg cfg/host cfg/missing)
+(cfg/port = 9090)
+(println "map after mutation:" cfg)
+
+(var nested {^outer {^inner 123}})
+(println "nested map access:" nested/outer/inner)
+
+(var shortcuts {
+  ^^enabled       # ^enabled true
+  ^!disabled     # ^disabled false
+  ^limits^^soft  # ^limits {^soft true}
+  ^limits^!hard  # ^limits {^hard false}
+})
+(println "map shortcuts:" shortcuts/enabled shortcuts/disabled shortcuts/limits/soft shortcuts/limits/hard)
+
+(println "assertion access:" cfg/host/!)
+(try
+  cfg/missing/!
+  catch *
+  (println "cfg/missing/! correctly threw:" $ex/message)
+)
+
+(println "map size/keys/values:" cfg/.size cfg/.keys cfg/.values)
+(println "map contains:" (cfg .contains `host))
+(println "map merge:" (cfg .merge {^mode "dev"}))
+(println "map filter:" ({^a 1 ^b 2 ^c 3} .filter (fn [k v] (v > 1))))
+(println "map reduce:" ({^a 1 ^b 2} .reduce 0 (fn [acc k v] (acc + v))))
+
+# RECOMMENDATION: add stable map destructuring:
+#   (var {^host h ^port p rest...} cfg)
+# RECOMMENDATION: add ordered/sorted maps where iteration order matters.
+
+(var r1 (0 .. 3))
+(var r2 (range 1 5 2))
+(var r3 (range 5 1 -2))
+(println "ranges:" r1 r2 r3)
+
+(for value in r2
+  (println "range item:" value)
+)
+
+(var it (r2 .iter))
+(println "range iterator:" (it .has_next) (it .next) (it .next_pair))
+
+
+# ----------------------------------------------------------------------------
+# 8) Selectors: path lookup, dynamic segments, selector values, stream mode, set
+# ----------------------------------------------------------------------------
+
+(println "=== 8) selectors ===")
+
+(var data {
+  ^users [
+    {^name "Ada" ^profile {^lang "Gene"}}
+    {^name "Bob" ^profile {^lang "Nim"}}
+  ]
+  ^props {^x 1 ^y 2}
+})
+
+(println "slash lookup:" data/users/0/name data/users/-1/profile/lang)
+(println "nil receiver stays nil:" nil/name)
+(println "missing lookup is void:" data/users/99/name)
+
+(var key "name")
+(var idx 1)
+(println "dynamic selector segment:" data/users/<idx>/<key>)
+
+(println "explicit ./ selector call:" ({^a "A"} ./ "a") ({} ./ "a" "default"))
+
+(var first_name @users/0/name)
+(var all_names @users/*/name)
+(println "selector values:" (first_name data) (all_names data))
+(println "selector method shorthand:" (data .@users/1/profile/lang))
+(println "selector entry expansion:" (@props/** data))
+(println "selector collect entries:" ((@ "props" ** @@) data))
+
+($set data @props {^x 10 ^y 20})
+(println "after simple $set:" data/props)
+
+# RECOMMENDATION: extend $set to deep selectors:
+#   ($set data @users/0/profile/lang "Gene")
+# RECOMMENDATION: add selector delete/update/append APIs and predicate/filter segments:
+#   @users/*[.active]/name
+# RECOMMENDATION: add optional selector trace/diagnostic mode because void can hide where a path failed.
+
+
+# ----------------------------------------------------------------------------
+# 9) Functions: forms, arguments, closure, metadata, macros
+# ----------------------------------------------------------------------------
+
+(println "=== 9) functions ===")
+
+(fn add [a b] (a + b))
+(fn typed_add [a: Int b: Int] -> Int (a + b))
+(fn hello [] (println "hello()"))
+
+(var double (fn [v] (v * 2)))
+
+(fn greet [name = "World"]
+  #"Hello, #{name}"
+)
+
+(fn sum_all [first rest...]
+  (var acc first)
+  (for v in rest
+    (acc += v)
+  )
+  acc
+)
+
+(fn configure [^host ^port = 8080 ^ssl = false ^debug = false]
+  {^host host ^port port ^ssl ssl ^debug debug}
+)
+
+(println "function calls:" (add 1 2) (typed_add 3 4) (double 5))
+(println "default arg:" (greet) (greet "Gene"))
+(println "rest arg:" (sum_all 1 2 3 4))
+(println "keyword args:" (configure ^host "localhost" ^ssl true))
+(println ".call:" (add .call 10 20))
+
+(var counter (make_counter 10))
+(println "closure:" (counter) (counter))
+
+(println "generic identity:" (identity 123) (identity "abc"))
+
+(println "function metadata intent:" (function_intent annotated_add))
+(println "function metadata examples:" (function_examples annotated_add))
+
+(println "macro-like trace:" (trace! "sum expression" (1 + 2 + 3)))
+
+(var render_subject "world")
+(println "rendered quoted form:" ($render `(println "hello" %render_subject)))
+
+# RECOMMENDATION: add core partial application and composition:
+#   (var add10 (partial + 10))
+#   (var f (compose normalize render))
+# RECOMMENDATION: add threading/pipeline macros:
+#   (-> value normalize validate render)
+
+
+# ----------------------------------------------------------------------------
+# 10) Gradual typing, runtime type checks, Result/Option, ADT-style matching
+# ----------------------------------------------------------------------------
+
+(println "=== 10) types ===")
+
+(var maybe_name: DisplayName "Ada")
+(var maybe_missing: DisplayName nil)
+
+(println "type checks:" (42 is Int) ("hi" is String) ([1] is Array) ({^a 1} is Map))
+(println "typeof:" (typeof 42) (typeof "hi") (typeof maybe_name))
+(println "union type expression:" (String | Nil))
+(println "type equivalence:" (types_equivalent DisplayName `(Nil | String)))
+
+(fn show_name [name: DisplayName] -> String
+  (name || "missing")
+)
+(println "union flow:" (show_name maybe_name) (show_name maybe_missing))
+
+(fn safe_div [a: Int b: Int] -> (Result Float String)
+  (if (b == 0)
+    (Err "division by zero")
+  else
+    (Ok (a / b))
+  )
+)
+
+(var ok_result (safe_div 10 2))
+(var err_result (safe_div 10 0))
+(println "Result values:" ok_result err_result)
+
+(case ok_result
+  when (Ok v) (println "case Ok:" v)
+  when (Err e) (println "case Err:" e)
+)
+
+(var some_val (Some "value"))
+(var none_val None)
+(println "Option values:" some_val none_val)
+
+(fn compute_with_question [] -> (Result Float String)
+  (var v ((safe_div 10 2) ?))
+  (Ok (v * 3))
+)
+(println "? unwrap:" (compute_with_question))
+
+# ADT/Option matching and ? are documented as experimental.
+# RECOMMENDATION: stabilize ADT pattern syntax, add exhaustiveness checks, guards, or-patterns, as-patterns:
+#   when (Ok v) if (v > 0) ...
+#   when (Err e as err) ...
+#   when (Some x | None) ...
+
+
+# ----------------------------------------------------------------------------
+# 11) Destructuring and pattern binding
+# ----------------------------------------------------------------------------
+
+(println "=== 11) patterns/destructuring ===")
+
+(var [dx dy] [10 20])
+(println "array destructuring:" dx dy)
+
+(var [with_default = nil second = 2] [])
+(println "defaults in destructuring:" with_default second)
+
+(var [first rest...] [1 2 3 4])
+(println "named rest:" first rest)
+
+(var [prefix... last_item] [1 2 3 4])
+(println "postfix rest:" prefix last_item)
+
+(var payload `(payload ^a 10 ^x 99 20 30 40))
+(var [^a first_child child_rest...] payload)
+(println "Gene prop/child destructuring:" a first_child child_rest)
+
+(var payload2 `(payload ^a 10 ^x 99 ^y 100 20))
+(var [^a child ^extra...] payload2)
+(println "Gene prop rest:" a child extra)
+
+# RECOMMENDATION: add stable nested patterns:
+#   (var [user [city zip]] value)
+# RECOMMENDATION: add stable map destructuring:
+#   (var {^name n ^age a} user)
+
+
+# ----------------------------------------------------------------------------
+# 12) OOP: construction, inheritance, methods, callable instances, interfaces
+# ----------------------------------------------------------------------------
+
+(println "=== 12) OOP ===")
+
+(var backlog (new Backlog))
+(var task1 (make_task 1 "write language tour" ^priority Priority/high ^owner "Ada"))
+(var task2 (make_task 2 "review docs" ^priority Priority/normal))
+(var task3 (new TimedTask 3 "publish examples" Priority/urgent "Bob" 2026-04-25T10:00:00Z))
+
+(backlog .add task1)
+(backlog .add task2)
+(backlog .add task3)
+
+(println "task render:" task1/.render)
+(println "timed render with super:" task3/.render)
+(println "backlog count/titles:" backlog/.count backlog/.titles)
+(task1 .mark_done)
+(println "pending tasks:" backlog/.pending)
+
+(var times10 (new Multiplier 10))
+(println "callable instance:" (times10 7))
+
+(var note (new Note "inline interface implementation"))
+(println "note render:" note/.render)
+
+(var score (Scored 99))
+(println "external adapter score:" score/.score)
+
+(ns Dynamic
+  (.on_member_missing (fn [name] #"Dynamic/#{name}"))
+)
+(println "namespace on_member_missing:" Dynamic/anything)
+
+# RECOMMENDATION: extend on_member_missing to instances with clear performance and type-checking rules.
+# RECOMMENDATION: add mixins/traits or interface composition.
+# RECOMMENDATION: decide whether ^fields is metadata-only or an enforced field declaration.
+
+
+# ----------------------------------------------------------------------------
+# 13) Errors, exceptions, catch forms, finally, contracts, assert
+# ----------------------------------------------------------------------------
+
+(println "=== 13) errors/contracts ===")
+
+(try
+  (throw "plain message")
+catch e
+  (println "caught with binding:" e/message)
+)
+
+(try
+  (1 / 0)
+catch RuntimeException
+  (println "caught runtime exception:" $ex/message)
+catch Exception
+  (println "caught generic exception:" $ex/message)
+catch *
+  (println "caught fallback:" $ex/message)
+finally
+  (println "finally always runs")
+)
+
+(try
+  (positive_add -1 2)
+catch *
+  (println "contract failure:" $ex/message)
+)
+
+(assert (backlog/.count >= 0) "backlog count must never be negative")
+
+# RECOMMENDATION: add `with`/resource-management syntax:
+#   (with [f (open path)] ...)
+# RECOMMENDATION: improve stack traces and contract diagnostics with source locations and actual values.
+# RECOMMENDATION: add ergonomic exception chaining:
+#   (throw (wrap $ex "failed to load config"))
+
+
+# ----------------------------------------------------------------------------
+# 14) Async, Futures, callbacks, async I/O, actors
+# ----------------------------------------------------------------------------
+
+(println "=== 14) async/concurrency ===")
+
+(var completed_future (async 42))
+(println "await completed future:" (await completed_future))
+
+(var manual_future (new gene/Future))
+(manual_future .on_success (fn [value] (println "manual future success:" value)))
+(manual_future .complete "ready")
+(println "manual await:" (await ^timeout 0.5 manual_future))
+
+(var failed_future (new gene/Future))
+(failed_future .fail "future failed")
+(try
+  (await failed_future)
+catch *
+  (println "future failure observed on await:" $ex/message)
+)
+
+(var cancelled_future (new gene/Future))
+(cancelled_future .cancel)
+(try
+  (await cancelled_future)
+catch CancellationException
+  (println "future cancellation observed:" $ex/message)
+catch *
+  (println "future cancellation fallback:" $ex/message)
+)
+
+# Async file I/O:
+# (await (gene/io/write_async "build/tour.txt" "hello"))
+# (println (await (gene/io/read_async "build/tour.txt")))
+
+# Actors: actor runtime must be enabled before spawning.
+(gene/actor/enable ^workers 2)
+
+(var counter_actor
+  (gene/actor/spawn
+    ^state 0
+    (fn [ctx msg state]
+      (case msg/kind
+      when "increment"
+        (+ state msg/by)
+
+      when "get"
+        (ctx .reply state)
+        state
+
+      when "stop"
+        (ctx .reply "stopping")
+        (ctx .stop)
+        state
+
+      else state
+      )
+    )
+  )
+)
+
+(counter_actor .send {^kind "increment" ^by 5})
+(counter_actor .send {^kind "increment" ^by 7})
+(println "actor reply:" (await (counter_actor .send_expect_reply {^kind "get"})))
+
+# RECOMMENDATION: add structured concurrency:
+#   (await_all [f1 f2 f3])
+#   (await_any [f1 f2])
+# RECOMMENDATION: add actor supervision/monitoring and restart strategies.
+# RECOMMENDATION: add async iteration:
+#   (for await row in stream ...)
+
+
+# ----------------------------------------------------------------------------
+# 15) Generators and iterator protocol
+# ----------------------------------------------------------------------------
+
+(println "=== 15) generators ===")
+
+(var id_gen (ids* 100 3))
+(println "manual generator:" id_gen/.next id_gen/.next id_gen/.next id_gen/.next)
+
+(var id_total 0)
+(for generated_id in (ids* 10 4)
+  (id_total += generated_id)
+)
+(println "for over generator:" id_total)
+
+(var squares
+  (fn ^^generator [max]
+    (var i 0)
+    (while (i < max)
+      (yield (i * i))
+      (i += 1)
+    )
+  )
+)
+(var square_gen (squares 5))
+(while (square_gen .has_next)
+  (println "square:" (square_gen .next))
+)
+
+# RECOMMENDATION: replace/augment ^^generator with a more obvious anonymous syntax:
+#   (fn* [max] ...)
+# RECOMMENDATION: avoid a yieldable `not_found` sentinel conflict by using an iterator result wrapper.
+
+
+# ----------------------------------------------------------------------------
+# 16) Regex and string methods
+# ----------------------------------------------------------------------------
+
+(println "=== 16) regex/string stdlib ===")
+
+(var email_re #/(?P<user>\w+)@(?P<host>\w+)/)
+(var match (email_re .match "contact ada@example now"))
+(println "regex match:" match/value match/captures match/named_captures match/start match/end)
+(println "regex find/find_all/scan:" (#/(\d+)/ .find "a123b") (#/\d/ .find_all "a1b2c3") (#/\d/ .scan "a1b2"))
+(println "replace first/all:" ("a1b2" .replace #/(\d)/ "[\\1]") ("a1b2" .replace_all #/(\d)/ "[\\1]"))
+
+(var raw "  héllo  ")
+(println "strings:"
+  raw/.length
+  raw/.trim
+  raw/.to_upper
+  raw/.to_lower
+  raw/.capitalize
+  raw/.reverse
+  ("a" .append "b")
+  ("hello" .start_with? "he")
+  ("hello" .include? "ell")
+  ("hello" .contain #/ell/)
+  ("abc" .chars)
+  ("abc" .char_at 1)
+  ("a,b,,c" .split #/,+/)
+  ("abcabc" .index "b")
+  ("abc123" .find #/\d+/)
+  ("abc123" .find_all #/\d/)
+  ("aab" .replace "a" "x")
+  ("aab" .replace_all "a" "x")
+)
+
+(println "string bytes:" ("hé" .bytesize) (typeof ("ABC" .bytes)) ("ABC" .each_byte) ("hé" .byteslice 0 1))
+
+# RECOMMENDATION: standardize predicate naming: .include? vs .contain.
+# RECOMMENDATION: add pad_left, pad_right, repeat, richer substring/slice functions.
+
+
+# ----------------------------------------------------------------------------
+# 17) Math, env, globals, system/process notes
+# ----------------------------------------------------------------------------
+
+(println "=== 17) stdlib/env/system ===")
+
+(println "math:" (abs -5) (sqrt 16) (pow 2 10) (min 3 7) (max 3 7) (floor 3.9) (ceil 3.1) (round 3.6))
+(println "random:" (random))
+
+(println "env HOME:" $env/HOME)
+(println "env fallback:" ($env/MISSING || "not found"))
+(println "$cwd:" $cwd)
+(println "$program:" $program)
+(println "$args:" $args)
+
+# Environment mutation helpers:
+# (set_env "GENE_TOUR_TEMP" "1")
+# (println (has_env "GENE_TOUR_TEMP"))
+
+# Process/system examples:
+# (println (cwd))
+# (var p (system/Process/start "echo" "hello"))
+# (println (p .read_line ^timeout 5))
+# (println (p .wait ^timeout 5))
+#
+# RECOMMENDATION: add cross-platform filesystem module:
+#   file_exists?, read_dir, mkdir_p, remove, metadata, path/join.
+# RECOMMENDATION: add raw TCP/UDP sockets or document that networking belongs only to genex/http.
+
+
+# ----------------------------------------------------------------------------
+# 18) JSON, serialization, GIR notes
+# ----------------------------------------------------------------------------
+
+(println "=== 18) serialization ===")
+
+(var json_text "{\"name\":\"Ada\",\"age\":37}")
+(var parsed (gene/json/parse json_text))
+(println "json parse:" parsed parsed/name parsed/age)
+(println "json stringify:" (gene/json/stringify {^ok true ^n 1}))
+
+(var tagged (gene/json/serialize person_gene))
+(println "tagged gene json:" tagged)
+(println "tagged gene json roundtrip:" (gene/json/deserialize tagged))
+
+(var ser_text (gene/serdes/serialize {^name "Ada" ^age 37}))
+(println "serdes:" ser_text (gene/serdes/deserialize ser_text))
+
+# GIR is bytecode/cache rather than data serialization:
+#   gene compile src/index.gene
+#   gene run build/index.gir
+#   gene run src/index.gene --no-gir-cache
+#
+# RECOMMENDATION: add pretty JSON, streaming JSON, circular-reference detection,
+# JSON serialization hooks for classes, and YAML/TOML support.
+
+
+# ----------------------------------------------------------------------------
+# 19) HTTP and database extension surfaces
+# ----------------------------------------------------------------------------
+
+(println "=== 19) extension examples, commented ===")
+
+# HTTP client:
+# (import genex/http)
+# (var resp (await (http_get "https://example.com")))
+# (println resp/status resp/body resp/headers)
+#
+# HTTP server:
+# (start_server 8080 (fn [req] (respond 200 "Hello!")))
+# (run_forever)
+#
+# SQLite:
+# (var db (genex/sqlite/open "/tmp/app.sqlite"))
+# (db .query "SELECT * FROM users WHERE age > ?" 18)
+# (db .exec "INSERT INTO users (name) VALUES (?)" "Alice")
+# (db .close)
+#
+# PostgreSQL:
+# (var pg (genex/postgres/open "host=localhost dbname=mydb"))
+# (pg .query "SELECT * FROM users WHERE id = $1" 42)
+# (pg .begin)
+# (pg .commit)
+# (pg .close)
+#
+# RECOMMENDATION: standardize extension loading errors and document which examples need buildext/native modules.
+
+
+# ----------------------------------------------------------------------------
+# 20) Final coherent run summary
+# ----------------------------------------------------------------------------
+
+(println "=== 20) summary ===")
+(println "math module:" a b (inc1 a) (twice b) (thrice b))
+(println "backlog summary:" {^count backlog/.count ^titles backlog/.titles ^score backlog/.total_score})
+(println "generated policy from comptime:" (generated_policy))
+(println "feature tour complete")

@@ -1,0 +1,10 @@
+# A tiny module used to demonstrate imports, aliases, nested namespace imports, and exports.
+
+(var /a 40)
+(var /b 2)
+
+(ns /ops
+  (fn /inc [x] (x + 1))
+  (fn /double [x] (x * 2))
+  (fn /triple [x] (x * 3))
+)

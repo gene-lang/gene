@@ -6,8 +6,8 @@ when isMainModule:
   import ../../src/gene/compiler
   import ../../src/gene/vm
 
-  var repeats = 1000
-  var opsPerRepeat = 100
+  var repeats = 10000
+  var opsPerRepeat = 1000
   let args = command_line_params()
   if args.len > 0:
     repeats = parseInt(args[0])

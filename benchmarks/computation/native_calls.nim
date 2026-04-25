@@ -15,8 +15,8 @@ when isMainModule:
     #   echo fmt"native_f1 {args[0]}"
     return NIL
 
-  var repeats = 1000
-  var callsPerRepeat = 100
+  var repeats = 10000
+  var callsPerRepeat = 1000
   let args = command_line_params()
   if args.len > 0:
     repeats = parseInt(args[0])
