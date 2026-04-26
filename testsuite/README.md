@@ -10,9 +10,9 @@ Primary spec-aligned sections:
 - `02-types/` — gradual typing, type flow, property types, generics
 - `03-expressions/` — arithmetic, comparison, `is`, precedence, infix lowering
 - `04-control-flow/` — `if`, loops, `do`, `ifel`, and case-oriented control tests
-- `05-functions/` — functions plus scope-related callable behavior
+- `05-functions/` — functions plus scope-related callable behavior and explicit function interception
 - `06-collections/` — arrays and maps
-- `07-oop/` — classes, inheritance, callable instances, AOP
+- `07-oop/` — classes, inheritance, callable instances, explicit class interception, and AOP compatibility
 - `08-modules/` — imports, namespace paths, comptime import behavior
 - `09-errors/` — contracts plus direct throw/catch coverage
 - `10-async/` — async I/O, futures, spawn/await, and thread-style reply flows

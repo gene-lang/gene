@@ -141,12 +141,25 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
 - `GeneratorObj` stores the saved frame, compilation unit, program counter, and scope.
 - Generators support `has_next`, `next`, and `peek` operations.
 
-## AOP (Aspect-Oriented Programming)
+## Explicit Runtime Interception
 
-- Aspects intercept method calls with before/after/around advices.
-- `Aspect` objects store advice mappings keyed by parameter names.
-- `AopContext` tracks the current interception state during around advice execution.
-- Interceptions wrap original callables and delegate to aspect advices.
+- Interception is an Experimental runtime surface, not part of the stable VM
+  contract.
+- Class interception uses explicit `(interceptor ...)` definitions and direct
+  callable application to install wrappers around explicitly named class methods.
+- Standalone function interception uses `(fn-interceptor ...)` definitions and
+  direct callable application to return a wrapper without mutating the original
+  function binding.
+- Interception wrappers carry the original callable, advice table, receiver
+  context when present, and enablement flags used during dispatch.
+- Definition-level and application-level `/.enable` / `/.disable` controls are
+  cheap flag changes; class wrapper installation invalidates method dispatch
+  assumptions by updating the class method table.
+- Legacy AOP spellings such as `(aspect ...)`, `.apply`, and `.apply-fn` remain
+  compatibility/history surfaces rather than the current API to teach first.
+
+See `docs/interception.md` for the public Experimental boundary, diagnostics,
+and unsupported keyword/async/macro limits.
 
 ## Inline Caching
 
@@ -202,12 +215,13 @@ Core documentation:
 
 Current subsystem docs:
 - [`generator_functions.md`](generator_functions.md) — Generator implementation
+- [`interception.md`](interception.md) — Experimental explicit runtime interception boundary
 
 Proposal and design-era docs:
 - [`proposals/future/selector_design.md`](proposals/future/selector_design.md) — Selector redesign and future direction
 - [`proposals/future/pattern_matching_design.md`](proposals/future/pattern_matching_design.md) — Pattern matching proposal
 - [`proposals/future/macro_design.md`](proposals/future/macro_design.md) — Macro system design notes
-- [`proposals/future/aop.md`](proposals/future/aop.md) — Aspect-oriented programming concept notes
+- [`proposals/future/aop.md`](proposals/future/aop.md) — AOP migration and implementation history
 
 Extension and tooling:
 - [`c_extensions.md`](c_extensions.md) — Building C/Nim extensions

@@ -1,69 +1,74 @@
-# AOP implementation audit
+# AOP migration and implementation history
 
-This page is a current-state audit and final M004 recommendation for Gene's
-aspect-oriented programming (AOP) implementation. It is written for the internal
-maintainer who must decide what posture to carry forward after reading the S02
-proof.
+This page preserves the M004 audit history for Gene's older
+aspect-oriented-programming implementation and the M005 migration to explicit
+runtime interception. The current user-facing reference is
+[explicit runtime interception](../../interception.md). This page is for
+maintainers who need the history behind the compatibility surface and should not
+be used as the first-stop tutorial for new code.
 
-The post-read action is narrow: treat the current audited AOP runtime surface as
-Experimental, use explicit class interception with `(interceptor ...)` plus direct
-callable application as the preferred class path for new class experiments, use
-`(fn-interceptor Name [f])` plus direct wrapper application such as `(Trace inc)`
-for standalone function experiments, keep legacy class `(aspect ...)` / `.apply`
-and standalone `.apply-fn` as temporary compatibility, and defer
-Beta/stable-core promotion, hard migration diagnostics, keyword wrapper support,
-macro-transparent wrappers, and broader hardening to future explicit milestones.
-This page is not a stable reference spec or release promise.
+The post-read action is narrow: use `docs/interception.md` for current guidance;
+treat broad AOP wording below as migration and audit history; keep legacy class
+`(aspect ...)` / `.apply`, standalone `.apply-fn`, and old interception toggle
+methods as temporary compatibility; and defer Beta/stable-core promotion, hard
+legacy removal, keyword/async/macro expansion, and broader hardening to future
+explicit milestones. This page is not a stable reference spec or release
+promise.
 
-## Recommendation
+## Historical recommendation
 
-**Keep/defer while migrating.** Keep the current AOP implementation available
-only as an **Experimental** runtime surface. Do not remove it in M004. Do not
-promote it to Beta or the stable core, and do not broaden the supported boundary,
-in this milestone. For new class interception, prefer `(interceptor ...)` and
-direct callable application; treat legacy class `(aspect ...)` / `.apply` as
-temporary compatibility.
+**Keep/defer while migrating.** M004 recommended keeping the existing runtime
+available only as an **Experimental** surface. M005 narrows the public framing to
+explicit runtime interception: for new class interception, prefer
+`(interceptor ...)` and direct callable application; for new standalone function
+interception, prefer `(fn-interceptor ...)` and direct wrapper application. Treat
+legacy class `(aspect ...)` / `.apply`, standalone `.apply-fn`, and old toggle
+methods as temporary compatibility rather than the API to teach first.
 
-Maintainers should use this page to preserve the current evidence-backed
-boundary: explicit class interceptor calls, compatibility class method wrappers,
-direct standalone `fn-interceptor` wrappers, compatibility standalone
-`.apply-fn` wrappers, per-interception toggles, chaining, callable advice,
-inline lexical capture, and named error boundaries have executable proof;
-standalone keyword wrapper calls, macro-transparent wrapper behavior, stale
-design-era APIs, hard migration diagnostics, and broader join points remain
+Maintainers should use this page to preserve the evidence-backed boundary:
+explicit class interceptor calls, compatibility class method wrappers, direct
+standalone `fn-interceptor` wrappers, compatibility standalone `.apply-fn`
+wrappers, definition/application `/.enable` / `/.disable` controls, chaining,
+callable advice, inline lexical capture, and named error boundaries have
+executable proof; hard legacy removal, standalone keyword wrapper calls,
+macro-transparent wrappers, stale design-era APIs, and broader join points remain
 unsupported or future work.
 
 ## Status and source of truth
 
-**Status:** Experimental. AOP is implemented and tested enough to keep available
-for exploration and maintainer-level experiments, but it remains outside the
-stable core and outside Beta-level public guarantees.
+**Status:** Experimental. Explicit runtime interception is implemented and
+tested enough to keep available for exploration and maintainer-level
+experiments, but it remains outside the stable core and outside Beta-level
+public guarantees.
 
-**Source of truth:** runtime behavior and tracked testsuite fixtures outrank old
-proposal text. When this document conflicts with executable behavior, update the
-document or add a fixture before treating the behavior as a public claim.
+**Source of truth:** `docs/interception.md`, runtime behavior, and tracked
+testsuite fixtures outrank old proposal text. When this document conflicts with
+executable behavior, update the document or add a fixture before treating the
+behavior as a public claim.
 
 **M005 class/function migration note:** S01 starts the public class-surface
 migration by making `(interceptor Name [targets] ...)` plus `(Name Class
 "method")` the current Experimental class API. S02 adds the standalone function
 surface with `(fn-interceptor Name [f])` plus direct wrapper application such as
-`(Trace inc)`. Old class `(aspect ...)` definitions, `(A .apply Class "method")`
-class application, and `(A .apply-fn inc "f")` function wrapping remain temporary
-compatibility so existing tests and programs keep running while later slices add
-harder diagnostics and broader migration cleanup. The broad AOP framing and old
-proposal language on this page are historical audit context, not the preferred
-name for new code.
+`(Trace inc)`. S03 adds definition-level and application-level `/.enable` /
+`/.disable` controls. S04 adds targeted `GENE.INTERCEPT` diagnostics for invalid
+applications and deferred keyword/async/macro boundaries. Old class `(aspect
+...)` definitions, `(A .apply Class "method")` class application, and `(A
+.apply-fn inc "f")` function wrapping remain temporary compatibility so existing
+tests and programs keep running. Hard legacy removal remains future work. The
+broad AOP framing and old proposal language on this page are historical audit
+context, not the preferred name for new code.
 
 | Evidence source | What it establishes |
 | --- | --- |
-| Aspect/interceptor stdlib registration | Live public registration for `(interceptor ...)`, `(fn-interceptor ...)`, compatibility `(aspect ...)`, `Aspect.apply`, `Aspect.apply-fn`, `Aspect.enable-interception`, and `Aspect.disable-interception`. |
+| Aspect/interceptor stdlib registration | Live public registration for `(interceptor ...)`, `(fn-interceptor ...)`, compatibility `(aspect ...)`, compatibility `Aspect.apply` / `Aspect.apply-fn`, current slash enablement controls, and old compatibility toggle methods. |
 | Runtime type model | `Aspect`, `Interceptor`, `Interception`, `AopAfterAdvice`, `AopContext`, `VkAspect`, and `VkInterception` are the value and context objects used by dispatch. |
 | Compiler dispatch rules | `(aspect ...)`, `(interceptor ...)`, and `(fn-interceptor ...)` stay out of the regular fast-call path so the native macros receive unevaluated advice definitions. |
 | VM dispatch | `VkAspect` can be called directly for class application, and `VkInterception` is callable for standalone wrappers and class method wrappers, with around advice, disabled wrappers, chaining, and escape handling. |
 | Tracked S02 fixtures | Executable proof for each behavior named in the verification map below. |
-| Feature-status documentation | AOP is outside the documented guaranteed feature boundary unless a later decision changes that status. |
+| Feature-status and interception documentation | Explicit interception is outside the documented guaranteed feature boundary unless a later decision changes that status. |
 
-## Current public surface
+## Implemented surface preserved by the audit
 
 ### Class interceptor definitions
 
@@ -123,7 +128,7 @@ Current semantics:
 - the method's previous callable is stored as the wrapper's original callable,
   so applying another aspect creates nested wrappers;
 - the return value is an array of the created wrapper values, which can later be
-  passed to the per-interception toggle APIs.
+  controlled with application-level slash toggles.
 
 ### Standalone function application
 
@@ -158,12 +163,12 @@ function binding is not changed; `(inc 1)` still calls the original function
 without advice, and callers must invoke the returned wrapper when they want
 interception.
 
-The returned wrapper is the same per-interception application object used by the
-existing runtime controls. Disabling that wrapper delegates directly to the
+The returned wrapper supports the same application-level slash controls as a
+class interception wrapper. Disabling that wrapper delegates directly to the
 stored original callable:
 
 ```gene
-(Trace .disable-interception wrapped)
+wrapped/.disable
 (wrapped 4)
 ```
 
@@ -181,24 +186,26 @@ the declared parameters. The compatibility wrapper also leaves the original
 function binding unchanged, but new function experiments should use
 `(fn-interceptor ...)` plus direct wrapper application instead.
 
-### Per-interception toggles
+### Enablement controls
 
-`(A .disable-interception interception)` and
-`(A .enable-interception interception)` toggle the active flag on a specific
-interception wrapper. The interception must belong to the aspect receiver. When
-an interception is inactive, dispatch calls the stored original callable
-directly.
+`Name/.disable` and `Name/.enable` toggle the enabled flag on the interceptor
+definition. `application/.disable` and `application/.enable` toggle the active
+flag on one returned interception wrapper. Advice runs only when both the
+definition and the application wrapper are enabled. When a wrapper is inactive,
+dispatch calls the stored original callable directly.
 
-These APIs are per wrapper. They are not whole-aspect toggles.
+These APIs are two-level slash controls. Legacy `.disable-interception` and
+`.enable-interception` methods remain compatibility behavior for old AOP code,
+not the current spelling for new docs or examples.
 
 ## Dispatch flow
 
 Interception dispatch handles both standalone wrapper values and class method
 callables.
 
-1. If the interception is inactive, dispatch immediately calls the stored
-   original callable and skips that wrapper's advice. Outer active wrappers in a
-   nested chain still run.
+1. If the interceptor definition or this wrapper is inactive, dispatch calls the
+   stored original callable and skips that wrapper's advice. Other active
+   wrappers in a nested chain still run.
 2. If active, dispatch prepares an AOP context containing the original callable,
    receiver when present, positional arguments, keyword pairs, caller frame,
    handler depth, and escape state.
@@ -227,11 +234,11 @@ command.
 | Invariants run before and after a non-escaped call, in declaration order. | `4_aop_invariants.gene` | Two invariants print in order before around/original execution and again afterward. |
 | If the original call escapes with an error to the caller, post-call invariants and after advice are skipped. | `4_aop_invariants.gene` | The throwing method prints pre-call advice and original output, then the catch marker, with no post-call invariant or after output. |
 | Applying multiple aspects to the same method creates nested wrappers rather than one shared advice list. | `6_aop_chaining.gene` | The second-applied aspect runs outside the first-applied aspect; disabling the inner wrapper leaves the outer wrapper active. |
-| Per-interception disable bypasses that wrapper and calls its stored original directly. | `6_aop_chaining.gene`; `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene`; `14_fn_interceptor_callable_wrapper.gene` | Disabling one captured wrapper removes only that wrapper's advice. Direct `fn-interceptor` wrappers also delegate to the unchanged original when disabled. Re-enabling restores wrappers. Wrong-owner and non-interception toggle inputs are catchable errors. |
+| Definition/application slash disable bypasses the selected interceptor level while preserving chain-local behavior. | `6_aop_chaining.gene`; `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene`; `12_interceptor_enablement.gene`; `16_fn_interceptor_enablement.gene` | Disabling an interceptor definition bypasses advice for its applications. Disabling one captured wrapper removes only that wrapper's advice. Direct `fn-interceptor` wrappers also delegate to the unchanged original when disabled. Re-enabling restores wrappers. Compatibility wrong-owner and non-interception toggle inputs remain catchable errors. |
 | `(fn-interceptor ...)` returns an explicit callable standalone function wrapper with before, around, and after advice. | `14_fn_interceptor_callable_wrapper.gene` | `(fn-interceptor Trace [f])`, direct wrapper creation with `(Trace inc)`, callable wrapper dispatch, disabled-wrapper delegation, and an unchanged original function binding are all exercised. |
 | Legacy `.apply-fn` remains a compatibility standalone function wrapper with before, around, and after advice. | `6_aop_functions.gene`; `11_aop_function_boundaries.gene` | Wrapped standalone functions run advice around the original callable. The original function binding remains callable without interception. |
 | Callable advice symbols resolve to existing Gene or native callables and receive receiver/argument/result values according to advice kind. | `5_aop_callable_advices.gene` | Gene advice functions and native `println` advice both run through the class method interception path. |
-| Malformed class and function application inputs fail through catchable errors. | `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene`; `15_fn_interceptor_boundaries.gene` | Missing method mappings, duplicate around advice, bad advice targets, invalid `^^replace_result`, missing `.apply-fn` arguments, non-callable function inputs, unknown function parameters, invalid direct `fn-interceptor` arity, keyword application, class/scalar targets, and macro-style direct function targets are rejected. |
+| Malformed class and function application inputs fail through catchable `GENE.INTERCEPT` diagnostics. | `13_interceptor_diagnostics.gene`; `17_fn_interceptor_diagnostics.gene`; `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene`; `15_fn_interceptor_boundaries.gene` | Missing method mappings, duplicate around advice, bad advice targets, invalid `^^replace_result`, missing `.apply-fn` arguments, non-callable function inputs, unknown function parameters, invalid direct `fn-interceptor` arity, keyword application, async function targets, class/scalar targets, and macro-style direct function targets are rejected with targeted markers where the explicit migration surface defines them. |
 | Intercepted class methods can receive keyword arguments. | `10_aop_interception_controls.gene` | The advice reads receiver state and the wrapped method receives keyword arguments correctly. |
 | Advice-thrown errors stop the wrapped method and later advice while allowing the caller to catch and continue. | `10_aop_interception_controls.gene` | A throwing `before` advice prevents method and after-advice execution, is caught by the caller, and execution continues. |
 | Standalone `.apply-fn` wrappers reject keyword-argument calls. | `11_aop_function_boundaries.gene` | Calling a wrapped standalone function with keywords is caught as the current boundary rather than treated as supported behavior. |
@@ -267,15 +274,17 @@ it into examples.
 - Constructor/destructor/exception join-point wording from the old proposal is
   unsupported. Design-era names such as `before_init`, `after_init`,
   `destruction`, and `after exception` are not registered advice forms.
-- Global aspect `(A .disable)` and `(A .enable)` examples are stale; current
-  public toggles are per-interception APIs.
+- Old method-call toggle examples such as `(A .disable-interception wrapper)`
+  and `(A .enable-interception wrapper)` are compatibility controls. Current new
+  code should use definition/application slash controls: `A/.disable`,
+  `A/.enable`, `wrapper/.disable`, and `wrapper/.enable`.
 - Regex/selector method matching is unsupported by the registered class method
   application path, which expects concrete method names as strings or symbols.
 - Async advice isolation, unapply/reset, priority controls, and broad ordering
   policy beyond the current advice tables and wrapper nesting remain unproven.
-- The old note saying "No function-level AOP" or "only instance methods" is
-  stale; `(fn-interceptor ...)` implements direct explicit standalone function
-  wrappers, and `.apply-fn` remains a compatibility wrapper path for legacy AOP
+- Old notes denying function-level support or claiming a class-method-only
+  boundary are stale; `(fn-interceptor ...)` implements direct explicit standalone
+  function wrappers, and `.apply-fn` remains a compatibility wrapper path for legacy AOP
   code and fixtures.
 - Standalone `.apply-fn` keyword calls are unsupported even though intercepted
   class methods can receive keyword arguments.
@@ -296,7 +305,7 @@ it into examples.
 
 - AOP has real executable coverage for class method wrappers, direct standalone
   `fn-interceptor` wrappers, legacy standalone `.apply-fn` wrappers,
-  interception toggles, chaining, callable advice, inline lexical capture, and
+  slash enablement controls, chaining, callable advice, inline lexical capture, and
   controlled error boundaries.
 - The S02 code patch was narrow and targeted inline advice lexical capture only;
   the audit did not expose a reason to delete the whole surface during M004.
@@ -319,7 +328,7 @@ it into examples.
   runtime redesign or expanded public contract under the cover of a decision
   record.
 
-### Follow-up work if Gene later promotes AOP
+### Follow-up work if Gene later promotes interception
 
 - Open an explicit future milestone that chooses the target support level,
   desired join points, and compatibility rules before changing runtime behavior.
