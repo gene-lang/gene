@@ -1,0 +1,152 @@
+# Custom enum variant case patterns
+
+(do
+  (enum Shape
+    (Circle radius)
+    (Rect width height)
+    Point)
+
+  (var circle (Shape/Circle 7))
+  (var rect (Shape/Rect 10 20))
+  (var point Shape/Point)
+
+  (println "qualified circle ="
+    (case circle
+      when (Shape/Circle r)
+        r
+      when (Shape/Rect w h)
+        (w + h)
+      when Shape/Point
+        0
+      else
+        -1))
+  # Expected: qualified circle = 7
+
+  (println "qualified rect ="
+    (case rect
+      when (Shape/Circle r)
+        r
+      when (Shape/Rect w h)
+        (w + h)
+      when Shape/Point
+        0
+      else
+        -1))
+  # Expected: qualified rect = 30
+
+  (println "qualified point ="
+    (case point
+      when (Shape/Circle r)
+        r
+      when (Shape/Rect w h)
+        (w + h)
+      when Shape/Point
+        99
+      else
+        -1))
+  # Expected: qualified point = 99
+
+  (println "bare circle ="
+    (case circle
+      when (Circle r)
+        r
+      when (Rect w h)
+        (w + h)
+      when Point
+        0
+      else
+        -1))
+  # Expected: bare circle = 7
+
+  (println "bare rect multi-bind ="
+    (case rect
+      when (Circle r)
+        r
+      when (Rect w h)
+        (w + h)
+      when Point
+        0
+      else
+        -1))
+  # Expected: bare rect multi-bind = 30
+
+  (println "ignored binder keeps second field ="
+    (case rect
+      when (Rect _ h)
+        h
+      else
+        -1))
+  # Expected: ignored binder keeps second field = 20
+
+  (println "no match else ="
+    (case circle
+      when Shape/Point
+        "point"
+      else
+        "not point"))
+  # Expected: no match else = not point
+
+  (enum ShadowResult
+    (Ok value)
+    (Err error))
+
+  (var shadow_ok (ShadowResult/Ok "shadow"))
+  (println "shadow bare Ok falls through ="
+    (case shadow_ok
+      when (Ok v)
+        "built-in matched"
+      else
+        "shadow ignored by bare Ok"))
+  # Expected: shadow bare Ok falls through = shadow ignored by bare Ok
+
+  (println "shadow qualified Ok ="
+    (case shadow_ok
+      when (ShadowResult/Ok v)
+        v
+      else
+        "missing"))
+  # Expected: shadow qualified Ok = shadow
+
+  (var built_in_ok (Ok 42))
+  (println "built-in Ok ="
+    (case built_in_ok
+      when (Ok value)
+        value
+      when (Err error)
+        error
+      else
+        -1))
+  # Expected: built-in Ok = 42
+
+  (var built_in_err (Err "boom"))
+  (println "built-in Err ="
+    (case built_in_err
+      when (Ok value)
+        value
+      when (Err error)
+        error
+      else
+        "missing"))
+  # Expected: built-in Err = boom
+
+  (var built_in_some (Some "hello"))
+  (println "built-in Some ="
+    (case built_in_some
+      when (Some value)
+        value
+      when None
+        "none"
+      else
+        "missing"))
+  # Expected: built-in Some = hello
+
+  (println "built-in None ="
+    (case None
+      when (Some value)
+        value
+      when None
+        "none"
+      else
+        "missing"))
+  # Expected: built-in None = none
+)
