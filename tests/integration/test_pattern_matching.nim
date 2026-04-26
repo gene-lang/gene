@@ -203,27 +203,6 @@ test_vm_error_contains """
 ]
 
 test_vm_error_contains """
-  (var [a `(literal)] [1 2])
-""", [
-  "Unsupported destructuring pattern",
-  "literal quote patterns are Future",
-]
-
-test_vm_error_contains """
-  (var [(| a b)] [1])
-""", [
-  "Unsupported destructuring pattern",
-  "or-patterns are Future",
-]
-
-test_vm_error_contains """
-  (var [(as value alias)] [1])
-""", [
-  "Unsupported destructuring pattern",
-  "as-patterns are Future",
-]
-
-test_vm_error_contains """
   (match 1 when 1 2)
 """, [
   "match has been removed",

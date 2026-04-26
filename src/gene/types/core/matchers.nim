@@ -160,9 +160,9 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
               m.name_key = v.str.to_key()
     of VkComplexSymbol:
       if v.ref == nil or v.ref.csymbol.len < 2:
-        not_allowed("Unsupported destructuring pattern: malformed complex symbol")
+        not_allowed("Unsupported destructuring pattern")
       if v.ref.csymbol[0] == "^":
-        not_allowed("Unsupported destructuring pattern: complex property patterns are Future")
+        not_allowed("Unsupported destructuring pattern")
       else:
         var m = new_matcher(self, MatchData)
         group.add(m)
@@ -200,24 +200,13 @@ proc parse(self: RootMatcher, group: var seq[Matcher], v: Value) =
             i += 1
             last_matcher.default_value = value
     of VkGene:
-      let form =
-        if v.gene != nil and v.gene.`type`.kind == VkSymbol:
-          v.gene.`type`.str
-        else:
-          "Gene"
-      case form
-      of "|":
-        not_allowed("Unsupported destructuring pattern: or-patterns are Future")
-      of "as":
-        not_allowed("Unsupported destructuring pattern: as-patterns are Future")
-      else:
-        not_allowed("Unsupported destructuring pattern: Gene pattern forms are Future")
+      not_allowed("Unsupported destructuring pattern")
     of VkQuote:
-      not_allowed("Unsupported destructuring pattern: literal quote patterns are Future")
+      not_allowed("Unsupported destructuring pattern")
     of VkMap:
-      not_allowed("Unsupported destructuring pattern: map destructuring is Future")
+      not_allowed("Unsupported destructuring pattern")
     else:
-      not_allowed("Unsupported destructuring pattern kind: " & $v.kind)
+      not_allowed("Unsupported destructuring pattern")
   {.pop.}
 
 proc parse*(self: RootMatcher, v: Value) =

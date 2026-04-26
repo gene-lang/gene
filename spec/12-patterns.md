@@ -1,6 +1,6 @@
 # 12. Pattern Matching & Destructuring
 
-Pattern matching is a Beta language surface for a deliberately small, tested subset. The current public contract covers direct argument binding, `var` destructuring, simple `case/when`, and enum ADT `case` patterns. The standalone `(match ...)` expression is removed, and richer pattern-language forms are Future work unless this page explicitly includes them in the Beta contract.
+Pattern matching is a Beta language surface for a deliberately small, tested subset. The current public contract covers direct argument binding, `var` destructuring, simple `case/when`, and enum ADT `case` patterns. The standalone `(match ...)` expression is removed. Other pattern-language forms are unsupported unless this page explicitly includes them in the Beta contract.
 
 ## Public Beta contract
 
@@ -130,9 +130,9 @@ Do not write new code using the removed form:
 (match 1 when 1 2)
 ```
 
-## Future pattern-language features
+## Unsupported pattern-language forms
 
-The following forms are not part of the Beta contract unless a later spec revision promotes them with implementation and focused tests:
+The following forms are outside the Beta contract and are not promised for any release. They require an explicit spec revision, implementation, and focused tests before they can be treated as supported:
 
 - Nested patterns beyond the covered destructuring cases.
 - Guard clauses such as `when pattern if condition`.
@@ -141,6 +141,6 @@ The following forms are not part of the Beta contract unless a later spec revisi
 - Literal quote patterns.
 - Or-patterns.
 - As-patterns.
-- Any reintroduced standalone match expression.
+- Any standalone match expression.
 
-Some non-enum destructuring failures still come from the matcher/runtime path. Invalid Beta-subset destructuring should produce targeted diagnostics where tests cover those failures; broader diagnostic polish remains Future work.
+Some non-enum destructuring failures still come from the matcher/runtime path. Invalid Beta-subset destructuring should produce targeted diagnostics where tests cover those failures; unsupported forms should not be documented as roadmap commitments.

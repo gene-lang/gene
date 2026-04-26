@@ -5,8 +5,8 @@ Pattern matching semantics were historically implicit, and stale planning still 
 - Define the minimal scope of pattern matching around argument binding, existing `var` destructuring, simple `case/when`, and enum ADT `case` patterns.
 - Document the performance constraint for argument binding: no aggregate object is constructed just to bind parameters.
 - Document scope/shadowing and arity/type error expectations for the Beta subset.
-- Explicitly mark `(match ...)` as Removed/Future; use `(var pattern value)` for binding and `(case ...)` for branching.
-- Keep map destructuring, nested patterns, guards, or-patterns, as-patterns, and full pattern-language work out of this baseline.
+- Explicitly mark `(match ...)` as Removed; use `(var pattern value)` for binding and `(case ...)` for branching.
+- Keep map destructuring, nested patterns, guards, or-patterns, as-patterns, and full pattern-language work out of this baseline without describing them as release promises.
 
 ## Impact
 - Affected specs: pattern-matching

@@ -201,4 +201,4 @@ Migration guidance:
 
 ## Deferred non-core work
 
-Enum ADTs are implemented and useful, but they remain Beta rather than stable core. Deferred work includes enum-specific methods, optimizer specialization, richer constructor ergonomics, additional pattern forms such as guards/or/as patterns, broader non-enum pattern diagnostics, and any future stable-core promotion decision.
+Enum ADTs are implemented and useful, but they remain Beta rather than stable core. Deferred non-core work includes enum-specific methods, optimizer specialization, richer constructor ergonomics, additional pattern-form design, broader non-enum pattern diagnostics, and any stable-core promotion decision. None of those deferred areas is a release promise.

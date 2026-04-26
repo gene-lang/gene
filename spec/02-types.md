@@ -299,6 +299,6 @@ Status/ready
 - **Type bounds/constraints**: No way to express `T: Comparable` or similar constraints on generic type parameters.
 - **Inference completeness**: Type inference still falls back to `Any` in some complex binding positions, notably destructuring parameters and other non-trivial patterns.
 - **Union type narrowing**: Flow-sensitive narrowing works in `if` branches and some ADT-aware control-flow positions, but not in every control-flow form or arbitrary predicate.
-- **Enum ADT refinements**: The core enum ADT contract is implemented through `enum`; future refinements may add enum-specific methods, optimizer specialization, richer constructor ergonomics, and additional pattern forms such as guards, or-patterns, and as-patterns.
+- **Enum ADT refinements**: The core enum ADT contract is implemented through `enum`; out-of-scope refinements include enum-specific methods, optimizer specialization, richer constructor ergonomics, and additional pattern-form design. None of these refinements is a release promise.
 - **Nil safety**: `nil` and `void` are distinct observable outcomes. Future work should build ergonomic optional-flow helpers and type narrowing on top of that contract.
 - **Structural typing**: All typing is nominal. Structural typing or interfaces/protocols would enable more flexible polymorphism.
