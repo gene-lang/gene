@@ -153,7 +153,16 @@ proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame
         advice_fn.ns = caller_frame.ns
         advice_fn.parent_scope = caller_frame.scope
 
-        var scope_tracker = new_scope_tracker()
+        let parent_tracker =
+          if caller_frame != nil and caller_frame.scope != nil:
+            caller_frame.scope.tracker
+          else:
+            nil
+        var scope_tracker =
+          if parent_tracker != nil:
+            new_scope_tracker(parent_tracker)
+          else:
+            new_scope_tracker()
         for m in matcher.children:
           if m.kind == MatchData and m.name_key != Key(0):
             scope_tracker.add(m.name_key)

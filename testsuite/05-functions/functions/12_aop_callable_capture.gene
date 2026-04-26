@@ -1,0 +1,41 @@
+# Expected: symbol before symbol-prefix 3
+# Expected: symbol target 3
+# Expected: symbol result 13
+# Expected: inline before inline-prefix 4
+# Expected: inline target 4
+# Expected: inline result 24
+
+(fn make_symbol_capture_wrapper []
+  (var prefix "symbol-prefix")
+  (var target (fn [x]
+    (println "symbol target" x)
+    (x + 10)
+  ))
+  (var symbol_before (fn [_self x]
+    (println "symbol before" prefix x)
+  ))
+  (aspect SymbolCaptureA [f]
+    (before f symbol_before)
+  )
+  (SymbolCaptureA .apply-fn target "f")
+)
+
+(var symbol_wrapped (make_symbol_capture_wrapper))
+(println "symbol result" (symbol_wrapped 3))
+
+(fn make_inline_capture_wrapper []
+  (var prefix "inline-prefix")
+  (var target (fn [x]
+    (println "inline target" x)
+    (x + 20)
+  ))
+  (aspect InlineCaptureA [f]
+    (before f [x]
+      (println "inline before" prefix x)
+    )
+  )
+  (InlineCaptureA .apply-fn target "f")
+)
+
+(var inline_wrapped (make_inline_capture_wrapper))
+(println "inline result" (inline_wrapped 4))
