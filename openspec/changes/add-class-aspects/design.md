@@ -1,34 +1,54 @@
-## Overview
-Class aspects are defined in Gene using `(aspect ...)` and applied in place via `(Aspect.apply <Class> <method...>)`. The VM intercepts method calls by replacing target methods with an interception wrapper that executes advice lists and then invokes the original method.
+## Context
 
-## Key Types
-- `Aspect`: holds name, parameter placeholders, advice tables, enabled flag.
-- `Interception`: holds original callable, aspect instance, and placeholder name used to lookup advice lists.
+The implementation started under the `add-class-aspects` change id, but M005 narrowed the supported Experimental surface to explicit runtime interception. Per D027, the change id is retained so prior validation history remains connected, while the capability delta and public wording now describe the supported class and function interception APIs.
 
-## Execution Model
-1. `(aspect ...)` expands to a native macro that builds an `Aspect` value and stores it in the caller namespace.
-2. `(Aspect.apply C "m1" "m2")` maps placeholders to concrete method names and replaces each method callable with a `VkInterception` wrapper.
-3. Advice entries can be inline logic blocks (compiled to functions) or existing callables referenced by symbol at aspect definition time.
-4. VM method dispatch detects `VkInterception` and:
-   - Executes `before_filter` advices in order; any falsy return aborts invocation and returns NIL.
-   - Executes `before` advices in order (FIFO).
-   - Executes `invariant` advices in order (FIFO) immediately before the around/original call.
-   - Executes the original method (Gene or native) with implicit `self` and args.
-   - Executes `invariant` advices in order (FIFO) immediately after the around/original call.
-   - Executes `after` advices in order (FIFO), passing the same args plus the return value as the final argument; `after` can be marked with `^^replace_result` to replace the return value with the advice result.
-   - If an `around` advice is configured, it receives `self`, args, and a wrapped bound method; invoking `(wrapped ...)` executes the original method.
+Explicit interception uses the existing runtime interception machinery for both class method wrappers and standalone callable wrappers. The public surface is intentionally concrete: users define an interceptor, apply it directly to explicit targets, and control advice execution with slash toggle methods.
 
-## Argument Conventions
-- Advices are methods with implicit `self` as the first argument, matching method semantics.
-- The advice argument matcher is built from the `[args...]` list in the aspect definition.
-- Callable-based advices receive the same arguments as inline advices, including the wrapped bound method for `around` and the result for `after`.
+## Goals
 
-## VM Integration
-- Interceptions are checked in unified method call paths (0/1/2/varargs/keyword/selector) to ensure consistency.
-- Return value propagation is handled so `after` advice runs for both native and Gene methods.
-- Invariant advices are skipped entirely when `before_filter` aborts; post-invariants do not run if the around/original call raises.
+- Make `(interceptor ...)` and direct class application the current class interception path.
+- Make `(fn-interceptor ...)` and direct callable wrapper application the current function interception path.
+- Preserve compatibility for legacy broad AOP spellings without presenting them as the preferred API.
+- Specify the implemented advice forms, enablement levels, diagnostics, and class application atomicity.
+- Name unsupported keyword, async, macro-style, and broad pointcut boundaries as deferred.
 
-## Non-Goals (v1)
-- Function aspects.
-- Dynamic enable/disable per instance.
-- Asynchronous advice execution.
+## Non-Goals
+
+- Promote interception to Stable Core or Beta.
+- Add public pointcuts, constructor/destructor join points, regex selectors, priority controls, reset/unapply controls, or exception join points.
+- Promise keyword argument wrapping, async target wrapping, or macro-transparent wrapping.
+- Remove legacy `(aspect ...)`, `.apply`, `.apply-fn`, `.enable-interception`, or `.disable-interception` in this change.
+
+## Runtime Model
+
+### Definitions
+
+`(interceptor Name [targets] ...)` defines a class interceptor value whose target placeholders are mapped to concrete class method names at application time. `(fn-interceptor Name [target])` defines a standalone callable interceptor value for one callable target.
+
+Both definition forms support the same advice vocabulary: `before_filter`, `before`, `invariant`, `around`, and `after`. Advice may be inline Gene code or a symbol that resolves to an existing callable at definition time. `around` receives a wrapped callable as its final argument and delegates by calling that wrapper. `after` may use `^^replace_result` to replace the result returned to the caller.
+
+### Class application
+
+Calling a class interceptor value directly with a class and one method mapping per target installs wrappers on the selected class methods and returns an array of wrapper applications. The helper validates target type, mapping arity, mapping names, method existence, unsupported keyword application, and macro-style targets before mutating class methods. If any mapping is invalid, the application fails atomically and leaves previously listed methods unwrapped.
+
+### Function application
+
+Calling a function interceptor value directly with exactly one callable target returns one callable wrapper. The original function binding is not mutated; callers must invoke the returned wrapper when they want advice to run. Ordinary Gene callables, native callables, and existing interception wrappers are valid targets. Classes, scalar values, native macros, `fn!` macro-style callables, keyword-parameter functions, async functions, and keyword application are rejected or deferred with targeted diagnostics.
+
+### Enablement controls
+
+Definition-level `Name/.disable` and `Name/.enable` toggle all applications of an interceptor definition. Application-level `wrapper/.disable` and `wrapper/.enable` toggle only that returned wrapper. Advice runs only when both levels are enabled. In wrapper chains, disabling one wrapper bypasses only that wrapper while preserving active outer or inner wrappers.
+
+### Diagnostics
+
+Invalid applications raise catchable diagnostics containing `GENE.INTERCEPT` markers. The current marker families cover class targets, mapping arity, mapping names, missing methods, function arity, function targets, unsupported keyword boundaries, unsupported macro-style boundaries, and unsupported async boundaries. Human-readable messages may improve over time, but marker families are the migration-visible contract.
+
+## Legacy Compatibility
+
+Legacy `(aspect ...)`, `.apply`, `.apply-fn`, `.enable-interception`, and `.disable-interception` remain implemented as temporary compatibility for existing programs and migration fixtures. They should not be taught first in public docs, examples, or current specs. Future hard removal or rejection requires a separate migration decision.
+
+## Risks / Trade-offs
+
+- Keeping the old change id can confuse readers unless the proposal clearly states that the active capability is explicit interception; this document and the delta make that continuity explicit.
+- Keeping legacy compatibility prevents a hard cleanup in M005, but it avoids breaking earlier fixtures and preserves migration proof from S01-S04.
+- Naming unsupported keyword, async, and macro-style boundaries narrows the current contract, but it prevents users from treating broad AOP behavior as supported.
