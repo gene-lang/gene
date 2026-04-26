@@ -1,0 +1,114 @@
+# Expected: boundary original 1
+# Expected: plain result 101
+# Expected: boundary before 2
+# Expected: boundary original 2
+# Expected: boundary after 2 102
+# Expected: wrapped active result 102
+# Expected: boundary original 3
+# Expected: wrapped disabled result 103
+# Expected: boundary before 4
+# Expected: boundary original 4
+# Expected: boundary after 4 104
+# Expected: wrapped enabled result 104
+# Expected: boundary before 5
+# Expected: boundary original 5
+# Expected: boundary after 5 105
+# Expected: wrapped enabled again result 105
+# Expected: outer before 6
+# Expected: inner before 6
+# Expected: chain original 6
+# Expected: inner after 6 60
+# Expected: outer after 6 60
+# Expected: chain result 60
+# Expected: malformed apply-fn caught
+# Expected: non-function apply-fn caught
+# Expected: unknown apply-fn parameter caught
+# Expected: keyword rejection caught
+
+(aspect BoundaryA [f]
+  (before f [x]
+    (println "boundary before" x)
+  )
+  (after f [x result]
+    (println "boundary after" x result)
+  )
+)
+
+(fn boundary_target [x]
+  (println "boundary original" x)
+  (x + 100)
+)
+
+(var boundary_wrapped (BoundaryA .apply-fn boundary_target "f"))
+
+(println "plain result" (boundary_target 1))
+(println "wrapped active result" (boundary_wrapped 2))
+
+(BoundaryA .disable-interception boundary_wrapped)
+(println "wrapped disabled result" (boundary_wrapped 3))
+
+(BoundaryA .enable-interception boundary_wrapped)
+(println "wrapped enabled result" (boundary_wrapped 4))
+
+(BoundaryA .enable-interception boundary_wrapped)
+(println "wrapped enabled again result" (boundary_wrapped 5))
+
+(aspect InnerA [f]
+  (before f [x]
+    (println "inner before" x)
+  )
+  (after f [x result]
+    (println "inner after" x result)
+  )
+)
+
+(aspect OuterA [f]
+  (before f [x]
+    (println "outer before" x)
+  )
+  (after f [x result]
+    (println "outer after" x result)
+  )
+)
+
+(fn chain_target [x]
+  (println "chain original" x)
+  (x + 54)
+)
+
+(var inner_wrapped (InnerA .apply-fn chain_target "f"))
+(var outer_wrapped (OuterA .apply-fn inner_wrapped "f"))
+(println "chain result" (outer_wrapped 6))
+
+(try
+  (BoundaryA .apply-fn boundary_target)
+catch *
+  (println "malformed apply-fn caught")
+)
+
+(try
+  (BoundaryA .apply-fn "not callable" "f")
+catch *
+  (println "non-function apply-fn caught")
+)
+
+(try
+  (BoundaryA .apply-fn boundary_target "missing")
+catch *
+  (println "unknown apply-fn parameter caught")
+)
+
+(aspect KeywordBoundaryA [f])
+
+(fn keyword_target [^x]
+  (println "keyword original should not run" x)
+  x
+)
+
+(var keyword_wrapped (KeywordBoundaryA .apply-fn keyword_target "f"))
+
+(try
+  (keyword_wrapped ^x 7)
+catch *
+  (println "keyword rejection caught")
+)
