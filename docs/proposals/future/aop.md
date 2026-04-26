@@ -7,13 +7,13 @@ proof.
 
 The post-read action is narrow: treat the current audited AOP runtime surface as
 Experimental, use explicit class interception with `(interceptor ...)` plus direct
-callable application as the preferred class path for new class experiments, keep
-legacy class `(aspect ...)` / `.apply` as temporary compatibility, keep
-standalone `.apply-fn` only as function compatibility until S02 introduces
-`fn-interceptor`, and defer Beta/stable-core promotion, hard migration
-diagnostics, keyword wrapper support, macro-transparent wrappers, and broader
-hardening to future explicit milestones. This page is not a stable reference
-spec or release promise.
+callable application as the preferred class path for new class experiments, use
+`(fn-interceptor Name [f])` plus direct wrapper application such as `(Trace inc)`
+for standalone function experiments, keep legacy class `(aspect ...)` / `.apply`
+and standalone `.apply-fn` as temporary compatibility, and defer
+Beta/stable-core promotion, hard migration diagnostics, keyword wrapper support,
+macro-transparent wrappers, and broader hardening to future explicit milestones.
+This page is not a stable reference spec or release promise.
 
 ## Recommendation
 
@@ -26,11 +26,12 @@ temporary compatibility.
 
 Maintainers should use this page to preserve the current evidence-backed
 boundary: explicit class interceptor calls, compatibility class method wrappers,
-explicit standalone `.apply-fn` wrappers pending `fn-interceptor`,
-per-interception toggles, chaining, callable advice, inline lexical capture, and
-named error boundaries have executable proof; standalone keyword wrapper calls,
-macro-transparent wrapper behavior, stale design-era APIs, hard migration
-diagnostics, and broader join points remain unsupported or future work.
+direct standalone `fn-interceptor` wrappers, compatibility standalone
+`.apply-fn` wrappers, per-interception toggles, chaining, callable advice,
+inline lexical capture, and named error boundaries have executable proof;
+standalone keyword wrapper calls, macro-transparent wrapper behavior, stale
+design-era APIs, hard migration diagnostics, and broader join points remain
+unsupported or future work.
 
 ## Status and source of truth
 
@@ -42,22 +43,22 @@ stable core and outside Beta-level public guarantees.
 proposal text. When this document conflicts with executable behavior, update the
 document or add a fixture before treating the behavior as a public claim.
 
-**M005 class migration note:** S01 starts the public class-surface migration by
-making `(interceptor Name [targets] ...)` plus `(Name Class "method")` the current
-Experimental class API. Old class `(aspect ...)` definitions and `(A .apply
-Class "method")` application remain temporary compatibility so existing tests and
-programs keep running while later slices add function migration and diagnostics.
-Standalone `.apply-fn` remains the current function wrapper compatibility path
-until S02 introduces `fn-interceptor`; hard legacy-form diagnostics are deferred
-to S04/S05 and are not specified here. The broad AOP framing and old proposal
-language on this page are historical audit context, not the preferred name for
-new class code.
+**M005 class/function migration note:** S01 starts the public class-surface
+migration by making `(interceptor Name [targets] ...)` plus `(Name Class
+"method")` the current Experimental class API. S02 adds the standalone function
+surface with `(fn-interceptor Name [f])` plus direct wrapper application such as
+`(Trace inc)`. Old class `(aspect ...)` definitions, `(A .apply Class "method")`
+class application, and `(A .apply-fn inc "f")` function wrapping remain temporary
+compatibility so existing tests and programs keep running while later slices add
+harder diagnostics and broader migration cleanup. The broad AOP framing and old
+proposal language on this page are historical audit context, not the preferred
+name for new code.
 
 | Evidence source | What it establishes |
 | --- | --- |
-| Aspect/interceptor stdlib registration | Live public registration for `(interceptor ...)`, compatibility `(aspect ...)`, `Aspect.apply`, `Aspect.apply-fn`, `Aspect.enable-interception`, and `Aspect.disable-interception`. |
+| Aspect/interceptor stdlib registration | Live public registration for `(interceptor ...)`, `(fn-interceptor ...)`, compatibility `(aspect ...)`, `Aspect.apply`, `Aspect.apply-fn`, `Aspect.enable-interception`, and `Aspect.disable-interception`. |
 | Runtime type model | `Aspect`, `Interceptor`, `Interception`, `AopAfterAdvice`, `AopContext`, `VkAspect`, and `VkInterception` are the value and context objects used by dispatch. |
-| Compiler dispatch rules | `(aspect ...)` and `(interceptor ...)` stay out of the regular fast-call path so the native macros receive unevaluated advice definitions. |
+| Compiler dispatch rules | `(aspect ...)`, `(interceptor ...)`, and `(fn-interceptor ...)` stay out of the regular fast-call path so the native macros receive unevaluated advice definitions. |
 | VM dispatch | `VkAspect` can be called directly for class application, and `VkInterception` is callable for standalone wrappers and class method wrappers, with around advice, disabled wrappers, chaining, and escape handling. |
 | Tracked S02 fixtures | Executable proof for each behavior named in the verification map below. |
 | Feature-status documentation | AOP is outside the documented guaranteed feature boundary unless a later decision changes that status. |
@@ -126,23 +127,59 @@ Current semantics:
 
 ### Standalone function application
 
-Function-level migration is not complete in S01. `(A .apply-fn inc "f")` remains
-the current compatibility wrapper around a standalone function, native function,
-or existing interception until S02 introduces `fn-interceptor`. The receiver must
-be an aspect/interceptor runtime value; the function argument must be a function,
-native function, or existing interception; and the parameter name must be one of
-the declared parameters.
+New standalone function interception should use the native macro form:
 
-Function-level AOP is therefore explicit wrapper behavior:
+```gene
+(fn-interceptor Trace [f]
+  (before f [x]
+    (println "trace before" x)
+  )
+  (around f [x wrapped]
+    (wrapped x)
+  )
+  (after f [x result]
+    (println "trace after" x result)
+  )
+)
+```
+
+The second argument is an array containing exactly one function-interceptor
+parameter name. Apply the function interceptor by calling the interceptor value
+with exactly one positional callable target:
 
 ```gene
 (fn inc [x] (x + 1))
-(var wrapped (A .apply-fn inc "f"))
+(var wrapped (Trace inc))
 (wrapped 4)
 ```
 
-The original function binding is not changed by `.apply-fn`; callers must use
-the returned wrapper if they want interception.
+Direct application returns a callable interception wrapper. The original
+function binding is not changed; `(inc 1)` still calls the original function
+without advice, and callers must invoke the returned wrapper when they want
+interception.
+
+The returned wrapper is the same per-interception application object used by the
+existing runtime controls. Disabling that wrapper delegates directly to the
+stored original callable:
+
+```gene
+(Trace .disable-interception wrapped)
+(wrapped 4)
+```
+
+Direct `fn-interceptor` application accepts ordinary functions, native
+functions, and existing interception wrappers. It rejects missing or extra
+application arguments, keyword application, class or scalar targets, and
+macro-style `fn!` function targets through catchable application-time errors.
+Macro-transparent function wrapping remains unsupported.
+
+Legacy `(A .apply-fn inc "f")` remains temporary compatibility around a
+standalone function, native function, or existing interception. The receiver must
+be an aspect/interceptor runtime value; the function argument must be a function,
+native function, or existing interception; and the parameter name must be one of
+the declared parameters. The compatibility wrapper also leaves the original
+function binding unchanged, but new function experiments should use
+`(fn-interceptor ...)` plus direct wrapper application instead.
 
 ### Per-interception toggles
 
@@ -190,16 +227,17 @@ command.
 | Invariants run before and after a non-escaped call, in declaration order. | `4_aop_invariants.gene` | Two invariants print in order before around/original execution and again afterward. |
 | If the original call escapes with an error to the caller, post-call invariants and after advice are skipped. | `4_aop_invariants.gene` | The throwing method prints pre-call advice and original output, then the catch marker, with no post-call invariant or after output. |
 | Applying multiple aspects to the same method creates nested wrappers rather than one shared advice list. | `6_aop_chaining.gene` | The second-applied aspect runs outside the first-applied aspect; disabling the inner wrapper leaves the outer wrapper active. |
-| Per-interception disable bypasses that wrapper and calls its stored original directly. | `6_aop_chaining.gene`; `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene` | Disabling one captured wrapper removes only that wrapper's advice. Re-enabling restores it. Wrong-owner and non-interception toggle inputs are catchable errors. |
-| `.apply-fn` returns an explicit standalone function wrapper with before, around, and after advice. | `6_aop_functions.gene`; `11_aop_function_boundaries.gene` | Wrapped standalone functions run advice around the original callable. The original function binding remains callable without interception. |
+| Per-interception disable bypasses that wrapper and calls its stored original directly. | `6_aop_chaining.gene`; `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene`; `14_fn_interceptor_callable_wrapper.gene` | Disabling one captured wrapper removes only that wrapper's advice. Direct `fn-interceptor` wrappers also delegate to the unchanged original when disabled. Re-enabling restores wrappers. Wrong-owner and non-interception toggle inputs are catchable errors. |
+| `(fn-interceptor ...)` returns an explicit callable standalone function wrapper with before, around, and after advice. | `14_fn_interceptor_callable_wrapper.gene` | `(fn-interceptor Trace [f])`, direct wrapper creation with `(Trace inc)`, callable wrapper dispatch, disabled-wrapper delegation, and an unchanged original function binding are all exercised. |
+| Legacy `.apply-fn` remains a compatibility standalone function wrapper with before, around, and after advice. | `6_aop_functions.gene`; `11_aop_function_boundaries.gene` | Wrapped standalone functions run advice around the original callable. The original function binding remains callable without interception. |
 | Callable advice symbols resolve to existing Gene or native callables and receive receiver/argument/result values according to advice kind. | `5_aop_callable_advices.gene` | Gene advice functions and native `println` advice both run through the class method interception path. |
-| Malformed class and function application inputs fail through catchable errors. | `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene` | Missing method mappings, duplicate around advice, bad advice targets, invalid `^^replace_result`, missing `.apply-fn` arguments, non-callable function inputs, and unknown function parameters are rejected. |
+| Malformed class and function application inputs fail through catchable errors. | `10_aop_interception_controls.gene`; `11_aop_function_boundaries.gene`; `15_fn_interceptor_boundaries.gene` | Missing method mappings, duplicate around advice, bad advice targets, invalid `^^replace_result`, missing `.apply-fn` arguments, non-callable function inputs, unknown function parameters, invalid direct `fn-interceptor` arity, keyword application, class/scalar targets, and macro-style direct function targets are rejected. |
 | Intercepted class methods can receive keyword arguments. | `10_aop_interception_controls.gene` | The advice reads receiver state and the wrapped method receives keyword arguments correctly. |
 | Advice-thrown errors stop the wrapped method and later advice while allowing the caller to catch and continue. | `10_aop_interception_controls.gene` | A throwing `before` advice prevents method and after-advice execution, is caught by the caller, and execution continues. |
 | Standalone `.apply-fn` wrappers reject keyword-argument calls. | `11_aop_function_boundaries.gene` | Calling a wrapped standalone function with keywords is caught as the current boundary rather than treated as supported behavior. |
 | `.apply-fn` can wrap an existing interception value, producing explicit nested function wrappers. | `11_aop_function_boundaries.gene` | Inner and outer wrapper advice run in nested order around the original standalone function. |
 | Inline advice lexical capture is patched for the narrow S02 case. | `12_aop_callable_capture.gene` | Symbol advice and inline advice defined inside a factory both capture lexical locals after the S02 scope-tracker patch. |
-| Macro-style standalone functions still work directly, but `.apply-fn` wrappers do not preserve quoted-argument behavior. | `13_aop_macro_boundary.gene` | A direct `fn!` call receives the symbol argument. The wrapped call receives an evaluated value, and an undefined symbol argument is caught before wrapper advice/original execution. |
+| Macro-style standalone functions still work directly; legacy `.apply-fn` wrappers do not preserve quoted-argument behavior, and direct `fn-interceptor` application rejects macro-style targets. | `13_aop_macro_boundary.gene`; `15_fn_interceptor_boundaries.gene` | A direct `fn!` call receives the symbol argument. The legacy `.apply-fn` wrapper path receives an evaluated value, and an undefined symbol argument is caught before wrapper advice/original execution. The new direct function-interceptor API rejects a `fn!` target at application time. |
 
 ## Patched behavior in S02
 
@@ -222,9 +260,10 @@ it into examples.
   Old `(aspect ...)` definitions remain compatibility for legacy AOP code and
   fixtures.
 - `.apply_in_place` is stale; new class application should call the interceptor
-  value directly, while old `.apply` remains temporary class compatibility and
-  `.apply-fn` returns an explicit wrapper for standalone functions until
-  `fn-interceptor` lands.
+  value directly, while old `.apply` remains temporary class compatibility. New
+  standalone function interception should use `(fn-interceptor ...)` plus direct
+  wrapper application, while `.apply-fn` remains temporary function
+  compatibility.
 - Constructor/destructor/exception join-point wording from the old proposal is
   unsupported. Design-era names such as `before_init`, `after_init`,
   `destruction`, and `after exception` are not registered advice forms.
@@ -235,15 +274,17 @@ it into examples.
 - Async advice isolation, unapply/reset, priority controls, and broad ordering
   policy beyond the current advice tables and wrapper nesting remain unproven.
 - The old note saying "No function-level AOP" or "only instance methods" is
-  stale; `.apply-fn` implements explicit standalone function wrappers as the
-  current compatibility path pending `fn-interceptor`.
+  stale; `(fn-interceptor ...)` implements direct explicit standalone function
+  wrappers, and `.apply-fn` remains a compatibility wrapper path for legacy AOP
+  code and fixtures.
 - Standalone `.apply-fn` keyword calls are unsupported even though intercepted
   class methods can receive keyword arguments.
-- `.apply-fn` wrapping of `fn!` macro-style functions is a current boundary, not
-  a future promise. Direct `fn!` calls can receive quoted arguments. The wrapper
-  path is not macro-transparent: defined arguments are evaluated before the
-  wrapper runs, and undefined quoted-symbol arguments fail before advice/original
-  execution.
+- Direct `fn-interceptor` application rejects `fn!` macro-style function targets.
+  Legacy `.apply-fn` wrapping of `fn!` macro-style functions is compatibility
+  behavior, not a future promise. Direct `fn!` calls can receive quoted
+  arguments. The legacy wrapper path is not macro-transparent: defined arguments
+  are evaluated before the wrapper runs, and undefined quoted-symbol arguments
+  fail before advice/original execution.
 - Macro-like class methods and macro-like constructors are rejected elsewhere in
   the language and should not be inferred as an AOP capability.
 - Any core-guarantee claim is unsupported until a later decision explicitly
@@ -253,9 +294,10 @@ it into examples.
 
 ### Why not remove now
 
-- AOP has real executable coverage for class method wrappers, standalone
-  function wrappers, interception toggles, chaining, callable advice, inline
-  lexical capture, and controlled error boundaries.
+- AOP has real executable coverage for class method wrappers, direct standalone
+  `fn-interceptor` wrappers, legacy standalone `.apply-fn` wrappers,
+  interception toggles, chaining, callable advice, inline lexical capture, and
+  controlled error boundaries.
 - The S02 code patch was narrow and targeted inline advice lexical capture only;
   the audit did not expose a reason to delete the whole surface during M004.
 - Removal would erase a working implementation before Gene has a replacement
@@ -264,8 +306,9 @@ it into examples.
 
 ### Why not promote or harden now
 
-- The current surface still has sharp boundaries: standalone `.apply-fn` keyword
-  calls are rejected, macro-style wrapper calls do not preserve quoted arguments,
+- The current surface still has sharp boundaries: standalone wrapper keyword
+  calls are rejected, direct `fn-interceptor` application rejects macro-style
+  targets, legacy macro-style wrapper calls do not preserve quoted arguments,
   and old proposal APIs such as `fn_aspect` and `.apply_in_place` remain stale.
 - Macro-transparent wrapper behavior is explicitly not preserved today, so any
   broader macro/AOP contract needs separate design and proof.
@@ -280,7 +323,7 @@ it into examples.
 
 - Open an explicit future milestone that chooses the target support level,
   desired join points, and compatibility rules before changing runtime behavior.
-- Decide whether standalone `.apply-fn` wrappers should support keyword calls or
+- Decide whether standalone function wrappers should support keyword calls or
   continue rejecting them as a documented boundary.
 - Decide whether macro-style functions can be wrapped while preserving quoted
   arguments; if so, design a macro-transparent wrapper path and add executable
