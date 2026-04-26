@@ -5152,6 +5152,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
+        of VkAspect:
+          if call_value_method(self, target, "call", []):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Aspect value is not callable (no 'call' method)")
 
         else:
           not_allowed("IkUnifiedCall0 requires a callable, got " & $target.kind)
@@ -5332,6 +5339,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
+        of VkAspect:
+          if call_value_method(self, target, "call", @[arg]):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Aspect value is not callable (no 'call' method)")
 
         of VkInterface:
           # Interface call with 1 arg - create adapter
@@ -5453,6 +5467,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
+        of VkAspect:
+          if call_value_method(self, target, "call", args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Aspect value is not callable (no 'call' method)")
 
         of VkInterface:
           if args.len < 1:
@@ -5722,6 +5743,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
+        of VkAspect:
+          if call_value_method(self, target, "call", args, kw_pairs):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Aspect value is not callable (no 'call' method)")
 
         of VkBlock:
           let b = target.ref.block
@@ -5864,6 +5892,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             continue
           else:
             not_allowed("Selector value is not callable (no 'call' method)")
+        of VkAspect:
+          if call_value_method(self, target, "call", args):
+            self.pc.inc()
+            inst = self.cu.instructions[self.pc].addr
+            continue
+          else:
+            not_allowed("Aspect value is not callable (no 'call' method)")
 
         of VkBlock:
           let b = target.ref.block

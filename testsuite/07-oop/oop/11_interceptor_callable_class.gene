@@ -1,0 +1,92 @@
+# Expected: applied size 2
+# Expected: applied run wrapper VkInterception
+# Expected: applied stop wrapper VkInterception
+# Expected: audit before run primary 1
+# Expected: run body primary 1
+# Expected: audit after run 2
+# Expected: run result 2
+# Expected: audit around stop 5
+# Expected: stop body 5
+# Expected: audit around stop original 7
+# Expected: stop result 17
+# Expected: skip body 9
+# Expected: skip result 12
+# Expected: direct zero caught
+# Expected: direct one caught
+# Expected: direct arity caught
+# Expected: direct non-class caught
+# Expected: direct keyword caught
+
+(interceptor Audit [run stop]
+  (before run [x]
+    (println "audit before run" /name x)
+  )
+  (after run [x result]
+    (println "audit after run" result)
+  )
+  (around stop [x wrapped]
+    (println "audit around stop" x)
+    (var original (wrapped x))
+    (println "audit around stop original" original)
+    (original + 10)
+  )
+)
+
+(class InterceptedC
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method run [x]
+    (println "run body" /name x)
+    (x + 1)
+  )
+  (method stop [x]
+    (println "stop body" x)
+    (x + 2)
+  )
+  (method skip [x]
+    (println "skip body" x)
+    (x + 3)
+  )
+)
+
+(var applied (Audit InterceptedC "run" "stop"))
+(println "applied size" (applied .size))
+(println "applied run wrapper" applied/0)
+(println "applied stop wrapper" applied/1)
+
+(var subject (new InterceptedC "primary"))
+(println "run result" (subject .run 1))
+(println "stop result" (subject .stop 5))
+(println "skip result" (subject .skip 9))
+
+(try
+  (Audit)
+catch *
+  (println "direct zero caught")
+)
+
+(try
+  (Audit InterceptedC)
+catch *
+  (println "direct one caught")
+)
+
+(try
+  (Audit InterceptedC "run")
+catch *
+  (println "direct arity caught")
+)
+
+(try
+  (Audit "not a class" "run" "stop")
+catch *
+  (println "direct non-class caught")
+)
+
+(try
+  (Audit InterceptedC "run" "stop" ^unexpected true)
+catch *
+  (println "direct keyword caught")
+)
