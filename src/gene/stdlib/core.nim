@@ -4041,18 +4041,28 @@ proc init_gene_core_functions() =
   # Result and Option as built-in enums
   # Ok/Some have ordinal 0 (success), Err/None have ordinal 1 (failure)
   # The ? operator checks ordinal == 0 for unwrap vs early return
-  let result_enum = new_enum("Result")
+  var result_type_descs = builtin_type_descs()
+  let result_t_type_id = result_type_descs.len.TypeId
+  result_type_descs.add(TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkVar, var_id: 0))
+  let result_e_type_id = result_type_descs.len.TypeId
+  result_type_descs.add(TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkVar, var_id: 1))
+
+  let result_enum = new_enum("Result", @["T", "E"], result_type_descs)
   let result_val = result_enum.to_value()
-  result_val.add_member("Ok", 0, @["value"])
-  result_val.add_member("Err", 1, @["message"])
+  result_val.add_member("Ok", 0, @["value"], @[result_t_type_id], result_type_descs)
+  result_val.add_member("Err", 1, @["error"], @[result_e_type_id], result_type_descs)
   App.app.result_enum = result_val
   App.app.global_ns.ns["Result".to_key()] = result_val
   App.app.global_ns.ns["Ok".to_key()] = result_val["Ok"]
   App.app.global_ns.ns["Err".to_key()] = result_val["Err"]
 
-  let option_enum = new_enum("Option")
+  var option_type_descs = builtin_type_descs()
+  let option_t_type_id = option_type_descs.len.TypeId
+  option_type_descs.add(TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkVar, var_id: 0))
+
+  let option_enum = new_enum("Option", @["T"], option_type_descs)
   let option_val = option_enum.to_value()
-  option_val.add_member("Some", 0, @["value"])
+  option_val.add_member("Some", 0, @["value"], @[option_t_type_id], option_type_descs)
   option_val.add_member("None", 1)
   App.app.option_enum = option_val
   App.app.global_ns.ns["Option".to_key()] = option_val

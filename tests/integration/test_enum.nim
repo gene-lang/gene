@@ -13,6 +13,21 @@ proc expect_enum_error(code: string, expected_message_part: string) =
   except CatchableError as err:
     check err.msg.contains(expected_message_part)
 
+proc expect_var_payload_field(member: EnumMember, field_name: string, expected_var_id: int32) =
+  check member.fields == @[field_name]
+  check member.field_type_ids.len == 1
+  if member.field_type_ids.len == 1:
+    let field_type_id = member.field_type_ids[0]
+    check field_type_id != NO_TYPE_ID
+    if field_type_id != NO_TYPE_ID:
+      check field_type_id.int >= 0
+      check member.field_type_descs.len > field_type_id.int
+      if field_type_id.int >= 0 and member.field_type_descs.len > field_type_id.int:
+        let desc = member.field_type_descs[field_type_id.int]
+        check desc.kind == TdkVar
+        if desc.kind == TdkVar:
+          check desc.var_id == expected_var_id
+
 # Tests for enum construct
 # Most enum functionality is not yet implemented in our VM
 # These tests are commented out until those features are available:
@@ -70,6 +85,64 @@ test_vm """
   let empty = enum_def.members["Empty"]
   check empty.fields.len == 0
   check empty.field_type_ids.len == 0
+
+test "built-in Result and Option expose canonical generic enum metadata":
+  init_all()
+
+  let result_val = App.app.result_enum
+  check result_val.kind == VkEnum
+  let result_def = result_val.ref.enum_def
+  check result_def.name == "Result"
+  check result_def.type_params == @["T", "E"]
+  check result_def.members.len == 2
+  check result_def.members.hasKey("Ok")
+  check result_def.members.hasKey("Err")
+
+  if result_def.members.hasKey("Ok"):
+    let ok = result_def.members["Ok"]
+    check ok.name == "Ok"
+    check ok.value == 0
+    expect_var_payload_field(ok, "value", 0)
+
+  if result_def.members.hasKey("Err"):
+    let err = result_def.members["Err"]
+    check err.name == "Err"
+    check err.value == 1
+    expect_var_payload_field(err, "error", 1)
+
+  let option_val = App.app.option_enum
+  check option_val.kind == VkEnum
+  let option_def = option_val.ref.enum_def
+  check option_def.name == "Option"
+  check option_def.type_params == @["T"]
+  check option_def.members.len == 2
+  check option_def.members.hasKey("Some")
+  check option_def.members.hasKey("None")
+
+  if option_def.members.hasKey("Some"):
+    let some = option_def.members["Some"]
+    check some.name == "Some"
+    check some.value == 0
+    expect_var_payload_field(some, "value", 0)
+
+  if option_def.members.hasKey("None"):
+    let none_member = option_def.members["None"]
+    check none_member.name == "None"
+    check none_member.value == 1
+    check none_member.fields.len == 0
+    check none_member.field_type_ids.len == 0
+
+  let global_ns = App.app.global_ns.ns
+  check global_ns["Result".to_key()] == result_val
+  check global_ns["Option".to_key()] == option_val
+  check global_ns["Ok".to_key()].kind == VkEnumMember
+  check global_ns["Ok".to_key()].ref.enum_member == result_def.members["Ok"]
+  check global_ns["Err".to_key()].kind == VkEnumMember
+  check global_ns["Err".to_key()].ref.enum_member == result_def.members["Err"]
+  check global_ns["Some".to_key()].kind == VkEnumMember
+  check global_ns["Some".to_key()].ref.enum_member == option_def.members["Some"]
+  check global_ns["None".to_key()].kind == VkEnumMember
+  check global_ns["None".to_key()].ref.enum_member == option_def.members["None"]
 
 test_vm """
   (enum Shape Point)
