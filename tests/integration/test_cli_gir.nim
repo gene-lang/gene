@@ -99,6 +99,30 @@ proc expect_load_gir_error(gir_path: string, parts: openArray[string]) =
       check e.msg.contains(part)
   check raised
 
+proc expect_load_gir_metadata_error(gir_path: string, owner_path: string,
+                                    invalid_type_id: TypeId,
+                                    descriptor_count: int,
+                                    parts: openArray[string] = []) =
+  var raised = false
+  try:
+    discard gir.load_gir(gir_path)
+  except CatchableError as e:
+    raised = true
+    checkpoint e.msg
+    for part in [
+      TypeMetadataInvalidMarker,
+      "phase=GIR load",
+      "owner/path=" & owner_path,
+      "invalid TypeId=" & $invalid_type_id,
+      "descriptor count=" & $descriptor_count,
+      "descriptor-table length=" & $descriptor_count,
+      "source path=" & gir_path,
+    ]:
+      check e.msg.contains(part)
+    for part in parts:
+      check e.msg.contains(part)
+  check raised
+
 proc find_module_type_node_for_test(nodes: seq[ModuleTypeNode], path: seq[string]): ModuleTypeNode =
   if path.len == 0:
     return nil
@@ -427,6 +451,7 @@ suite "GIR CLI":
       TypeDesc(kind: TdkUnion, members: @[0'i32, 1'i32]),
       TypeDesc(kind: TdkFn, params: @[CallableParamDesc(kind: CpkPositional, keyword_name: "", type_id: 0'i32)], ret: 1'i32, effects: @["io/read"])
     ]
+    compiled.type_registry = populate_registry(compiled.type_descriptors, compiled.module_path)
 
     let gir_path = "build/tests/type_descriptor_roundtrip.gir"
     createDir(parentDir(gir_path))
@@ -451,12 +476,14 @@ suite "GIR CLI":
     let code = "(var x 1) x"
     let compiled = compiler.parse_and_compile(code, "<registry-test>")
     let module_path = "tmp/type_registry_roundtrip.gene"
-    let user_id = 11'i32
-    let union_id = 27'i32
-    let fn_id = 43'i32
+    let user_id = 0'i32
+    let string_id = 1'i32
+    let union_id = 2'i32
+    let fn_id = 3'i32
 
     let user_desc = TypeDesc(module_path: module_path, kind: TdkNamed, name: "User")
-    let union_desc = TypeDesc(module_path: module_path, kind: TdkUnion, members: @[user_id, 1'i32])
+    let string_desc = TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "String")
+    let union_desc = TypeDesc(module_path: module_path, kind: TdkUnion, members: @[user_id, string_id])
     let fn_desc = TypeDesc(
       module_path: module_path,
       kind: TdkFn,
@@ -465,11 +492,8 @@ suite "GIR CLI":
       effects: @["io/read"]
     )
 
-    compiled.type_descriptors = @[user_desc, union_desc, fn_desc]
-    compiled.type_registry = new_module_type_registry(module_path)
-    register_type_desc(compiled.type_registry, user_id, user_desc, module_path)
-    register_type_desc(compiled.type_registry, union_id, union_desc, module_path)
-    register_type_desc(compiled.type_registry, fn_id, fn_desc, module_path)
+    compiled.type_descriptors = @[user_desc, string_desc, union_desc, fn_desc]
+    compiled.type_registry = populate_registry(compiled.type_descriptors, module_path)
     compiled.type_aliases = initTable[string, TypeId]()
     compiled.type_aliases["UserType"] = user_id
     compiled.type_aliases["UserResult"] = union_id
@@ -482,13 +506,16 @@ suite "GIR CLI":
 
     check loaded.type_registry != nil
     check loaded.type_registry.module_path == module_path
-    check loaded.type_registry.descriptors.len == 3
+    check loaded.type_registry.descriptors.len == 4
     check loaded.type_registry.descriptors.hasKey(user_id)
     check loaded.type_registry.descriptors[user_id].kind == TdkNamed
     check loaded.type_registry.descriptors[user_id].name == "User"
+    check loaded.type_registry.descriptors.hasKey(string_id)
+    check loaded.type_registry.descriptors[string_id].kind == TdkNamed
+    check loaded.type_registry.descriptors[string_id].name == "String"
     check loaded.type_registry.descriptors.hasKey(union_id)
     check loaded.type_registry.descriptors[union_id].kind == TdkUnion
-    check loaded.type_registry.descriptors[union_id].members == @[user_id, 1'i32]
+    check loaded.type_registry.descriptors[union_id].members == @[user_id, string_id]
     check loaded.type_registry.descriptors.hasKey(fn_id)
     check loaded.type_registry.descriptors[fn_id].kind == TdkFn
     check loaded.type_registry.descriptors[fn_id].params.len == 1
@@ -496,6 +523,7 @@ suite "GIR CLI":
     check loaded.type_registry.descriptors[fn_id].params[0].type_id == user_id
     check loaded.type_registry.descriptors[fn_id].ret == union_id
     check loaded.type_registry.descriptors[fn_id].effects == @["io/read"]
+    check loaded.type_registry.builtin_types.len == 1
     check loaded.type_registry.named_types.len == 1
     check loaded.type_registry.union_types.len == 1
     check loaded.type_registry.function_types.len == 1

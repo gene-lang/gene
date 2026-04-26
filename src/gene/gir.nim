@@ -865,6 +865,8 @@ proc load_gir*(path: string): CompilationUnit =
   result.type_descriptors = gir_file.type_descriptors
   result.type_registry = gir_file.type_registry
   result.type_aliases = gir_file.type_aliases
+  if result.type_registry != nil:
+    result.module_path = result.type_registry.module_path
 
   if gir_file.trace_nodes.len > 0:
     var node_refs: seq[SourceTrace] = @[]
@@ -892,6 +894,8 @@ proc load_gir*(path: string): CompilationUnit =
           result.instruction_traces[idx] = nil
       else:
         result.instruction_traces[idx] = nil
+
+  verify_type_metadata(result, phase = "GIR load", source_path = path)
 
 proc is_gir_up_to_date*(gir_path: string, source_path: string): bool =
   ## Check if a GIR file is up-to-date with its source
