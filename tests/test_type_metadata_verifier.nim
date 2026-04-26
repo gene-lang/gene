@@ -55,6 +55,12 @@ proc expect_metadata_error(cu: CompilationUnit, expected_parts: openArray[string
       check e.msg.contains(part)
   check raised
 
+proc type_id_array_value_for_test(items: openArray[TypeId]): Value =
+  var values: seq[Value] = @[]
+  for item in items:
+    values.add(item.to_value())
+  new_array_value(values)
+
 suite "Type metadata verifier":
   test "accepts valid descriptor graph and registry parity":
     let fixture = new_metadata_fixture()
@@ -163,3 +169,173 @@ suite "Type metadata verifier":
       "invalid TypeId=" & $NO_TYPE_ID,
       "type_registry is nil"
     ])
+
+  test "rejects out-of-range compilation unit type alias":
+    let fixture = new_metadata_fixture()
+    fixture.cu.type_aliases = initTable[string, TypeId]()
+    fixture.cu.type_aliases["BadAlias"] = 999'i32
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=type_aliases[BadAlias]",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range root matcher return type":
+    let fixture = new_metadata_fixture()
+    fixture.cu.matcher = new_arg_matcher()
+    fixture.cu.matcher.return_type_id = 999'i32
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=matcher.return_type_id",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range nested matcher child type":
+    let fixture = new_metadata_fixture()
+    let root = new_arg_matcher()
+    let parent = new_matcher(root, MatchData)
+    let child = new_matcher(root, MatchData)
+    child.type_id = 777'i32
+    parent.children.add(child)
+    root.children.add(parent)
+    fixture.cu.matcher = root
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=matcher.children[0].children[0].type_id",
+      "invalid TypeId=777",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range scope tracker parent expectation":
+    let fixture = new_metadata_fixture()
+    let parent = new_scope_tracker()
+    parent.next_index = 1
+    parent.type_expectation_ids = @[888'i32]
+    let child = new_scope_tracker(parent)
+    fixture.cu.instructions.add(Instruction(kind: IkScopeStart, arg0: child.to_value()))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkScopeStart.arg0.parent.type_expectation_ids[0]",
+      "invalid TypeId=888",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range function definition parameter expectation":
+    let fixture = new_metadata_fixture()
+    let info = new_function_def_info(new_scope_tracker(), nil, NIL, @[999'i32], NO_TYPE_ID)
+    fixture.cu.instructions.add(Instruction(kind: IkFunction, arg0: info.to_value()))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkFunction.arg0.type_expectation_ids[0]",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range block definition return type":
+    let fixture = new_metadata_fixture()
+    let info = new_function_def_info(new_scope_tracker(), nil, NIL, @[], 999'i32)
+    fixture.cu.instructions.add(Instruction(kind: IkBlock, arg0: info.to_value()))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkBlock.arg0.return_type_id",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects invalid nested compiled body descriptor metadata with owner context":
+    let fixture = new_metadata_fixture()
+    let nested = new_compilation_unit()
+    nested.module_path = fixture.module_path
+    nested.type_descriptors = fixture.cu.type_descriptors
+    nested.type_registry = populate_registry(nested.type_descriptors, nested.module_path)
+    var applied_desc = nested.type_descriptors[fixture.applied_id.int]
+    applied_desc.args[0] = 666'i32
+    nested.type_descriptors[fixture.applied_id.int] = applied_desc
+    let info = new_function_def_info(new_scope_tracker(), nested, NIL)
+    fixture.cu.instructions.add(Instruction(kind: IkFunction, arg0: info.to_value()))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkFunction.arg0.compiled_body/" &
+        fixture.module_path & "/type_descriptors[" & $fixture.applied_id & "].args[0]",
+      "invalid TypeId=666",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range IkVar type metadata but ignores IkVarValue arg1 slot index":
+    let fixture = new_metadata_fixture()
+    fixture.cu.instructions.add(Instruction(kind: IkVarValue, arg0: NIL, arg1: 999'i32))
+    verify_type_metadata(fixture.cu, phase = "unit-test", source_path = TestSourcePath)
+
+    fixture.cu.instructions.add(Instruction(kind: IkVar, arg0: 0.to_value(), arg1: 999'i32))
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[1].IkVar.arg1",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range IkDefineProp metadata":
+    let fixture = new_metadata_fixture()
+    fixture.cu.instructions.add(Instruction(
+      kind: IkDefineProp,
+      arg0: "prop".to_key().to_value(),
+      arg1: 999'i32))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkDefineProp.arg1",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range IkEnumAddMember field metadata":
+    let fixture = new_metadata_fixture()
+    fixture.cu.instructions.add(Instruction(
+      kind: IkEnumAddMember,
+      arg0: type_id_array_value_for_test([999'i32])))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkEnumAddMember.arg0[0]",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "rejects out-of-range IkPushTypeValue metadata":
+    let fixture = new_metadata_fixture()
+    fixture.cu.instructions.add(Instruction(kind: IkPushTypeValue, arg0: 999.to_value()))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkPushTypeValue.arg0",
+      "invalid TypeId=999",
+      "TypeId is outside the descriptor table"
+    ])
+
+  test "reports malformed instruction TypeId payloads as verifier diagnostics":
+    let fixture = new_metadata_fixture()
+    fixture.cu.instructions.add(Instruction(kind: IkPushTypeValue, arg0: "not-a-type-id".to_value()))
+
+    expect_metadata_error(fixture.cu, [
+      "owner/path=instructions[0].IkPushTypeValue.arg0",
+      "invalid TypeId=" & $NO_TYPE_ID,
+      "expected integer TypeId, got VkString"
+    ])
+
+  test "accepts NO_TYPE_ID in intentionally untyped source metadata owners":
+    let fixture = new_metadata_fixture()
+    let root = new_arg_matcher()
+    let child = new_matcher(root, MatchData)
+    root.children.add(child)
+    fixture.cu.matcher = root
+
+    let tracker = new_scope_tracker()
+    tracker.type_expectation_ids = @[NO_TYPE_ID]
+    let info = new_function_def_info(tracker, nil, NIL, @[NO_TYPE_ID], NO_TYPE_ID)
+    fixture.cu.instructions.add(Instruction(kind: IkScopeStart, arg0: tracker.to_value()))
+    fixture.cu.instructions.add(Instruction(kind: IkVar, arg0: 0.to_value(), arg1: NO_TYPE_ID))
+    fixture.cu.instructions.add(Instruction(kind: IkDefineProp,
+      arg0: "prop".to_key().to_value(), arg1: NO_TYPE_ID))
+    fixture.cu.instructions.add(Instruction(kind: IkEnumAddMember,
+      arg0: type_id_array_value_for_test([NO_TYPE_ID])))
+    fixture.cu.instructions.add(Instruction(kind: IkFunction, arg0: info.to_value()))
+
+    verify_type_metadata(fixture.cu, phase = "unit-test", source_path = TestSourcePath)
