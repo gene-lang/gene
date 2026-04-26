@@ -110,39 +110,140 @@ proc compile_if_not(self: Compiler, gene: ptr Gene) =
   # compile_if's normalize_if will see "cond" already set and return early.
   self.compile_if(gene)
 
-proc is_result_option_pattern(v: Value): bool =
-  ## Check if value is a Result/Option pattern like (Ok a), (Err e), (Some x), or None
-  if v.kind == VkSymbol and v.str == "None":
-    return true
-  if v.kind == VkGene and v.gene != nil:
-    if v.gene.`type`.kind == VkSymbol:
-      let type_name = v.gene.`type`.str
-      if type_name in ["Ok", "Err", "Some", "None"]:
-        return true
-  return false
+proc is_builtin_result_option_variant_name(name: string): bool =
+  name in ["Ok", "Err", "Some", "None"]
 
-proc get_pattern_info(v: Value): tuple[type_name: string, binding: string] =
-  ## Extract pattern info: type name and optional binding variable
-  if v.kind == VkSymbol and v.str == "None":
-    return ("None", "")
-  if v.kind == VkGene and v.gene != nil:
-    let type_name = v.gene.`type`.str
-    var binding = ""
-    if v.gene.children.len > 0 and v.gene.children[0].kind == VkSymbol:
-      binding = v.gene.children[0].str
-      if binding == "_":
-        binding = ""  # _ means ignore binding
-    return (type_name, binding)
-  return ("", "")
+proc ensure_enum_pattern_metadata(self: Compiler) =
+  if self.enum_pattern_metadata_initialized:
+    return
+  self.enum_pattern_by_qualified = initTable[string, EnumVariantPatternMetadata]()
+  self.enum_pattern_by_name = initTable[string, seq[EnumVariantPatternMetadata]]()
+  self.enum_pattern_metadata_initialized = true
+
+proc register_enum_pattern_metadata(self: Compiler, enum_name: string, variant_name: string, fields: seq[string]) =
+  self.ensure_enum_pattern_metadata()
+  let info = EnumVariantPatternMetadata(enum_name: enum_name, variant_name: variant_name, fields: fields)
+  let qualified_name = enum_name & "/" & variant_name
+  self.enum_pattern_by_qualified[qualified_name] = info
+  var entries = self.enum_pattern_by_name.getOrDefault(variant_name, @[])
+  entries.add(info)
+  self.enum_pattern_by_name[variant_name] = entries
+
+proc enum_pattern_qualified_name(info: EnumVariantPatternMetadata): string =
+  info.enum_name & "/" & info.variant_name
+
+proc enum_pattern_binding_message(info: EnumVariantPatternMetadata, got: int): string =
+  let expected = info.fields.len
+  let field_names = if expected > 0: " (" & info.fields.join(", ") & ")" else: ""
+  "variant " & info.enum_pattern_qualified_name() & " pattern expects " &
+    $expected & " binding(s)" & field_names & ", got " & $got
+
+proc is_simple_qualified_enum_pattern_head(v: Value): bool =
+  if v.kind != VkComplexSymbol or v.ref == nil:
+    return false
+  let parts = v.ref.csymbol
+  parts.len == 2 and parts[0].len > 0 and parts[1].len > 0 and
+    not parts[0].startsWith(".") and not parts[1].startsWith(".")
+
+proc qualified_enum_pattern_name(v: Value): string =
+  let parts = v.ref.csymbol
+  parts[0] & "/" & parts[1]
+
+type EnumCasePattern = object
+  matched: bool
+  head: Value
+  bindings: seq[string]
+  metadata_known: bool
+  metadata: EnumVariantPatternMetadata
+
+proc resolve_enum_case_pattern_head(self: Compiler, head: Value): EnumCasePattern =
+  if head.kind == VkComplexSymbol and head.is_simple_qualified_enum_pattern_head():
+    let qualified_name = head.qualified_enum_pattern_name()
+    result.matched = true
+    result.head = head
+    if self.enum_pattern_metadata_initialized and self.enum_pattern_by_qualified.hasKey(qualified_name):
+      result.metadata_known = true
+      result.metadata = self.enum_pattern_by_qualified[qualified_name]
+    return
+
+  if head.kind != VkSymbol:
+    return
+
+  let name = head.str
+  if name.len == 0:
+    return
+
+  # Preserve canonical built-in Result/Option aliases. A custom enum variant named
+  # Ok must not silently rewrite a user's existing built-in Ok pattern.
+  if is_builtin_result_option_variant_name(name):
+    result.matched = true
+    result.head = head
+    return
+
+  if self.enum_pattern_metadata_initialized and self.enum_pattern_by_name.hasKey(name):
+    let candidates = self.enum_pattern_by_name[name]
+    if candidates.len == 1:
+      result.matched = true
+      result.metadata_known = true
+      result.metadata = candidates[0]
+      result.head = @[candidates[0].enum_name, candidates[0].variant_name].to_complex_symbol()
+      return
+    elif candidates.len > 1:
+      var qualified: seq[string] = @[]
+      for candidate in candidates:
+        qualified.add(candidate.enum_pattern_qualified_name())
+      not_allowed("variant " & name & " is ambiguous; use a qualified pattern such as " & qualified.join(" or "))
+
+  # Explicit aliases such as `(var Circle Shape/Circle)` are resolved at runtime.
+  # Restrict this fallback to uppercase local names so ordinary lowercase call
+  # values in `case` keep the existing value-comparison behavior.
+  let found = self.scope_tracker.locate(name.to_key())
+  if found.local_index >= 0 and name[0].isUpperAscii():
+    result.matched = true
+    result.head = head
+
+proc extract_enum_case_pattern(self: Compiler, v: Value): EnumCasePattern =
+  case v.kind
+  of VkSymbol, VkComplexSymbol:
+    result = self.resolve_enum_case_pattern_head(v)
+  of VkGene:
+    if v.gene == nil:
+      return
+    result = self.resolve_enum_case_pattern_head(v.gene.`type`)
+    if not result.matched:
+      return
+    for child in v.gene.children:
+      if child.kind != VkSymbol:
+        let label = if result.metadata_known: result.metadata.enum_pattern_qualified_name() else: $result.head
+        not_allowed("enum pattern " & label & " binding must be a symbol")
+      result.bindings.add(child.str)
+  else:
+    discard
+
+  if result.matched and result.metadata_known and result.bindings.len != result.metadata.fields.len:
+    not_allowed(result.metadata.enum_pattern_binding_message(result.bindings.len))
+
+proc bind_case_pattern_local(self: Compiler, binding: string) =
+  if binding.len == 0 or binding == "_":
+    return
+  let key = binding.to_key()
+  let var_index = self.scope_tracker.next_index
+  self.scope_tracker.mappings[key] = var_index
+  if self.declared_names.len > 0:
+    self.declared_names[^1][key] = true
+  self.add_scope_start()
+  self.scope_tracker.next_index.inc()
+  self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
+  self.emit(Instruction(kind: IkPop))
 
 proc compile_case(self: Compiler, gene: ptr Gene) =
   ## Compile case expression:
   ## (case target when val1 body1 when val2 body2 else body3)
   ##
-  ## Supports pattern matching for Result/Option types:
-  ## (case result
-  ##   when (Ok value) (println value)
-  ##   when (Err e) (println "error:" e)
+  ## Supports enum variant pattern matching:
+  ## (case shape
+  ##   when (Shape/Circle radius) radius
+  ##   when Shape/Point 0
   ## )
   ##
   ## Generates code that:
@@ -181,39 +282,31 @@ proc compile_case(self: Compiler, gene: ptr Gene) =
         self.emit(Instruction(kind: IkNoop, label: next_label))
         next_label = new_label()
 
-      # Check if this is a Result/Option pattern
-      if is_result_option_pattern(when_value):
-        let (type_name, binding) = get_pattern_info(when_value)
+      let enum_pattern = self.extract_enum_case_pattern(when_value)
 
-        # Use pattern matching instruction
-        # Stack: [target]
-        self.emit(Instruction(kind: IkMatchGeneType, arg0: type_name.to_symbol_value()))
+      # Check if this is an enum variant pattern.  Pattern heads are compiled as
+      # values (e.g. Shape/Circle -> VkEnumMember) and matched by identity in the
+      # VM, while the target remains on stack for later when/else clauses.
+      if enum_pattern.matched:
+        self.compile(enum_pattern.head)
+        self.emit(Instruction(kind: IkMatchEnumVariant, arg1: enum_pattern.bindings.len.int32))
         # Stack: [target, bool]
 
         # Jump to next when if not matched
         self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
         # Stack: [target]
 
-        # Start scope for body with potential binding
+        # Start scope for body with potential bindings
         self.start_scope()
 
-        # If there's a binding, extract the inner value and bind it
-        if binding.len > 0:
-          # Duplicate target to extract child
+        # Extract payload fields in declaration order; '_' consumes an arity slot
+        # but intentionally skips local binding creation.
+        for binding_index, binding in enum_pattern.bindings:
+          if binding.len == 0 or binding == "_":
+            continue
           self.emit(Instruction(kind: IkDup))
-          # Stack: [target, target]
-          self.emit(Instruction(kind: IkGetGeneChild, arg0: 0.to_value()))
-          # Stack: [target, child]
-
-          # Register the binding variable properly with numeric index
-          let var_index = self.scope_tracker.next_index
-          self.scope_tracker.mappings[binding.to_key()] = var_index
-          self.add_scope_start()
-          self.scope_tracker.next_index.inc()
-          self.emit(Instruction(kind: IkVar, arg0: var_index.to_value()))
-          # Stack: [target, child] (IkVar doesn't pop)
-          self.emit(Instruction(kind: IkPop))
-          # Stack: [target]
+          self.emit(Instruction(kind: IkGetGeneChild, arg0: binding_index.to_value()))
+          self.bind_case_pattern_local(binding)
 
         # Pop the target before executing body
         self.emit(Instruction(kind: IkPop))
@@ -1369,6 +1462,9 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
       value.inc()
       i.inc()
   
+  for variant in variants:
+    self.register_enum_pattern_metadata(enum_name, variant.name, variant.fields)
+
   # Create the enum after validation so malformed declarations fail before bytecode emission.
   self.emit(Instruction(
     kind: IkPushValue,

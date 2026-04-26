@@ -231,6 +231,8 @@ proc instruction_metadata*(kind: InstructionKind): InstructionMetadata =
     meta(fixed(1, 1), "control", touches_refs = true)
   of IkMatchGeneType:
     meta(fixed(1, 1), "pattern", IokValue)
+  of IkMatchEnumVariant:
+    meta(fixed(2, 2), "pattern", arg1 = IokCount)
   of IkGetGeneChild:
     meta(fixed(1, 1), "pattern", IokCount, touches_refs = true)
   of IkSpawnThread:

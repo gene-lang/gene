@@ -736,6 +736,11 @@ type
     MamAutoCall
     MamReference
 
+  EnumVariantPatternMetadata* = object
+    enum_name*: string
+    variant_name*: string
+    fields*: seq[string]
+
   Compiler* = ref object
     output*: CompilationUnit
     quote_level*: int
@@ -755,6 +760,9 @@ type
     contract_fn_name*: string
     contract_post_conditions*: seq[Value]
     contract_result_slot*: int16
+    enum_pattern_metadata_initialized*: bool
+    enum_pattern_by_qualified*: Table[string, EnumVariantPatternMetadata]
+    enum_pattern_by_name*: Table[string, seq[EnumVariantPatternMetadata]]
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop
@@ -995,6 +1003,7 @@ type
     IkVmDurationStart
     IkVmDuration
     IkVarDestructure  # Matcher-based var destructuring (arg0=[pattern, [target-indices]])
+    IkMatchEnumVariant # Identity-aware enum variant pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object

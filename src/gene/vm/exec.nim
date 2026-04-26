@@ -105,8 +105,32 @@ proc require_enum_constructor_member(variant: Value): EnumMember {.inline.} =
 
   member
 
+proc require_enum_pattern_member(pattern: Value): EnumMember {.inline.} =
+  if pattern.kind != VkEnumMember:
+    not_allowed("Enum pattern expected VkEnumMember, got " & $pattern.kind)
+
+  let pattern_ref = pattern.ref
+  if pattern_ref == nil or pattern_ref.enum_member == nil:
+    not_allowed("Malformed enum pattern: missing member metadata")
+
+  let member = pattern_ref.enum_member
+  if member.parent.kind != VkEnum:
+    not_allowed("Malformed enum pattern " & member.name & ": missing enum parent metadata")
+
+  let parent_ref = member.parent.ref
+  if parent_ref == nil or parent_ref.enum_def == nil:
+    not_allowed("Malformed enum pattern " & member.name & ": missing enum definition metadata")
+
+  member
+
 proc qualified_enum_variant_name(member: EnumMember): string {.inline.} =
   member.parent.ref.enum_def.name & "/" & member.name
+
+proc enum_pattern_arity_message(member: EnumMember, got: int): string {.inline.} =
+  let expected = member.fields.len
+  let field_names = if expected > 0: " (" & member.fields.join(", ") & ")" else: ""
+  "variant " & qualified_enum_variant_name(member) & " pattern expects " &
+    $expected & " binding(s)" & field_names & ", got " & $got
 
 proc enum_keyword_name(key: Key): string {.inline.} =
   get_symbol(symbol_index(key))
@@ -4780,6 +4804,32 @@ proc exec*(self: ptr VirtualMachine): Value =
             matched = true
 
         self.frame.push(val)  # Keep the value on stack for later use
+        self.frame.push(if matched: TRUE else: FALSE)
+        {.pop.}
+
+      of IkMatchEnumVariant:
+        # Identity-aware enum pattern matching.  The compiler leaves the case
+        # target below a runtime-resolved VkEnumMember pattern; this instruction
+        # restores [target, bool] so existing compile_case control flow can keep
+        # using IkJumpIfFalse and later payload extraction.
+        {.push checks: off.}
+        let pattern = self.frame.pop()
+        let val = self.frame.pop()
+        let expected_member = require_enum_pattern_member(pattern)
+        let binder_count = inst.arg1.int
+        if binder_count != expected_member.fields.len:
+          not_allowed(enum_pattern_arity_message(expected_member, binder_count))
+
+        var matched = false
+        if val.kind == VkEnumValue:
+          let variant = val.ref.ev_variant
+          if variant.kind == VkEnumMember and variant.ref != nil and variant.ref.enum_member != nil:
+            matched = variant.ref.enum_member == expected_member
+        elif val.kind == VkEnumMember:
+          if val.ref != nil and val.ref.enum_member != nil:
+            matched = val.ref.enum_member == expected_member
+
+        self.frame.push(val)
         self.frame.push(if matched: TRUE else: FALSE)
         {.pop.}
 

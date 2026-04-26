@@ -382,3 +382,76 @@ test "enum declarations reject malformed syntax with targeted diagnostics":
   expect_enum_error("""
     (enum Bad:T (Full value: 123))
   """, "invalid type annotation")
+
+test_vm """
+  (enum Shape (Circle radius) (Rect width height) Point)
+  (var circle (Shape/Circle 7))
+  (var rect (Shape/Rect 10 20))
+  (var point Shape/Point)
+  [
+    (case circle
+      when (Shape/Circle r) r
+      when (Shape/Rect w h) (w + h)
+      when Shape/Point 0
+      else -1)
+    (case rect
+      when (Shape/Circle r) r
+      when (Shape/Rect w h) (w + h)
+      when Shape/Point 0
+      else -1)
+    (case point
+      when (Shape/Circle r) r
+      when (Shape/Rect w h) (w + h)
+      when Shape/Point 99
+      else -1)
+  ]
+""", proc(r: Value) =
+  check r == @[7, 30, 99].to_value()
+
+test_vm """
+  (enum Shape (Circle radius) (Rect width height) Point)
+  (enum Shadow (Ok value))
+  (var Circle Shape/Circle)
+  (var shadow (Shadow/Ok "shadow"))
+  (var miss (Shape/Circle 1))
+  (var rect (Shape/Rect 10 20))
+  [
+    (case shadow
+      when (Ok v) 1
+      else 2)
+    (case miss
+      when (Shape/Rect w h) (w + h)
+      else 3)
+    (case rect
+      when (Shape/Rect _ h) h
+      else -1)
+    (case (Circle 7)
+      when (Circle r) r
+      else -1)
+  ]
+""", proc(r: Value) =
+  check r == @[2, 3, 20, 7].to_value()
+
+test "enum variant case patterns validate declared arity with field names":
+  expect_enum_error("""
+    (enum Shape (Circle radius) (Rect width height) Point)
+    (var rect (Shape/Rect 10 20))
+    (case rect
+      when (Shape/Rect w) w
+      else -1)
+  """, "variant Shape/Rect pattern expects 2 binding(s) (width, height), got 1")
+
+  expect_enum_error("""
+    (enum Shape (Circle radius) (Rect width height) Point)
+    (var rect (Shape/Rect 10 20))
+    (case rect
+      when (Shape/Rect w h d) w
+      else -1)
+  """, "variant Shape/Rect pattern expects 2 binding(s) (width, height), got 3")
+
+  expect_enum_error("""
+    (enum Shape (Circle radius) (Rect width height) Point)
+    (case Shape/Point
+      when (Shape/Point p) p
+      else -1)
+  """, "variant Shape/Point pattern expects 0 binding(s), got 1")
