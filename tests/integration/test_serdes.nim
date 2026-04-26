@@ -364,3 +364,73 @@ test "Serdes: futures are rejected":
   except CatchableError:
     raised = true
   check raised
+
+proc expect_deserialize_error_contains(serialized: string, expected_parts: openArray[string]) =
+  var raised = false
+  var message = ""
+  try:
+    discard deserialize(serialized)
+  except CatchableError as e:
+    raised = true
+    message = e.msg
+  check raised
+  for part in expected_parts:
+    check message.contains(part)
+
+proc s05_identity_left_module_path(): string =
+  absolutePath("tests/fixtures/s05_identity_left")
+
+test "Serdes: enum payload values use explicit EnumValue refs and stable roundtrip":
+  init_all()
+  init_serdes()
+  let value = VM.exec(cleanup("""
+    (import Identity:LeftIdentity from "tests/fixtures/s05_identity_left")
+    (LeftIdentity/Box 42)
+  """), "serdes_s05_enum_payload_source")
+  check value.kind == VkEnumValue
+
+  let serialized = serialize(value).to_s()
+  check serialized.contains("EnumValue")
+  check serialized.contains("EnumRef")
+  check serialized.contains("Identity/Box")
+  check serialized.contains("s05_identity_left")
+
+  reset_module_cache()
+  discard VM.exec("1", "serdes_s05_other_module")
+  let roundtripped = deserialize(serialized)
+  check roundtripped.kind == VkEnumValue
+  if roundtripped.kind == VkEnumValue:
+    let variant = roundtripped.ref.ev_variant
+    check variant.kind == VkEnumMember
+    if variant.kind == VkEnumMember:
+      check variant.ref.enum_member.name == "Box"
+      check variant.ref.enum_member.parent.ref.enum_def.name == "Identity"
+      check variant.ref.enum_member.module_path.contains("s05_identity_left")
+    check roundtripped.ref.ev_data == @[42.to_value()]
+  check serialize(roundtripped).to_s() == serialized
+
+test "Serdes: malformed EnumValue records reject before constructing values":
+  init_all()
+  init_serdes()
+  let module_path = s05_identity_left_module_path()
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (EnumValue
+    (ClassRef ^path "Identity" ^module "$MODULE")
+    [1]))
+""".replace("$MODULE", module_path), ["EnumValue", "EnumRef"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (EnumValue
+    (EnumRef ^path "Identity/Box" ^module "$MODULE")
+    []))
+""".replace("$MODULE", module_path), ["EnumValue", "Identity/Box", "payload"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (EnumValue
+    (EnumRef ^path "Identity/Box" ^module "$MODULE")
+    ["wrong"]))
+""".replace("$MODULE", module_path), ["GENE_TYPE_MISMATCH", "Identity/Box.value"])

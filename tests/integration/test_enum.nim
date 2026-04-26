@@ -455,3 +455,63 @@ test "enum variant case patterns validate declared arity with field names":
       when (Shape/Point p) p
       else -1)
   """, "variant Shape/Point pattern expects 0 binding(s), got 1")
+
+test_vm """
+  (import Identity:LeftIdentity make_unit:left_unit from "tests/fixtures/s05_identity_left")
+  (import Identity:RightIdentity make_unit:right_unit from "tests/fixtures/s05_identity_right")
+  (var left (LeftIdentity/Box 5))
+  (var right (RightIdentity/Box 5))
+  [
+    (if (left == right) 1 else 0)
+    (case left
+      when (LeftIdentity/Box value) value
+      when (RightIdentity/Box value) -100
+      else -1)
+    (case right
+      when (LeftIdentity/Box value) -100
+      when (RightIdentity/Box value) value
+      else -1)
+    (case (left_unit)
+      when LeftIdentity/Unit 10
+      when RightIdentity/Unit 20
+      else -1)
+    (case (right_unit)
+      when LeftIdentity/Unit 10
+      when RightIdentity/Unit 20
+      else -1)
+  ]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  let values = array_data(r)
+  check values.len == 5
+  if values.len == 5:
+    check values[0] == 0.to_value()
+    check values[1] == 5.to_value()
+    check values[2] == 5.to_value()
+    check values[3] == 10.to_value()
+    check values[4] == 20.to_value()
+
+test "quoted legacy Result/Option-shaped values fail typed boundaries with migration diagnostics":
+  expect_enum_error_parts("""
+    (fn accept_result [r: (Result Int String)] -> Int 1)
+    (accept_result `(Ok 1))
+  """, ["legacy Gene-expression ADT value", "Result", "enum"])
+
+  expect_enum_error_parts("""
+    (fn accept_option [o: (Option Int)] -> Int 1)
+    (accept_option `(Some 1))
+  """, ["legacy Gene-expression ADT value", "Option", "enum"])
+
+test_vm """
+  (fn accept_result [r: (Result Int String)] -> Int
+    (case r
+      when (Ok value) value
+      when (Err error) 0))
+  (fn accept_option [o: (Option Int)] -> Int
+    (case o
+      when (Some value) value
+      when None 0))
+  [(accept_result (Ok 5)) (accept_option (Some 4))]
+""", proc(r: Value) =
+  check r == @[5, 4].to_value()
+

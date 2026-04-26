@@ -4,6 +4,7 @@ import ./helpers
 import ../src/gene/parser
 import ../src/gene/type_checker as tc
 import ../src/gene/types except Exception
+import ../src/gene/vm
 
 proc test_strict_type_error(code: string) =
   var code = cleanup(code)
@@ -31,6 +32,22 @@ proc test_strict_type_error_contains(code: string, expected: string) =
       message = e.msg
     check raised
     check message.contains(expected)
+
+proc test_strict_type_error_contains_all(code: string, expected: openArray[string]) =
+  var code = cleanup(code)
+  test "Strict type checking error contains migration diagnostics: " & code:
+    let checker = tc.new_type_checker(strict = true, module_filename = "test_code")
+    var raised = false
+    var message = ""
+    try:
+      for node in read_all(code):
+        checker.type_check_node(node)
+    except CatchableError as e:
+      raised = true
+      message = e.msg
+    check raised
+    for part in expected:
+      check message.contains(part)
 
 proc test_strict_type_ok(code: string) =
   var code = cleanup(code)
@@ -736,3 +753,48 @@ suite "Static type checking":
         else
           0))
   """
+
+  test_strict_type_error_contains_all """
+    (type (Result T E)
+      ((Ok T) | (Err E)))
+  """, ["legacy ADT declaration", "Result", "(enum Result:T:E"]
+
+  test_strict_type_error_contains_all """
+    (type (Option T)
+      ((Some T) | None))
+  """, ["legacy ADT declaration", "Option", "(enum Option:T"]
+
+  test "Runtime compilation rejects legacy ADT declarations with migration diagnostics":
+    init_all()
+    var raised = false
+    var message = ""
+    try:
+      discard VM.exec(cleanup("""
+        (type (Result T E)
+          ((Ok T) | (Err E)))
+      """), "legacy_adt_runtime_rejection.gene")
+    except CatchableError as e:
+      raised = true
+      message = e.msg
+    check raised
+    check message.contains("legacy ADT declaration")
+    check message.contains("Result")
+    check message.contains("(enum Result:T:E")
+
+  test_strict_type_ok """
+    (fn accept_enum_result [r: (Result Int String)] -> Int
+      (case r
+        when (Ok value)
+          value
+        when (Err error)
+          0))
+    (fn accept_enum_option [o: (Option Int)] -> Int
+      (case o
+        when (Some value)
+          value
+        when None
+          0))
+    (accept_enum_result (Ok 8))
+    (accept_enum_option (Some 9))
+  """
+

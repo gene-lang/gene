@@ -323,3 +323,36 @@ suite "filesystem tree serdes":
       (assert (copied/sessions/two/user == "bob"))
       true
     """, "tree_serdes_lazy_write_copy") == TRUE
+
+  test "enum payload tree serialization hashes include canonical enum identity":
+    init_all()
+    let root_path = fresh_path("s05-enum-identity")
+    check VM.exec(fmt"""
+      (import Identity:LeftIdentity from "tests/fixtures/s05_identity_left")
+      (import Identity:RightIdentity from "tests/fixtures/s05_identity_right")
+      (var values [(LeftIdentity/Box 9) (RightIdentity/Box 9)])
+      (gene/serdes/write_tree "{root_path}" values ^separate [/*])
+      (var loaded (gene/serdes/read_tree "{root_path}"))
+      (assert ((loaded/0 == (LeftIdentity/Box 9)) == true))
+      (assert ((loaded/1 == (RightIdentity/Box 9)) == true))
+      (assert ((loaded/0 == loaded/1) == false))
+      true
+    """, "tree_serdes_s05_enum_identity") == TRUE
+
+    let manifest = deserialize(readFile(joinPath(root_path, "_genearray.gene")))
+    check manifest.kind == VkArray
+    let ids = array_data(manifest)
+    check ids.len == 2
+    if ids.len == 2:
+      check ids[0].kind == VkString
+      check ids[1].kind == VkString
+      if ids[0].kind == VkString and ids[1].kind == VkString:
+        check ids[0].str != ids[1].str
+        let left_path = joinPath(root_path, ids[0].str & ".gene")
+        let right_path = joinPath(root_path, ids[1].str & ".gene")
+        check fileExists(left_path)
+        check fileExists(right_path)
+        check readFile(left_path).contains("EnumValue")
+        check readFile(left_path).contains("EnumRef")
+        check readFile(right_path).contains("EnumValue")
+        check readFile(right_path).contains("EnumRef")

@@ -1,0 +1,10 @@
+(enum Identity
+  Unit
+  (Box value: Int)
+)
+
+(fn make_unit [] -> Identity
+  Identity/Unit
+)
+
+(export Identity make_unit)

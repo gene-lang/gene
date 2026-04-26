@@ -1113,3 +1113,23 @@ suite "GIR CLI":
     let after_param_type = loaded_fn.matcher.children[0].type_id
     check after_param_type != NO_TYPE_ID
     check loaded.type_descriptors[int(after_param_type)].kind == TdkVar
+
+  test "cached GIR preserves S05 imported enum identity fixture":
+    let source_path = absolutePath("tests/fixtures/s05_gir_identity_main.gene")
+    let gir_path = gir.get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let gene_bin = absolutePath("bin/gene")
+    let first = execCmdEx(gene_bin & " run " & source_path)
+    checkpoint first.output
+    check first.exitCode == 0
+    check fileExists(gir_path)
+
+    let second = execCmdEx(gene_bin & " run " & source_path)
+    checkpoint second.output
+    check second.exitCode == 0

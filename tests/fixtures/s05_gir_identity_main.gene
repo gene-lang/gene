@@ -1,0 +1,25 @@
+(import Identity:LeftIdentity make_unit:left_unit from "tests/fixtures/s05_identity_left")
+(import Identity:RightIdentity make_unit:right_unit from "tests/fixtures/s05_identity_right")
+
+(var left (LeftIdentity/Box 7))
+(var right (RightIdentity/Box 7))
+
+(assert ((left == right) == false))
+(assert ((case left
+  when (LeftIdentity/Box value) value
+  when (RightIdentity/Box value) -100
+  else -1) == 7))
+(assert ((case right
+  when (LeftIdentity/Box value) -100
+  when (RightIdentity/Box value) value
+  else -1) == 7))
+(assert ((case (left_unit)
+  when LeftIdentity/Unit "left"
+  when RightIdentity/Unit "right"
+  else "miss") == "left"))
+(assert ((case (right_unit)
+  when LeftIdentity/Unit "left"
+  when RightIdentity/Unit "right"
+  else "miss") == "right"))
+
+"ok"
