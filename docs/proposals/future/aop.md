@@ -222,7 +222,8 @@ it into examples.
 - `.apply_in_place` is stale; class `.apply` mutates method callables in place,
   while `.apply-fn` returns an explicit wrapper for standalone functions.
 - Constructor/destructor/exception join-point wording from the old proposal is
-  unsupported; the registered advice forms are `before`, `before_filter`,
+  unsupported; dedicated advice exception hooks such as `after exception` are
+  also unsupported. The registered advice forms are `before`, `before_filter`,
   `invariant`, `around`, and `after`.
 - Global aspect `(A .disable)` and `(A .enable)` examples are stale; current
   public toggles are per-interception APIs.
