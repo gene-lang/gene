@@ -1,0 +1,174 @@
+# Expected: direct scalar target [GENE.INTERCEPT.CLASS_TARGET]
+# Expected: direct macro target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
+# Expected: direct missing class [GENE.INTERCEPT.CLASS_TARGET]
+# Expected: direct too few mappings [GENE.INTERCEPT.MAPPING_ARITY]
+# Expected: direct too many mappings [GENE.INTERCEPT.MAPPING_ARITY]
+# Expected: direct mapping name [GENE.INTERCEPT.MAPPING_NAME]
+# Expected: direct missing method [GENE.INTERCEPT.MISSING_METHOD]
+# Expected: direct keyword [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: legacy scalar target [GENE.INTERCEPT.CLASS_TARGET]
+# Expected: legacy macro target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
+# Expected: legacy missing method [GENE.INTERCEPT.MISSING_METHOD]
+# Expected: legacy mapping name [GENE.INTERCEPT.MAPPING_NAME]
+# Expected: legacy arity [GENE.INTERCEPT.MAPPING_ARITY]
+# Expected: legacy keyword [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: atomic missing method [GENE.INTERCEPT.MISSING_METHOD]
+# Expected: atomic run body 5
+# Expected: atomic run result 15
+
+(var CLASS_TARGET_MARKER "[GENE.INTERCEPT.CLASS_TARGET]")
+(var MAPPING_ARITY_MARKER "[GENE.INTERCEPT.MAPPING_ARITY]")
+(var MAPPING_NAME_MARKER "[GENE.INTERCEPT.MAPPING_NAME]")
+(var MISSING_METHOD_MARKER "[GENE.INTERCEPT.MISSING_METHOD]")
+(var MACRO_MARKER "[GENE.INTERCEPT.MACRO_UNSUPPORTED]")
+(var KEYWORD_MARKER "[GENE.INTERCEPT.KEYWORD_UNSUPPORTED]")
+
+(fn expect_marker [label marker e]
+  (assert ((e .message) .contains marker))
+  (println label marker)
+)
+
+(interceptor Audit [run stop]
+  (before run [x]
+    (println "audit before run" x)
+  )
+  (before stop [x]
+    (println "audit before stop" x)
+  )
+)
+
+(class DiagnosticC
+  ^fields {}
+  (method run [x]
+    (println "diagnostic run body" x)
+    (x + 1)
+  )
+  (method stop [x]
+    (println "diagnostic stop body" x)
+    (x + 2)
+  )
+)
+
+(try
+  (Audit "not a class" "run" "stop")
+catch e
+  (expect_marker "direct scalar target" CLASS_TARGET_MARKER e)
+)
+
+(try
+  (Audit fn-interceptor "run" "stop")
+catch e
+  (expect_marker "direct macro target" MACRO_MARKER e)
+)
+
+(try
+  (Audit)
+catch e
+  (expect_marker "direct missing class" CLASS_TARGET_MARKER e)
+)
+
+(try
+  (Audit DiagnosticC "run")
+catch e
+  (expect_marker "direct too few mappings" MAPPING_ARITY_MARKER e)
+)
+
+(try
+  (Audit DiagnosticC "run" "stop" "extra")
+catch e
+  (expect_marker "direct too many mappings" MAPPING_ARITY_MARKER e)
+)
+
+(try
+  (Audit DiagnosticC 123 "stop")
+catch e
+  (expect_marker "direct mapping name" MAPPING_NAME_MARKER e)
+)
+
+(try
+  (Audit DiagnosticC "run" "missing")
+catch e
+  (expect_marker "direct missing method" MISSING_METHOD_MARKER e)
+)
+
+(try
+  (Audit DiagnosticC "run" "stop" ^unexpected true)
+catch e
+  (expect_marker "direct keyword" KEYWORD_MARKER e)
+)
+
+(aspect LegacyAudit [run]
+  (before run [x]
+    (println "legacy before run" x)
+  )
+)
+
+(class LegacyC
+  ^fields {}
+  (method run [x]
+    (println "legacy run body" x)
+    (x + 20)
+  )
+)
+
+(try
+  (LegacyAudit .apply "not a class" "run")
+catch e
+  (expect_marker "legacy scalar target" CLASS_TARGET_MARKER e)
+)
+
+(try
+  (LegacyAudit .apply fn-interceptor "run")
+catch e
+  (expect_marker "legacy macro target" MACRO_MARKER e)
+)
+
+(try
+  (LegacyAudit .apply LegacyC "missing")
+catch e
+  (expect_marker "legacy missing method" MISSING_METHOD_MARKER e)
+)
+
+(try
+  (LegacyAudit .apply LegacyC 123)
+catch e
+  (expect_marker "legacy mapping name" MAPPING_NAME_MARKER e)
+)
+
+(try
+  (LegacyAudit .apply LegacyC "run" "extra")
+catch e
+  (expect_marker "legacy arity" MAPPING_ARITY_MARKER e)
+)
+
+(try
+  (LegacyAudit .apply LegacyC "run" ^unexpected true)
+catch e
+  (expect_marker "legacy keyword" KEYWORD_MARKER e)
+)
+
+(interceptor AtomicAudit [run missing]
+  (before run [x]
+    (println "atomic before run" x)
+  )
+  (before missing [x]
+    (println "atomic before missing" x)
+  )
+)
+
+(class AtomicC
+  ^fields {}
+  (method run [x]
+    (println "atomic run body" x)
+    (x + 10)
+  )
+)
+
+(try
+  (AtomicAudit AtomicC "run" "missing")
+catch e
+  (expect_marker "atomic missing method" MISSING_METHOD_MARKER e)
+)
+
+(var atomic (new AtomicC))
+(println "atomic run result" (atomic .run 5))

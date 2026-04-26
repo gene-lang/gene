@@ -6,6 +6,10 @@ const
   InterceptFnArityMarker = "[GENE.INTERCEPT.FN_ARITY]"
   InterceptKeywordUnsupportedMarker = "[GENE.INTERCEPT.KEYWORD_UNSUPPORTED]"
   InterceptFnTargetMarker = "[GENE.INTERCEPT.FN_TARGET]"
+  InterceptClassTargetMarker = "[GENE.INTERCEPT.CLASS_TARGET]"
+  InterceptMappingArityMarker = "[GENE.INTERCEPT.MAPPING_ARITY]"
+  InterceptMappingNameMarker = "[GENE.INTERCEPT.MAPPING_NAME]"
+  InterceptMissingMethodMarker = "[GENE.INTERCEPT.MISSING_METHOD]"
   InterceptMacroUnsupportedMarker = "[GENE.INTERCEPT.MACRO_UNSUPPORTED]"
   InterceptAsyncUnsupportedMarker = "[GENE.INTERCEPT.ASYNC_UNSUPPORTED]"
 
@@ -287,21 +291,71 @@ proc create_interception_value(original: Value, aspect_value: Value, param_name:
   interception_ref.interception = interception
   interception_ref.to_ref_value()
 
-proc apply_aspect_to_class(label: string, self: Value, class_arg: Value, method_name_vals: seq[Value]): Value =
-  if self.kind != VkAspect:
-    not_allowed(label & " must be called on an aspect")
+type
+  ClassInterceptorMapping = object
+    param_name: string
+    method_name: string
+    method_key: Key
 
-  let aspect = self.ref.aspect
+proc class_target_kind(target: Value): string =
+  case target.kind
+  of VkClass:
+    "class"
+  of VkFunction:
+    if target.ref.fn.is_macro_like:
+      "macro-like function"
+    else:
+      "function"
+  of VkNativeFn:
+    "native function"
+  of VkNativeMacro:
+    "native macro"
+  of VkInterception:
+    "interception"
+  else:
+    $target.kind
 
-  if class_arg.kind != VkClass:
-    not_allowed(label & " requires a class argument")
+proc validate_class_interceptor_target(label: string, aspect_name: string, class_arg: Value): Class =
+  case class_arg.kind
+  of VkClass:
+    return class_arg.ref.class
+  of VkFunction:
+    let fn = class_arg.ref.fn
+    if fn.is_macro_like:
+      raise_interception_diagnostic(
+        InterceptMacroUnsupportedMarker,
+        label,
+        aspect_name,
+        "expected class target; actual " & class_target_kind(class_arg) & " '" & fn.name & "'"
+      )
+  of VkNativeMacro:
+    raise_interception_diagnostic(
+      InterceptMacroUnsupportedMarker,
+      label,
+      aspect_name,
+      "expected class target; actual " & class_target_kind(class_arg)
+    )
+  else:
+    discard
 
-  let class = class_arg.ref.class
+  raise_interception_diagnostic(
+    InterceptClassTargetMarker,
+    label,
+    aspect_name,
+    "expected class target; actual " & class_target_kind(class_arg)
+  )
+  nil
 
+proc prevalidate_class_interceptor_mappings(label: string, aspect: Aspect, target_class: Class,
+                                            method_name_vals: seq[Value]): seq[ClassInterceptorMapping] =
   if method_name_vals.len != aspect.param_names.len:
-    not_allowed(label & " requires " & $aspect.param_names.len & " method name arguments")
+    raise_interception_diagnostic(
+      InterceptMappingArityMarker,
+      label,
+      aspect.name,
+      "expected " & $aspect.param_names.len & " method mapping arguments; actual " & $method_name_vals.len
+    )
 
-  let applied = new_array_value()
   for i in 0..<aspect.param_names.len:
     let param_name = aspect.param_names[i]
     let method_name_val = method_name_vals[i]
@@ -310,18 +364,46 @@ proc apply_aspect_to_class(label: string, self: Value, class_arg: Value, method_
     of VkString, VkSymbol:
       method_name = method_name_val.str
     else:
-      not_allowed(label & " method name must be a string or symbol")
+      raise_interception_diagnostic(
+        InterceptMappingNameMarker,
+        label,
+        aspect.name,
+        "mapping for parameter '" & param_name & "' expected string or symbol method name; actual " &
+          $method_name_val.kind
+      )
 
     let method_key = method_name.to_key()
-    if not class.methods.hasKey(method_key):
-      not_allowed(label & " class does not have method: " & method_name)
+    if not target_class.methods.hasKey(method_key):
+      raise_interception_diagnostic(
+        InterceptMissingMethodMarker,
+        label,
+        aspect.name,
+        "class '" & target_class.name & "' has no method '" & method_name &
+          "' for parameter '" & param_name & "'"
+      )
 
-    let original_method = class.methods[method_key]
-    let interception_val = create_interception_value(original_method.callable, self, param_name)
-    class.methods[method_key].callable = interception_val
-    class.version.inc()
-    if class.runtime_type != nil:
-      class.runtime_type.methods[method_key] = interception_val
+    result.add(ClassInterceptorMapping(
+      param_name: param_name,
+      method_name: method_name,
+      method_key: method_key
+    ))
+
+proc apply_aspect_to_class(label: string, self: Value, class_arg: Value, method_name_vals: seq[Value]): Value =
+  if self.kind != VkAspect:
+    not_allowed(label & " must be called on an aspect")
+
+  let aspect = self.ref.aspect
+  let target_class = validate_class_interceptor_target(label, aspect.name, class_arg)
+  let mappings = prevalidate_class_interceptor_mappings(label, aspect, target_class, method_name_vals)
+
+  let applied = new_array_value()
+  for mapping in mappings:
+    let original_method = target_class.methods[mapping.method_key]
+    let interception_val = create_interception_value(original_method.callable, self, mapping.param_name)
+    target_class.methods[mapping.method_key].callable = interception_val
+    target_class.version.inc()
+    if target_class.runtime_type != nil:
+      target_class.runtime_type.methods[mapping.method_key] = interception_val
     array_data(applied).add(interception_val)
 
   return applied
@@ -388,23 +470,37 @@ proc apply_aspect_to_function(label: string, self: Value, fn_arg: Value): Value 
 
   create_interception_value(fn_arg, self, aspect.param_names[0])
 
-proc collect_method_name_args(label: string, args: ptr UncheckedArray[Value], arg_count: int,
-                              has_keyword_args: bool): seq[Value] =
+proc collect_class_application_args(label: string, aspect_name: string, args: ptr UncheckedArray[Value],
+                                    arg_count: int, has_keyword_args: bool): tuple[class_arg: Value,
+                                    method_name_vals: seq[Value]] =
   if has_keyword_args:
-    not_allowed(label & " does not accept keyword arguments")
-
-  if arg_count < 2:
-    not_allowed(label & " requires self and class arguments")
+    raise_interception_diagnostic(
+      InterceptKeywordUnsupportedMarker,
+      label,
+      aspect_name,
+      "class interceptor application does not accept keyword arguments"
+    )
 
   let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional < 2:
+    raise_interception_diagnostic(
+      InterceptClassTargetMarker,
+      label,
+      aspect_name,
+      "expected class target argument; actual none"
+    )
+
+  result.class_arg = get_positional_arg(args, 1, has_keyword_args)
+  result.method_name_vals = @[]
   for i in 2..<positional:
-    result.add(get_positional_arg(args, i, has_keyword_args))
+    result.method_name_vals.add(get_positional_arg(args, i, has_keyword_args))
 
 proc aspect_apply(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-  let method_name_vals = collect_method_name_args("aspect.apply", args, arg_count, has_keyword_args)
   let self = get_positional_arg(args, 0, has_keyword_args)
-  let class_arg = get_positional_arg(args, 1, has_keyword_args)
-  apply_aspect_to_class("aspect.apply", self, class_arg, method_name_vals)
+  if self.kind != VkAspect:
+    not_allowed("aspect.apply must be called on an aspect")
+  let collected = collect_class_application_args("aspect.apply", self.ref.aspect.name, args, arg_count, has_keyword_args)
+  apply_aspect_to_class("aspect.apply", self, collected.class_arg, collected.method_name_vals)
 
 proc aspect_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   let self = get_positional_arg(args, 0, has_keyword_args)
@@ -432,9 +528,8 @@ proc aspect_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
     let fn_arg = get_positional_arg(args, 1, has_keyword_args)
     apply_aspect_to_function("fn-interceptor application", self, fn_arg)
   of AkLegacyAspect, AkClassInterceptor:
-    let method_name_vals = collect_method_name_args("interceptor application", args, arg_count, has_keyword_args)
-    let class_arg = get_positional_arg(args, 1, has_keyword_args)
-    apply_aspect_to_class("interceptor application", self, class_arg, method_name_vals)
+    let collected = collect_class_application_args("interceptor application", aspect.name, args, arg_count, has_keyword_args)
+    apply_aspect_to_class("interceptor application", self, collected.class_arg, collected.method_name_vals)
 
 proc aspect_apply_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 3:

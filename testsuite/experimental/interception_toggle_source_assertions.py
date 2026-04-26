@@ -81,18 +81,34 @@ def main() -> int:
     # and invalidates both class.version and runtime_type.methods.
     check_contains(
         apply_class,
-        "let interception_val = create_interception_value(original_method.callable, self, param_name)",
+        "let interception_val = create_interception_value(original_method.callable, self, mapping.param_name)",
         "apply_aspect_to_class install",
     )
     check_order(
         apply_class,
         [
-            "class.methods[method_key].callable = interception_val",
-            "class.version.inc()",
-            "if class.runtime_type != nil:",
-            "class.runtime_type.methods[method_key] = interception_val",
+            "target_class.methods[mapping.method_key].callable = interception_val",
+            "target_class.version.inc()",
+            "if target_class.runtime_type != nil:",
+            "target_class.runtime_type.methods[mapping.method_key] = interception_val",
         ],
         "apply_aspect_to_class install invalidation",
+    )
+
+    check_contains(
+        apply_class,
+        "let mappings = prevalidate_class_interceptor_mappings(label, aspect, target_class, method_name_vals)",
+        "apply_aspect_to_class prevalidation",
+    )
+    check_order(
+        apply_class,
+        [
+            "let mappings = prevalidate_class_interceptor_mappings(label, aspect, target_class, method_name_vals)",
+            "let applied = new_array_value()",
+            "let interception_val = create_interception_value(original_method.callable, self, mapping.param_name)",
+            "target_class.methods[mapping.method_key].callable = interception_val",
+        ],
+        "apply_aspect_to_class prevalidation before install",
     )
 
     # Cheap toggle invariants: direct Aspect and Interception slash toggles are field
