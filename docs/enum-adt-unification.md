@@ -1,25 +1,34 @@
-# Enum and ADT Unification
+# Enum ADT Reference
 
-Gene is converging on one public sum-type model: `enum`. Simple enums and payload-bearing algebraic data types use the same declaration form, metadata model, diagnostics, and runtime identity rules.
+Gene uses `enum` as its public sum-type model. Simple symbolic enums, unit variants, and payload-bearing algebraic data types all use the same declaration form, constructor rules, matching rules, nominal identity, and persistence behavior.
 
-The reader for this document is a Gene maintainer working on enum ADT implementation slices. After reading, they should know exactly what the declaration contract already provides and which behaviors are deliberately left to downstream work.
+This document is for Gene users and maintainers who need to define, construct, type-check, match, serialize/import, and migrate enum ADTs correctly. For the normative language contract, read the type specification (`../spec/02-types.md`) and pattern specification (`../spec/12-patterns.md`) alongside this reference.
 
 ## Public model
 
-The canonical public declaration form is:
+The canonical public declaration form is `enum`:
 
 ```gene
-(enum Name:T:E
-  (Variant field: T)
-  (Other error: E)
-  UnitVariant)
+(enum Result:T:E
+  (Ok value: T)
+  (Err error: E)
+  Empty)
 ```
 
-The declaration head contains the enum name plus optional colon-prefixed generic parameters. The canonical enum base name is the portion before the first generic parameter. For example, `(enum Result:T:E ...)` declares the enum `Result`; type usage supplies concrete parameters as `(Result Int String)`.
+The declaration head contains the enum name plus optional colon-prefixed generic parameters. The canonical enum name is the portion before the first generic parameter, so `Result:T:E` declares the enum `Result`. Concrete type positions supply generic arguments with ordinary type-expression syntax:
 
-Legacy Gene-expression ADT declarations such as `(type (Result T E) ...)` are not a supported alternate public model. New language behavior, documentation, and tests should use `enum` for sum types.
+```gene
+(fn accept_result [r: (Result Int String)] -> String
+  "accepted")
+```
 
-## Declaration syntax
+Legacy Gene-expression ADT declarations such as `(type (Result T E) ...)` are migration errors, not a second supported model. New code, docs, and examples should describe sum types with `enum`.
+
+### Non-goals
+
+The public model does not expose private checker bridge machinery or any separate ADT registry. Display strings such as `Result/Ok` and `(Result/Ok 42)` are presentation, not identity. Runtime and type identity are nominal: an enum value belongs to the enum declaration that created its variant.
+
+## Declarations
 
 ### Unit variants
 
@@ -29,108 +38,167 @@ Legacy Gene-expression ADT declarations such as `(type (Result T E) ...)` are no
 (var c Color/red)
 ```
 
-A unit variant has no payload fields. It is represented by the enum member itself and belongs to its parent enum.
-
-The older `^values` spelling is accepted as simple-enum declaration sugar and canonicalizes to the same unit-variant metadata:
+A unit variant has no payload fields. It can be used directly as a value, and it belongs to its parent enum. The older `^values` spelling is accepted as simple-enum sugar and canonicalizes to the same ordered unit-variant model:
 
 ```gene
 (enum Status ^values [ready done])
+
+(var s Status/ready)
 ```
 
 ### Payload variants
 
 ```gene
 (enum Shape
-  (Circle radius)
-  (Rect width height)
+  (Circle radius: Float)
+  (Rect width: Int height: Int)
   Point)
 ```
 
-A payload variant is written as a list whose first element is the variant name and whose remaining elements are field declarations. Field order is significant and is preserved for constructors, display, destructuring, and downstream type enforcement.
+A payload variant is a list whose first element is the variant name and whose remaining elements are ordered field declarations. Field order defines positional constructor order, positional pattern binding order, and display order. Field names define keyword constructor names and field accessors.
 
-### Field type annotations
+Field annotations are optional. Annotated fields are checked when payload values are constructed; unannotated fields remain gradual and accept any value.
+
+## Construction
+
+Qualified enum members construct values:
+
+```gene
+(var circle (Shape/Circle 5.0))
+(var rect (Shape/Rect ^height 20 ^width 10))
+(var point Shape/Point)
+```
+
+Payload variants support positional construction and keyword construction. A single constructor call must use one style; mixed positional and keyword arguments are rejected.
+
+```gene
+(var by_position (Shape/Rect 10 20))
+(var by_keyword (Shape/Rect ^width 10 ^height 20))
+(assert (by_position == by_keyword))
+```
+
+Constructors validate arity, missing keyword fields, unknown keyword fields, duplicate keyword fields, and annotated payload types.
+
+```gene
+(enum Metric
+  (Counter value: Int))
+
+(var counter (Metric/Counter 7))
+
+(try
+  (Metric/Counter "bad")
+catch *
+  (println "typed payload rejected"))
+```
+
+Unit variants can be used directly or called with no arguments. Calling a unit variant with payload arguments is an error.
+
+## Field access, equality, display, and `typeof`
+
+Payload fields are accessed by their declaration names:
+
+```gene
+(assert ((circle .radius) == 5.0))
+(assert ((rect .width) == 10))
+(assert ((rect .height) == 20))
+```
+
+Enum value equality is nominal by variant and structural by payload. Two payload values compare equal when they come from the same enum variant and all payload values compare equal. Unit variants from the same enum member compare equal.
+
+`typeof` returns the parent enum name for enum members and enum values:
+
+```gene
+(assert ((typeof circle) == "Shape"))
+(assert ((typeof Shape/Point) == "Shape"))
+```
+
+Display forms are for humans and diagnostics. They are not the canonical identity and must not be used as a substitute for nominal enum identity.
+
+## Built-in `Result`, `Option`, and `?`
+
+`Result` and `Option` are enum-backed built-ins. Their variants are ordinary enum variants with built-in nominal identities:
+
+- `Result/Ok` / `Ok`
+- `Result/Err` / `Err`
+- `Option/Some` / `Some`
+- `Option/None` / `None`
+
+```gene
+(var ok (Ok 42))
+(var err (Err "boom"))
+(var some (Some "value"))
+(var none None)
+```
+
+The `?` operator unwraps built-in `Ok` and `Some`. It returns early with built-in `Err` and `None`. Same-named variants from user-defined enums are ordinary enum values and do not receive the built-in shortcut behavior.
+
+Prefer qualified forms in docs and examples when custom enums might also use names such as `Ok`, `Err`, `Some`, or `None`.
+
+## `case` patterns
+
+Enum ADTs match through `case` and `when` patterns. A pattern can use a qualified variant name or an unambiguous bare variant name.
+
+```gene
+(fn describe [shape: Shape] -> String
+  (case shape
+    when (Shape/Circle radius)
+      "circle"
+    when (Shape/Rect width height)
+      "rect"
+    when Shape/Point
+      "point"))
+```
+
+Payload binders are positional and follow the declaration order. A binder must be a symbol. `_` consumes a payload position without creating a binding.
+
+```gene
+(var height
+  (case (Shape/Rect 10 20)
+    when (Shape/Rect _ h)
+      h
+    else
+      0))
+```
+
+Unit variants match as symbols. Payload variants must provide exactly one binder per declared field. Missing or extra binders produce arity diagnostics. Unknown enum or variant names produce diagnostics. Ambiguous bare variant names require qualification.
+
+A `case` over a statically known enum value is checked for exhaustiveness when it has no explicit `else` and no wildcard `_` branch. Missing variants are reported in declaration order. At runtime, a no-match `case` without `else` returns `nil`.
+
+## Nominal identity across boundaries
+
+Enum identity is nominal and belongs to the enum declaration, not to the printed name. That rule applies across ordinary runtime use, imports, GIR cache artifacts, runtime serialization, and tree serialization.
+
+A value created by `Shape/Circle` satisfies `Shape` boundaries because it carries the `Shape` identity. A different enum with the same printed variant name is not the same type. Built-in `Result` and `Option` shortcuts use the built-in enum identities; user-defined variants named `Ok`, `Err`, `Some`, or `None` do not become the built-ins by name alone.
+
+This identity rule matters when code is split across modules or cached/serialized and loaded later: consumers should rely on enum/type semantics, not on display-string comparison.
+
+## Migration from legacy ADT syntax
+
+Legacy Gene-expression ADT syntax is no longer the public ADT model:
+
+```gene
+(type (Result T E)
+  (Ok T)
+  (Err E))
+```
+
+Migrate it to `enum`:
 
 ```gene
 (enum Result:T:E
   (Ok value: T)
-  (Err error: E)
-  Empty)
+  (Err error: E))
 ```
 
-A field may include an optional type annotation with Gene's `field: Type` syntax. S01 records the resolved field type descriptor when one is available, alongside the ordered field name. Untyped fields remain valid and accept any value until a downstream constructor/type-enforcement slice applies stricter checks.
+Migration guidance:
 
-## S01 declaration contract
+- Replace legacy `type` ADT declarations with `enum` declarations.
+- Use colon-prefixed generic parameters in the enum head.
+- Give payload fields names; those names become constructor keywords, field accessors, and pattern documentation.
+- Construct values with enum variants such as `(Result/Ok value)` or `(Ok value)` for built-ins.
+- Match values with enum variant patterns.
+- Do not treat quoted legacy Result/Option-shaped Gene values as enum ADT values; they do not satisfy enum ADT type boundaries.
 
-S01 delivers the canonical declaration and metadata baseline:
+## Deferred non-core work
 
-- `enum` is the single public ADT declaration form.
-- Generic enum heads use colon parameters, such as `Result:T:E`.
-- The stored enum name is the base name, such as `Result`, not `Result:T:E`.
-- Each variant records whether it is a unit variant or a payload variant.
-- Payload variants record ordered field names.
-- Payload fields may record optional type descriptors for later enforcement.
-- Enum declaration diagnostics identify malformed declarations, duplicate variants, duplicate fields, invalid generic parameters, and invalid field annotations.
-- Type annotations can refer to generic enum applications such as `(Result Int String)` and accept values whose parent enum is `Result`.
-
-S01 intentionally does not make every enum ADT behavior final. It provides the metadata and diagnostics that later slices consume.
-
-## Downstream ownership
-
-The following behaviors are deliberately staged after S01:
-
-| Area | Downstream responsibility |
-|------|---------------------------|
-| Constructors and field enforcement | Enforce constructor arity, keyword behavior, and annotated field types consistently for payload variants. |
-| Result and Option migration | Make `Result` and `Option` ordinary enum declarations end-to-end, including compatibility handling for existing shortcuts. |
-| Pattern matching | Match and destructure enum variants through the unified enum metadata rather than hardcoded Gene-expression ADT names. |
-| Import identity and persistence | Preserve nominal enum identity across modules, GIR/cache, and serialization boundaries. |
-| Final examples | Publish polished examples only after constructor, matching, and identity semantics are all closed. |
-
-## Runtime representation direction
-
-The unified model has three conceptual values:
-
-- **Enum definition**: the named sum type, such as `Result` or `Shape`.
-- **Enum member**: one declared variant, such as `Result/Ok` or `Shape/Point`.
-- **Enum value**: an instantiated payload variant, such as `(Result/Ok 42)`.
-
-Unit variants use the enum member as the value. Payload variants use an enum value that points back to the member and stores field payloads in declaration order.
-
-## Construction surface
-
-Construction is the responsibility of the constructor-enforcement slice. The intended public shape is:
-
-```gene
-(var ok (Result/Ok 42))
-(var err (Result/Err "boom"))
-(var empty Result/Empty)
-```
-
-S01 preserves the metadata needed to implement this consistently. Documentation should avoid claiming final constructor enforcement until the downstream slice validates arity, keyword arguments, field annotations, and diagnostics.
-
-## Pattern-matching surface
-
-Enum pattern matching is downstream. The intended direction is to match on enum variants and bind fields by declaration order:
-
-```gene
-(case result
-  (when (Ok value) value)
-  (when (Err error) error)
-  (when Empty nil))
-```
-
-This must be implemented through enum metadata, not by recognizing hardcoded `Ok`, `Err`, `Some`, or `None` Gene-expression forms. Exhaustiveness checking is also downstream and should start as diagnostic-grade feedback before becoming stricter.
-
-## Compatibility stance
-
-Gene may temporarily contain compatibility shortcuts while `Result` and `Option` migrate, but those shortcuts are not a second ADT model. New code and docs should prefer enum-qualified forms such as `Result/Ok` and `Option/Some` when describing the unified model.
-
-## Validation expectations
-
-A complete implementation slice should keep three inspection surfaces aligned:
-
-1. Declaration tests that exercise generic enum heads, unit variants, payload fields, and annotations.
-2. Negative tests that assert targeted diagnostics for malformed declarations.
-3. OpenSpec validation that captures the public contract with scenario-based requirements.
-
-If those surfaces disagree, the implementation is not ready to become the next baseline for downstream enum ADT work.
+Enum ADTs are implemented and useful, but they remain Beta rather than stable core. Deferred work includes enum-specific methods, optimizer specialization, richer constructor ergonomics, additional pattern forms such as guards/or/as patterns, broader non-enum pattern diagnostics, and any future stable-core promotion decision.
