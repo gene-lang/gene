@@ -1,0 +1,36 @@
+# Expected: wrapped value VkInterception
+# Expected: trace before 2
+# Expected: trace around 2
+# Expected: inc 2
+# Expected: trace after 2 3
+# Expected: wrapped result 3
+# Expected: inc 1
+# Expected: original result 2
+# Expected: inc 3
+# Expected: disabled result 4
+
+(fn-interceptor Trace [f]
+  (before f [x]
+    (println "trace before" x)
+  )
+  (around f [x wrapped]
+    (println "trace around" x)
+    (wrapped x)
+  )
+  (after f [x result]
+    (println "trace after" x result)
+  )
+)
+
+(fn inc [x]
+  (println "inc" x)
+  (x + 1)
+)
+
+(var wrapped (Trace inc))
+(println "wrapped value" wrapped)
+(println "wrapped result" (wrapped 2))
+(println "original result" (inc 1))
+
+(Trace .disable-interception wrapped)
+(println "disabled result" (wrapped 3))

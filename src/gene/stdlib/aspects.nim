@@ -71,7 +71,8 @@ proc resolve_advice_callable(callable_val: Value, caller_frame: Frame): Value =
   else:
     not_allowed("advice callable must be a symbol")
 
-proc parse_aspect_macro(form_label: string, vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
+proc parse_aspect_macro(form_label: string, definition_kind: AspectDefinitionKind,
+                        vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     let gene = gene_value.gene
     if gene.children.len < 2:
@@ -93,8 +94,12 @@ proc parse_aspect_macro(form_label: string, vm: ptr VirtualMachine, gene_value: 
       else:
         not_allowed(form_label & " parameter must be a symbol")
 
+    if definition_kind == AkFunctionInterceptor and param_names.len != 1:
+      not_allowed("fn-interceptor parameter list must contain exactly one symbol")
+
     let aspect = Aspect(
       name: name,
+      definition_kind: definition_kind,
       param_names: param_names,
       before_advices: initTable[string, seq[Value]](),
       invariant_advices: initTable[string, seq[Value]](),
@@ -209,10 +214,13 @@ proc parse_aspect_macro(form_label: string, vm: ptr VirtualMachine, gene_value: 
     return aspect_val
 
 proc aspect_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
-  parse_aspect_macro("aspect", vm, gene_value, caller_frame)
+  parse_aspect_macro("aspect", AkLegacyAspect, vm, gene_value, caller_frame)
 
 proc interceptor_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
-  parse_aspect_macro("interceptor", vm, gene_value, caller_frame)
+  parse_aspect_macro("interceptor", AkClassInterceptor, vm, gene_value, caller_frame)
+
+proc fn_interceptor_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
+  parse_aspect_macro("fn-interceptor", AkFunctionInterceptor, vm, gene_value, caller_frame)
 
 proc create_interception_value(original: Value, aspect_value: Value, param_name: string): Value =
   let interception = Interception(
@@ -264,6 +272,19 @@ proc apply_aspect_to_class(label: string, self: Value, class_arg: Value, method_
 
   return applied
 
+proc apply_aspect_to_function(label: string, self: Value, fn_arg: Value): Value =
+  if self.kind != VkAspect:
+    not_allowed(label & " must be called on an aspect")
+
+  let aspect = self.ref.aspect
+  if aspect.param_names.len != 1:
+    not_allowed(label & " requires exactly one function parameter")
+
+  if fn_arg.kind notin {VkFunction, VkNativeFn, VkInterception}:
+    not_allowed(label & " requires a function, native function, or interception")
+
+  create_interception_value(fn_arg, self, aspect.param_names[0])
+
 proc collect_method_name_args(label: string, args: ptr UncheckedArray[Value], arg_count: int,
                               has_keyword_args: bool): seq[Value] =
   if has_keyword_args:
@@ -283,10 +304,24 @@ proc aspect_apply(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   apply_aspect_to_class("aspect.apply", self, class_arg, method_name_vals)
 
 proc aspect_call(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-  let method_name_vals = collect_method_name_args("interceptor application", args, arg_count, has_keyword_args)
   let self = get_positional_arg(args, 0, has_keyword_args)
-  let class_arg = get_positional_arg(args, 1, has_keyword_args)
-  apply_aspect_to_class("interceptor application", self, class_arg, method_name_vals)
+  if self.kind != VkAspect:
+    not_allowed("aspect call must be called on an aspect")
+
+  let aspect = self.ref.aspect
+  case aspect.definition_kind
+  of AkFunctionInterceptor:
+    if has_keyword_args:
+      not_allowed("fn-interceptor application does not accept keyword arguments")
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional != 2:
+      not_allowed("fn-interceptor application requires exactly one callable argument")
+    let fn_arg = get_positional_arg(args, 1, has_keyword_args)
+    apply_aspect_to_function("fn-interceptor application", self, fn_arg)
+  of AkLegacyAspect, AkClassInterceptor:
+    let method_name_vals = collect_method_name_args("interceptor application", args, arg_count, has_keyword_args)
+    let class_arg = get_positional_arg(args, 1, has_keyword_args)
+    apply_aspect_to_class("interceptor application", self, class_arg, method_name_vals)
 
 proc aspect_apply_fn(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   if arg_count < 3:
@@ -350,6 +385,10 @@ proc init_aspect_support*() =
   var interceptor_macro_ref = new_ref(VkNativeMacro)
   interceptor_macro_ref.native_macro = interceptor_macro
   global_ns["interceptor".to_key()] = interceptor_macro_ref.to_ref_value()
+
+  var fn_interceptor_macro_ref = new_ref(VkNativeMacro)
+  fn_interceptor_macro_ref.native_macro = fn_interceptor_macro
+  global_ns["fn-interceptor".to_key()] = fn_interceptor_macro_ref.to_ref_value()
 
   let aspect_class = new_class("Aspect")
   aspect_class.def_native_method("apply", aspect_apply)

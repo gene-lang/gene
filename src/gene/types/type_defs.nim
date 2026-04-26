@@ -71,7 +71,7 @@ type
     GsDone               # Exhausted
 
   ExceptionData* = ref object
-  
+
   Interception* = ref object
     original*: Value      # Original callable (method/function)
     aspect*: Value        # The aspect that created this interception
@@ -79,6 +79,11 @@ type
     active*: bool         # Whether this interception is active
 
   # AOP Aspect type
+  AspectDefinitionKind* = enum
+    AkLegacyAspect
+    AkClassInterceptor
+    AkFunctionInterceptor
+
   AopAfterAdvice* = object
     callable*: Value
     replace_result*: bool
@@ -86,6 +91,7 @@ type
 
   Aspect* = ref object
     name*: string
+    definition_kind*: AspectDefinitionKind
     param_names*: seq[string]                  # Method placeholders [m1, m2]
     before_advices*: Table[string, seq[Value]] # param -> [advice fns]
     invariant_advices*: Table[string, seq[Value]]
@@ -1182,7 +1188,7 @@ type
   VmCallback* = proc() {.gcsafe.}
 
   ReplOnThrowCallback* = proc(vm: ptr VirtualMachine, exception_value: Value): Value {.nimcall.}
-  
+
   # Scheduler callback - extensions register poll handlers here
   SchedulerCallback* = proc(vm: ptr VirtualMachine) {.gcsafe.}
 

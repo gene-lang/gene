@@ -87,18 +87,18 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
         self.compile(gene.type)  # This pushes object and method
       finally:
         self.method_access_mode = prev_mode
-      
+
       # After compiling obj/.method, stack has [obj, method]
       # IkGeneStartDefault will pop the method
       # We need to ensure obj is used as an argument
       let fn_label = new_label()
       let end_label = if gene.children.len == 0 and gene.props.len == 0: fn_label else: new_label()
       self.emit(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
-      
+
       # Swap so obj is on top, then add it as the first child
       self.emit(Instruction(kind: IkSwap))
       self.emit(Instruction(kind: IkGeneAddChild))
-      
+
       # Add any explicit arguments
       self.quote_level.inc()
 
@@ -139,7 +139,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
         i += 1
 
       self.quote_level.dec()
-      
+
       self.emit(Instruction(kind: IkNoop, label: fn_label))
       self.emit(Instruction(kind: IkGeneEnd, label: end_label))
       return
@@ -157,14 +157,14 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       # Syntax: (target ./ property [default])
       if gene.children.len < 2 or gene.children.len > 3:
         not_allowed("(target ./ property [default]) expects 2 or 3 arguments")
-      
+
       # Compile the target
       self.compile(gene.type)
-      
+
       # Compile the property
       self.compile(gene.children[1])
       self.emit(Instruction(kind: IkValidateSelectorSegment))
-      
+
       # If there's a default value, compile it
       if gene.children.len == 3:
         self.compile(gene.children[2])
@@ -178,7 +178,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
         compiler_log(LlDebug, "Handling selector with complex symbol")
       # Compile the target
       self.compile(gene.type)
-      
+
       # The property is the second part of the complex symbol
       let prop_name = first_child.ref.csymbol[1]
       # Check if property is numeric
@@ -192,7 +192,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
           compiler_log(LlDebug, "Property is symbolic: " & prop_name)
         self.emit(Instruction(kind: IkPushValue, arg0: prop_name.to_symbol_value()))
       self.emit(Instruction(kind: IkValidateSelectorSegment))
-      
+
       # Check for default value (second child of gene)
       if gene.children.len == 2:
         self.compile(gene.children[1])
@@ -200,7 +200,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       else:
         self.emit(Instruction(kind: IkGetMemberOrNil))
       return
-  
+
   let start_pos = self.output.instructions.len
   self.compile(gene.type)
 
@@ -218,7 +218,7 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   # Fast path optimizations for regular function calls (no properties, not macro-like, no spreads)
   if gene.props.len == 0 and gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    if (not func_name.ends_with("!")) and func_name notin ["return", "break", "continue", "throw", "aspect", "interceptor"]:
+    if (not func_name.ends_with("!")) and func_name notin ["return", "break", "continue", "throw", "aspect", "interceptor", "fn-interceptor"]:
       var has_spread = false
       for k, _ in gene.props:
         if ($k).startsWith("..."):
@@ -540,21 +540,21 @@ proc compile_dynamic_method_call(self: Compiler, gene: ptr Gene) =
   # gene.children[0] = . (operator symbol)
   # gene.children[1] = method_expr (to be evaluated for method name)
   # gene.children[2..] = args
-  
+
   if gene.children.len < 2:
     not_allowed("Dynamic method call requires method expression: (obj . method_expr args...)")
-  
+
   # Compile the object (will be on stack)
   self.compile(gene.type)
-  
+
   # Compile the method expression (result will be method name string/symbol)
   self.compile(gene.children[1])
-  
+
   # Compile additional arguments
   let arg_count = gene.children.len - 2  # exclude . and method_expr
   for i in 2..<gene.children.len:
     self.compile(gene.children[i])
-  
+
   # Emit dynamic method call instruction with arg count
   self.emit(Instruction(kind: IkDynamicMethodCall, arg1: arg_count.int32))
 proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
@@ -861,7 +861,7 @@ proc rewrite_infix_expression(left_value: Value, tail: seq[Value]): Value =
 
 proc compile_gene(self: Compiler, input: Value) =
   let gene = input.gene
-  
+
   # Special case: handle selector operator ./
   if not gene.type.is_nil():
     if DEBUG:
@@ -877,7 +877,7 @@ proc compile_gene(self: Compiler, input: Value) =
       # "./" is parsed as complex symbol @[".", ""]
       self.compile_selector(gene)
       return
-  
+
   # Special case: handle range expressions like (0 .. 2)
   if gene.children.len == 2 and gene.children[0].kind == VkSymbol and gene.children[0].str == "..":
     # This is a range expression: (start .. end)
@@ -886,12 +886,12 @@ proc compile_gene(self: Compiler, input: Value) =
     self.emit(Instruction(kind: IkPushValue, arg0: NIL))  # default step
     self.emit(Instruction(kind: IkCreateRange))
     return
-  
+
   # Special case: handle genes with numeric types and no children like (-1)
   if gene.children.len == 0 and gene.type.kind in {VkInt, VkFloat}:
     self.compile_literal(gene.type)
     return
-  
+
   # Special case: super calls use dedicated super-call instructions.
   if gene.type.kind == VkSymbol and gene.type.str == "super":
     if gene.children.len == 0:
@@ -962,7 +962,7 @@ proc compile_gene(self: Compiler, input: Value) =
 
   let `type` = gene.type
 
-    
+
   # Check for infix notation: (value operator args...)
   # This handles cases like (6 / 2) or (i + 1)
   if gene.children.len >= 1:
@@ -988,7 +988,7 @@ proc compile_gene(self: Compiler, input: Value) =
       # Selector method shorthand: (obj .@path/... [args...])
       self.compile_method_call(gene)
       return
-  
+
   # Check if type is an arithmetic operator
   if `type`.kind == VkSymbol:
     # Operands of operators are never in tail position
@@ -1204,7 +1204,7 @@ proc compile_gene(self: Compiler, input: Value) =
         return
       else:
         discard  # Not an arithmetic operator, continue with normal processing
-  
+
   if gene.children.len > 0:
     let first = gene.children[0]
     if first.kind == VkSymbol:
