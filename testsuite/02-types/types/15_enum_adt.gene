@@ -19,7 +19,7 @@
   Point)
 
 (var circle (Shape/Circle 5.0))
-(assert ((typeof circle) == "VkEnumValue"))
+(assert ((typeof circle) == "Shape"))
 (println "Data variant construction ok")
 # Expected: Data variant construction ok
 
@@ -40,7 +40,7 @@
 
 # Unit variant
 (var p Shape/Point)
-(assert ((typeof p) == "VkEnumMember"))
+(assert ((typeof p) == "Shape"))
 (println p)
 # Expected: Shape/Point
 

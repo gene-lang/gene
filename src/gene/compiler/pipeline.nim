@@ -287,6 +287,17 @@ proc module_type_path_from_name(name: Value): seq[string] =
   else:
     return @[]
 
+proc module_type_path_from_generic_decl_name(name: Value): seq[string] =
+  ## Module metadata records the public declaration identity, not generic syntax.
+  ## For `(enum Result:T:E ...)`, GIR/import metadata should expose `Result` once.
+  result = module_type_path_from_name(name)
+  if result.len == 0:
+    return
+
+  let parsed_name = split_generic_definition_name(result[^1])
+  if parsed_name.type_params.len > 0:
+    result[^1] = parsed_name.base_name
+
 proc ensure_module_type_child(nodes: var seq[ModuleTypeNode], name: string, default_kind: ModuleTypeKind): ModuleTypeNode =
   for node in nodes:
     if node != nil and node.name == name:
@@ -372,7 +383,7 @@ proc collect_module_type_nodes(node: Value, prefix: seq[string], tree: var seq[M
   of "enum":
     if gene.children.len == 0:
       return
-    let path = module_type_path_from_name(gene.children[0])
+    let path = module_type_path_from_generic_decl_name(gene.children[0])
     if path.len == 0:
       return
     add_module_type_path(tree, prefix & path, MtkEnum)

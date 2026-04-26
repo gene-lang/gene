@@ -99,6 +99,22 @@ proc expect_load_gir_error(gir_path: string, parts: openArray[string]) =
       check e.msg.contains(part)
   check raised
 
+proc find_module_type_node_for_test(nodes: seq[ModuleTypeNode], path: seq[string]): ModuleTypeNode =
+  if path.len == 0:
+    return nil
+  var current_nodes = nodes
+  var current: ModuleTypeNode = nil
+  for part in path:
+    current = nil
+    for node in current_nodes:
+      if node != nil and node.name == part:
+        current = node
+        break
+    if current == nil:
+      return nil
+    current_nodes = current.children
+  current
+
 suite "GIR CLI":
   test "gir show renders instructions":
     let source_path = "examples/hello_world.gene"
@@ -264,6 +280,51 @@ suite "GIR CLI":
     check user.kind == MtkClass
     check root != nil
     check root.kind == MtkClass
+
+    removeFile(gir_path)
+
+  test "gir canonicalizes generic enum module type names":
+    let code = """
+      (ns api
+        (enum Result:T:E
+          (Ok value: T)
+          (Err error: E))
+      )
+      (enum Box:T
+        (Full value: T)
+        Empty)
+    """
+
+    let compiled = compiler.parse_and_compile(code, "<generic-enum-module>", module_mode = true, run_init = false)
+
+    let compiled_api_result = find_module_type_node_for_test(compiled.module_types, @["api", "Result"])
+    let compiled_raw_api_result = find_module_type_node_for_test(compiled.module_types, @["api", "Result:T:E"])
+    let compiled_box = find_module_type_node_for_test(compiled.module_types, @["Box"])
+    let compiled_raw_box = find_module_type_node_for_test(compiled.module_types, @["Box:T"])
+
+    check compiled_api_result != nil
+    check compiled_api_result.kind == MtkEnum
+    check compiled_raw_api_result == nil
+    check compiled_box != nil
+    check compiled_box.kind == MtkEnum
+    check compiled_raw_box == nil
+
+    let gir_path = "build/tests/generic_enum_module_types.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path)
+    let loaded = gir.load_gir(gir_path)
+
+    let loaded_api_result = find_module_type_node_for_test(loaded.module_types, @["api", "Result"])
+    let loaded_raw_api_result = find_module_type_node_for_test(loaded.module_types, @["api", "Result:T:E"])
+    let loaded_box = find_module_type_node_for_test(loaded.module_types, @["Box"])
+    let loaded_raw_box = find_module_type_node_for_test(loaded.module_types, @["Box:T"])
+
+    check loaded_api_result != nil
+    check loaded_api_result.kind == MtkEnum
+    check loaded_raw_api_result == nil
+    check loaded_box != nil
+    check loaded_box.kind == MtkEnum
+    check loaded_raw_box == nil
 
     removeFile(gir_path)
 
