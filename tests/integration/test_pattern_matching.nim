@@ -1,8 +1,22 @@
-import unittest
+import unittest, strutils
 
 import gene/types except Exception
+import gene/vm
 
 import ../helpers
+
+proc test_vm_error_contains(code: string, expected: openArray[string]) =
+  var code = cleanup(code)
+  test "Compilation & VM error contains: " & code:
+    init_all()
+    try:
+      discard VM.exec(code, "test_code")
+      fail()
+    except CatchableError as e:
+      let message = e.msg
+      checkpoint("error message: " & message)
+      for substring in expected:
+        check message.contains(substring)
 
 # Pattern Binding
 #
@@ -131,23 +145,91 @@ test_vm """
   check array_data(array_data(r)[2])[1] == 40
   check array_data(r)[3] == 99
 
-test_vm_error """
-  (var [^a b c...] [1 2 3])
-"""
+test_vm_error_contains """
+  (var [a b] [])
+""", [
+  "Destructuring pattern mismatch",
+  "Expected 1 arguments, got 0",
+]
 
-test_vm_error """
+test_vm_error_contains """
+  (var [a] [1 2])
+""", [
+  "Destructuring pattern mismatch",
+  "Expected 1 arguments, got 2",
+]
+
+test_vm_error_contains """
+  (var [^a b c...] [1 2 3])
+""", [
+  "Destructuring pattern mismatch",
+  "Missing keyword argument: a",
+]
+
+test_vm_error_contains """
+  (var [^a] [1])
+""", [
+  "Destructuring pattern mismatch",
+  "Missing keyword argument: a",
+]
+
+test_vm_error_contains """
   (var payload `(payload ^a 1 ^extra 9 2))
   (var [^a b] payload)
-"""
+""", [
+  "Destructuring pattern mismatch",
+  "Unexpected keyword argument: extra",
+]
 
-test_vm_error """
+test_vm_error_contains """
+  (var payload `(payload ^a 1))
+  (var [^a b] payload)
+""", [
+  "Destructuring pattern mismatch",
+  "Expected 2 arguments, got 0",
+]
+
+test_vm_error_contains """
   (var [... tail] [1 2])
-"""
+""", [
+  "Positional rest must follow a named parameter",
+]
 
 # duplicate positional rest is rejected
-test_vm_error """
+test_vm_error_contains """
   (var [a... b...] [1 2 3])
-"""
+""", [
+  "Only one named positional rest parameter is allowed",
+]
+
+test_vm_error_contains """
+  (var [a `(literal)] [1 2])
+""", [
+  "Unsupported destructuring pattern",
+  "literal quote patterns are Future",
+]
+
+test_vm_error_contains """
+  (var [(| a b)] [1])
+""", [
+  "Unsupported destructuring pattern",
+  "or-patterns are Future",
+]
+
+test_vm_error_contains """
+  (var [(as value alias)] [1])
+""", [
+  "Unsupported destructuring pattern",
+  "as-patterns are Future",
+]
+
+test_vm_error_contains """
+  (match 1 when 1 2)
+""", [
+  "match has been removed",
+  "(var pattern value)",
+  "(case ...)",
+]
 
 # explicit nil default in destructuring stays NIL
 test_vm """

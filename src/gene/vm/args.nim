@@ -1,4 +1,4 @@
-import tables, sets
+import tables, sets, strutils
 import ../types
 import ../types/runtime_types
 
@@ -289,13 +289,20 @@ proc bind_destructure_pattern*(pattern: Value, input: Value, scope: Scope, targe
   if scope.is_nil:
     not_allowed("Destructuring target scope is nil")
 
-  let matcher = new_arg_matcher(pattern)
-  var bound_values: seq[Value] = @[]
-  append_bound_values_for_children(matcher.children, input, bound_values)
+  try:
+    let matcher = new_arg_matcher(pattern)
+    var bound_values: seq[Value] = @[]
+    append_bound_values_for_children(matcher.children, input, bound_values)
 
-  let count = min(target_indices.len, bound_values.len)
-  for i in 0..<count:
-    let idx = target_indices[i].int
-    while scope.members.len <= idx:
-      scope.members.add(NIL)
-    scope.members[idx] = bound_values[i]
+    let count = min(target_indices.len, bound_values.len)
+    for i in 0..<count:
+      let idx = target_indices[i].int
+      while scope.members.len <= idx:
+        scope.members.add(NIL)
+      scope.members[idx] = bound_values[i]
+  except CatchableError as e:
+    let message = e.msg
+    if message.startsWith("Unsupported destructuring pattern") or
+       message.startsWith("Destructuring"):
+      raise
+    raise new_exception(types.Exception, "Destructuring pattern mismatch: " & message)
