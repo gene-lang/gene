@@ -636,3 +636,103 @@ suite "Static type checking":
       "status")
     (accept_status ok)
   """
+
+  test_strict_type_error_contains """
+    (enum Shape (Circle radius: Int))
+    (enum Badge (Circle radius: Int))
+    (var shape (Shape/Circle 3))
+    (case shape
+      when (Circle r)
+        r
+      else
+        0)
+  """, "variant Circle is ambiguous; use"
+
+  test_strict_type_error_contains """
+    (enum Shape Point)
+    (fn classify [shape: Shape] -> Int
+      (case shape
+        when Shape/Circle
+          1
+        else
+          0))
+  """, "enum pattern Shape/Circle references unknown enum or variant"
+
+  test_strict_type_error_contains """
+    (enum Shape (Rect width: Int height: Int) Point)
+    (fn bad_rect [shape: Shape] -> Int
+      (case shape
+        when (Shape/Rect w)
+          w
+        when Shape/Point
+          0))
+  """, "variant Shape/Rect pattern expects 2 binding(s) (width, height), got 1"
+
+  test_strict_type_error_contains """
+    (enum Shape Point)
+    (fn bad_point [shape: Shape] -> Int
+      (case shape
+        when (Shape/Point p)
+          p
+        else
+          0))
+  """, "variant Shape/Point pattern expects 0 binding(s), got 1"
+
+  test_strict_type_ok """
+    (enum Shape (Circle radius: Int) (Rect width: Int height: Int) Point)
+    (fn classify [shape: Shape] -> Int
+      (case shape
+        when (Shape/Circle r)
+          (r + 1)
+        when (Shape/Rect w h)
+          (w + h)
+        when Shape/Point
+          0))
+  """
+
+  test_strict_type_error_contains """
+    (enum Shape (Circle radius: Int) Point)
+    (fn bad_radius_use [shape: Shape] -> String
+      (case shape
+        when (Shape/Circle r)
+          (r ++ "!")
+        when Shape/Point
+          "point"))
+  """, "expected String, got Int"
+
+  test_strict_type_error_contains """
+    (fn bad_result_error_binding [r: (Result Int String)] -> Int
+      (case r
+        when (Ok value)
+          value
+        when (Err error)
+          (error + 1)))
+  """, "expected Int, got String"
+
+  test_strict_type_error_contains """
+    (enum Box:T (Item value: T) Empty)
+    (fn bad_box_binding [box: (Box String)] -> Int
+      (case box
+        when (Box/Item value)
+          (value + 1)
+        when Box/Empty
+          0))
+  """, "expected Int, got String"
+
+  test_strict_type_error_contains """
+    (enum Shape (Circle radius: Int) (Rect width: Int height: Int) Point)
+    (fn classify [shape: Shape] -> Int
+      (case shape
+        when (Shape/Circle r)
+          r))
+  """, "non-exhaustive case over Shape; missing variants: Rect, Point"
+
+  test_strict_type_ok """
+    (enum Shape (Circle radius: Int) (Rect width: Int height: Int) Point)
+    (fn classify [shape: Shape] -> Int
+      (case shape
+        when (Shape/Circle r)
+          r
+        else
+          0))
+  """
