@@ -9,7 +9,7 @@
 # Expected: A2 after 2
 # Expected: call2 3
 
-(aspect A1 [m]
+(interceptor A1 [m]
   (before m [x]
     (println "A1 before" x)
   )
@@ -18,7 +18,7 @@
   )
 )
 
-(aspect A2 [m]
+(interceptor A2 [m]
   (before m [x]
     (println "A2 before" x)
   )
@@ -35,12 +35,12 @@
   )
 )
 
-(var a1_interceptions (A1 .apply C "m"))
-(var a2_interceptions (A2 .apply C "m"))
+(var a1_interceptions (A1 C "m"))
+(var a2_interceptions (A2 C "m"))
 (var a1_m a1_interceptions/0)
 
 (var c (new C))
 (println "call1" (c .m 1))
 
-(A1 .disable-interception a1_m)
+a1_m/.disable
 (println "call2" (c .m 2))

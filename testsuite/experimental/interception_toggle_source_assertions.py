@@ -12,7 +12,7 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ASPECTS = REPO_ROOT / "src/gene/stdlib/aspects.nim"
+INTERCEPTION = REPO_ROOT / "src/gene/stdlib/interception.nim"
 TYPE_DEFS = REPO_ROOT / "src/gene/types/type_defs.nim"
 CLASS_FIXTURE = REPO_ROOT / "testsuite/07-oop/oop/12_interceptor_enablement.gene"
 FUNCTION_FIXTURE = REPO_ROOT / "testsuite/05-functions/functions/16_fn_interceptor_enablement.gene"
@@ -67,22 +67,21 @@ def check_order(body: str, needles: list[str], context: str) -> None:
 
 
 def main() -> int:
-    aspects = read_tracked_source(ASPECTS)
+    interception = read_tracked_source(INTERCEPTION)
     type_defs = read_tracked_source(TYPE_DEFS)
     class_fixture = read_tracked_source(CLASS_FIXTURE)
     function_fixture = read_tracked_source(FUNCTION_FIXTURE)
 
-    apply_class = extract_proc(aspects, "apply_aspect_to_class")
-    aspect_toggle = extract_proc(aspects, "aspect_set_enabled")
-    interception_toggle = extract_proc(aspects, "interception_set_active")
-    legacy_interception_toggle = extract_proc(aspects, "aspect_set_interception_active")
+    apply_class = extract_proc(interception, "apply_interceptor_to_class")
+    definition_toggle = extract_proc(interception, "interceptor_set_enabled")
+    interception_toggle = extract_proc(interception, "interception_set_active")
 
     # Install invariants: class interception installation owns method table mutation
     # and invalidates both class.version and runtime_type.methods.
     check_contains(
         apply_class,
         "let interception_val = create_interception_value(original_method.callable, self, mapping.param_name)",
-        "apply_aspect_to_class install",
+        "apply_interceptor_to_class install",
     )
     check_order(
         apply_class,
@@ -92,26 +91,26 @@ def main() -> int:
             "if target_class.runtime_type != nil:",
             "target_class.runtime_type.methods[mapping.method_key] = interception_val",
         ],
-        "apply_aspect_to_class install invalidation",
+        "apply_interceptor_to_class install invalidation",
     )
 
     check_contains(
         apply_class,
-        "let mappings = prevalidate_class_interceptor_mappings(label, aspect, target_class, method_name_vals)",
-        "apply_aspect_to_class prevalidation",
+        "let mappings = prevalidate_class_interceptor_mappings(label, definition, target_class, method_name_vals)",
+        "apply_interceptor_to_class prevalidation",
     )
     check_order(
         apply_class,
         [
-            "let mappings = prevalidate_class_interceptor_mappings(label, aspect, target_class, method_name_vals)",
+            "let mappings = prevalidate_class_interceptor_mappings(label, definition, target_class, method_name_vals)",
             "let applied = new_array_value()",
             "let interception_val = create_interception_value(original_method.callable, self, mapping.param_name)",
             "target_class.methods[mapping.method_key].callable = interception_val",
         ],
-        "apply_aspect_to_class prevalidation before install",
+        "apply_interceptor_to_class prevalidation before install",
     )
 
-    # Cheap toggle invariants: direct Aspect and Interception slash toggles are field
+    # Cheap toggle invariants: direct Interceptor and Interception slash toggles are field
     # assignments only. They must not reinstall wrappers, rewrite method tables, or
     # invalidate runtime method caches.
     toggle_forbidden = [
@@ -119,26 +118,19 @@ def main() -> int:
         "runtime_type.methods",
         "class.version",
         "create_interception_value",
-        "apply_aspect_to_class",
-        "apply_aspect_to_function",
+        "apply_interceptor_to_class",
+        "apply_interceptor_to_function",
     ]
-    check_contains(aspect_toggle, "self.ref.aspect.enabled = enabled", "aspect_set_enabled")
-    check_absent(aspect_toggle, toggle_forbidden, "aspect_set_enabled")
+    check_contains(definition_toggle, "self.ref.interceptor.enabled = enabled", "interceptor_set_enabled")
+    check_absent(definition_toggle, toggle_forbidden, "interceptor_set_enabled")
 
     check_contains(interception_toggle, "self.ref.interception.active = active", "interception_set_active")
     check_absent(interception_toggle, toggle_forbidden, "interception_set_active")
 
-    check_contains(
-        legacy_interception_toggle,
-        "interception_val.ref.interception.active = active",
-        "aspect_set_interception_active",
-    )
-    check_absent(legacy_interception_toggle, toggle_forbidden, "aspect_set_interception_active")
-
     # Type-surface invariants backing the toggles and inspection surface.
     check_contains(type_defs, "interception_class*: Value", "Application stores Interception class")
     check_contains(type_defs, "active*: bool", "Interception stores application enablement")
-    check_contains(type_defs, "enabled*: bool", "Aspect stores definition enablement")
+    check_contains(type_defs, "enabled*: bool", "Interceptor stores definition enablement")
 
     # Fixture smoke assertions keep this diagnostic tied to the S03 behavior tests
     # without depending on local-only .gsd artifacts.

@@ -138,23 +138,27 @@ The system SHALL reject invalid explicit interception applications with catchabl
 - **THEN** the application fails
 - **AND** the diagnostic message includes the `GENE.INTERCEPT.ASYNC_UNSUPPORTED` marker.
 
-### Requirement: Keep legacy AOP compatibility migration-only
-The system SHALL keep legacy `(aspect ...)`, `.apply`, `.apply-fn`, `.enable-interception`, and `.disable-interception` behavior available as temporary compatibility, while current public guidance SHALL prefer explicit interception APIs for new code.
+### Requirement: Remove legacy AOP public compatibility
+The system SHALL reject legacy AOP public definition and application forms and SHALL keep explicit interception as the only current interception API.
 
-#### Scenario: Legacy class application remains compatible
-- **WHEN** existing code uses `(aspect ...)` with `.apply` for class method interception
-- **THEN** the compatibility path can still install wrappers for existing programs
-- **AND** current docs, examples, and specs do not present `.apply` as the preferred API for new code.
+#### Scenario: Legacy aspect definition is rejected
+- **WHEN** a Gene program evaluates the historical AOP definition form
+- **THEN** the program fails instead of binding a legacy aspect definition
+- **AND** the failure does not install any interception wrapper.
 
-#### Scenario: Legacy function application remains compatible
-- **WHEN** existing code uses `.apply-fn` for standalone callable interception
-- **THEN** the compatibility path can still return a callable wrapper for existing programs
-- **AND** current docs, examples, and specs do not present `.apply-fn` as the preferred API for new code.
+#### Scenario: Legacy class application method is unavailable
+- **WHEN** a Gene program tries to apply interception with a historical dot class application helper
+- **THEN** the program fails instead of using a compatibility path
+- **AND** the class method table remains unchanged.
 
-#### Scenario: Legacy toggle names remain compatibility controls
-- **WHEN** existing code uses `.enable-interception` or `.disable-interception`
-- **THEN** those controls remain available for compatibility
-- **AND** current public guidance prefers `/.enable` and `/.disable` for new code.
+#### Scenario: Legacy function application method is unavailable
+- **WHEN** a Gene program tries to apply interception with a historical dot function application helper
+- **THEN** the program fails instead of returning a compatibility wrapper
+- **AND** the original callable binding remains unchanged.
+
+#### Scenario: Legacy toggle methods are unavailable
+- **WHEN** a Gene program calls historical interception toggle method names on an interceptor definition or wrapper
+- **THEN** the call fails instead of mutating interception enablement state.
 
 ### Requirement: Defer unsupported interception boundaries
 The system SHALL document keyword, async, macro-style, broad pointcut, constructor/destructor, exception join point, regex selector, priority, reset/unapply, and async advice isolation boundaries as unsupported or deferred for the current Experimental surface.

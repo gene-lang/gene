@@ -12,7 +12,7 @@ Primary spec-aligned sections:
 - `04-control-flow/` — `if`, loops, `do`, `ifel`, and case-oriented control tests
 - `05-functions/` — functions plus scope-related callable behavior and explicit function interception
 - `06-collections/` — arrays and maps
-- `07-oop/` — classes, inheritance, callable instances, explicit class interception, and AOP compatibility
+- `07-oop/` — classes, inheritance, callable instances, explicit class interception
 - `08-modules/` — imports, namespace paths, comptime import behavior
 - `09-errors/` — contracts plus direct throw/catch coverage
 - `10-async/` — async I/O, futures, spawn/await, and thread-style reply flows

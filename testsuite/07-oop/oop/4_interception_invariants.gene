@@ -16,7 +16,7 @@
 # Expected: m3 1
 # Expected: caught
 
-(aspect A [m1 m2 m3]
+(interceptor A [m1 m2 m3]
   (before m1 [x]
     (println "before m1" x)
   )
@@ -86,7 +86,7 @@
   )
 )
 
-(A .apply C "m1" "m2" "m3")
+(A C "m1" "m2" "m3")
 
 (var c (new C))
 (println "result1" (c .m1 1))

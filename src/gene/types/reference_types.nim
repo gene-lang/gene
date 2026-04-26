@@ -185,8 +185,8 @@ type
         exception_data*: ExceptionData
       of VkInterception:
         interception*: Interception
-      of VkAspect:
-        aspect*: Aspect
+      of VkInterceptor:
+        interceptor*: InterceptorDefinition
 
       # Concurrency types
 

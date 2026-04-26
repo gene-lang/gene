@@ -1,0 +1,23 @@
+# Expected: direct macro target x
+# Expected: direct macro result x
+# Expected: macro target rejection caught
+
+(fn quote_arg! [expr]
+  (println "direct macro target" expr)
+  expr
+)
+
+(var x 41)
+(println "direct macro result" (quote_arg! x))
+
+(fn-interceptor MacroBoundaryA [f]
+  (before f [expr]
+    (println "macro boundary before should not run" expr)
+  )
+)
+
+(try
+  (MacroBoundaryA quote_arg!)
+catch *
+  (println "macro target rejection caught")
+)

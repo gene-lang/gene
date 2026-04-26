@@ -20,12 +20,10 @@
 # Expected: inner after 6 60
 # Expected: outer after 6 60
 # Expected: chain result 60
-# Expected: malformed apply-fn caught
-# Expected: non-function apply-fn caught
-# Expected: unknown apply-fn parameter caught
+# Expected: legacy apply-fn caught
 # Expected: keyword rejection caught
 
-(aspect BoundaryA [f]
+(fn-interceptor BoundaryA [f]
   (before f [x]
     (println "boundary before" x)
   )
@@ -39,21 +37,21 @@
   (x + 100)
 )
 
-(var boundary_wrapped (BoundaryA .apply-fn boundary_target "f"))
+(var boundary_wrapped (BoundaryA boundary_target))
 
 (println "plain result" (boundary_target 1))
 (println "wrapped active result" (boundary_wrapped 2))
 
-(BoundaryA .disable-interception boundary_wrapped)
+boundary_wrapped/.disable
 (println "wrapped disabled result" (boundary_wrapped 3))
 
-(BoundaryA .enable-interception boundary_wrapped)
+boundary_wrapped/.enable
 (println "wrapped enabled result" (boundary_wrapped 4))
 
-(BoundaryA .enable-interception boundary_wrapped)
+boundary_wrapped/.enable
 (println "wrapped enabled again result" (boundary_wrapped 5))
 
-(aspect InnerA [f]
+(fn-interceptor InnerA [f]
   (before f [x]
     (println "inner before" x)
   )
@@ -62,7 +60,7 @@
   )
 )
 
-(aspect OuterA [f]
+(fn-interceptor OuterA [f]
   (before f [x]
     (println "outer before" x)
   )
@@ -76,39 +74,25 @@
   (x + 54)
 )
 
-(var inner_wrapped (InnerA .apply-fn chain_target "f"))
-(var outer_wrapped (OuterA .apply-fn inner_wrapped "f"))
+(var inner_wrapped (InnerA chain_target))
+(var outer_wrapped (OuterA inner_wrapped))
 (println "chain result" (outer_wrapped 6))
 
 (try
-  (BoundaryA .apply-fn boundary_target)
+  (BoundaryA .apply-fn boundary_target "f")
 catch *
-  (println "malformed apply-fn caught")
+  (println "legacy apply-fn caught")
 )
 
-(try
-  (BoundaryA .apply-fn "not callable" "f")
-catch *
-  (println "non-function apply-fn caught")
-)
-
-(try
-  (BoundaryA .apply-fn boundary_target "missing")
-catch *
-  (println "unknown apply-fn parameter caught")
-)
-
-(aspect KeywordBoundaryA [f])
+(fn-interceptor KeywordBoundaryA [f])
 
 (fn keyword_target [^x]
   (println "keyword original should not run" x)
   x
 )
 
-(var keyword_wrapped (KeywordBoundaryA .apply-fn keyword_target "f"))
-
 (try
-  (keyword_wrapped ^x 7)
+  (KeywordBoundaryA keyword_target)
 catch *
   (println "keyword rejection caught")
 )

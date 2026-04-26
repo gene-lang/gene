@@ -74,33 +74,32 @@ type
 
   Interception* = ref object
     original*: Value      # Original callable (method/function)
-    aspect*: Value        # The aspect that created this interception
-    param_name*: string   # Which aspect param this method maps to
+    definition*: Value    # Interceptor definition that created this interception
+    param_name*: string   # Which interceptor parameter this callable maps to
     active*: bool         # Whether this interception is active
 
-  # AOP Aspect type
-  AspectDefinitionKind* = enum
-    AkLegacyAspect
-    AkClassInterceptor
-    AkFunctionInterceptor
+  # Explicit interception definition type
+  InterceptorDefinitionKind* = enum
+    IdkClassInterceptor
+    IdkFunctionInterceptor
 
-  AopAfterAdvice* = object
+  InterceptionAfterAdvice* = object
     callable*: Value
     replace_result*: bool
     user_arg_count*: int  # Number of user-declared args (excluding implicit self), -1 if unknown
 
-  Aspect* = ref object
+  InterceptorDefinition* = ref object
     name*: string
-    definition_kind*: AspectDefinitionKind
+    definition_kind*: InterceptorDefinitionKind
     param_names*: seq[string]                  # Method placeholders [m1, m2]
     before_advices*: Table[string, seq[Value]] # param -> [advice fns]
     invariant_advices*: Table[string, seq[Value]]
-    after_advices*: Table[string, seq[AopAfterAdvice]]
+    after_advices*: Table[string, seq[InterceptionAfterAdvice]]
     around_advices*: Table[string, Value]      # param -> single around advice
     before_filter_advices*: Table[string, seq[Value]]
     enabled*: bool
 
-  AopContext* = object
+  InterceptionContext* = object
     wrapped*: Value
     instance*: Value
     args*: seq[Value]
@@ -253,8 +252,8 @@ type
 
     # Exception handling
     VkException = 128    # Start exceptions at 128
-    VkInterception       # AOP interception
-    VkAspect             # AOP aspect definition
+    VkInterception       # Explicit interception wrapper
+    VkInterceptor         # Explicit interceptor definition
 
     # Concurrency types
 
@@ -472,7 +471,7 @@ type
     thread_message_type_class* : Value
     actor_class*    : Value
     actor_context_class* : Value
-    aspect_class*   : Value
+    interceptor_class*   : Value
     interception_class*: Value
     interface_class*: Value
     adapter_class*  : Value
@@ -1169,7 +1168,7 @@ type
     thread_local_ns*: Namespace  # Thread-local namespace for $thread, $main_thread, etc.
     # Scheduler mode
     scheduler_running*: bool  # Set to true when run_forever is active, false to stop
-    aop_contexts*: seq[AopContext]  # Stack of active around advice contexts
+    interception_contexts*: seq[InterceptionContext]  # Stack of active around advice contexts
     missing_method_depth*: int  # Recursion guard for on_method_missing dispatch
     native_tier*: NativeCompileTier  # Native dispatch policy
     native_code*: bool  # Enable native code execution when available

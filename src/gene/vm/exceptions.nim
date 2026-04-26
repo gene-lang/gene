@@ -37,10 +37,10 @@ proc dispatch_exception(self: ptr VirtualMachine, value: Value, inst: var ptr In
     if self.checked_vm_enabled:
       self.check_exception_handlers(inst[], require_current_exception = true)
 
-  if self.aop_contexts.len > 0:
-    let ctx_idx = self.aop_contexts.len - 1
-    if self.exception_handlers.len == 0 or self.exception_handlers.len - 1 < self.aop_contexts[ctx_idx].handler_depth:
-      self.aop_contexts[ctx_idx].exception_escaped = true
+  if self.interception_contexts.len > 0:
+    let ctx_idx = self.interception_contexts.len - 1
+    if self.exception_handlers.len == 0 or self.exception_handlers.len - 1 < self.interception_contexts[ctx_idx].handler_depth:
+      self.interception_contexts[ctx_idx].exception_escaped = true
 
   if self.repl_skip_on_throw:
     self.repl_skip_on_throw = false

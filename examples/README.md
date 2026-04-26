@@ -30,7 +30,7 @@ The goal is to keep examples small, current, and runnable against the codebase a
 
 ## Experimental
 
-- `interception.gene` - Explicit runtime interception for selected class methods and standalone callables using `(interceptor ...)`, `(fn-interceptor ...)`, direct callable application, and slash toggles. Historical broad AOP material remains compatibility/migration context; start here for current experiments.
+- `interception.gene` - Explicit runtime interception for selected class methods and standalone callables using `(interceptor ...)`, `(fn-interceptor ...)`, direct callable application, and slash toggles. Historical broad AOP material is migration history only; start here for current experiments.
 
 ## Extensions and Web
 

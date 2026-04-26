@@ -144,9 +144,9 @@ proc value_class_value*(val: Value): Value =
       App.app.object_class
   of VkSelector:
     App.app.selector_class
-  of VkAspect:
-    if App.app.aspect_class.kind == VkClass:
-      App.app.aspect_class
+  of VkInterceptor:
+    if App.app.interceptor_class.kind == VkClass:
+      App.app.interceptor_class
     else:
       App.app.object_class
   of VkInterception:

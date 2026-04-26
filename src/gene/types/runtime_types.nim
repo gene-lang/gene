@@ -286,7 +286,7 @@ proc runtime_type_name*(v: Value): string =
   of VkFunction: "Function"
   of VkBlock: "Block"
   of VkNativeFn: "Function"
-  of VkAspect: "Aspect"
+  of VkInterceptor: "Interceptor"
   of VkInterception: "Interception"
   of VkClass: "Class"
   else: $v.kind

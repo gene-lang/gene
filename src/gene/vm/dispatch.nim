@@ -670,10 +670,10 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   if not interception.active:
     return self.call_interception_original(interception.original, instance, args, kw_pairs)
 
-  let aspect_val = interception.aspect
-  if aspect_val.kind != VkAspect:
-    not_allowed("Aspect interception requires a VkAspect")
-  let aspect = aspect_val.ref.aspect
+  let definition_val = interception.definition
+  if definition_val.kind != VkInterceptor:
+    not_allowed("Interception requires an interceptor definition")
+  let definition = definition_val.ref.interceptor
   let param_name = interception.param_name
   let wrapped_value =
     if instance == NIL:
@@ -694,7 +694,7 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
         `method`: wrapped_method
       )
       wrapped_ref.to_ref_value()
-  let ctx = AopContext(
+  let ctx = InterceptionContext(
     wrapped: interception.original,
     instance: instance,
     args: args,
@@ -704,9 +704,9 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     handler_depth: self.exception_handlers.len,
     exception_escaped: false
   )
-  self.aop_contexts.add(ctx)
+  self.interception_contexts.add(ctx)
   defer:
-    discard self.aop_contexts.pop()
+    discard self.interception_contexts.pop()
 
   proc call_advice(advice_fn: Value, instance: Value, args: seq[Value]): Value =
     case advice_fn.kind
@@ -722,40 +722,40 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
       not_allowed("Advice callable must be a function or native function")
       return NIL
 
-  if aspect.enabled:
-    if aspect.before_filter_advices.hasKey(param_name):
-      for advice_fn in aspect.before_filter_advices[param_name]:
+  if definition.enabled:
+    if definition.before_filter_advices.hasKey(param_name):
+      for advice_fn in definition.before_filter_advices[param_name]:
         let ok = call_advice(advice_fn, instance, args)
         if not ok.to_bool():
           return NIL
 
-    if aspect.before_advices.hasKey(param_name):
-      for advice_fn in aspect.before_advices[param_name]:
+    if definition.before_advices.hasKey(param_name):
+      for advice_fn in definition.before_advices[param_name]:
         discard call_advice(advice_fn, instance, args)
-    if aspect.invariant_advices.hasKey(param_name):
-      for advice_fn in aspect.invariant_advices[param_name]:
+    if definition.invariant_advices.hasKey(param_name):
+      for advice_fn in definition.invariant_advices[param_name]:
         discard call_advice(advice_fn, instance, args)
-    if self.aop_contexts[^1].exception_escaped:
+    if self.interception_contexts[^1].exception_escaped:
       return NIL
 
   var result: Value
-  if aspect.enabled and aspect.around_advices.hasKey(param_name):
-    let around_fn = aspect.around_advices[param_name]
-    let ctx_idx = self.aop_contexts.len - 1
-    self.aop_contexts[ctx_idx].in_around = true
+  if definition.enabled and definition.around_advices.hasKey(param_name):
+    let around_fn = definition.around_advices[param_name]
+    let ctx_idx = self.interception_contexts.len - 1
+    self.interception_contexts[ctx_idx].in_around = true
     let around_args = args & @[wrapped_value]
     result = call_advice(around_fn, instance, around_args)
-    self.aop_contexts[ctx_idx].in_around = false
+    self.interception_contexts[ctx_idx].in_around = false
   else:
     result = self.call_interception_original(interception.original, instance, args, kw_pairs)
 
-  let exception_escaped = self.aop_contexts[^1].exception_escaped
-  if not exception_escaped and aspect.enabled and aspect.invariant_advices.hasKey(param_name):
-    for advice_fn in aspect.invariant_advices[param_name]:
+  let exception_escaped = self.interception_contexts[^1].exception_escaped
+  if not exception_escaped and definition.enabled and definition.invariant_advices.hasKey(param_name):
+    for advice_fn in definition.invariant_advices[param_name]:
       discard call_advice(advice_fn, instance, args)
 
-  if not exception_escaped and aspect.enabled and aspect.after_advices.hasKey(param_name):
-    for advice_fn in aspect.after_advices[param_name]:
+  if not exception_escaped and definition.enabled and definition.after_advices.hasKey(param_name):
+    for advice_fn in definition.after_advices[param_name]:
       var after_args = args
       if advice_fn.user_arg_count < 0 or advice_fn.user_arg_count > args.len:
         after_args = args & @[result]
@@ -770,8 +770,8 @@ proc call_bound_method(self: ptr VirtualMachine, target: Value, args: seq[Value]
   let bm = target.ref.bound_method
   let callable = bm.`method`.callable
   var caller_ctx = self.frame
-  if callable.kind == VkFunction and callable.ref.fn.is_macro_like and self.aop_contexts.len > 0:
-    let ctx = self.aop_contexts[^1]
+  if callable.kind == VkFunction and callable.ref.fn.is_macro_like and self.interception_contexts.len > 0:
+    let ctx = self.interception_contexts[^1]
     if ctx.in_around and ctx.caller_context != nil and
        same_value_identity(bm.self, ctx.instance) and
        same_value_identity(callable, ctx.wrapped):

@@ -14,10 +14,10 @@
   (var symbol_before (fn [_self x]
     (println "symbol before" prefix x)
   ))
-  (aspect SymbolCaptureA [f]
+  (fn-interceptor SymbolCaptureA [f]
     (before f symbol_before)
   )
-  (SymbolCaptureA .apply-fn target "f")
+  (SymbolCaptureA target)
 )
 
 (var symbol_wrapped (make_symbol_capture_wrapper))
@@ -29,12 +29,12 @@
     (println "inline target" x)
     (x + 20)
   ))
-  (aspect InlineCaptureA [f]
+  (fn-interceptor InlineCaptureA [f]
     (before f [x]
       (println "inline before" prefix x)
     )
   )
-  (InlineCaptureA .apply-fn target "f")
+  (InlineCaptureA target)
 )
 
 (var inline_wrapped (make_inline_capture_wrapper))

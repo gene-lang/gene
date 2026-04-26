@@ -12,9 +12,8 @@
 # Expected: ctrl before m 3
 # Expected: ctrl m 3
 # Expected: ctrl m enabled result 4
-# Expected: wrong aspect caught
-# Expected: non interception caught
-# Expected: malformed apply caught
+# Expected: legacy toggle caught
+# Expected: legacy apply caught
 # Expected: duplicate around caught
 # Expected: bad advice target caught
 # Expected: invalid replace result caught
@@ -25,7 +24,7 @@
 # Expected: advice throw caught
 # Expected: after advice throw continuation
 
-(aspect CtrlA [m n]
+(interceptor CtrlA [m n]
   (before m [x]
     (println "ctrl before m" x)
   )
@@ -46,55 +45,27 @@
   )
 )
 
-(var ctrl_wrappers (CtrlA .apply CtrlC "m" "n"))
+(var ctrl_wrappers (CtrlA CtrlC "m" "n"))
 (var ctrl_m ctrl_wrappers/0)
 
 (var ctrl (new CtrlC))
 (println "ctrl m result" (ctrl .m 1))
 (println "ctrl n result" (ctrl .n 10))
 
-(CtrlA .disable-interception ctrl_m)
+ctrl_m/.disable
 (println "ctrl m disabled result" (ctrl .m 2))
 (println "ctrl n still result" (ctrl .n 20))
 
-(CtrlA .enable-interception ctrl_m)
+ctrl_m/.enable
 (println "ctrl m enabled result" (ctrl .m 3))
 
-(aspect WrongOwnerA [m]
-  (before m [x]
-    (println "wrong owner A before" x)
-  )
-)
-
-(aspect WrongOwnerB [m]
-  (before m [x]
-    (println "wrong owner B before" x)
-  )
-)
-
-(class WrongOwnerC
-  ^fields {}
-  (method m [x]
-    x
-  )
-)
-
-(var wrong_owner_wrappers (WrongOwnerA .apply WrongOwnerC "m"))
-(var wrong_owner_m wrong_owner_wrappers/0)
-
 (try
-  (WrongOwnerB .disable-interception wrong_owner_m)
+  (CtrlA .disable-interception ctrl_m)
 catch *
-  (println "wrong aspect caught")
+  (println "legacy toggle caught")
 )
 
-(try
-  (WrongOwnerA .disable-interception "not an interception")
-catch *
-  (println "non interception caught")
-)
-
-(aspect MalformedApplyA [m]
+(interceptor MalformedApplyA [m]
   (before m [x]
     (println "malformed apply before" x)
   )
@@ -110,11 +81,11 @@ catch *
 (try
   (MalformedApplyA .apply MalformedApplyC)
 catch *
-  (println "malformed apply caught")
+  (println "legacy apply caught")
 )
 
 (try
-  (aspect DuplicateAroundA [m]
+  (interceptor DuplicateAroundA [m]
     (around m [x wrapped]
       (wrapped x)
     )
@@ -127,7 +98,7 @@ catch *
 )
 
 (try
-  (aspect BadTargetA [m]
+  (interceptor BadTargetA [m]
     (before missing [x]
       (println "bad target should not run" x)
     )
@@ -137,7 +108,7 @@ catch *
 )
 
 (try
-  (aspect InvalidReplaceA [m]
+  (interceptor InvalidReplaceA [m]
     (before ^^replace_result m [x]
       (println "invalid replace should not run" x)
     )
@@ -146,7 +117,7 @@ catch *
   (println "invalid replace result caught")
 )
 
-(aspect KeywordA [sum]
+(interceptor KeywordA [sum]
   (before sum _
     (println "kw before" /label)
   )
@@ -163,11 +134,11 @@ catch *
   )
 )
 
-(KeywordA .apply KeywordC "sum")
+(KeywordA KeywordC "sum")
 (var keyword_c (new KeywordC "kw-self"))
 (println "kw result" (keyword_c .sum ^x 3 ^y 4))
 
-(aspect ThrowAdviceA [m]
+(interceptor ThrowAdviceA [m]
   (before m [x]
     (println "throw before" x)
     (throw "advice boom")
@@ -185,7 +156,7 @@ catch *
   )
 )
 
-(ThrowAdviceA .apply ThrowAdviceC "m")
+(ThrowAdviceA ThrowAdviceC "m")
 (var throw_advice_c (new ThrowAdviceC))
 (try
   (throw_advice_c .m 5)

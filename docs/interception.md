@@ -1,15 +1,14 @@
 # Explicit Runtime Interception
 
 Explicit runtime interception is an **Experimental** Gene surface for wrapping
-selected class methods or standalone callables with advice. It replaces the old
-broad AOP framing for new experiments: use `(interceptor ...)`,
-`(fn-interceptor ...)`, direct callable application, and slash enablement
-controls for current code.
+selected class methods or standalone callables with advice. It is the only
+current interception API: use `(interceptor ...)`, `(fn-interceptor ...)`, direct
+callable application, and slash enablement controls.
 
-Post-read action: after reading this page, a Gene user should be able to choose
-the current explicit interception API for a class method or standalone function,
-recognize legacy AOP spellings as temporary compatibility, and avoid unsupported
-keyword, async, and macro-style boundaries.
+Post-read action: after reading this page, a Gene user should be able to write a
+class method interceptor or standalone function interceptor, use the current
+enablement controls, understand the targeted diagnostics, and avoid unsupported
+keyword, async, macro-style, and broad pointcut boundaries.
 
 This is not a stable-core or Beta contract. Treat it as a documented
 Experimental runtime surface whose compatibility rules may still change before
@@ -17,16 +16,17 @@ promotion.
 
 ## Current posture
 
-- **Use for new class experiments:** `(interceptor Name [targets] ...)` and
-  direct callable application such as `(Name Class "method")`.
-- **Use for new function experiments:** `(fn-interceptor Name [target] ...)` and
+- **Use for class experiments:** `(interceptor Name [targets] ...)` and direct
+  callable application such as `(Name Class "method")`.
+- **Use for function experiments:** `(fn-interceptor Name [target] ...)` and
   direct callable wrapper application such as `(Name fn_value)`.
 - **Use for enablement:** `Name/.enable`, `Name/.disable`,
   `application/.enable`, and `application/.disable`.
-- **Keep legacy AOP forms only for compatibility/history:** `(aspect ...)`,
-  `.apply`, `.apply-fn`, `.enable-interception`, and `.disable-interception`.
-- **Do not treat this as broad AspectJ-style AOP:** there are no public
-  pointcuts, constructor/destructor join points, regex method selectors, or
+- **Removed:** legacy AOP spellings are not current API. Do not use the old
+  definition form, dot-application helpers, or old interception toggle method
+  names in new code.
+- **Not broad AspectJ-style AOP:** there are no public pointcuts,
+  constructor/destructor join points, regex method selectors, or
   macro-transparent wrappers.
 
 ## Advice forms
@@ -43,7 +43,7 @@ Class and function interceptors share the same advice vocabulary:
 
 Advice bodies may be inline Gene bodies or symbols that resolve to callable
 advice functions. Inline advice supports the current lexical-capture boundary
-validated by the runtime fixtures, but this does not make interception
+validated by runtime fixtures, but this does not make interception
 macro-transparent.
 
 ## Class interception
@@ -141,15 +141,11 @@ dispatch calls the wrapper's stored original callable directly. In a wrapper
 chain, disabling one wrapper bypasses only that wrapper; active outer or inner
 wrappers still use their own flags.
 
-Legacy `.enable-interception` and `.disable-interception` remain compatibility
-controls for old AOP code, not the current spelling for new examples.
-
 ## Diagnostics
 
 Invalid interception application fails at application time with catchable
 messages that include `GENE.INTERCEPT` markers. The marker is intended to make
-migration and tests precise while the human-readable message can improve over
-time.
+tests precise while the human-readable message can improve over time.
 
 Current marker families include:
 
@@ -165,23 +161,21 @@ Current marker families include:
 | `GENE.INTERCEPT.MACRO_UNSUPPORTED` | A macro-style target or interception macro value was used where wrapping cannot preserve semantics. |
 | `GENE.INTERCEPT.ASYNC_UNSUPPORTED` | An async function target hit the deferred async boundary. |
 
-Diagnostics are targeted for the current migration boundary. Hard removal of
-legacy AOP forms is still deferred; compatibility spellings may continue to run
-until a later migration milestone removes or rejects them.
+## Removed legacy AOP API
 
-## Legacy compatibility
+The historical AOP spellings have been removed from the current runtime surface.
+Use the replacements below:
 
-The old AOP spelling remains implemented for compatibility with existing
-programs and maintainer tests:
+| Removed spelling | Replacement |
+| --- | --- |
+| old definition form | `(interceptor ...)` for classes or `(fn-interceptor ...)` for standalone callables |
+| old dot class application helper | direct class application: `(Name Class "method")` |
+| old dot function application helper | direct function application: `(Name callable)` |
+| old dot interception toggle helpers | `application/.enable` and `application/.disable` |
+| old definition-wide toggle spelling, if present in old code | `Name/.enable` and `Name/.disable` |
 
-- `(aspect ...)` can still define a compatibility interceptor value;
-- `.apply` can still install class method wrappers;
-- `.apply-fn` can still create standalone function wrappers;
-- `.enable-interception` and `.disable-interception` can still toggle old-style
-  wrapper state.
-
-Do not teach these forms first in new docs, examples, or specs. Use them only
-when maintaining old code or documenting migration history.
+Existing programs that still use the removed spellings must migrate before
+running on this runtime.
 
 ## Unsupported and deferred boundaries
 
@@ -191,8 +185,6 @@ The current Experimental surface is intentionally narrow:
 - function interceptor targets with keyword parameters are rejected;
 - async function targets are rejected;
 - macro-style `fn!` targets are rejected by direct `fn-interceptor` application;
-- legacy macro-style wrapping is compatibility behavior and is not
-  macro-transparent;
 - direct class interceptor application does not accept keyword options;
 - broad pointcuts, constructor/destructor interception, exception join points,
   regex or selector method matching, priority controls, reset/unapply controls,
@@ -206,5 +198,4 @@ macro evaluation model or promise transparent wrapping of every callable form.
 ## See also
 
 - [Feature status](feature-status.md) for the public stability boundary.
-- [AOP migration and implementation history](proposals/future/aop.md) for the
-  earlier audit record and compatibility background.
+- [AOP migration history](proposals/future/aop.md) for the earlier audit record.

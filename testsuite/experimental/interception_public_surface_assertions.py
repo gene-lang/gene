@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Public-surface assertions for the explicit interception migration.
 
-The goal is not to ban legacy AOP syntax from the repository.  Legacy fixtures
-and the migration/history document must keep it so compatibility remains tested
-and explainable.  The goal is to prevent public drift where current docs,
-examples, or OpenSpec accidentally teach broad AOP syntax as the preferred
-Experimental surface again.
+The goal is to keep current public docs, examples, OpenSpec, and testsuite
+surfaces aligned around explicit interception after legacy AOP removal. Historical migration documents may name old concepts, and removal
+fixtures may mention old spellings only as negative coverage.
 
 This script intentionally reads only bounded, source-controlled public trees:
 ``docs/``, ``examples/``, the active ``openspec/changes/add-class-aspects``
@@ -68,19 +66,13 @@ MIGRATION_HISTORY_FILES = {
     "docs/proposals/future/aop.md",
 }
 
-# Legacy executable fixtures remain part of the public regression surface.  They
-# are explicitly exempt because their job is to prove old `(aspect ...)`, `.apply`,
-# and `.apply-fn` compatibility while docs/specs teach explicit interception.
-LEGACY_FIXTURE_GLOBS = [
-    "testsuite/05-functions/functions/*_aop_*.gene",
-    "testsuite/07-oop/oop/*_aop_*.gene",
-]
-LEGACY_FIXTURE_FILES = {
-    "testsuite/07-oop/oop/13_interceptor_diagnostics.gene",
-}
+# Negative removal fixtures may mention old spellings only in local legacy/removal
+# contexts. No fixture is allowlisted wholesale anymore.
+LEGACY_FIXTURE_GLOBS: list[str] = []
+LEGACY_FIXTURE_FILES: set[str] = set()
 
 # Implementation-level invariant script may mention internal proc names such as
-# `apply_aspect_to_class`; those are not user-facing API recommendations.
+# `apply_interceptor_to_class`; those are not user-facing API recommendations.
 IMPLEMENTATION_ASSERTION_FILES = {
     "testsuite/experimental/interception_toggle_source_assertions.py",
 }
@@ -111,10 +103,9 @@ REQUIRED_APPEARANCES = {
         "docs/feature-status.md",
         "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
     ],
-    "temporary compatibility": [
+    "Removed": [
         "docs/interception.md",
         "docs/feature-status.md",
-        "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
     ],
     "Experimental": [
         "docs/interception.md",
@@ -137,10 +128,14 @@ LEGACY_API_PHRASES = [
     "(aspect",
     ".apply",
     ".apply-fn",
+    ".enable-interception",
+    ".disable-interception",
 ]
 
 ALLOWED_STALE_CONTEXT_WORDS = [
     "compatibility",
+    "removed",
+    "removal",
     "temporary",
     "migration",
     "history",
@@ -161,6 +156,9 @@ ALLOWED_STALE_CONTEXT_WORDS = [
     "current boundary",
     "rather than treated as supported",
     "remove legacy",
+    "removed legacy",
+    "must migrate",
+    "replacement",
     "compatibility/history",
 ]
 
@@ -193,6 +191,7 @@ LEGACY_NEGATIONS = [
     "migration history",
     "history context",
     "remove legacy",
+    "removed legacy",
 ]
 
 
@@ -349,16 +348,16 @@ def check_primary_surface_presence(files_by_rel: dict[str, PublicFile]) -> None:
 
     feature_status = files_by_rel.get("docs/feature-status.md") or read_public_file("docs/feature-status.md")
     check(
-        "Explicit runtime interception (AOP compatibility)" in feature_status.text,
-        "docs/feature-status.md: feature matrix must name explicit runtime interception with AOP compatibility",
+        "| Explicit runtime interception | Experimental |" in feature_status.text,
+        "docs/feature-status.md: feature matrix must name explicit runtime interception without AOP compatibility",
     )
 
     spec = files_by_rel.get("openspec/changes/add-class-aspects/specs/explicit-interception/spec.md") or read_public_file(
         "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md"
     )
     check(
-        "### Requirement: Keep legacy AOP compatibility migration-only" in spec.text,
-        "openspec explicit-interception spec: legacy compatibility must be migration-only",
+        "### Requirement: Remove legacy AOP public compatibility" in spec.text,
+        "openspec explicit-interception spec: legacy AOP compatibility must be removed",
     )
 
 

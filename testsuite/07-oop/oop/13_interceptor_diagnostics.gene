@@ -6,12 +6,8 @@
 # Expected: direct mapping name [GENE.INTERCEPT.MAPPING_NAME]
 # Expected: direct missing method [GENE.INTERCEPT.MISSING_METHOD]
 # Expected: direct keyword [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
-# Expected: legacy scalar target [GENE.INTERCEPT.CLASS_TARGET]
-# Expected: legacy macro target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
-# Expected: legacy missing method [GENE.INTERCEPT.MISSING_METHOD]
-# Expected: legacy mapping name [GENE.INTERCEPT.MAPPING_NAME]
-# Expected: legacy arity [GENE.INTERCEPT.MAPPING_ARITY]
-# Expected: legacy keyword [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: legacy aspect definition removed
+# Expected: legacy apply removed
 # Expected: atomic missing method [GENE.INTERCEPT.MISSING_METHOD]
 # Expected: atomic run body 5
 # Expected: atomic run result 15
@@ -97,54 +93,20 @@ catch e
   (expect_marker "direct keyword" KEYWORD_MARKER e)
 )
 
-(aspect LegacyAudit [run]
-  (before run [x]
-    (println "legacy before run" x)
+(try
+  (aspect LegacyAudit [run]
+    (before run [x]
+      x
+    )
   )
-)
-
-(class LegacyC
-  ^fields {}
-  (method run [x]
-    (println "legacy run body" x)
-    (x + 20)
-  )
+catch *
+  (println "legacy aspect definition removed")
 )
 
 (try
-  (LegacyAudit .apply "not a class" "run")
-catch e
-  (expect_marker "legacy scalar target" CLASS_TARGET_MARKER e)
-)
-
-(try
-  (LegacyAudit .apply fn-interceptor "run")
-catch e
-  (expect_marker "legacy macro target" MACRO_MARKER e)
-)
-
-(try
-  (LegacyAudit .apply LegacyC "missing")
-catch e
-  (expect_marker "legacy missing method" MISSING_METHOD_MARKER e)
-)
-
-(try
-  (LegacyAudit .apply LegacyC 123)
-catch e
-  (expect_marker "legacy mapping name" MAPPING_NAME_MARKER e)
-)
-
-(try
-  (LegacyAudit .apply LegacyC "run" "extra")
-catch e
-  (expect_marker "legacy arity" MAPPING_ARITY_MARKER e)
-)
-
-(try
-  (LegacyAudit .apply LegacyC "run" ^unexpected true)
-catch e
-  (expect_marker "legacy keyword" KEYWORD_MARKER e)
+  (Audit .apply DiagnosticC "run" "stop")
+catch *
+  (println "legacy apply removed")
 )
 
 (interceptor AtomicAudit [run missing]

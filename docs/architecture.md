@@ -155,8 +155,8 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
 - Definition-level and application-level `/.enable` / `/.disable` controls are
   cheap flag changes; class wrapper installation invalidates method dispatch
   assumptions by updating the class method table.
-- Legacy AOP spellings such as `(aspect ...)`, `.apply`, and `.apply-fn` remain
-  compatibility/history surfaces rather than the current API to teach first.
+- Historical AOP spellings have been removed from the current runtime surface;
+  maintainers should use explicit interception terminology and APIs.
 
 See `docs/interception.md` for the public Experimental boundary, diagnostics,
 and unsupported keyword/async/macro limits.
@@ -221,7 +221,7 @@ Proposal and design-era docs:
 - [`proposals/future/selector_design.md`](proposals/future/selector_design.md) — Selector redesign and future direction
 - [`proposals/future/pattern_matching_design.md`](proposals/future/pattern_matching_design.md) — Pattern matching proposal
 - [`proposals/future/macro_design.md`](proposals/future/macro_design.md) — Macro system design notes
-- [`proposals/future/aop.md`](proposals/future/aop.md) — AOP migration and implementation history
+- [`proposals/future/aop.md`](proposals/future/aop.md) — AOP migration history
 
 Extension and tooling:
 - [`c_extensions.md`](c_extensions.md) — Building C/Nim extensions

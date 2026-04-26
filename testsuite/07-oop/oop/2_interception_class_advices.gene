@@ -10,7 +10,7 @@
 # Expected: result2 4
 # Expected: result3 nil
 
-(aspect A [m1 m2]
+(interceptor A [m1 m2]
   (before m1 [x]
     (println "before m1" x)
     (println "self tag" /tag)
@@ -46,7 +46,7 @@
   )
 )
 
-(A .apply C "m1" "m2")
+(A C "m1" "m2")
 
 (var c (new C))
 (c/tag = "ok")

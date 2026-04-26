@@ -32,5 +32,5 @@
 (println "wrapped result" (wrapped 2))
 (println "original result" (inc 1))
 
-(Trace .disable-interception wrapped)
+wrapped/.disable
 (println "disabled result" (wrapped 3))

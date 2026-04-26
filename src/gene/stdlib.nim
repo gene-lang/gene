@@ -9,7 +9,7 @@ import ./stdlib/dates
 import ./stdlib/selectors
 import ./stdlib/gdat
 import ./stdlib/gene_meta
-import ./stdlib/aspects
+import ./stdlib/interception
 import ./serdes
 
 proc init_gene_namespace*() =
