@@ -107,6 +107,11 @@ proc get_class*(val: Value): Class {.inline.} =
         return App.ref.app.aspect_class.ref.class
       else:
         return nil
+    of VkInterception:
+      if App.ref.app.interception_class.kind == VkClass:
+        return App.ref.app.interception_class.ref.class
+      else:
+        return nil
     # of VkThread:
     #   return App.ref.app.thread_class.ref.class
     # of VkThreadMessage:

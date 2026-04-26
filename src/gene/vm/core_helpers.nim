@@ -370,6 +370,8 @@ template get_value_class(val: Value): Class =
     safe_class_value(App.app.map_class)
   of VkAspect:
     safe_class_value(App.app.aspect_class)
+  of VkInterception:
+    safe_class_value(App.app.interception_class)
   of VkNamespace:
     safe_class_value(App.app.namespace_class)
   of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:

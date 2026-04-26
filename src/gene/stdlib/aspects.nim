@@ -384,6 +384,47 @@ proc aspect_disable_interception(vm: ptr VirtualMachine, args: ptr UncheckedArra
                                  has_keyword_args: bool): Value {.gcsafe.} =
   aspect_set_interception_active(vm, args, arg_count, has_keyword_args, false)
 
+proc toggle_receiver(label: string, args: ptr UncheckedArray[Value], arg_count: int,
+                     has_keyword_args: bool): Value {.gcsafe.} =
+  if has_keyword_args:
+    not_allowed(label & " does not accept keyword arguments")
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional != 1:
+    not_allowed(label & " expects no arguments")
+  get_positional_arg(args, 0, has_keyword_args)
+
+proc aspect_set_enabled(label: string, args: ptr UncheckedArray[Value], arg_count: int,
+                        has_keyword_args: bool, enabled: bool): Value {.gcsafe.} =
+  let self = toggle_receiver(label, args, arg_count, has_keyword_args)
+  if self.kind != VkAspect:
+    not_allowed(label & " must be called on an aspect")
+  self.ref.aspect.enabled = enabled
+  self
+
+proc aspect_enable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                   has_keyword_args: bool): Value {.gcsafe.} =
+  aspect_set_enabled("Aspect.enable", args, arg_count, has_keyword_args, true)
+
+proc aspect_disable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                    has_keyword_args: bool): Value {.gcsafe.} =
+  aspect_set_enabled("Aspect.disable", args, arg_count, has_keyword_args, false)
+
+proc interception_set_active(label: string, args: ptr UncheckedArray[Value], arg_count: int,
+                             has_keyword_args: bool, active: bool): Value {.gcsafe.} =
+  let self = toggle_receiver(label, args, arg_count, has_keyword_args)
+  if self.kind != VkInterception:
+    not_allowed(label & " must be called on an Interception")
+  self.ref.interception.active = active
+  self
+
+proc interception_enable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                         has_keyword_args: bool): Value {.gcsafe.} =
+  interception_set_active("Interception.enable", args, arg_count, has_keyword_args, true)
+
+proc interception_disable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                          has_keyword_args: bool): Value {.gcsafe.} =
+  interception_set_active("Interception.disable", args, arg_count, has_keyword_args, false)
+
 proc init_aspect_support*() =
   var global_ns = App.app.global_ns.ns
 
@@ -400,9 +441,13 @@ proc init_aspect_support*() =
   global_ns["fn-interceptor".to_key()] = fn_interceptor_macro_ref.to_ref_value()
 
   let aspect_class = new_class("Aspect")
+  if App.app.object_class.kind == VkClass:
+    aspect_class.parent = App.app.object_class.ref.class
   aspect_class.def_native_method("apply", aspect_apply)
   aspect_class.def_native_method("call", aspect_call)
   aspect_class.def_native_method("apply-fn", aspect_apply_fn)
+  aspect_class.def_native_method("enable", aspect_enable)
+  aspect_class.def_native_method("disable", aspect_disable)
   aspect_class.def_native_method("enable-interception", aspect_enable_interception)
   aspect_class.def_native_method("disable-interception", aspect_disable_interception)
   var aspect_class_ref = new_ref(VkClass)
@@ -412,3 +457,14 @@ proc init_aspect_support*() =
   App.app.gene_ns.ns["Interceptor".to_key()] = App.app.aspect_class
   global_ns["Aspect".to_key()] = App.app.aspect_class
   global_ns["Interceptor".to_key()] = App.app.aspect_class
+
+  let interception_class = new_class("Interception")
+  if App.app.object_class.kind == VkClass:
+    interception_class.parent = App.app.object_class.ref.class
+  interception_class.def_native_method("enable", interception_enable)
+  interception_class.def_native_method("disable", interception_disable)
+  var interception_class_ref = new_ref(VkClass)
+  interception_class_ref.class = interception_class
+  App.app.interception_class = interception_class_ref.to_ref_value()
+  App.app.gene_ns.ns["Interception".to_key()] = App.app.interception_class
+  global_ns["Interception".to_key()] = App.app.interception_class

@@ -473,6 +473,7 @@ type
     actor_class*    : Value
     actor_context_class* : Value
     aspect_class*   : Value
+    interception_class*: Value
     interface_class*: Value
     adapter_class*  : Value
 
