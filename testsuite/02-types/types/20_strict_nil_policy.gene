@@ -1,0 +1,54 @@
+# Strict nil runtime policy fixture
+# Args: --strict-nil
+
+(fn typed_arg [x: Int] x)
+(try
+  (typed_arg nil)
+  (println "arg-not-rejected")
+catch *
+  (println "arg-rejected"))
+# Expected: arg-rejected
+
+(fn typed_return [] -> Int nil)
+(try
+  (typed_return)
+  (println "return-not-rejected")
+catch *
+  (println "return-rejected"))
+# Expected: return-rejected
+
+(try
+  (var local_value: Int nil)
+  (println "local-not-rejected")
+catch *
+  (println "local-rejected"))
+# Expected: local-rejected
+
+(class StrictNilPoint
+  (field x: Int)
+  (ctor [] (/x = 1)))
+(var point (new StrictNilPoint))
+(try
+  (point/x = nil)
+  (println "property-not-rejected")
+catch *
+  (println "property-rejected"))
+# Expected: property-rejected
+
+(fn accepts_any [x: Any]
+  (if (x == nil) "any-admitted" "any-mismatch"))
+(println (accepts_any nil))
+# Expected: any-admitted
+
+(fn accepts_nil [x: Nil] "nil-admitted")
+(println (accepts_nil nil))
+# Expected: nil-admitted
+
+(fn accepts_option [x: (Option Int)] "option-admitted")
+(println (accepts_option nil))
+# Expected: option-admitted
+
+(type MaybeInt (Int | Nil))
+(fn accepts_union [x: MaybeInt] "union-admitted")
+(println (accepts_union nil))
+# Expected: union-admitted

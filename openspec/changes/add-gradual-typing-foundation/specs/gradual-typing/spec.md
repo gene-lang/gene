@@ -48,11 +48,11 @@ Default gradual typing mode SHALL preserve existing nil-compatible behavior and 
 - **AND** users are not required to rewrite those programs to include explicit `Nil` unions until they opt into strict nil
 
 ### Requirement: Opt-In Strict Nil
-Strict nil behavior SHALL be available as an explicit opt-in mode for typed boundaries.
+Strict nil behavior SHALL be available as an explicit opt-in `--strict-nil` runtime mode for typed boundaries.
 
 #### Scenario: Strict nil rejects implicit nil at typed boundaries
 - **WHEN** strict nil mode is enabled and a typed argument, return, local assignment, or property assignment receives `nil`
-- **THEN** the runtime rejects `nil` unless the expected type is `Any`, `Nil`, or a union containing `Nil`
+- **THEN** the runtime rejects `nil` unless the expected type is `Any`, `Nil`, `Option[T]`, or a union containing `Nil`
 - **AND** the same behavior applies when the typed metadata came from source compilation or GIR loading
 
 ### Requirement: Final Foundation Gate

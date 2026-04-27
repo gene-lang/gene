@@ -512,6 +512,42 @@ proc is_compatible*(value: Value, expected_type_id: TypeId, type_descs: seq[Type
   let parsed = type_desc_to_rt(type_descs, expected_type_id)
   return is_compatible_rt(value, parsed)
 
+const StrictNilAdmissibilityMaxDepth = 64
+
+proc descriptor_id_in_range(type_id: TypeId, type_descs: seq[TypeDesc]): bool {.inline.} =
+  type_id != NO_TYPE_ID and type_id >= 0 and type_id.int < type_descs.len
+
+proc nil_admitted_by_type_id*(expected_type_id: TypeId, type_descs: seq[TypeDesc],
+                              depth = 0): bool =
+  ## Return whether a descriptor explicitly admits nil under strict nil mode.
+  ## This helper deliberately fails closed for missing, malformed, or out-of-range
+  ## metadata instead of repairing descriptor tables or falling back to Any.
+  if depth > StrictNilAdmissibilityMaxDepth:
+    return false
+  if not descriptor_id_in_range(expected_type_id, type_descs):
+    return false
+
+  let desc = type_descs[expected_type_id.int]
+  case desc.kind
+  of TdkAny:
+    return true
+  of TdkNamed:
+    return desc.name == "Nil"
+  of TdkApplied:
+    if desc.ctor != "Option" or desc.args.len != 1:
+      return false
+    return descriptor_id_in_range(desc.args[0], type_descs)
+  of TdkUnion:
+    for member in desc.members:
+      if not descriptor_id_in_range(member, type_descs):
+        return false
+    for member in desc.members:
+      if nil_admitted_by_type_id(member, type_descs, depth + 1):
+        return true
+    return false
+  else:
+    return false
+
 proc types_equivalent*(left_type_id: TypeId, right_type_id: TypeId,
                       type_descs: seq[TypeDesc]): bool =
   ## Structural type equivalence based on runtime compatibility logic.
@@ -644,10 +680,18 @@ proc emit_type_warning*(warning: string) =
 const
   TYPE_DIAG_MISMATCH_CODE* = "GENE_TYPE_MISMATCH"
   TYPE_DIAG_COERCION_CODE* = "GENE_TYPE_COERCION"
+  STRICT_NIL_ALLOWED_TARGETS = "Any, Nil, Option[T], or unions containing Nil"
 
 proc format_type_mismatch(expected: string, actual: string, context: string, location: string): string =
   result = "Type error [" & TYPE_DIAG_MISMATCH_CODE & "]: expected " & expected &
     ", got " & actual & " in " & context
+  if location.len > 0:
+    result &= " @ " & location
+
+proc format_strict_nil_mismatch(expected: string, context: string, location: string): string =
+  result = "Type error [" & TYPE_DIAG_MISMATCH_CODE & "]: expected " & expected &
+    ", got Nil in " & context & "; strict nil mode admits nil only for " &
+    STRICT_NIL_ALLOWED_TARGETS
   if location.len > 0:
     result &= " @ " & location
 
@@ -692,7 +736,13 @@ proc format_type_warning(warning: string, location: string): string =
 proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
                              type_descs: seq[TypeDesc],
                              param_name: string = "argument",
-                             location: string = ""): string =
+                             location: string = "",
+                             strict_nil: bool = false): string =
+  if strict_nil and value == NIL:
+    if nil_admitted_by_type_id(expected_type_id, type_descs):
+      return ""
+    let expected = type_desc_to_string(expected_type_id, type_descs)
+    raise new_exception(type_defs.Exception, format_strict_nil_mismatch(expected, param_name, location))
   var converted = value
   var warning = ""
   if coerce_value_to_type(value, expected_type_id, type_descs, param_name, converted, warning):
@@ -708,7 +758,13 @@ proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
   raise new_exception(type_defs.Exception, format_type_mismatch(expected, actual, param_name, location))
 
 proc validate_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
-                   param_name: string = "argument", location: string = "") =
+                   param_name: string = "argument", location: string = "",
+                   strict_nil: bool = false) =
+  if strict_nil and value == NIL:
+    if nil_admitted_by_type_id(expected_type_id, type_descs):
+      return
+    let expected = type_desc_to_string(expected_type_id, type_descs)
+    raise new_exception(type_defs.Exception, format_strict_nil_mismatch(expected, param_name, location))
   if not is_compatible(value, expected_type_id, type_descs):
     let actual = runtime_type_name(value)
     let expected = type_desc_to_string(expected_type_id, type_descs)

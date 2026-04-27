@@ -18,6 +18,7 @@ type
     quote_str: bool
     filter: bool
     type_check: bool
+    strict_nil: bool
     checked_vm: bool
     native_tier: NativeCompileTier
     native_code: bool
@@ -37,6 +38,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  --quote-str: output strings with quotes")
   manager.add_help("  --filter: treat code as predicate, output $line when true")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
+  manager.add_help("  --strict-nil: reject nil at typed runtime boundaries unless the expected type admits nil")
   manager.add_help("  --checked-vm: enable checked VM invariants (requires -d:geneVmChecks build)")
   manager.add_help("  --native-code: enable native code execution (alias for --native-tier guarded)")
   manager.add_help("  --native-tier <never|guarded|fully-typed>: set native compilation policy")
@@ -51,6 +53,7 @@ let long_no_val = @[
   "filter",
   "no-typecheck",
   "no-type-check",
+  "strict-nil",
   "checked-vm",
   "native-code",
 ]
@@ -95,6 +98,8 @@ proc parse_options(args: seq[string]): PipeOptions =
         result.filter = true
       of "no-typecheck", "no-type-check":
         result.type_check = false
+      of "strict-nil":
+        result.strict_nil = true
       of "checked-vm":
         result.checked_vm = true
       of "native-code":
@@ -154,6 +159,7 @@ Options:
   --quote-str             Output strings with quotes (for Gene-parseable output)
   --filter                Treat code as predicate; output $line when true
   --no-type-check         Disable static type checking (alias: --no-typecheck)
+  --strict-nil            Reject nil at typed runtime boundaries unless explicitly admitted
   --native-code           Enable native code execution (alias for --native-tier guarded)
   --native-tier <tier>    Native tier: never | guarded | fully-typed
 
@@ -267,6 +273,7 @@ Notes:
   VM.native_tier = options.native_tier
   VM.native_code = options.native_tier != NctNever
   VM.type_check = options.type_check
+  VM.strict_nil = options.strict_nil
   if options.checked_vm:
     require_checked_vm_available()
     VM.checked_vm = true

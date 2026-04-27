@@ -83,12 +83,13 @@ Gene remains gradual-first.
 
 Default mode keeps existing nil-compatible behavior. Users should not be forced to rewrite working gradual programs with explicit `Nil` unions just because the descriptor verifier exists. If strict nil is not enabled, the foundation should preserve the current posture: `nil` may continue to pass through typed boundaries that already allow it by default.
 
-### Opt-in strict nil target
+### Opt-in `--strict-nil` target
 
-Strict nil is an explicit opt-in target mode for typed boundaries. When strict nil is enabled, `nil` should be rejected for a typed argument, return, local assignment, or property assignment unless the expected type is one of:
+Strict nil is an explicit opt-in target mode for typed boundaries, enabled through the `--strict-nil` runtime flag on execution commands. When strict nil is enabled, `nil` should be rejected for a typed argument, return, local assignment, or property assignment unless the expected type is one of:
 
 - `Any`
 - `Nil`
+- `Option[T]`
 - a union that contains `Nil`
 
 Strict nil must behave the same whether the metadata came from source compilation or from GIR loading. This document only defines the target semantics; it does not claim strict nil has already been implemented.
@@ -116,7 +117,7 @@ Foundation evidence should be accumulated in slices, not asserted early:
 2. GIR loading rejects corrupted descriptor metadata before import, execution, or runtime validation.
 3. Source/GIR parity proves source-compiled and cached-GIR execution agree on typed metadata and typed boundary behavior.
 4. Default mode proves nil-compatible programs still work without strict nil.
-5. Strict nil mode proves implicit `nil` rejection and explicit `Nil` acceptance at typed boundaries.
+5. Strict nil mode proves implicit `nil` rejection and explicit `Nil`, `Option[T]`, or union-with-`Nil` acceptance at typed boundaries.
 6. Diagnostics prove `GENE_TYPE_METADATA_INVALID` includes phase, owner/path, invalid `TypeId`, descriptor-table length, and source/GIR paths.
 7. Documentation and OpenSpec validation prove future agents can find this contract and distinguish current behavior from target behavior.
 

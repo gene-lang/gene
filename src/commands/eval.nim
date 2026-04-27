@@ -23,6 +23,7 @@ type
     compile: bool
     repl_on_error: bool
     type_check: bool
+    strict_nil: bool
     contracts_enabled: bool
     checked_vm: bool
     native_tier: NativeCompileTier
@@ -39,6 +40,7 @@ proc init*(manager: CommandManager) =
   manager.add_help("  --pkg <package>: execute the eval session in a package context")
   manager.add_help("  --repl-on-error: drop into REPL on Gene exceptions")
   manager.add_help("  --no-type-check: disable static type checking (alias: --no-typecheck)")
+  manager.add_help("  --strict-nil: reject nil at typed runtime boundaries unless the expected type admits nil")
   manager.add_help("  --contracts <on|off>: enable or disable runtime contract checks")
   manager.add_help("  --checked-vm: enable checked VM invariants (requires -d:geneVmChecks build)")
   manager.add_help("  --native-code: enable native code execution (alias for --native-tier guarded)")
@@ -59,6 +61,7 @@ let long_no_val = @[
   "compile",
   "no-typecheck",
   "no-type-check",
+  "strict-nil",
   "checked-vm",
   "native-code",
   "print-last",
@@ -116,6 +119,8 @@ proc parse_options(args: seq[string]): Options =
         result.compile = true
       of "no-typecheck", "no-type-check":
         result.type_check = false
+      of "strict-nil":
+        result.strict_nil = true
       of "p", "print-last":
         result.print_last = true
       of "native-code":
@@ -211,6 +216,7 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   VM.native_tier = options.native_tier
   VM.native_code = options.native_tier != NctNever
   VM.type_check = options.type_check
+  VM.strict_nil = options.strict_nil
   VM.contracts_enabled = options.contracts_enabled
   if options.checked_vm:
     require_checked_vm_available()

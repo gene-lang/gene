@@ -112,6 +112,7 @@ proc new_vm_ptr*(): ptr VirtualMachine =
   result[].native_tier = NctNever
   result[].native_code = false
   result[].type_check = true
+  result[].strict_nil = false
   result[].contracts_enabled = true
   result[].profile_data = initTable[string, FunctionProfile]()
   result[].profile_stack = @[]

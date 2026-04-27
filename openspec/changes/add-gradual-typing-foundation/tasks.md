@@ -21,10 +21,10 @@
 
 ## 4. S04 Opt-In Strict Nil Scaffold
 
-- [ ] 4.1 Add an opt-in strict nil mode that rejects `nil` at typed boundaries unless the expected type is `Any`, `Nil`, or a union containing `Nil`.
+- [ ] 4.1 Add an opt-in `--strict-nil` mode that rejects `nil` at typed boundaries unless the expected type is `Any`, `Nil`, `Option[T]`, or a union containing `Nil`.
 - [ ] 4.2 Preserve default gradual nil compatibility for existing programs when strict nil is not enabled.
 - [ ] 4.3 Apply strict nil behavior consistently to arguments, returns, locals/assignments, typed properties, and GIR-loaded metadata paths.
-- [ ] 4.4 Add tests for default nil compatibility, strict nil rejection, explicit `Nil` acceptance, and union-with-`Nil` acceptance.
+- [ ] 4.4 Add tests for default nil compatibility, strict nil rejection, explicit `Nil` acceptance, `Option[T]` acceptance, and union-with-`Nil` acceptance.
 
 ## 5. S05 Final Foundation Gate
 
