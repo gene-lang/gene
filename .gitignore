@@ -70,6 +70,8 @@ example-projects/geneclaw/home/
 # ── GSD durable state ──
 # Commit the files needed to continue GSD work on another machine.
 # Runtime/session-local state stays ignored below.
+# Ignore a .gsd symlink, but unignore a real .gsd/ directory and durable files.
+.gsd
 .gsd/*
 !.gsd/
 !.gsd/gsd.db
@@ -119,6 +121,3 @@ target/
 vendor/
 *.log
 coverage/
-
-# ── GSD self-heal: .gsd is a symlink to external state ──
-.gsd
