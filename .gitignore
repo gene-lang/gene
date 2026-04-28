@@ -67,8 +67,36 @@ example-projects/geneclaw/home/
 
 .omx
 
-# ── GSD baseline (auto-generated) ──
-.gsd
+# ── GSD durable state ──
+# Commit the files needed to continue GSD work on another machine.
+# Runtime/session-local state stays ignored below.
+.gsd/*
+!.gsd/
+!.gsd/gsd.db
+!.gsd/PROJECT.md
+!.gsd/REQUIREMENTS.md
+!.gsd/DECISIONS.md
+!.gsd/KNOWLEDGE.md
+!.gsd/PREFERENCES.md
+!.gsd/OVERRIDES.md
+!.gsd/QUEUE.md
+!.gsd/STATE.md
+!.gsd/CODEBASE.md
+!.gsd/milestones/
+!.gsd/milestones/**
+
+# GSD runtime/session-local artifacts.
+.gsd/gsd.db-wal
+.gsd/gsd.db-shm
+.gsd/runtime/
+.gsd/activity/
+.gsd/worktrees/
+.gsd/exec/
+.gsd/browser-state/
+.gsd/browser-baselines/
+.gsd/auto.lock
+.gsd/tmp/
+.gsd/*.log
 .gsd-id
 .mcp.json
 .bg-shell/
@@ -91,3 +119,6 @@ target/
 vendor/
 *.log
 coverage/
+
+# ── GSD self-heal: .gsd is a symlink to external state ──
+.gsd

@@ -11,6 +11,37 @@ import ../logging_core
 const RuntimeTypesLogger = "gene/runtime_types"
 
 type
+  GuardPhase* = enum
+    GpUnknown,
+    GpArgument,
+    GpReturn,
+    GpLocal,
+    GpProperty,
+    GpEnumPayload
+
+  GuardContext* = object
+    enabled*: bool
+    phase*: GuardPhase
+    producer*: string
+    consumer*: string
+    site*: string
+
+  GuardError* = object
+    code*: string
+    message*: string
+    expected*: string
+    got*: string
+    phase*: string
+    producer*: string
+    consumer*: string
+    site*: string
+
+  GuardResult* = object
+    ok*: bool
+    value*: Value
+    warning*: string
+    error*: GuardError
+
   RtTypeKind = enum
     RtAny,
     RtNamed,
@@ -732,6 +763,93 @@ proc format_type_warning(warning: string, location: string): string =
     result = warning
   if location.len > 0:
     result &= " @ " & location
+
+proc guard_phase_name*(phase: GuardPhase): string =
+  case phase
+  of GpUnknown:
+    "unknown"
+  of GpArgument:
+    "argument"
+  of GpReturn:
+    "return"
+  of GpLocal:
+    "local"
+  of GpProperty:
+    "property"
+  of GpEnumPayload:
+    "enum-payload"
+
+proc guard_field_value(value: string, fallback: string): string =
+  if value.len == 0:
+    return fallback
+  for ch in value:
+    if ch in {'\n', '\r', '\t', ';'}:
+      result.add('_')
+    else:
+      result.add(ch)
+  if result.len == 0:
+    return fallback
+
+proc append_guard_fields*(message: string, context: GuardContext): string =
+  if not context.enabled:
+    return message
+  message & "; phase=" & guard_phase_name(context.phase) &
+    "; producer=" & guard_field_value(context.producer, "<unknown>") &
+    "; consumer=" & guard_field_value(context.consumer, "<unknown>") &
+    "; site=" & guard_field_value(context.site, "<unknown>")
+
+proc make_guard_error(expected: string, actual: string, message: string,
+                      context: GuardContext): GuardError =
+  let has_context = context.enabled
+  GuardError(
+    code: TYPE_DIAG_MISMATCH_CODE,
+    message: append_guard_fields(message, context),
+    expected: expected,
+    got: actual,
+    phase: (if has_context: guard_phase_name(context.phase) else: ""),
+    producer: (if has_context: guard_field_value(context.producer, "<unknown>") else: ""),
+    consumer: (if has_context: guard_field_value(context.consumer, "<unknown>") else: ""),
+    site: (if has_context: guard_field_value(context.site, "<unknown>") else: ""))
+
+proc guard_runtime_type*(value: Value, expected_type_id: TypeId,
+                         type_descs: seq[TypeDesc],
+                         param_name: string = "argument",
+                         location: string = "",
+                         strict_nil: bool = false,
+                         allow_implicit_nil: bool = false,
+                         allow_coercion: bool = true,
+                         context: GuardContext = GuardContext()): GuardResult =
+  result = GuardResult(ok: true, value: value, warning: "", error: GuardError())
+  if strict_nil and value == NIL:
+    if nil_admitted_by_type_id(expected_type_id, type_descs):
+      return
+    let expected = type_desc_to_string(expected_type_id, type_descs)
+    result.ok = false
+    result.error = make_guard_error(expected, "Nil",
+      format_strict_nil_mismatch(expected, param_name, location), context)
+    return
+  if allow_implicit_nil and value == NIL:
+    return
+  if allow_coercion:
+    var converted = value
+    var warning = ""
+    if coerce_value_to_type(value, expected_type_id, type_descs, param_name, converted, warning):
+      result.value = converted
+      result.warning = format_type_warning(warning, location)
+      return
+  elif is_compatible(value, expected_type_id, type_descs):
+    return
+  result.ok = false
+  let expected = type_desc_to_string(expected_type_id, type_descs)
+  let actual = runtime_type_name(value)
+  if expected_type_id != NO_TYPE_ID and type_descs.len > 0:
+    let parsed_expected = type_desc_to_rt(type_descs, expected_type_id)
+    let migration = legacy_gene_adt_value_mismatch(value, parsed_expected, param_name, location)
+    if migration.len > 0:
+      result.error = make_guard_error(expected, actual, migration, context)
+      return
+  result.error = make_guard_error(expected, actual,
+    format_type_mismatch(expected, actual, param_name, location), context)
 
 proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
                              type_descs: seq[TypeDesc],
