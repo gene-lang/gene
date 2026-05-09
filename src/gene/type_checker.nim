@@ -65,11 +65,16 @@ type
 
   AdtVariant = object
     name*: string
+    payload_shape*: EnumPayloadShapeKind
     field_count*: int
     param_index*: int  # -1 when no param binding
     fields*: seq[string]
     field_types*: seq[TypeExpr]
     field_param_indices*: seq[int]
+
+  AdtPatternBinding = object
+    field_index*: int
+    local_name*: string
 
   AdtDef = ref object
     name*: string
@@ -85,7 +90,7 @@ type
     matched*: bool
     adt*: AdtDef
     variant*: AdtVariant
-    bindings*: seq[string]
+    bindings*: seq[AdtPatternBinding]
 
   ImportTypeItem = object
     path: seq[string]
@@ -289,12 +294,12 @@ proc register_builtin_adts(self: TypeChecker) =
   let result_e = TypeExpr(kind: TkNamed, name: "E")
   let option_t = TypeExpr(kind: TkNamed, name: "T")
   self.add_adt("Result", @["T", "E"], @[
-    AdtVariant(name: "Ok", field_count: 1, param_index: 0, fields: @["value"], field_types: @[result_t], field_param_indices: @[0]),
-    AdtVariant(name: "Err", field_count: 1, param_index: 1, fields: @["error"], field_types: @[result_e], field_param_indices: @[1])
+    AdtVariant(name: "Ok", payload_shape: EpsNamed, field_count: 1, param_index: 0, fields: @["value"], field_types: @[result_t], field_param_indices: @[0]),
+    AdtVariant(name: "Err", payload_shape: EpsNamed, field_count: 1, param_index: 1, fields: @["error"], field_types: @[result_e], field_param_indices: @[1])
   ])
   self.add_adt("Option", @["T"], @[
-    AdtVariant(name: "Some", field_count: 1, param_index: 0, fields: @["value"], field_types: @[option_t], field_param_indices: @[0]),
-    AdtVariant(name: "None", field_count: 0, param_index: -1, fields: @[], field_types: @[], field_param_indices: @[])
+    AdtVariant(name: "Some", payload_shape: EpsNamed, field_count: 1, param_index: 0, fields: @["value"], field_types: @[option_t], field_param_indices: @[0]),
+    AdtVariant(name: "None", payload_shape: EpsUnit, field_count: 0, param_index: -1, fields: @[], field_types: @[], field_param_indices: @[])
   ])
 
 proc fresh_var(self: TypeChecker): TypeExpr =
@@ -1058,10 +1063,33 @@ proc enum_param_index(params: seq[string], type_node: Value): int =
       return i
   -1
 
+proc is_enum_positional_type_slot(self: TypeChecker, type_params: seq[string], v: Value): bool =
+  case v.kind
+  of VkGene:
+    return enum_type_annotation_valid(v)
+  of VkSymbol:
+    let token = v.str
+    if token.len == 0 or token.endsWith(":"):
+      return false
+    if enum_param_index(type_params, v) >= 0:
+      return true
+    if self.is_known_type_name(token):
+      return true
+    return token[0].isUpperAscii()
+  of VkString:
+    return v.str.len > 0
+  else:
+    return false
+
+proc mixed_enum_variant_shape_error(enum_name, variant_name: string): ref types.Exception =
+  new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name &
+    " cannot mix positional payload types and named fields; use either all positional type slots or all named fields")
+
 proc parse_enum_variant_fields(self: TypeChecker, enum_name: string, variant_gene: ptr Gene,
-                               type_params: seq[string]): tuple[fields: seq[string], field_types: seq[TypeExpr], field_param_indices: seq[int], param_index: int] =
+                               type_params: seq[string]): tuple[payload_shape: EnumPayloadShapeKind, field_count: int, fields: seq[string], field_types: seq[TypeExpr], field_param_indices: seq[int], param_index: int] =
   let variant_name = variant_gene.`type`.str
   result.param_index = -1
+  result.payload_shape = EpsUnit
   if variant_gene.props.len > 0:
     raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " field declarations must be positional, not properties")
 
@@ -1070,16 +1098,13 @@ proc parse_enum_variant_fields(self: TypeChecker, enum_name: string, variant_gen
   var i = 0
   while i < variant_gene.children.len:
     let child = variant_gene.children[i]
-    if child.kind != VkSymbol:
-      raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " field must be a symbol")
 
-    let token = child.str
-    var field_name = token
-    var field_type = ANY_TYPE
-    var field_param_index = -1
-
-    if token.endsWith(":"):
-      field_name = token[0..^2]
+    if child.kind == VkSymbol and child.str.endsWith(":"):
+      if result.payload_shape == EpsPositional:
+        raise mixed_enum_variant_shape_error(enum_name, variant_name)
+      result.payload_shape = EpsNamed
+      let token = child.str
+      let field_name = token[0..^2]
       if field_name.len == 0:
         raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " has an empty field name")
       if i + 1 >= variant_gene.children.len:
@@ -1089,21 +1114,48 @@ proc parse_enum_variant_fields(self: TypeChecker, enum_name: string, variant_gen
         raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " field " & field_name & " is missing a type after ':'")
       if not enum_type_annotation_valid(type_node):
         raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " field " & field_name & " has an invalid type annotation")
-      field_param_index = enum_param_index(type_params, type_node)
-      field_type = self.parse_type_expr(type_node)
+      if seen_fields.hasKey(field_name):
+        raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " has duplicate field " & field_name)
+      seen_fields[field_name] = true
+      let field_param_index = enum_param_index(type_params, type_node)
+      result.fields.add(field_name)
+      result.field_types.add(self.parse_type_expr(type_node))
+      result.field_param_indices.add(field_param_index)
+      field_param_indices.add(field_param_index)
       i += 2
-    else:
-      i.inc()
+      continue
 
+    if self.is_enum_positional_type_slot(type_params, child):
+      if result.payload_shape == EpsNamed:
+        raise mixed_enum_variant_shape_error(enum_name, variant_name)
+      result.payload_shape = EpsPositional
+      let field_param_index = enum_param_index(type_params, child)
+      result.field_types.add(self.parse_type_expr(child))
+      result.field_param_indices.add(field_param_index)
+      field_param_indices.add(field_param_index)
+      i.inc()
+      continue
+
+    if child.kind != VkSymbol:
+      raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " field must be a symbol or type expression")
+
+    if result.payload_shape == EpsPositional:
+      raise mixed_enum_variant_shape_error(enum_name, variant_name)
+    result.payload_shape = EpsNamed
+    let field_name = child.str
     if seen_fields.hasKey(field_name):
       raise new_exception(types.Exception, "enum variant " & enum_name & "/" & variant_name & " has duplicate field " & field_name)
     seen_fields[field_name] = true
     result.fields.add(field_name)
-    result.field_types.add(field_type)
-    result.field_param_indices.add(field_param_index)
-    field_param_indices.add(field_param_index)
+    result.field_types.add(ANY_TYPE)
+    result.field_param_indices.add(-1)
+    field_param_indices.add(-1)
+    i.inc()
 
-  if result.fields.len == 1 and field_param_indices.len == 1:
+  result.field_count = result.field_types.len
+  if result.field_count == 0:
+    result.payload_shape = EpsUnit
+  if result.field_count == 1 and field_param_indices.len == 1:
     result.param_index = field_param_indices[0]
 
 proc check_enum(self: TypeChecker, gene: ptr Gene): TypeExpr =
@@ -1145,12 +1197,12 @@ proc check_enum(self: TypeChecker, gene: ptr Gene): TypeExpr =
     for member in array_data(values_array):
       if member.kind != VkSymbol:
         raise new_exception(types.Exception, "enum ^values member must be a symbol")
-      add_variant(AdtVariant(name: member.str, field_count: 0, param_index: -1, fields: @[], field_types: @[]))
+      add_variant(AdtVariant(name: member.str, payload_shape: EpsUnit, field_count: 0, param_index: -1, fields: @[], field_types: @[], field_param_indices: @[]))
   else:
     for i in 1..<gene.children.len:
       let member = gene.children[i]
       if member.kind == VkSymbol:
-        add_variant(AdtVariant(name: member.str, field_count: 0, param_index: -1, fields: @[], field_types: @[]))
+        add_variant(AdtVariant(name: member.str, payload_shape: EpsUnit, field_count: 0, param_index: -1, fields: @[], field_types: @[], field_param_indices: @[]))
       elif member.kind == VkGene and member.gene != nil:
         let variant_gene = member.gene
         if variant_gene.`type`.kind != VkSymbol:
@@ -1158,7 +1210,8 @@ proc check_enum(self: TypeChecker, gene: ptr Gene): TypeExpr =
         let parsed_fields = self.parse_enum_variant_fields(enum_name, variant_gene, type_params)
         add_variant(AdtVariant(
           name: variant_gene.`type`.str,
-          field_count: parsed_fields.fields.len,
+          payload_shape: parsed_fields.payload_shape,
+          field_count: parsed_fields.field_count,
           param_index: parsed_fields.param_index,
           fields: parsed_fields.fields,
           field_types: parsed_fields.field_types,
@@ -1439,9 +1492,57 @@ proc adt_variant_qualified_name(adt: AdtDef, variant: AdtVariant): string =
 
 proc adt_pattern_binding_message(adt: AdtDef, variant: AdtVariant, got: int): string =
   let expected = variant.field_count
-  let field_names = if expected > 0 and variant.fields.len > 0: " (" & variant.fields.join(", ") & ")" else: ""
+  let field_names = if expected > 0 and variant.payload_shape == EpsNamed and variant.fields.len > 0: " (" & variant.fields.join(", ") & ")" else: ""
   "variant " & adt_variant_qualified_name(adt, variant) & " pattern expects " &
     $expected & " binding(s)" & field_names & ", got " & $got
+
+proc adt_variant_field_index(variant: AdtVariant, field_name: string): int =
+  for i, field in variant.fields:
+    if field == field_name:
+      return i
+  -1
+
+proc split_adt_pattern_alias(token: string): tuple[has_alias: bool, field_name: string, local_name: string] =
+  let colon = token.find(':')
+  if colon < 0:
+    return (false, token, token)
+  if colon == 0 or colon == token.len - 1:
+    return (true, "", "")
+  (true, token[0..<colon], token[colon + 1..^1])
+
+proc resolve_adt_pattern_bindings(self: TypeChecker, adt: AdtDef, variant: AdtVariant,
+                                  raw_bindings: seq[string]): seq[AdtPatternBinding] =
+  if raw_bindings.len != variant.field_count:
+    self.warn(adt_pattern_binding_message(adt, variant, raw_bindings.len))
+    return @[]
+
+  var seen_fields = initTable[string, bool]()
+  for i, raw in raw_bindings:
+    let alias = split_adt_pattern_alias(raw)
+    if variant.payload_shape == EpsPositional:
+      if alias.has_alias:
+        self.warn("enum pattern " & adt_variant_qualified_name(adt, variant) &
+          " uses named field binding on a positional variant")
+        return @[]
+      result.add(AdtPatternBinding(field_index: i, local_name: raw))
+    elif variant.payload_shape == EpsNamed and alias.has_alias:
+      if alias.field_name.len == 0 or alias.local_name.len == 0:
+        self.warn("enum pattern " & adt_variant_qualified_name(adt, variant) &
+          " has invalid field alias " & raw)
+        return @[]
+      let field_index = adt_variant_field_index(variant, alias.field_name)
+      if field_index < 0:
+        self.warn("enum pattern " & adt_variant_qualified_name(adt, variant) &
+          " references unknown field " & alias.field_name)
+        return @[]
+      if seen_fields.hasKey(alias.field_name):
+        self.warn("enum pattern " & adt_variant_qualified_name(adt, variant) &
+          " references duplicate field " & alias.field_name)
+        return @[]
+      seen_fields[alias.field_name] = true
+      result.add(AdtPatternBinding(field_index: field_index, local_name: alias.local_name))
+    else:
+      result.add(AdtPatternBinding(field_index: i, local_name: raw))
 
 proc sorted_adt_names(self: TypeChecker): seq[string] =
   for name in self.adts.keys:
@@ -1571,7 +1672,7 @@ proc check_adt_ctor(self: TypeChecker, gene: ptr Gene): TypeExpr =
     if gene.children.len > 0:
       payload = gene.children[0]
       found_payload = true
-    elif variant.fields.len == 1:
+    elif variant.payload_shape == EpsNamed and variant.fields.len == 1:
       let field_key = variant.fields[0].to_key()
       if gene.props.hasKey(field_key):
         payload = gene.props[field_key]
@@ -2106,19 +2207,25 @@ proc subtract_adt_type(self: TypeChecker, original: TypeExpr, adt_name: string):
     return ANY_TYPE
   return ro
 
+proc simple_qualified_adt_pattern_parts(v: Value): seq[string] =
+  if v.kind == VkComplexSymbol and v.ref != nil:
+    return v.ref.csymbol
+  if v.kind == VkSymbol and v.str.contains("/"):
+    return v.str.split("/")
+  @[]
+
 proc is_simple_qualified_adt_pattern_head(v: Value): bool =
-  if v.kind != VkComplexSymbol or v.ref == nil:
-    return false
-  let parts = v.ref.csymbol
+  let parts = simple_qualified_adt_pattern_parts(v)
   parts.len == 2 and parts[0].len > 0 and parts[1].len > 0 and
     not parts[0].startsWith(".") and not parts[1].startsWith(".")
 
 proc qualified_adt_pattern_name(v: Value): string =
-  let parts = v.ref.csymbol
+  let parts = simple_qualified_adt_pattern_parts(v)
   parts[0] & "/" & parts[1]
 
 proc resolve_adt_pattern(self: TypeChecker, pattern: Value, scrutinee_type: TypeExpr): AdtPatternResolution =
   var head = NIL
+  var raw_bindings: seq[string] = @[]
   case pattern.kind
   of VkSymbol, VkComplexSymbol:
     head = pattern
@@ -2134,12 +2241,12 @@ proc resolve_adt_pattern(self: TypeChecker, pattern: Value, scrutinee_type: Type
           else: $head
         self.warn("enum pattern " & label & " binding must be a symbol")
         return
-      result.bindings.add(child.str)
+      raw_bindings.add(child.str)
   else:
     return
 
-  if head.kind == VkComplexSymbol and head.is_simple_qualified_adt_pattern_head():
-    let parts = head.ref.csymbol
+  if head.is_simple_qualified_adt_pattern_head():
+    let parts = simple_qualified_adt_pattern_parts(head)
     let qualified_name = head.qualified_adt_pattern_name()
     let resolved = self.find_qualified_adt_variant(parts[0], parts[1])
     if not resolved.found:
@@ -2185,8 +2292,8 @@ proc resolve_adt_pattern(self: TypeChecker, pattern: Value, scrutinee_type: Type
   else:
     return
 
-  if result.matched and result.bindings.len != result.variant.field_count:
-    self.warn(adt_pattern_binding_message(result.adt, result.variant, result.bindings.len))
+  if result.matched:
+    result.bindings = self.resolve_adt_pattern_bindings(result.adt, result.variant, raw_bindings)
 
 proc add_unique_string(items: var seq[string], value: string) =
   if value.len == 0:
@@ -2470,11 +2577,12 @@ proc check_case(self: TypeChecker, gene: ptr Gene): TypeExpr =
       self.define(scrutinee_name, self.narrow_type_to_adt(scrutinee_type, adt_pattern.adt.name))
 
     if adt_pattern.matched:
-      for binding_index, bound_name in adt_pattern.bindings:
+      for binding in adt_pattern.bindings:
+        let bound_name = binding.local_name
         if bound_name.len == 0 or bound_name == "_":
           continue
         ensure_user_value_name(bound_name, "case pattern binding")
-        let bound_type = self.adt_field_binding_type(scrutinee_type, adt_pattern.adt, adt_pattern.variant, binding_index)
+        let bound_type = self.adt_field_binding_type(scrutinee_type, adt_pattern.adt, adt_pattern.variant, binding.field_index)
         self.define(bound_name, bound_type)
 
     let body_type = self.check_expr(when_body)

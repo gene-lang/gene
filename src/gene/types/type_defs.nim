@@ -20,6 +20,11 @@ type
   CustomValue* = ref object of RootObj
     materialize_hook*: proc(data: CustomValue): Value {.gcsafe.}
 
+  EnumPayloadShapeKind* = enum
+    EpsUnit
+    EpsNamed
+    EpsPositional
+
   EnumDef* = ref object
     name*: string
     type_params*: seq[string]
@@ -32,8 +37,10 @@ type
     parent*: Value  # The enum this member belongs to
     name*: string
     value*: int
-    fields*: seq[string]       # field names for data variants, empty for unit variants
-    field_type_ids*: seq[TypeId]  # parallel to fields; NO_TYPE_ID means untyped
+    payload_shape*: EnumPayloadShapeKind
+    payload_arity*: int
+    fields*: seq[string]       # field names for named data variants, empty for unit/positional variants
+    field_type_ids*: seq[TypeId]  # parallel to payload arity; NO_TYPE_ID means untyped
     field_type_descs*: seq[TypeDesc]
     module_path*: string
     internal_path*: string
@@ -745,6 +752,8 @@ type
   EnumVariantPatternMetadata* = object
     enum_name*: string
     variant_name*: string
+    payload_shape*: EnumPayloadShapeKind
+    payload_arity*: int
     fields*: seq[string]
 
   Compiler* = ref object

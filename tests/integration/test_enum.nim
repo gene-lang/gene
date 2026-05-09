@@ -261,6 +261,57 @@ test_vm """
   check r.ref.ev_variant.ref.enum_member.name == "Rect"
   check r.ref.ev_data == @[10.to_value(), 20.to_value()]
 
+test_vm """
+  (enum E
+    (X Int Int)
+    (Y r: Int))
+  (var x (E/X 1 2))
+  (var y (E/Y ^r 3))
+  [
+    x/0
+    x/1
+    y/r
+    (case x
+      when (E/X a b) (+ a b)
+      when (E/Y r) r)
+    (case y
+      when (E/X a b) (+ a b)
+      when (E/Y r) r)
+    (case y
+      when (E/X a b) (+ a b)
+      when (E/Y r:rx) rx)
+  ]
+""", proc(r: Value) =
+  check r == @[1, 2, 3, 3, 3, 3].to_value()
+
+test_vm """
+  (enum E
+    (X Int Int)
+    (Y r: Int))
+  E/X
+""", proc(r: Value) =
+  check r.kind == VkEnumMember
+  if r.kind == VkEnumMember:
+    let member = r.ref.enum_member
+    check member.payload_shape == EpsPositional
+    check enum_payload_arity(member) == 2
+    check member.fields.len == 0
+    check member.field_type_ids.len == 2
+
+test_vm """
+  (enum E
+    (X Int Int)
+    (Y r: Int))
+  E/Y
+""", proc(r: Value) =
+  check r.kind == VkEnumMember
+  if r.kind == VkEnumMember:
+    let member = r.ref.enum_member
+    check member.payload_shape == EpsNamed
+    check enum_payload_arity(member) == 1
+    check member.fields == @["r"]
+    check member.field_type_ids.len == 1
+
 proc expect_enum_error_parts(code: string, expected_message_parts: openArray[string],
                              forbidden_message_parts: openArray[string]) =
   init_all()
@@ -363,6 +414,17 @@ test "enum keyword payload constructor diagnostics name fields and call shape":
   """, "Variant Shape/Rect cannot mix positional and keyword arguments")
 
   expect_enum_error("""
+    (enum E (X Int Int))
+    (E/X ^r 1)
+  """, "Variant E/X has positional payload slots and does not accept keyword argument(s): r")
+
+  expect_enum_error("""
+    (enum E (X Int Int))
+    (var x (E/X 1 2))
+    x/2/!
+  """, "Selector did not match (VOID)")
+
+  expect_enum_error("""
     (enum Shape Point)
     (var Point Shape/Point)
     (Point ^x 1)
@@ -418,6 +480,10 @@ test "enum declarations reject malformed syntax with targeted diagnostics":
   expect_enum_error("""
     (enum Bad (Full value:))
   """, "missing a type after ':'")
+
+  expect_enum_error("""
+    (enum Bad (Mixed Int r: Int))
+  """, "cannot mix positional payload types and named fields")
 
   expect_enum_error("""
     (enum Bad 123)

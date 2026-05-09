@@ -50,14 +50,19 @@ A unit variant has no payload fields. It can be used directly as a value, and it
 
 ```gene
 (enum Shape
-  (Circle radius: Float)
-  (Rect width: Int height: Int)
+  (Circle Float)                    # positional tuple-like payload
+  (Rect width: Int height: Int)      # named record-like payload
   Point)
 ```
 
-A payload variant is a list whose first element is the variant name and whose remaining elements are ordered field declarations. Field order defines positional constructor order, positional pattern binding order, and display order. Field names define keyword constructor names and field accessors.
+A payload variant is a list whose first element is the variant name and whose remaining elements choose one payload shape:
 
-Field annotations are optional. Annotated fields are checked when payload values are constructed; unannotated fields remain gradual and accept any value.
+- **Positional payloads** use type expressions only, such as `(Circle Float)` or `(Pair Int Int)`. Slots are ordered and accessed by zero-based ordinal.
+- **Named payloads** use field declarations, such as `(Rect width: Int height: Int)` or `(Bag item)`. Field order defines positional constructor order, positional pattern binding order, and display order. Field names define keyword constructor names and named field accessors.
+
+An enum may contain both shapes, but a single variant must not mix them. `(Bad Int name: String)` is rejected; choose either all positional type slots or all named fields.
+
+Field annotations on named variants are optional. Positional slots are type descriptors by construction; use `Any` when a positional slot should remain gradual.
 
 ## Construction
 
@@ -69,7 +74,7 @@ Qualified enum members construct values:
 (var point Shape/Point)
 ```
 
-Payload variants support positional construction and keyword construction. A single constructor call must use one style; mixed positional and keyword arguments are rejected.
+Named payload variants support positional construction and keyword construction. A single constructor call must use one style; mixed positional and keyword arguments are rejected.
 
 ```gene
 (var by_position (Shape/Rect 10 20))
@@ -77,7 +82,18 @@ Payload variants support positional construction and keyword construction. A sin
 (assert (by_position == by_keyword))
 ```
 
-Constructors validate arity, missing keyword fields, unknown keyword fields, duplicate keyword fields, and annotated payload types.
+Positional payload variants support positional construction only because they have no public field names:
+
+```gene
+(enum E
+  (X Int Int)
+  (Y r: Int))
+
+(var x (E/X 1 2))
+(var y (E/Y ^r 3))
+```
+
+Constructors validate arity, missing keyword fields, unknown keyword fields, duplicate keyword fields, invalid keyword use for positional variants, mixed call shapes, and annotated payload types.
 
 ```gene
 (enum Metric
@@ -95,12 +111,19 @@ Unit variants can be used directly or called with no arguments. Calling a unit v
 
 ## Field access, equality, display, and `typeof`
 
-Payload fields are accessed by their declaration names:
+Named payload fields are accessed by their declaration names:
 
 ```gene
-(assert ((circle .radius) == 5.0))
 (assert ((rect .width) == 10))
 (assert ((rect .height) == 20))
+(assert (rect/width == 10))
+```
+
+Positional payload fields are accessed by zero-based ordinal:
+
+```gene
+(assert (x/0 == 1))
+(assert (x/1 == 2))
 ```
 
 Enum value equality is nominal by variant and structural by payload. Two payload values compare equal when they come from the same enum variant and all payload values compare equal. Unit variants from the same enum member compare equal.
@@ -149,7 +172,25 @@ Enum ADTs match through `case` and `when` patterns. A pattern can use a qualifie
       "point"))
 ```
 
-Payload binders are positional and follow the declaration order. A binder must be a symbol. `_` consumes a payload position without creating a binding.
+Payload binders follow the matched variant's payload shape. Positional variants bind by ordinal. Named variants keep declaration-order binders and additionally support field aliases of the form `field:local`.
+
+```gene
+(var total
+  (case (E/X 1 2)
+    when (E/X a b)
+      (+ a b)
+    else
+      0))
+
+(var renamed
+  (case (E/Y ^r 3)
+    when (E/Y r:rx)
+      rx
+    else
+      0))
+```
+
+`_` consumes a payload position without creating a binding.
 
 ```gene
 (var height

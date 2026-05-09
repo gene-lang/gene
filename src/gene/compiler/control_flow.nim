@@ -120,9 +120,16 @@ proc ensure_enum_pattern_metadata(self: Compiler) =
   self.enum_pattern_by_name = initTable[string, seq[EnumVariantPatternMetadata]]()
   self.enum_pattern_metadata_initialized = true
 
-proc register_enum_pattern_metadata(self: Compiler, enum_name: string, variant_name: string, fields: seq[string]) =
+proc register_enum_pattern_metadata(self: Compiler, enum_name: string, variant_name: string,
+                                    fields: seq[string], payload_shape: EnumPayloadShapeKind,
+                                    payload_arity: int) =
   self.ensure_enum_pattern_metadata()
-  let info = EnumVariantPatternMetadata(enum_name: enum_name, variant_name: variant_name, fields: fields)
+  let info = EnumVariantPatternMetadata(
+    enum_name: enum_name,
+    variant_name: variant_name,
+    payload_shape: payload_shape,
+    payload_arity: payload_arity,
+    fields: fields)
   let qualified_name = enum_name & "/" & variant_name
   self.enum_pattern_by_qualified[qualified_name] = info
   var entries = self.enum_pattern_by_name.getOrDefault(variant_name, @[])
@@ -133,31 +140,41 @@ proc enum_pattern_qualified_name(info: EnumVariantPatternMetadata): string =
   info.enum_name & "/" & info.variant_name
 
 proc enum_pattern_binding_message(info: EnumVariantPatternMetadata, got: int): string =
-  let expected = info.fields.len
-  let field_names = if expected > 0: " (" & info.fields.join(", ") & ")" else: ""
+  let expected = info.payload_arity
+  let field_names = if expected > 0 and info.payload_shape == EpsNamed and info.fields.len > 0: " (" & info.fields.join(", ") & ")" else: ""
   "variant " & info.enum_pattern_qualified_name() & " pattern expects " &
     $expected & " binding(s)" & field_names & ", got " & $got
 
+proc simple_qualified_enum_pattern_parts(v: Value): seq[string] =
+  if v.kind == VkComplexSymbol and v.ref != nil:
+    return v.ref.csymbol
+  if v.kind == VkSymbol and v.str.contains("/"):
+    return v.str.split("/")
+  @[]
+
 proc is_simple_qualified_enum_pattern_head(v: Value): bool =
-  if v.kind != VkComplexSymbol or v.ref == nil:
-    return false
-  let parts = v.ref.csymbol
+  let parts = simple_qualified_enum_pattern_parts(v)
   parts.len == 2 and parts[0].len > 0 and parts[1].len > 0 and
     not parts[0].startsWith(".") and not parts[1].startsWith(".")
 
 proc qualified_enum_pattern_name(v: Value): string =
-  let parts = v.ref.csymbol
+  let parts = simple_qualified_enum_pattern_parts(v)
   parts[0] & "/" & parts[1]
+
+type EnumCasePatternBinding = object
+  field_index: int
+  field_name: string
+  local_name: string
 
 type EnumCasePattern = object
   matched: bool
   head: Value
-  bindings: seq[string]
+  bindings: seq[EnumCasePatternBinding]
   metadata_known: bool
   metadata: EnumVariantPatternMetadata
 
 proc resolve_enum_case_pattern_head(self: Compiler, head: Value): EnumCasePattern =
-  if head.kind == VkComplexSymbol and head.is_simple_qualified_enum_pattern_head():
+  if head.is_simple_qualified_enum_pattern_head():
     let qualified_name = head.qualified_enum_pattern_name()
     result.matched = true
     result.head = head
@@ -202,7 +219,51 @@ proc resolve_enum_case_pattern_head(self: Compiler, head: Value): EnumCasePatter
     result.matched = true
     result.head = head
 
+proc split_enum_pattern_alias(token: string): tuple[has_alias: bool, field_name: string, local_name: string] =
+  let colon = token.find(':')
+  if colon < 0:
+    return (false, token, token)
+  if colon == 0 or colon == token.len - 1:
+    return (true, "", "")
+  (true, token[0..<colon], token[colon + 1..^1])
+
+proc enum_pattern_field_index(info: EnumVariantPatternMetadata, field_name: string): int =
+  for i, field in info.fields:
+    if field == field_name:
+      return i
+  -1
+
+proc resolve_enum_case_bindings(info: EnumVariantPatternMetadata,
+                                raw_bindings: seq[string]): seq[EnumCasePatternBinding] =
+  if raw_bindings.len != info.payload_arity:
+    not_allowed(info.enum_pattern_binding_message(raw_bindings.len))
+
+  var seen_fields = initTable[string, bool]()
+  for i, raw in raw_bindings:
+    let alias = split_enum_pattern_alias(raw)
+    if info.payload_shape == EpsPositional:
+      if alias.has_alias:
+        not_allowed("enum pattern " & info.enum_pattern_qualified_name() &
+          " uses named field binding on a positional variant")
+      result.add(EnumCasePatternBinding(field_index: i, field_name: "", local_name: raw))
+    elif info.payload_shape == EpsNamed and alias.has_alias:
+      if alias.field_name.len == 0 or alias.local_name.len == 0:
+        not_allowed("enum pattern " & info.enum_pattern_qualified_name() &
+          " has invalid field alias " & raw)
+      let field_index = enum_pattern_field_index(info, alias.field_name)
+      if field_index < 0:
+        not_allowed("enum pattern " & info.enum_pattern_qualified_name() &
+          " references unknown field " & alias.field_name)
+      if seen_fields.hasKey(alias.field_name):
+        not_allowed("enum pattern " & info.enum_pattern_qualified_name() &
+          " references duplicate field " & alias.field_name)
+      seen_fields[alias.field_name] = true
+      result.add(EnumCasePatternBinding(field_index: field_index, field_name: alias.field_name, local_name: alias.local_name))
+    else:
+      result.add(EnumCasePatternBinding(field_index: i, field_name: "", local_name: raw))
+
 proc extract_enum_case_pattern(self: Compiler, v: Value): EnumCasePattern =
+  var raw_bindings: seq[string] = @[]
   case v.kind
   of VkSymbol, VkComplexSymbol:
     result = self.resolve_enum_case_pattern_head(v)
@@ -216,12 +277,22 @@ proc extract_enum_case_pattern(self: Compiler, v: Value): EnumCasePattern =
       if child.kind != VkSymbol:
         let label = if result.metadata_known: result.metadata.enum_pattern_qualified_name() else: $result.head
         not_allowed("enum pattern " & label & " binding must be a symbol")
-      result.bindings.add(child.str)
+      raw_bindings.add(child.str)
   else:
     discard
 
-  if result.matched and result.metadata_known and result.bindings.len != result.metadata.fields.len:
-    not_allowed(result.metadata.enum_pattern_binding_message(result.bindings.len))
+  if result.matched:
+    if result.metadata_known:
+      result.bindings = resolve_enum_case_bindings(result.metadata, raw_bindings)
+    else:
+      for i, binding in raw_bindings:
+        let alias = split_enum_pattern_alias(binding)
+        if alias.has_alias:
+          if alias.field_name.len == 0 or alias.local_name.len == 0:
+            not_allowed("enum pattern " & $result.head & " has invalid field alias " & binding)
+          result.bindings.add(EnumCasePatternBinding(field_index: -1, field_name: alias.field_name, local_name: alias.local_name))
+        else:
+          result.bindings.add(EnumCasePatternBinding(field_index: i, field_name: "", local_name: binding))
 
 proc bind_case_pattern_local(self: Compiler, binding: string) =
   if binding.len == 0 or binding == "_":
@@ -301,12 +372,17 @@ proc compile_case(self: Compiler, gene: ptr Gene) =
 
         # Extract payload fields in declaration order; '_' consumes an arity slot
         # but intentionally skips local binding creation.
-        for binding_index, binding in enum_pattern.bindings:
-          if binding.len == 0 or binding == "_":
+        for binding in enum_pattern.bindings:
+          let local_name = binding.local_name
+          if local_name.len == 0 or local_name == "_":
             continue
           self.emit(Instruction(kind: IkDup))
-          self.emit(Instruction(kind: IkGetGeneChild, arg0: binding_index.to_value()))
-          self.bind_case_pattern_local(binding)
+          if binding.field_index >= 0:
+            self.emit(Instruction(kind: IkGetGeneChild, arg0: binding.field_index.to_value()))
+          else:
+            self.emit(Instruction(kind: IkPushValue, arg0: binding.field_name.to_symbol_value()))
+            self.emit(Instruction(kind: IkGetMemberOrNil))
+          self.bind_case_pattern_local(local_name)
 
         # Pop the target before executing body
         self.emit(Instruction(kind: IkPop))
@@ -1290,6 +1366,8 @@ proc compile_for(self: Compiler, gene: ptr Gene) =
 type EnumVariantCompileMetadata = object
   name: string
   value: int
+  payload_shape: EnumPayloadShapeKind
+  payload_arity: int
   fields: seq[string]
   field_type_ids: seq[TypeId]
 
@@ -1329,10 +1407,40 @@ proc enum_type_annotation_valid(v: Value): bool =
   else:
     return false
 
+proc is_enum_positional_type_slot(type_desc_index: Table[string, TypeId],
+                                  generic_type_ids: Table[string, TypeId],
+                                  type_aliases: Table[string, TypeId],
+                                  v: Value): bool =
+  case v.kind
+  of VkGene:
+    return enum_type_annotation_valid(v)
+  of VkSymbol:
+    let token = v.str
+    if token.len == 0 or token.endsWith(":"):
+      return false
+    if lookup_builtin_type(token) != NO_TYPE_ID:
+      return true
+    if generic_type_ids.hasKey(token):
+      return true
+    if type_aliases.hasKey(token):
+      return true
+    if type_desc_index.hasKey(token):
+      return true
+    return token[0].isUpperAscii()
+  of VkString:
+    return v.str.len > 0
+  else:
+    return false
+
+proc enum_variant_shape_error(enum_name, variant_name: string): string =
+  "enum variant " & enum_name & "/" & variant_name &
+    " cannot mix positional payload types and named fields; use either all positional type slots or all named fields"
+
 proc parse_enum_variant_fields(self: Compiler, enum_name: string, variant_gene: ptr Gene,
                                type_desc_index: var Table[string, TypeId],
-                               generic_type_ids: Table[string, TypeId]): tuple[fields: seq[string], field_type_ids: seq[TypeId]] =
+                               generic_type_ids: Table[string, TypeId]): tuple[payload_shape: EnumPayloadShapeKind, payload_arity: int, fields: seq[string], field_type_ids: seq[TypeId]] =
   let variant_name = variant_gene.type.str
+  result.payload_shape = EpsUnit
   if variant_gene.props.len > 0:
     not_allowed("enum variant " & enum_name & "/" & variant_name & " field declarations must be positional, not properties")
 
@@ -1340,15 +1448,12 @@ proc parse_enum_variant_fields(self: Compiler, enum_name: string, variant_gene: 
   var i = 0
   while i < variant_gene.children.len:
     let child = variant_gene.children[i]
-    if child.kind != VkSymbol:
-      not_allowed("enum variant " & enum_name & "/" & variant_name & " field must be a symbol")
 
-    let token = child.str
-    var field_name = token
-    var field_type_id = NO_TYPE_ID
-
-    if token.endsWith(":"):
-      field_name = token[0..^2]
+    if child.kind == VkSymbol and child.str.endsWith(":"):
+      if result.payload_shape == EpsPositional:
+        not_allowed(enum_variant_shape_error(enum_name, variant_name))
+      result.payload_shape = EpsNamed
+      let field_name = child.str[0..^2]
       if field_name.len == 0:
         not_allowed("enum variant " & enum_name & "/" & variant_name & " has an empty field name")
       if i + 1 >= variant_gene.children.len:
@@ -1358,18 +1463,45 @@ proc parse_enum_variant_fields(self: Compiler, enum_name: string, variant_gene: 
         not_allowed("enum variant " & enum_name & "/" & variant_name & " field " & field_name & " is missing a type after ':'")
       if not enum_type_annotation_valid(type_node):
         not_allowed("enum variant " & enum_name & "/" & variant_name & " field " & field_name & " has an invalid type annotation")
-      field_type_id = resolve_type_value_to_id_with_index(
+      if seen_fields.hasKey(field_name):
+        not_allowed("enum variant " & enum_name & "/" & variant_name & " has duplicate field " & field_name)
+      seen_fields[field_name] = true
+      let field_type_id = resolve_type_value_to_id_with_index(
         type_node, self.output.type_descriptors, type_desc_index, self.output.type_aliases,
         generic_type_ids, self.output.module_path)
+      result.fields.add(field_name)
+      result.field_type_ids.add(field_type_id)
       i += 2
-    else:
-      i.inc()
+      continue
 
+    if is_enum_positional_type_slot(type_desc_index, generic_type_ids, self.output.type_aliases, child):
+      if result.payload_shape == EpsNamed:
+        not_allowed(enum_variant_shape_error(enum_name, variant_name))
+      result.payload_shape = EpsPositional
+      let field_type_id = resolve_type_value_to_id_with_index(
+        child, self.output.type_descriptors, type_desc_index, self.output.type_aliases,
+        generic_type_ids, self.output.module_path)
+      result.field_type_ids.add(field_type_id)
+      i.inc()
+      continue
+
+    if child.kind != VkSymbol:
+      not_allowed("enum variant " & enum_name & "/" & variant_name & " field must be a symbol or type expression")
+
+    if result.payload_shape == EpsPositional:
+      not_allowed(enum_variant_shape_error(enum_name, variant_name))
+    result.payload_shape = EpsNamed
+    let field_name = child.str
     if seen_fields.hasKey(field_name):
       not_allowed("enum variant " & enum_name & "/" & variant_name & " has duplicate field " & field_name)
     seen_fields[field_name] = true
     result.fields.add(field_name)
-    result.field_type_ids.add(field_type_id)
+    result.field_type_ids.add(NO_TYPE_ID)
+    i.inc()
+
+  result.payload_arity = result.field_type_ids.len
+  if result.payload_arity == 0:
+    result.payload_shape = EpsUnit
 
 proc compile_enum(self: Compiler, gene: ptr Gene) =
   # (enum Color red green blue)
@@ -1417,6 +1549,8 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
       add_variant(EnumVariantCompileMetadata(
         name: member.str,
         value: value,
+        payload_shape: EpsUnit,
+        payload_arity: 0,
         fields: @[],
         field_type_ids: @[]))
       value.inc()
@@ -1442,6 +1576,8 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
         add_variant(EnumVariantCompileMetadata(
           name: variant_name,
           value: value,
+          payload_shape: EpsUnit,
+          payload_arity: 0,
           fields: @[],
           field_type_ids: @[]))
       elif member.kind == VkGene:
@@ -1454,6 +1590,8 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
         add_variant(EnumVariantCompileMetadata(
           name: variant_name,
           value: value,
+          payload_shape: parsed_fields.payload_shape,
+          payload_arity: parsed_fields.payload_arity,
           fields: parsed_fields.fields,
           field_type_ids: parsed_fields.field_type_ids))
       else:
@@ -1463,7 +1601,8 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
       i.inc()
   
   for variant in variants:
-    self.register_enum_pattern_metadata(enum_name, variant.name, variant.fields)
+    self.register_enum_pattern_metadata(enum_name, variant.name, variant.fields,
+      variant.payload_shape, variant.payload_arity)
 
   # Create the enum after validation so malformed declarations fail before bytecode emission.
   self.emit(Instruction(
@@ -1480,7 +1619,9 @@ proc compile_enum(self: Compiler, gene: ptr Gene) =
     self.emit(Instruction(kind: IkPushValue, arg0: variant.name.to_value()))
     self.emit(Instruction(kind: IkPushValue, arg0: variant.value.to_value()))
     self.emit(Instruction(kind: IkPushValue, arg0: new_array_value(field_values)))
-    self.emit(Instruction(kind: IkEnumAddMember, arg0: type_id_array_value(variant.field_type_ids)))
+    self.emit(Instruction(kind: IkEnumAddMember,
+      arg0: type_id_array_value(variant.field_type_ids),
+      arg1: variant.payload_shape.ord.int32))
   
   # Store the enum in the namespace under its canonical base name.
   let index = self.scope_tracker.next_index

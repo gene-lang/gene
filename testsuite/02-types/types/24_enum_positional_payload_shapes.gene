@@ -1,0 +1,34 @@
+# Enum positional and named payload shapes
+
+(enum E
+  (X Int Int)
+  (Y r: Int))
+
+(var x (E/X 1 2))
+(var y (E/Y ^r 3))
+
+(assert (x/0 == 1))
+(assert (x/1 == 2))
+(assert (y/r == 3))
+
+(println x)
+# Expected: (E/X 1 2)
+
+(println y)
+# Expected: (E/Y 3)
+
+(println (case x
+  when (E/X a b) (a + b)
+  when (E/Y r) r))
+# Expected: 3
+
+(println (case y
+  when (E/X a b) (+ a b)
+  when (E/Y r:rx) rx))
+# Expected: 3
+
+(try
+  (E/X ^r 1)
+catch *
+  (println "positional keyword rejected"))
+# Expected: positional keyword rejected

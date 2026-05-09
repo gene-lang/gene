@@ -551,6 +551,23 @@ suite "Static type checking":
       m)
   """
 
+  test_strict_type_ok """
+    (enum E
+      (X Int Int)
+      (Y r: Int))
+    (fn classify [e: E] -> Int
+      (case e
+        when (E/X a b)
+          (a + b)
+        when (E/Y r:rx)
+          rx))
+  """
+
+  test_strict_type_error_contains """
+    (enum Bad
+      (Mixed Int r: Int))
+  """, "cannot mix positional payload types and named fields"
+
   test_strict_type_error_contains """
     (enum Bad:T:T
       (Item value: T))

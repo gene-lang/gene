@@ -127,10 +127,49 @@ proc qualified_enum_variant_name(member: EnumMember): string {.inline.} =
   member.parent.ref.enum_def.name & "/" & member.name
 
 proc enum_pattern_arity_message(member: EnumMember, got: int): string {.inline.} =
-  let expected = member.fields.len
-  let field_names = if expected > 0: " (" & member.fields.join(", ") & ")" else: ""
+  let expected = enum_payload_arity(member)
+  let field_names = if expected > 0 and enum_payload_shape(member) == EpsNamed: " (" & member.fields.join(", ") & ")" else: ""
   "variant " & qualified_enum_variant_name(member) & " pattern expects " &
     $expected & " binding(s)" & field_names & ", got " & $got
+
+proc enum_payload_expected_fields(member: EnumMember): string {.inline.} =
+  if enum_payload_shape(member) == EpsNamed:
+    return member.fields.join(", ")
+  var slots: seq[string] = @[]
+  for i in 0..<enum_payload_arity(member):
+    slots.add("#" & $i)
+  slots.join(", ")
+
+proc enum_payload_type_label(qualified_name: string, member: EnumMember, index: int): string {.inline.} =
+  if enum_payload_shape(member) == EpsNamed and index >= 0 and index < member.fields.len:
+    return "field " & qualified_name & "." & member.fields[index]
+  "field " & qualified_name & "[" & $index & "]"
+
+proc enum_value_payload_or(target: Value, prop: Value, missing: Value): Value {.inline.} =
+  if target.kind != VkEnumValue or target.ref == nil or target.ref.ev_variant.kind != VkEnumMember:
+    return missing
+  let member = target.ref.ev_variant.ref.enum_member
+  if member == nil:
+    return missing
+
+  if prop.kind == VkInt:
+    let idx64 = prop.int64
+    let arity = target.ref.ev_data.len.int64
+    var resolved = idx64
+    if resolved < 0:
+      resolved = arity + resolved
+    if resolved >= 0 and resolved < arity:
+      return target.ref.ev_data[resolved.int]
+    return missing
+
+  if prop.kind == VkString or prop.kind == VkSymbol:
+    if enum_payload_shape(member) != EpsNamed:
+      return missing
+    let field_name = prop.str
+    for i, field in member.fields:
+      if field == field_name and i < target.ref.ev_data.len:
+        return target.ref.ev_data[i]
+  missing
 
 proc enum_keyword_name(key: Key): string {.inline.} =
   get_symbol(symbol_index(key))
@@ -169,22 +208,23 @@ proc validate_enum_payload_fields(self: ptr VirtualMachine, member: EnumMember,
   if self == nil or not self.type_check:
     return
 
-  if member.field_type_ids.len != member.fields.len:
+  let expected = enum_payload_arity(member)
+  if member.field_type_ids.len != expected:
     not_allowed("Variant " & qualified_name & " has malformed field type metadata: expected " &
-                $member.fields.len & " field type id(s), got " & $member.field_type_ids.len)
+                $expected & " field type id(s), got " & $member.field_type_ids.len)
 
-  for i, field_name in member.fields:
+  for i in 0..<expected:
     let type_id = member.field_type_ids[i]
     if type_id == NO_TYPE_ID:
       continue
     if type_id < 0 or type_id.int >= member.field_type_descs.len:
-      not_allowed("Variant " & qualified_name & " has malformed field type descriptor metadata for field " &
-                  field_name & ": TypeId " & $type_id & " is unavailable")
+      not_allowed("Variant " & qualified_name & " has malformed field type descriptor metadata for " &
+                  enum_payload_slot_label(member, i) & ": TypeId " & $type_id & " is unavailable")
 
     var value = payload[i]
     let location = self.runtime_type_error_location()
     let warning = validate_or_coerce_type(value, type_id, member.field_type_descs,
-      "field " & qualified_name & "." & field_name, location,
+      enum_payload_type_label(qualified_name, member, i), location,
       strict_nil = self.strict_nil,
       context = enum_payload_guard_context(location))
     payload[i] = value
@@ -194,8 +234,8 @@ proc construct_enum_variant(self: ptr VirtualMachine, variant: Value, positional
                             keywords: seq[(Key, Value)] = @[]): Value {.inline.} =
   let member = require_enum_constructor_member(variant)
   let qualified_name = qualified_enum_variant_name(member)
-  let expected = member.fields.len
-  let expected_fields = member.fields.join(", ")
+  let expected = enum_payload_arity(member)
+  let expected_fields = enum_payload_expected_fields(member)
 
   if positional.len > 0 and keywords.len > 0:
     not_allowed("Variant " & qualified_name & " cannot mix positional and keyword arguments")
@@ -225,6 +265,13 @@ proc construct_enum_variant(self: ptr VirtualMachine, variant: Value, positional
       names.sort(system.cmp[string])
       not_allowed("Unit variant " & qualified_name & " expects 0 keyword arguments, got: " & names.join(", "))
     not_allowed("Unit variant " & qualified_name & " expects 0 arguments, got " & $positional.len)
+
+  if enum_payload_shape(member) == EpsPositional and keywords.len > 0:
+    var names: seq[string] = @[]
+    for (key, _) in keywords:
+      names.add(enum_keyword_name(key))
+    names.sort(system.cmp[string])
+    not_allowed("Variant " & qualified_name & " has positional payload slots and does not accept keyword argument(s): " & names.join(", "))
 
   if keywords.len == 0:
     if positional.len != expected:
@@ -1066,6 +1113,14 @@ proc exec*(self: ptr VirtualMachine): Value =
               self.frame.push(member)
             else:
               not_allowed("enum " & value.ref.enum_def.name & " has no member " & member_name)
+          of VkEnumValue:
+            let prop = cast[Value](name)
+            let member = enum_value_payload_or(value, prop, VOID)
+            if member != VOID:
+              retain(member)
+              self.frame.push(member)
+            else:
+              not_allowed("Variant " & value.ref.ev_variant.ref.enum_member.name & " has no field " & prop.str)
           of VkAdapter:
             # Access member through adapter mapping
             let member = adapter_get_member(self, value, name)
@@ -1253,6 +1308,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(member)
               else:
                 self.frame.push(VOID)
+            of VkEnumValue:
+              let member = enum_value_payload_or(target, prop, VOID)
+              retain(member)
+              self.frame.push(member)
             of VkInstance:
               let key = case prop.kind:
                 of VkString, VkSymbol: prop.str.to_key()
@@ -1459,6 +1518,10 @@ proc exec*(self: ptr VirtualMachine): Value =
               else:
                 retain(default_val)
                 self.frame.push(default_val)
+            of VkEnumValue:
+              let member = enum_value_payload_or(target, prop, default_val)
+              retain(member)
+              self.frame.push(member)
             of VkInstance:
               let key = case prop.kind:
                 of VkString, VkSymbol: prop.str.to_key()
@@ -3422,15 +3485,37 @@ proc exec*(self: ptr VirtualMachine): Value =
             if type_id != NO_TYPE_ID and (type_id < 0 or type_id.int >= self.cu.type_descriptors.len):
               not_allowed("enum member " & name.str & " field type metadata references invalid TypeId " & $type_id)
             field_type_ids.add(type_id)
-        else:
+
+        let payload_shape =
+          if inst.arg1 == EpsNamed.ord.int32:
+            EpsNamed
+          elif inst.arg1 == EpsPositional.ord.int32:
+            EpsPositional
+          else:
+            EpsUnit
+        let payload_arity =
+          if payload_shape == EpsNamed:
+            fields.len
+          elif payload_shape == EpsPositional:
+            field_type_ids.len
+          else:
+            0
+
+        if payload_shape == EpsNamed and field_type_ids.len == 0 and fields.len > 0:
           field_type_ids = newSeq[TypeId](fields.len)
           for i in 0..<field_type_ids.len:
             field_type_ids[i] = NO_TYPE_ID
 
-        if field_type_ids.len != fields.len:
+        if payload_shape == EpsNamed and field_type_ids.len != fields.len:
           not_allowed("enum member " & name.str & " field type metadata count " & $field_type_ids.len &
                       " does not match field count " & $fields.len)
-        enum_val.add_member(name.str, value.int64.int, fields, field_type_ids, self.cu.type_descriptors)
+        if payload_shape == EpsPositional and fields.len != 0:
+          not_allowed("enum member " & name.str & " positional payload metadata must not contain field names")
+        if field_type_ids.len != payload_arity:
+          not_allowed("enum member " & name.str & " field type metadata count " & $field_type_ids.len &
+                      " does not match payload arity " & $payload_arity)
+        enum_val.add_member(name.str, value.int64.int, fields, field_type_ids,
+          self.cu.type_descriptors, payload_shape, payload_arity)
 
       of IkCompileInit:
         let input = self.frame.pop()
@@ -4821,7 +4906,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let val = self.frame.pop()
         let expected_member = require_enum_pattern_member(pattern)
         let binder_count = inst.arg1.int
-        if binder_count != expected_member.fields.len:
+        if binder_count != enum_payload_arity(expected_member):
           not_allowed(enum_pattern_arity_message(expected_member, binder_count))
 
         var matched = false

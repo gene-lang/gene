@@ -4,7 +4,7 @@ import ./types
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 23'u32  # S05: legacy Gene-expression ADT pattern/type compatibility removed.
+  GIR_VERSION* = 24'u32  # Enum member payload-shape metadata added to IkEnumAddMember.
   COMPILER_VERSION* = "0.1.3"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   INSTRUCTION_ABI_VERSION* = 3'u32  # Version 3: HashMap opcodes added

@@ -453,24 +453,25 @@ proc require_enum_value_member(variant: Value, context: string): EnumMember {.gc
 
 proc validate_enum_payload_types(member: EnumMember, payload: var seq[Value], context: string) {.gcsafe.} =
   let qualified_name = qualified_enum_member_name(member)
-  if member.field_type_ids.len != member.fields.len:
+  let expected = enum_payload_arity(member)
+  if member.field_type_ids.len != expected:
     not_allowed(context & " " & qualified_name & " has malformed field type metadata: expected " &
-                $member.fields.len & " field type id(s), got " & $member.field_type_ids.len)
+                $expected & " field type id(s), got " & $member.field_type_ids.len)
 
-  for i, field_name in member.fields:
+  for i in 0..<expected:
     let type_id = member.field_type_ids[i]
     if type_id == NO_TYPE_ID:
       continue
     if type_id < 0 or type_id.int >= member.field_type_descs.len:
       not_allowed(context & " " & qualified_name &
-                  " has malformed field type descriptor metadata for field " &
-                  field_name & ": TypeId " & $type_id & " is unavailable")
+                  " has malformed field type descriptor metadata for " &
+                  enum_payload_slot_label(member, i) & ": TypeId " & $type_id & " is unavailable")
 
     var item = payload[i]
     var warning = ""
     {.cast(gcsafe).}:
       warning = validate_or_coerce_type(item, type_id, member.field_type_descs,
-        "field " & qualified_name & "." & field_name)
+        "field " & qualified_name & (if enum_payload_shape(member) == EpsNamed and i < member.fields.len: "." & member.fields[i] else: "[" & $i & "]"))
     payload[i] = item
     emit_type_warning(warning)
 
@@ -1592,7 +1593,7 @@ proc deserialize_enum_value(self: Serialization, gene: ptr Gene): Value {.gcsafe
   except CatchableError as e:
     not_allowed("EnumValue payload validation failed: " & e.msg)
 
-  if member.fields.len == 0:
+  if enum_payload_arity(member) == 0:
     return variant
   new_enum_value(variant, payload)
 
