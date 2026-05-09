@@ -261,27 +261,71 @@ test_vm """
   check r.ref.ev_variant.ref.enum_member.name == "Rect"
   check r.ref.ev_data == @[10.to_value(), 20.to_value()]
 
-proc expect_enum_error_parts(code: string, expected_message_parts: openArray[string]) =
+proc expect_enum_error_parts(code: string, expected_message_parts: openArray[string],
+                             forbidden_message_parts: openArray[string]) =
   init_all()
   try:
     discard VM.exec(cleanup(code), "test_code")
     fail()
   except CatchableError as err:
+    checkpoint err.msg
     for expected_message_part in expected_message_parts:
       check err.msg.contains(expected_message_part)
+    for forbidden_message_part in forbidden_message_parts:
+      check not err.msg.contains(forbidden_message_part)
+
+proc expect_enum_error_parts(code: string, expected_message_parts: openArray[string]) =
+  expect_enum_error_parts(code, expected_message_parts, [])
+
+proc enum_payload_guard_parts(): seq[string] = @[
+  "Type error [GENE_TYPE_MISMATCH]",
+  "expected Int",
+  "got String",
+  "field Metric/Counter.value",
+  "phase=enum-payload",
+  "producer=enum-constructor",
+  "consumer=enum-variant",
+  "site=",
+]
+
+proc enum_payload_guard_field_parts(): seq[string] = @[
+  "phase=enum-payload",
+  "producer=enum-constructor",
+  "consumer=enum-variant",
+  "site=",
+]
 
 test "enum typed payload constructors validate concrete field annotations":
   expect_enum_error_parts("""
     (enum Metric (Counter value: Int))
     (var Counter Metric/Counter)
     (Counter "bad")
-  """, ["Type error [GENE_TYPE_MISMATCH]", "field Metric/Counter.value"])
+  """, enum_payload_guard_parts())
 
   expect_enum_error_parts("""
     (enum Metric (Counter value: Int))
     (var Counter Metric/Counter)
     (Counter ^value "bad")
-  """, ["Type error [GENE_TYPE_MISMATCH]", "field Metric/Counter.value"])
+  """, enum_payload_guard_parts())
+
+test "enum constructor arity and keyword diagnostics stay outside payload guard blame":
+  expect_enum_error_parts("""
+    (enum Shape (Circle radius))
+    (var Circle Shape/Circle)
+    (Circle)
+  """, ["Variant Shape/Circle expects 1 arguments (radius), got 0"], enum_payload_guard_field_parts())
+
+  expect_enum_error_parts("""
+    (enum Shape (Rect width height))
+    (var Rect Shape/Rect)
+    (Rect ^width 10 ^depth 30)
+  """, ["Variant Shape/Rect got unknown keyword argument(s): depth; expected fields: width, height"], enum_payload_guard_field_parts())
+
+  expect_enum_error_parts("""
+    (enum Shape Point)
+    (var Point Shape/Point)
+    (Point ^x 1)
+  """, ["Unit variant Shape/Point expects 0 keyword arguments, got: x"], enum_payload_guard_field_parts())
 
 test_vm """
   (enum Bag (Item value))

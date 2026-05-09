@@ -135,6 +135,14 @@ proc enum_pattern_arity_message(member: EnumMember, got: int): string {.inline.}
 proc enum_keyword_name(key: Key): string {.inline.} =
   get_symbol(symbol_index(key))
 
+proc enum_payload_guard_context(site: string): GuardContext {.inline.} =
+  GuardContext(
+    enabled: true,
+    phase: GpEnumPayload,
+    producer: "enum-constructor",
+    consumer: "enum-variant",
+    site: site)
+
 proc deterministic_enum_keyword_pairs(member: EnumMember, props: Table[Key, Value]): seq[(Key, Value)] {.inline.} =
   ## Gene.props is a Table, so materialize a deterministic keyword stream:
   ## declared fields first, then unknown keys sorted by name for stable diagnostics.
@@ -174,8 +182,11 @@ proc validate_enum_payload_fields(self: ptr VirtualMachine, member: EnumMember,
                   field_name & ": TypeId " & $type_id & " is unavailable")
 
     var value = payload[i]
+    let location = self.runtime_type_error_location()
     let warning = validate_or_coerce_type(value, type_id, member.field_type_descs,
-      "field " & qualified_name & "." & field_name, self.runtime_type_error_location())
+      "field " & qualified_name & "." & field_name, location,
+      strict_nil = self.strict_nil,
+      context = enum_payload_guard_context(location))
     payload[i] = value
     emit_type_warning(warning)
 

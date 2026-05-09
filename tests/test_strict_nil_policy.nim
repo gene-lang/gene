@@ -406,6 +406,19 @@ suite "Strict nil policy":
       "site="
     ])
 
+    expect_vm_strict_nil_mismatch("""
+      (enum Metric (Counter value: Int))
+      (Metric/Counter nil)
+    """, "strict_nil_enum_payload.gene", [
+      "expected Int",
+      "field Metric/Counter.value",
+      "strict_nil_enum_payload.gene",
+      "phase=enum-payload",
+      "producer=enum-constructor",
+      "consumer=enum-variant",
+      "site="
+    ])
+
   test "strict VM execution admits nil through compiled Any Nil Option and union descriptors":
     let value = exec_gene("""
       (fn accepts_any [x: Any] "any-admitted")

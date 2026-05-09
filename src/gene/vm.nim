@@ -12,6 +12,7 @@ from ./types/runtime_types import
   GuardContext,
   GpReturn,
   GpLocal,
+  GpEnumPayload,
   emit_type_warning,
   is_compatible,
   runtime_type_name,
