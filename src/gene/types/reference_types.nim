@@ -168,6 +168,11 @@ type
       of VkEnumValue:
         ev_variant*: Value        # → VkEnumMember (which variant)
         ev_data*: seq[Value]      # payload values, positional
+      of VkTupleDef:
+        tuple_def*: TupleDef
+      of VkTupleValue:
+        tv_def*: Value            # → VkTupleDef
+        tv_data*: seq[Value]      # payload values, positional
       of VkInterface:
         gene_interface*: GeneInterface
       of VkAdapter:

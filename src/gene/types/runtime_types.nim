@@ -281,6 +281,7 @@ proc validate_string*(v: Value, param_name: string = "argument") {.inline.} =
     raise new_exception(type_defs.Exception, param_name & " must be String, got " & $v.kind)
 
 proc enum_parent_type_name(value: Value): string {.gcsafe.}
+proc tuple_parent_type_name(value: Value): string {.gcsafe.}
 
 # Get runtime type name as string
 proc runtime_type_name*(v: Value): string =
@@ -289,6 +290,9 @@ proc runtime_type_name*(v: Value): string =
   let enum_name = enum_parent_type_name(v)
   if enum_name.len > 0:
     return enum_name
+  let tuple_name = tuple_parent_type_name(v)
+  if tuple_name.len > 0:
+    return tuple_name
   case v.kind
   of VkInt: "Int"
   of VkFloat: "Float"
@@ -320,6 +324,8 @@ proc runtime_type_name*(v: Value): string =
   of VkInterceptor: "Interceptor"
   of VkInterception: "Interception"
   of VkClass: "Class"
+  of VkTupleDef: "TupleDef"
+  of VkTupleValue: "TupleValue"
   else: $v.kind
 
 proc enum_parent_type_name(value: Value): string {.gcsafe.} =
@@ -338,6 +344,20 @@ proc enum_parent_type_name(value: Value): string {.gcsafe.} =
         let parent = variant.ref.enum_member.parent
         if parent.kind == VkEnum and parent.ref != nil and parent.ref.enum_def != nil:
           return parent.ref.enum_def.name
+  else:
+    discard
+  return ""
+
+proc tuple_parent_type_name(value: Value): string {.gcsafe.} =
+  ## Return the nominal tuple definition name for tuple values.
+  ## Malformed tuple values fall back to their raw runtime kind.
+  case value.kind
+  of VkTupleValue:
+    if value.ref != nil:
+      let tuple_def_value = value.ref.tv_def
+      if tuple_def_value.kind == VkTupleDef and tuple_def_value.ref != nil and
+          tuple_def_value.ref.tuple_def != nil:
+        return tuple_def_value.ref.tuple_def.name
   else:
     discard
   return ""

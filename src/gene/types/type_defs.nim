@@ -45,6 +45,16 @@ type
     module_path*: string
     internal_path*: string
 
+  TupleDef* = ref object
+    name*: string
+    module_path*: string
+    internal_path*: string
+    payload_shape*: EnumPayloadShapeKind
+    payload_arity*: int
+    fields*: seq[string]       # field names for named tuples, empty for positional tuples
+    field_type_ids*: seq[TypeId]  # parallel to payload arity; NO_TYPE_ID means untyped
+    field_type_descs*: seq[TypeDesc]
+
   FutureState* = enum
     FsPending
     FsSuccess
@@ -276,6 +286,10 @@ type
     VkScope
     VkFrame
     VkNativeFrame
+
+    # Nominal product types (append-only to preserve existing ordinals)
+    VkTupleDef
+    VkTupleValue
 
   Key* = distinct int64
 

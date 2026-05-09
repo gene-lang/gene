@@ -176,6 +176,7 @@ include ./core/collections
 include ./core/matchers
 include ./core/functions
 include ./core/enums
+include ./core/tuples
 include ./core/futures
 include ./core/native_helpers
 include ./core/frames

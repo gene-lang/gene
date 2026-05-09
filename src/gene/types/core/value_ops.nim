@@ -494,6 +494,11 @@ proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
               if a.ref.ev_data[i] != b.ref.ev_data[i]:
                 return false
             return true
+          of VkTupleDef:
+            return a.ref.tuple_def == b.ref.tuple_def
+          of VkTupleValue:
+            # Final tuple equality semantics are deferred; keep helper values safe and nominal.
+            return a.ref == b.ref
           else:
             return a.ref == b.ref
       # Only references can be equal with different bit patterns
@@ -841,6 +846,18 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         for i, v in self.ref.ev_data:
           result &= " " & $v
         result &= ")"
+      of VkTupleDef:
+        if self.ref != nil and self.ref.tuple_def != nil and self.ref.tuple_def.name.len > 0:
+          result = "<TupleDef " & self.ref.tuple_def.name & ">"
+        else:
+          result = "<TupleDef>"
+      of VkTupleValue:
+        if self.ref != nil and self.ref.tv_def.kind == VkTupleDef and
+            self.ref.tv_def.ref != nil and self.ref.tv_def.ref.tuple_def != nil and
+            self.ref.tv_def.ref.tuple_def.name.len > 0:
+          result = "<TupleValue " & self.ref.tv_def.ref.tuple_def.name & ">"
+        else:
+          result = "<TupleValue>"
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = self.ref.custom_data.materialize_hook(self.ref.custom_data).str_no_quotes()
@@ -948,6 +965,18 @@ proc `$`*(self: Value): string {.gcsafe.} =
         for i, v in self.ref.ev_data:
           result &= " " & $v
         result &= ")"
+      of VkTupleDef:
+        if self.ref != nil and self.ref.tuple_def != nil and self.ref.tuple_def.name.len > 0:
+          result = "<TupleDef " & self.ref.tuple_def.name & ">"
+        else:
+          result = "<TupleDef>"
+      of VkTupleValue:
+        if self.ref != nil and self.ref.tv_def.kind == VkTupleDef and
+            self.ref.tv_def.ref != nil and self.ref.tv_def.ref.tuple_def != nil and
+            self.ref.tv_def.ref.tuple_def.name.len > 0:
+          result = "<TupleValue " & self.ref.tv_def.ref.tuple_def.name & ">"
+        else:
+          result = "<TupleValue>"
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = $self.ref.custom_data.materialize_hook(self.ref.custom_data)
