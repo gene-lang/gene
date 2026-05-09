@@ -31,7 +31,8 @@ proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instan
         instance_props(instance)[param.name_key] = value
 
 # Forward declaration for original process_args function
-proc process_args*(matcher: RootMatcher, args: Value, scope: Scope)
+proc process_args*(matcher: RootMatcher, args: Value, scope: Scope,
+                  context: GuardContext = GuardContext())
 
 template is_simple_positional(matcher: RootMatcher, arg_count: int): bool =
   matcher.hint_mode == MhSimpleData and matcher.children.len == arg_count
@@ -62,9 +63,20 @@ proc current_type_error_location(): string {.inline.} =
     trace = VM.cu.trace_root
   trace_location(trace)
 
+proc callable_argument_guard_context*(): GuardContext {.inline.} =
+  ## Build the explicit guard context used for function-call argument validation.
+  ## Blank locations are intentionally left blank so runtime_types applies the
+  ## shared <unknown> site fallback when formatting diagnostics.
+  GuardContext(
+    enabled: true,
+    phase: GpArgument,
+    producer: "caller",
+    consumer: "function",
+    site: current_type_error_location())
+
 proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
                       pos_count: int, keywords: seq[(Key, Value)],
-                      scope: Scope) {.inline.} =
+                      scope: Scope, context: GuardContext = GuardContext()) {.inline.} =
   ## Shared argument binding logic for positional/keyword combinations.
   if scope.members.len < matcher.children.len:
     let old_len = scope.members.len
@@ -164,14 +176,16 @@ proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Valu
         var value = scope.members[i]
         if value != NIL or strict_nil:  # Non-strict mode preserves legacy nil/missing arg compatibility.
           let warning = validate_or_coerce_type(value, param.type_id, matcher.type_descriptors,
-            key_to_name(param.name_key), location = location, strict_nil = strict_nil)
+            key_to_name(param.name_key), location = location, strict_nil = strict_nil,
+            context = context)
           scope.members[i] = value
           emit_type_warning(warning)
 
   assign_property_params(matcher, scope)
 
 # Inline type validation for fast paths
-template validate_fast_path_types(matcher: RootMatcher, scope: Scope) =
+template validate_fast_path_types(matcher: RootMatcher, scope: Scope,
+                                  context: GuardContext = GuardContext()) =
   if matcher.type_check and matcher.has_type_annotations:
     let strict_nil = current_strict_nil()
     let location = if strict_nil: current_type_error_location() else: ""
@@ -180,29 +194,33 @@ template validate_fast_path_types(matcher: RootMatcher, scope: Scope) =
         var value = scope.members[i]
         if value != NIL or strict_nil:
           let warning = validate_or_coerce_type(value, param.type_id, matcher.type_descriptors,
-            key_to_name(param.name_key), location = location, strict_nil = strict_nil)
+            key_to_name(param.name_key), location = location, strict_nil = strict_nil,
+            context = context)
           scope.members[i] = value
           emit_type_warning(warning)
 
 # Optimized version for zero arguments
-proc process_args_zero*(matcher: RootMatcher, scope: Scope) {.inline.} =
+proc process_args_zero*(matcher: RootMatcher, scope: Scope,
+                        context: GuardContext = GuardContext()) {.inline.} =
   ## Ultra-fast path for zero-argument functions
   if matcher.is_simple_positional(0):
     return
-  process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope)
+  process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope, context)
 
 # Optimized version for single argument
-proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope) {.inline.} =
+proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope,
+                       context: GuardContext = GuardContext()) {.inline.} =
   ## Ultra-fast path for single-argument functions
   if matcher.is_simple_positional(1) and not matcher.has_type_annotations:
     ensure_scope_capacity(scope, 1)
     scope.members[0] = arg
     return
   var arr = [arg]
-  process_args_core(matcher, cast[ptr UncheckedArray[Value]](arr[0].addr), 1, @[], scope)
+  process_args_core(matcher, cast[ptr UncheckedArray[Value]](arr[0].addr), 1, @[], scope, context)
 
 proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
-                         arg_count: int, has_keyword_args: bool, scope: Scope) {.inline.} =
+                         arg_count: int, has_keyword_args: bool, scope: Scope,
+                         context: GuardContext = GuardContext()) {.inline.} =
   ## Process arguments directly from stack to scope
   ## Supports positional arguments only (keywords handled by process_args_direct_kw).
   if (not has_keyword_args) and matcher.is_simple_positional(arg_count) and not matcher.has_type_annotations:
@@ -215,15 +233,16 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
     {.pop.}
     return
 
-  process_args_core(matcher, args, arg_count, @[], scope)
+  process_args_core(matcher, args, arg_count, @[], scope, context)
 
 proc process_args_direct_kw*(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
                             pos_count: int, keywords: seq[(Key, Value)],
-                            scope: Scope) {.inline.} =
+                            scope: Scope, context: GuardContext = GuardContext()) {.inline.} =
   ## Optimized processing when keyword arguments are provided separately.
-  process_args_core(matcher, positional, pos_count, keywords, scope)
+  process_args_core(matcher, positional, pos_count, keywords, scope, context)
 
-proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
+proc process_args*(matcher: RootMatcher, args: Value, scope: Scope,
+                   context: GuardContext = GuardContext()) =
   ## Process function arguments and bind them to the scope
   ## Handles both positional and named arguments
 
@@ -247,9 +266,9 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope) =
 
     let pos_ptr = if positional.len > 0: cast[ptr UncheckedArray[Value]](positional[0].addr)
                   else: cast[ptr UncheckedArray[Value]](nil)
-    process_args_core(matcher, pos_ptr, positional.len, keywords, scope)
+    process_args_core(matcher, pos_ptr, positional.len, keywords, scope, context)
   else:
-    process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope)
+    process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope, context)
 
 proc split_destructure_input(input: Value): tuple[positional: seq[Value], keywords: seq[(Key, Value)]] =
   ## Adapt a runtime value to matcher-style positional/keyword inputs.

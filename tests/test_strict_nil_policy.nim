@@ -129,6 +129,35 @@ suite "Strict nil policy":
     check value == NIL
     check VM.strict_nil == false
 
+  test "VM argument mismatch diagnostics include callable guard context":
+    let simple_message = expect_vm_type_mismatch("""
+      (fn wrong_arg [x: Int] x)
+      (wrong_arg "oops")
+    """, "arg_mismatch.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in x",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site="
+    ])
+    check not simple_message.contains("strict nil mode")
+
+    let regular_message = expect_vm_type_mismatch("""
+      (fn wrong_arg_regular [x: Int y: Int] y)
+      (wrong_arg_regular 1 "oops")
+    """, "arg_mismatch_regular.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in y",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site="
+    ])
+    check not regular_message.contains("strict nil mode")
+
   test "VM return mismatch diagnostics include callable guard context":
     let message = expect_vm_type_mismatch("""
       (fn wrong_return [] -> Int "oops")
@@ -148,7 +177,15 @@ suite "Strict nil policy":
     expect_vm_strict_nil_mismatch("""
       (fn strict_arg [x: Int] x)
       (strict_arg nil)
-    """, "strict_nil_arg.gene", ["expected Int", "in x", "strict_nil_arg.gene"])
+    """, "strict_nil_arg.gene", [
+      "expected Int",
+      "in x",
+      "strict_nil_arg.gene",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site="
+    ])
 
     expect_vm_strict_nil_mismatch("""
       (fn strict_return [] -> Int nil)
@@ -162,9 +199,13 @@ suite "Strict nil policy":
       "site="
     ])
 
-    expect_vm_strict_nil_mismatch("""
+    let local_message = expect_vm_type_mismatch("""
       (var local_value: Int nil)
-    """, "strict_nil_local.gene", ["expected Int", "in variable", "strict_nil_local.gene"])
+    """, "strict_nil_local.gene", strict_nil = true, ["expected Int", "in variable", "strict_nil_local.gene"])
+    check local_message.contains("strict nil mode")
+    check local_message.contains(StrictNilAllowedTargets)
+    check local_message.contains("got Nil")
+    check not local_message.contains("phase=argument")
 
     expect_vm_strict_nil_mismatch("""
       (class StrictNilPoint

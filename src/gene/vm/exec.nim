@@ -677,9 +677,9 @@ proc exec*(self: ptr VirtualMachine): Value =
                   if self.frame.args.kind == VkGene and self.frame.args.gene.children.len > 1:
                     for i in 1..<self.frame.args.gene.children.len:
                       method_args.children.add(self.frame.args.gene.children[i])
-                  process_args(f.matcher, method_args.to_gene_value(), self.frame.scope)
+                  process_args(f.matcher, method_args.to_gene_value(), self.frame.scope, callable_argument_guard_context())
                 else:
-                  process_args(f.matcher, self.frame.args, self.frame.scope)
+                  process_args(f.matcher, self.frame.args, self.frame.scope, callable_argument_guard_context())
 
               self.frame.stack_index = 0
               self.pc = 0
@@ -702,7 +702,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               tco_frame2.ns = f2.ns
 
               if not f2.matcher.is_empty():
-                process_args(f2.matcher, tco_frame2.args, tco_frame2.scope)
+                process_args(f2.matcher, tco_frame2.args, tco_frame2.scope, callable_argument_guard_context())
 
               if self.profiling:
                 self.exit_function()
@@ -2402,10 +2402,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                   # For methods, the matcher includes self as a parameter
                   # So we should pass ALL arguments including self
                   if is_method_frame(frame):
-                    process_args(f.matcher, frame.args, frame.scope)
+                    process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
                   elif f.matcher.has_type_annotations:
                     # Type-annotated functions must go through process_args for runtime type validation
-                    process_args(f.matcher, frame.args, frame.scope)
+                    process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
                   else:
                     # Optimization: Fast paths for common argument patterns
                     if frame.args.kind == VkGene:
@@ -2430,10 +2430,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                             frame.scope.members[idx] = frame.args.gene.children[0]
                           else:
                             # Fall back to normal processing if we can't find the index
-                            process_args(f.matcher, frame.args, frame.scope)
+                            process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
                         else:
                           # Complex matcher - use normal processing
-                          process_args(f.matcher, frame.args, frame.scope)
+                          process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
 
                       # Two-argument optimization
                       elif arg_count == 2 and param_count == 2:
@@ -2466,17 +2466,17 @@ proc exec*(self: ptr VirtualMachine): Value =
                             frame.scope.members[idx2] = frame.args.gene.children[1]
                           else:
                             # Fall back if we can't find indices
-                            process_args(f.matcher, frame.args, frame.scope)
+                            process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
                         else:
                           # Complex matcher - use normal processing
-                          process_args(f.matcher, frame.args, frame.scope)
+                          process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
 
                       else:
                         # Regular function call - 3+ args or mismatched counts
-                        process_args(f.matcher, frame.args, frame.scope)
+                        process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
                     else:
                       # Non-gene args - use normal processing
-                      process_args(f.matcher, frame.args, frame.scope)
+                      process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
 
                 # If this is an async function, set up exception handler
                 if f.async:
@@ -2513,7 +2513,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
                 # Process arguments if matcher exists
                 if not f.matcher.is_empty():
-                  process_args(f.matcher, frame.args, frame.scope)
+                  process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
 
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
@@ -4075,7 +4075,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                   constructor_args.children.add(child)
                 for k, v in args.gene.props:
                   constructor_args.props[k] = v
-              process_args(f.matcher, constructor_args.to_gene_value(), scope)
+              process_args(f.matcher, constructor_args.to_gene_value(), scope, callable_argument_guard_context())
               assign_property_params(f.matcher, scope, instance)
 
             self.cu = compiled
@@ -5012,7 +5012,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.scope = scope
               # OPTIMIZATION: Direct argument processing without Gene objects
               if not f.matcher.is_empty():
-                process_args_zero(f.matcher, scope)
+                process_args_zero(f.matcher, scope, callable_argument_guard_context())
               # No need to set new_frame.args for zero-argument functions
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
@@ -5119,7 +5119,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.args = new_gene_value()
               new_frame.args.gene.children.add(instance)  # Add self as first argument
               if not f.matcher.is_empty():
-                process_args(f.matcher, new_frame.args, scope)
+                process_args(f.matcher, new_frame.args, scope, callable_argument_guard_context())
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5205,7 +5205,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
               # OPTIMIZATION: Direct single-argument processing without Gene objects
               if not f.matcher.is_empty():
-                process_args_one(f.matcher, arg, scope)
+                process_args_one(f.matcher, arg, scope, callable_argument_guard_context())
               # No need to set new_frame.args for single-parameter functions
 
               new_frame.caller_frame = self.frame
@@ -5306,7 +5306,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               new_frame.args.gene.children.add(instance)  # Add self as first argument
               new_frame.args.gene.children.add(arg)       # Add the constructor argument
               if not f.matcher.is_empty():
-                process_args(f.matcher, new_frame.args, scope)
+                process_args(f.matcher, new_frame.args, scope, callable_argument_guard_context())
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5422,9 +5422,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               # OPTIMIZATION: Direct multi-argument processing without Gene objects
               if not f.matcher.is_empty():
                 if args.len > 0:
-                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope, callable_argument_guard_context())
                 else:
-                  process_args_zero(f.matcher, scope)
+                  process_args_zero(f.matcher, scope, callable_argument_guard_context())
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5580,9 +5580,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               if not f.matcher.is_empty():
                 let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
                 if args.len > 0 or kw_pairs.len > 0:
-                  process_args_direct_kw(f.matcher, args_ptr, args.len, kw_pairs, scope)
+                  process_args_direct_kw(f.matcher, args_ptr, args.len, kw_pairs, scope, callable_argument_guard_context())
                 else:
-                  process_args_zero(f.matcher, scope)
+                  process_args_zero(f.matcher, scope, callable_argument_guard_context())
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -5844,9 +5844,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               if not f.matcher.is_empty():
                 # Convert seq[Value] to ptr UncheckedArray[Value] for direct processing
                 if args.len > 0:
-                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope, callable_argument_guard_context())
                 else:
-                  process_args_zero(f.matcher, scope)
+                  process_args_zero(f.matcher, scope, callable_argument_guard_context())
               # No need to set new_frame.args for optimized argument processing
 
               new_frame.caller_frame = self.frame
@@ -6138,7 +6138,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                     scope.members[self_idx] = obj
                 else:
                   let args_arr = [obj]
-                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope)
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope, callable_argument_guard_context())
 
               # ULTRA-OPTIMIZED: Minimal frame creation (like original IkCallMethod1)
               var new_frame = new_frame()
@@ -6313,7 +6313,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                     scope.members[arg_idx] = arg
                 else:
                   let args_arr = [obj, arg]
-                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 2, false, scope)
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 2, false, scope, callable_argument_guard_context())
 
               # ULTRA-OPTIMIZED: Minimal frame creation (like IkUnifiedMethodCall0)
               var new_frame = new_frame()
@@ -6469,7 +6469,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                     scope.members[arg2_idx] = arg2
                 else:
                   let args_arr = [obj, arg1, arg2]
-                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 3, false, scope)
+                  process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 3, false, scope, callable_argument_guard_context())
 
               # ULTRA-OPTIMIZED: Minimal frame creation
               var new_frame = new_frame()
@@ -6608,7 +6608,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               for arg in args:
                 new_frame.args.gene.children.add(arg)
               if not f.matcher.is_empty():
-                process_args(f.matcher, new_frame.args, scope)
+                process_args(f.matcher, new_frame.args, scope, callable_argument_guard_context())
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
               new_frame.caller_address = Address(cu: self.cu, pc: self.pc + 1)
@@ -6746,7 +6746,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 var all_args = @[obj]
                 all_args.add(args)
                 let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
-                process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+                process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope, callable_argument_guard_context())
 
               new_frame.caller_frame = self.frame
               self.frame.ref_count.inc()
@@ -6864,7 +6864,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 all_args[0] = obj
                 for i, arg in args:
                   all_args[i + 1] = arg
-                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+                process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope, callable_argument_guard_context())
 
               var new_frame = new_frame()
               new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
