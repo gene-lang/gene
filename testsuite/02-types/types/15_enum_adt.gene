@@ -24,10 +24,10 @@
 # Expected: Data variant construction ok
 
 # Field access
-(assert ((circle .radius) == 5.0))
+(assert (circle/radius == 5.0))
 (var rect (Shape/Rect 10 20))
-(assert ((rect .width) == 10))
-(assert ((rect .height) == 20))
+(assert (rect/width == 10))
+(assert (rect/height == 20))
 (println "Field access ok")
 # Expected: Field access ok
 
@@ -77,8 +77,8 @@
 
 (var ok (Result/Ok 42))
 (var err (Result/Err "not found"))
-(assert ((ok .value) == 42))
-(assert ((err .message) == "not found"))
+(assert (ok/value == 42))
+(assert (err/message == "not found"))
 (println "Result-like enum ok")
 # Expected: Result-like enum ok
 
@@ -89,6 +89,6 @@
 
 (var some (Option/Some "hello"))
 (var none Option/None)
-(assert ((some .value) == "hello"))
+(assert (some/value == "hello"))
 (println "Option-like enum ok")
 # Expected: Option-like enum ok

@@ -17,10 +17,10 @@
   # Expected: shape typeof = Shape
 
   # Field access should use declared payload names regardless of construction style.
-  (assert ((circle .radius) == 5))
-  (assert ((rect_kw .width) == 3))
-  (assert ((rect_kw .height) == 4))
-  (println "shape fields =" (circle .radius) (rect_kw .width) (rect_kw .height))
+  (assert (circle/radius == 5))
+  (assert (rect_kw/width == 3))
+  (assert (rect_kw/height == 4))
+  (println "shape fields =" circle/radius rect_kw/width rect_kw/height)
   # Expected: shape fields = 5 3 4
 
   # Qualified case patterns bind payloads with their declared arity.

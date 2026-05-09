@@ -6,12 +6,12 @@
   Empty)
 
 (var ok (Result/Ok 42))
-(assert ((ok .value) == 42))
+(assert (ok/value == 42))
 (println ok)
 # Expected: (Result/Ok 42)
 
 (var err (Result/Err "boom"))
-(assert ((err .error) == "boom"))
+(assert (err/error == "boom"))
 (println err)
 # Expected: (Result/Err "boom")
 

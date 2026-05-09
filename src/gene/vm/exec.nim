@@ -171,6 +171,50 @@ proc enum_value_payload_or(target: Value, prop: Value, missing: Value): Value {.
         return target.ref.ev_data[i]
   missing
 
+proc enum_payload_method_slot(method_name: string): int {.inline.} =
+  if method_name.len == 0:
+    return -1
+  var index = 0
+  for ch in method_name:
+    if ch < '0' or ch > '9':
+      return -1
+    let digit = ord(ch) - ord('0')
+    if index > (high(int) - digit) div 10:
+      return -1
+    index = index * 10 + digit
+  index
+
+proc enum_payload_method_label(target: Value, method_name: string): string {.inline.} =
+  if target.kind != VkEnumValue or target.ref == nil:
+    return ""
+  let variant = target.ref.ev_variant
+  if variant.kind != VkEnumMember or variant.ref == nil or variant.ref.enum_member == nil:
+    return ""
+  let member = variant.ref.enum_member
+  if member.parent.kind != VkEnum or member.parent.ref == nil or member.parent.ref.enum_def == nil:
+    return ""
+
+  let qualified_name = qualified_enum_variant_name(member)
+  case enum_payload_shape(member)
+  of EpsNamed:
+    for field in member.fields:
+      if field == method_name:
+        return qualified_name & "." & method_name
+  of EpsPositional:
+    let slot = enum_payload_method_slot(method_name)
+    if slot >= 0 and slot < enum_payload_arity(member):
+      return qualified_name & "[" & $slot & "]"
+  of EpsUnit:
+    discard
+
+  ""
+
+proc reject_enum_payload_method_access_if_needed(target: Value, method_name: string) {.inline.} =
+  let payload_label = enum_payload_method_label(target, method_name)
+  if payload_label.len > 0:
+    not_allowed("Enum payload field " & payload_label &
+      " is not a method; use slash access (value/" & method_name & ") instead")
+
 proc enum_keyword_name(key: Key): string {.inline.} =
   get_symbol(symbol_index(key))
 
@@ -6204,6 +6248,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
+          reject_enum_payload_method_access_if_needed(obj, method_name_0())
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6300,17 +6345,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
             not_allowed("Method " & method_name_0() & " not found on instance")
         of VkEnumValue:
-          # Field access on enum value: (circle .radius)
-          let variant = obj.ref.ev_variant.ref.enum_member
-          let field_name = method_name_0()
-          var found = false
-          for i, f in variant.fields:
-            if f == field_name:
-              self.frame.push(obj.ref.ev_data[i])
-              found = true
-              break
-          if not found:
-            not_allowed("Variant " & variant.name & " has no field " & field_name)
+          not_allowed("Unified method call not supported for " & $obj.kind)
         of VkString, VkArray, VkMap, VkRange, VkGene, VkNamespace, VkFuture, VkGenerator, VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
           # Fallback for value types when fast path didn't fire (e.g. method not found)
           let value_class = get_value_class(obj)
@@ -6372,6 +6407,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
+          reject_enum_payload_method_access_if_needed(obj, method_name_1())
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6522,6 +6558,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
+          reject_enum_payload_method_access_if_needed(obj, method_name)
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6680,6 +6717,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
+          reject_enum_payload_method_access_if_needed(obj, method_name)
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6816,6 +6854,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
+          reject_enum_payload_method_access_if_needed(obj, method_name)
 
         case obj.kind:
         of VkInstance, VkCustom:
@@ -6943,6 +6982,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.pc.inc()
             inst = self.cu.instructions[self.pc].addr
             continue
+          reject_enum_payload_method_access_if_needed(obj, method_name)
 
         case obj.kind:
         of VkInstance, VkCustom:

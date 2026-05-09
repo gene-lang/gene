@@ -328,6 +328,69 @@ proc expect_enum_error_parts(code: string, expected_message_parts: openArray[str
 proc expect_enum_error_parts(code: string, expected_message_parts: openArray[string]) =
   expect_enum_error_parts(code, expected_message_parts, [])
 
+test_vm """
+  (enum Shape (Circle radius) (Rect width height))
+  (enum E (X Int Int))
+  (var circle (Shape/Circle 7))
+  (var rect (Shape/Rect 10 20))
+  (var x (E/X 1 2))
+  [circle/radius rect/width x/0 (circle .to_s)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 4
+    if values.len == 4:
+      check values[0] == 7.to_value()
+      check values[1] == 10.to_value()
+      check values[2] == 1.to_value()
+      check values[3] == "(Shape/Circle 7)".to_value()
+
+test "enum payload dot-method access rejects with slash remediation":
+  let expected_parts = [
+    "Enum payload field",
+    "Shape/Circle.radius",
+    "not a method",
+    "slash access",
+  ]
+
+  expect_enum_error_parts("""
+    (enum Shape (Circle radius))
+    (var circle (Shape/Circle 7))
+    (circle .radius)
+  """, expected_parts)
+
+  expect_enum_error_parts("""
+    (enum Shape (Circle radius))
+    (var circle (Shape/Circle 7))
+    (circle .radius 1)
+  """, expected_parts)
+
+  expect_enum_error_parts("""
+    (enum Shape (Circle radius))
+    (var circle (Shape/Circle 7))
+    (circle . "radius")
+  """, expected_parts)
+
+  let positional_parts = [
+    "Enum payload field",
+    "E/X[0]",
+    "not a method",
+    "slash access",
+  ]
+
+  expect_enum_error_parts("""
+    (enum E (X Int Int))
+    (var x (E/X 1 2))
+    (x .0)
+  """, positional_parts)
+
+  expect_enum_error_parts("""
+    (enum Shape (Circle radius))
+    (var circle (Shape/Circle 7))
+    (circle .missing)
+  """, ["Unified method call not supported for VkEnumValue"], ["Enum payload field"])
+
 proc enum_payload_guard_parts(): seq[string] = @[
   "Type error [GENE_TYPE_MISMATCH]",
   "expected Int",

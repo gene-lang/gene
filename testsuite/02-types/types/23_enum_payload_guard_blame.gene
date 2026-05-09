@@ -33,22 +33,22 @@
 
 (fn fixture_typed_positional []
   (var counter (Counter 7))
-  (assert ((counter .value) == 7))
+  (assert (counter/value == 7))
   "typed positional enum payload ok")
 
 (fn fixture_typed_keyword []
   (var counter (Counter ^value 8))
-  (assert ((counter .value) == 8))
+  (assert (counter/value == 8))
   "typed keyword enum payload ok")
 
 (fn fixture_untyped_payload []
   (var item (Bag/Item "free"))
-  (assert ((item .value) == "free"))
+  (assert (item/value == "free"))
   "untyped enum payload ok")
 
 (fn fixture_generic_payload []
   (var wrapped (Box/Wrapped "generic stays gradual"))
-  (assert ((wrapped .value) == "generic stays gradual"))
+  (assert (wrapped/value == "generic stays gradual"))
   "generic enum payload ok")
 
 (var mode
