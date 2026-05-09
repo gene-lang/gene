@@ -855,40 +855,22 @@ proc validate_or_coerce_type*(value: var Value, expected_type_id: TypeId,
                              type_descs: seq[TypeDesc],
                              param_name: string = "argument",
                              location: string = "",
-                             strict_nil: bool = false): string =
-  if strict_nil and value == NIL:
-    if nil_admitted_by_type_id(expected_type_id, type_descs):
-      return ""
-    let expected = type_desc_to_string(expected_type_id, type_descs)
-    raise new_exception(type_defs.Exception, format_strict_nil_mismatch(expected, param_name, location))
-  var converted = value
-  var warning = ""
-  if coerce_value_to_type(value, expected_type_id, type_descs, param_name, converted, warning):
-    value = converted
-    return format_type_warning(warning, location)
-  let actual = runtime_type_name(value)
-  let expected = type_desc_to_string(expected_type_id, type_descs)
-  if expected_type_id != NO_TYPE_ID and type_descs.len > 0:
-    let parsed_expected = type_desc_to_rt(type_descs, expected_type_id)
-    let migration = legacy_gene_adt_value_mismatch(value, parsed_expected, param_name, location)
-    if migration.len > 0:
-      raise new_exception(type_defs.Exception, migration)
-  raise new_exception(type_defs.Exception, format_type_mismatch(expected, actual, param_name, location))
+                             strict_nil: bool = false,
+                             context: GuardContext = GuardContext()): string =
+  let guard = guard_runtime_type(value, expected_type_id, type_descs,
+    param_name = param_name, location = location, strict_nil = strict_nil,
+    allow_implicit_nil = false, allow_coercion = true, context = context)
+  if not guard.ok:
+    raise new_exception(type_defs.Exception, guard.error.message)
+  value = guard.value
+  guard.warning
 
 proc validate_type*(value: Value, expected_type_id: TypeId, type_descs: seq[TypeDesc],
                    param_name: string = "argument", location: string = "",
-                   strict_nil: bool = false) =
-  if strict_nil and value == NIL:
-    if nil_admitted_by_type_id(expected_type_id, type_descs):
-      return
-    let expected = type_desc_to_string(expected_type_id, type_descs)
-    raise new_exception(type_defs.Exception, format_strict_nil_mismatch(expected, param_name, location))
-  if not is_compatible(value, expected_type_id, type_descs):
-    let actual = runtime_type_name(value)
-    let expected = type_desc_to_string(expected_type_id, type_descs)
-    if expected_type_id != NO_TYPE_ID and type_descs.len > 0:
-      let parsed_expected = type_desc_to_rt(type_descs, expected_type_id)
-      let migration = legacy_gene_adt_value_mismatch(value, parsed_expected, param_name, location)
-      if migration.len > 0:
-        raise new_exception(type_defs.Exception, migration)
-    raise new_exception(type_defs.Exception, format_type_mismatch(expected, actual, param_name, location))
+                   strict_nil: bool = false,
+                   context: GuardContext = GuardContext()) =
+  let guard = guard_runtime_type(value, expected_type_id, type_descs,
+    param_name = param_name, location = location, strict_nil = strict_nil,
+    allow_implicit_nil = false, allow_coercion = false, context = context)
+  if not guard.ok:
+    raise new_exception(type_defs.Exception, guard.error.message)

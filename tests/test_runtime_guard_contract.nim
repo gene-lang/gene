@@ -4,6 +4,15 @@ import gene/parser
 import gene/types except Exception
 import gene/types/runtime_types
 
+proc expect_runtime_error(action: proc() {.closure.}): string =
+  var raised = false
+  try:
+    action()
+  except CatchableError as e:
+    raised = true
+    result = e.msg
+  check raised
+
 suite "Runtime guard contract":
   test "guard accepts compatible values without warning":
     let descs = builtin_type_descs()
@@ -126,3 +135,82 @@ suite "Runtime guard contract":
     check result.error.message.contains("Result")
     check result.error.message.contains("enum-backed Result constructors")
     check not result.error.message.contains("phase=")
+
+  test "validate_or_coerce_type preserves legacy no-context mismatch text":
+    let descs = builtin_type_descs()
+    var value = "oops".to_value()
+    let message = expect_runtime_error(proc() =
+      discard validate_or_coerce_type(value, BUILTIN_TYPE_INT_ID, descs,
+        param_name = "argument x", location = "wrapper_contract:1"))
+
+    check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got String in argument x")
+    check message.contains("wrapper_contract:1")
+    check not message.contains("phase=")
+    check not message.contains("producer=")
+    check not message.contains("consumer=")
+    check not message.contains("site=")
+
+  test "validate_type explicit context mismatch appends guard fields":
+    let descs = builtin_type_descs()
+    let context = GuardContext(
+      enabled: true,
+      phase: GpArgument,
+      producer: "caller",
+      consumer: "function",
+      site: "unit-test:1")
+    let message = expect_runtime_error(proc() =
+      validate_type("oops".to_value(), BUILTIN_TYPE_INT_ID, descs,
+        param_name = "argument x", context = context))
+
+    check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got String in argument x")
+    check message.contains("phase=argument")
+    check message.contains("producer=caller")
+    check message.contains("consumer=function")
+    check message.contains("site=unit-test:1")
+
+  test "validate_or_coerce_type mutates caller value and returns warning":
+    let descs = builtin_type_descs()
+    var value = 1.5.to_value()
+    let warning = validate_or_coerce_type(value, BUILTIN_TYPE_INT_ID, descs,
+      param_name = "argument x", location = "wrapper_contract:2")
+
+    check value.kind == VkInt
+    check value.int64 == 1'i64
+    check warning.contains("Lossy conversion Float -> Int for argument x")
+    check warning.contains("1.5 -> 1")
+    check warning.contains("wrapper_contract:2")
+
+  test "validate_type keeps Float to Int invalid instead of coercing":
+    let descs = builtin_type_descs()
+    let value = 1.5.to_value()
+    let message = expect_runtime_error(proc() =
+      validate_type(value, BUILTIN_TYPE_INT_ID, descs,
+        param_name = "argument x", location = "wrapper_contract:3"))
+
+    check value.kind == VkFloat
+    check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got Float in argument x")
+    check message.contains("wrapper_contract:3")
+    check not message.contains("phase=")
+
+  test "wrapper strict nil rejects Int and admits Option Int":
+    var descs = builtin_type_descs()
+    let option_int_id = intern_type_desc(descs,
+      TypeDesc(module_path: "tests/test_runtime_guard_contract.nim", kind: TdkApplied,
+        ctor: "Option", args: @[BUILTIN_TYPE_INT_ID]))
+
+    var nil_value = NIL
+    let message = expect_runtime_error(proc() =
+      discard validate_or_coerce_type(nil_value, BUILTIN_TYPE_INT_ID, descs,
+        param_name = "argument x", strict_nil = true))
+    check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got Nil in argument x")
+    check message.contains("strict nil mode")
+    check not message.contains("phase=")
+
+    nil_value = NIL
+    let warning = validate_or_coerce_type(nil_value, option_int_id, descs,
+      param_name = "argument option", strict_nil = true)
+    check warning == ""
+    check nil_value == NIL
+
+    validate_type(NIL, option_int_id, descs,
+      param_name = "argument option", strict_nil = true)
