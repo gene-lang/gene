@@ -6,6 +6,8 @@ import gene/gir
 const StrictNilFixture = "testsuite/02-types/types/20_strict_nil_policy.gene"
 const StrictNilAllowedTargets = "Any, Nil, Option[T], or unions containing Nil"
 
+var cachedGeneBin = ""
+
 proc expected_fixture_lines(): seq[string] = @[
   "arg-rejected",
   "return-rejected",
@@ -18,14 +20,16 @@ proc expected_fixture_lines(): seq[string] = @[
 ]
 
 proc ensure_gene_bin_for_test(): string =
-  result = absolutePath("bin/gene")
-  if fileExists(result):
-    return
+  if cachedGeneBin.len > 0 and fileExists(cachedGeneBin):
+    return cachedGeneBin
 
   let build = execCmdEx("nimble build")
   checkpoint build.output
   check build.exitCode == 0
+
+  result = absolutePath("bin/gene")
   check fileExists(result)
+  cachedGeneBin = result
 
 proc run_gene(args: openArray[string]): tuple[output: string, exitCode: int] =
   let gene_bin = ensure_gene_bin_for_test()
@@ -56,7 +60,28 @@ suite "Strict nil CLI":
     check result.output.contains("GENE_TYPE_MISMATCH")
     check result.output.contains("strict nil mode")
     check result.output.contains(StrictNilAllowedTargets)
+    check result.output.contains("expected Int")
     check result.output.contains("got Nil")
+    check result.output.contains("in x")
+    check result.output.contains("phase=argument")
+    check result.output.contains("producer=caller")
+    check result.output.contains("consumer=function")
+    check result.output.contains("site=")
+
+  test "eval --strict-nil rejects nil at a typed Int return boundary with stable diagnostics":
+    let result = run_gene(@["eval", "--strict-nil", "(fn f [] -> Int nil) (f)"])
+    checkpoint result.output
+    check result.exitCode != 0
+    check result.output.contains("GENE_TYPE_MISMATCH")
+    check result.output.contains("strict nil mode")
+    check result.output.contains(StrictNilAllowedTargets)
+    check result.output.contains("expected Int")
+    check result.output.contains("got Nil")
+    check result.output.contains("return value of f")
+    check result.output.contains("phase=return")
+    check result.output.contains("producer=callee")
+    check result.output.contains("consumer=caller")
+    check result.output.contains("site=")
 
   test "default eval and run remain nil-compatible for typed Int arguments":
     let eval_result = run_gene(@["eval", "(fn f [x: Int] x) (println (f nil))"])

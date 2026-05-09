@@ -1,0 +1,42 @@
+# Callable guard blame fixture
+# Program args:
+#   arg    -> fail at typed argument boundary
+#   return -> fail at typed return boundary
+#   default or omitted -> prove non-strict nil compatibility
+# Expected: default arg nil ok
+# Expected: default return nil ok
+
+(fn fixture_string []
+  "not-an-int")
+
+(fn fixture_bad_arg [x: Int]
+  x)
+
+(fn fixture_bad_return [] -> Int
+  (fixture_string))
+
+(fn fixture_default_arg_nil [x: Int]
+  (if (x == nil)
+    "default arg nil ok"
+  else
+    "default arg nil missing"))
+
+(fn fixture_default_return_nil [] -> Int
+  nil)
+
+(var mode
+  (if ((args .size) > 0)
+    args/0
+  else
+    "default"))
+
+(if (mode == "arg")
+  (fixture_bad_arg (fixture_string))
+elif (mode == "return")
+  (fixture_bad_return)
+else
+  (println (fixture_default_arg_nil nil))
+  (if ((fixture_default_return_nil) == nil)
+    (println "default return nil ok")
+  else
+    (println "default return nil missing")))

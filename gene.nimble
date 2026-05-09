@@ -122,6 +122,8 @@ task testintegration, "Runs non-unit integration tests":
   exec "nim c -r tests/integration/test_cli_deser.nim"
   #exec "nim c -r tests/integration/test_cli_fmt.nim"
   exec "nim c -r tests/integration/test_cli_gir.nim"
+  exec "nim c -r tests/integration/test_callable_guard_blame.nim"
+  exec "nim c -r tests/integration/test_strict_nil_cli.nim"
   exec "nim c -r tests/integration/test_cli_package_context.nim"
   exec "nim c -r tests/integration/test_future_callbacks.nim"
   exec "nim c -r tests/integration/test_deps_command.nim"
