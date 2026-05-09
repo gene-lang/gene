@@ -388,6 +388,13 @@ proc collect_module_type_nodes(node: Value, prefix: seq[string], tree: var seq[M
     if path.len == 0:
       return
     add_module_type_path(tree, prefix & path, MtkEnum)
+  of "tuple":
+    if gene.children.len == 0:
+      return
+    let path = module_type_path_from_name(gene.children[0])
+    if path.len == 0:
+      return
+    add_module_type_path(tree, prefix & path, MtkTuple)
   of "interface":
     if gene.children.len == 0:
       return

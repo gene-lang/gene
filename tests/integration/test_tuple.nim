@@ -1,6 +1,10 @@
 import unittest, strutils
 
+import gene/compiler
 import gene/types except Exception
+import gene/vm
+
+import ../helpers
 
 
 template expect_tuple_error(expected_message_part: string, body: untyped) =
@@ -10,6 +14,99 @@ template expect_tuple_error(expected_message_part: string, body: untyped) =
   except CatchableError as err:
     checkpoint err.msg
     check err.msg.contains(expected_message_part)
+
+
+proc expect_tuple_source_error(code: string, expected_message_part: string) =
+  init_all()
+  try:
+    discard VM.exec(cleanup(code), "test_code")
+    fail()
+  except CatchableError as err:
+    checkpoint err.msg
+    check err.msg.contains(expected_message_part)
+
+
+proc tuple_type_id_array_value(items: openArray[TypeId]): Value =
+  var values: seq[Value] = @[]
+  for item in items:
+    values.add(item.to_value())
+  new_array_value(values)
+
+
+test_vm """
+  (tuple Point x: Int y: Int)
+  Point
+""", proc(r: Value) =
+  check r.kind == VkTupleDef
+  if r.kind == VkTupleDef:
+    let tupleDef = r.ref.tuple_def
+    check tupleDef.name == "Point"
+    check tupleDef.payload_shape == EpsNamed
+    check tuple_payload_shape(tupleDef) == EpsNamed
+    check tuple_payload_arity(tupleDef) == 2
+    check tupleDef.fields == @["x", "y"]
+    check tupleDef.field_type_ids == @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID]
+    check tupleDef.field_type_descs.len > BUILTIN_TYPE_INT_ID.int
+    if tupleDef.field_type_descs.len > BUILTIN_TYPE_INT_ID.int:
+      let desc = tupleDef.field_type_descs[BUILTIN_TYPE_INT_ID]
+      check desc.kind == TdkNamed
+      check desc.name == "Int"
+
+
+test_vm """
+  (tuple Box Int)
+  Box
+""", proc(r: Value) =
+  check r.kind == VkTupleDef
+  if r.kind == VkTupleDef:
+    let tupleDef = r.ref.tuple_def
+    check tupleDef.name == "Box"
+    check tupleDef.payload_shape == EpsPositional
+    check tuple_payload_shape(tupleDef) == EpsPositional
+    check tuple_payload_arity(tupleDef) == 1
+    check tupleDef.fields.len == 0
+    check tupleDef.field_type_ids == @[BUILTIN_TYPE_INT_ID]
+    check tupleDef.field_type_descs.len > BUILTIN_TYPE_INT_ID.int
+    if tupleDef.field_type_descs.len > BUILTIN_TYPE_INT_ID.int:
+      let desc = tupleDef.field_type_descs[BUILTIN_TYPE_INT_ID]
+      check desc.kind == TdkNamed
+      check desc.name == "Int"
+
+
+test "tuple declaration rejects malformed source syntax":
+  expect_tuple_source_error("""
+    (tuple Bad x: Int x: Int)
+  """, "tuple Bad has duplicate field x")
+
+  expect_tuple_source_error("""
+    (tuple Bad x:)
+  """, "tuple Bad field x is missing a type after ':'")
+
+  expect_tuple_source_error("""
+    (tuple Bad x: Int String)
+  """, "tuple Bad cannot mix named fields and positional type slots")
+
+
+test "tuple declaration metadata verifier rejects invalid field TypeId":
+  let cu = new_compilation_unit()
+  cu.type_registry = populate_registry(cu.type_descriptors, cu.module_path)
+  cu.instructions.add(Instruction(
+    kind: IkCreateTuple,
+    arg0: tuple_type_id_array_value([999'i32])))
+
+  expect_tuple_error(TypeMetadataInvalidMarker):
+    verify_type_metadata(cu, phase = "tuple metadata verifier", source_path = "tuple_metadata_test.gene")
+
+
+test "tuple declarations are collected as module type metadata":
+  let cu = compiler.parse_and_compile(cleanup("""
+    (tuple Point x: Int y: Int)
+  """), "tuple_module.gene", module_mode = true)
+
+  check cu.module_types.len == 1
+  if cu.module_types.len == 1:
+    check cu.module_types[0].name == "Point"
+    check cu.module_types[0].kind == MtkTuple
 
 
 test "direct named tuple definition and value allocation":

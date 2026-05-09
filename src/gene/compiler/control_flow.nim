@@ -1371,6 +1371,12 @@ type EnumVariantCompileMetadata = object
   fields: seq[string]
   field_type_ids: seq[TypeId]
 
+type TupleCompileMetadata = object
+  payload_shape: EnumPayloadShapeKind
+  payload_arity: int
+  fields: seq[string]
+  field_type_ids: seq[TypeId]
+
 proc string_array_value(items: seq[string]): Value =
   var values: seq[Value] = @[]
   for item in items:
@@ -1502,6 +1508,122 @@ proc parse_enum_variant_fields(self: Compiler, enum_name: string, variant_gene: 
   result.payload_arity = result.field_type_ids.len
   if result.payload_arity == 0:
     result.payload_shape = EpsUnit
+
+proc parse_tuple_declaration_name(raw_name: string): string =
+  if raw_name.contains(":"):
+    not_allowed("tuple generic declarations are not supported; use (tuple Name field: Type ...)")
+  if raw_name.len == 0:
+    not_allowed("tuple name must not be empty")
+  raw_name
+
+proc tuple_type_annotation_valid(v: Value): bool =
+  enum_type_annotation_valid(v)
+
+proc is_tuple_positional_type_slot(type_desc_index: Table[string, TypeId],
+                                   type_aliases: Table[string, TypeId],
+                                   v: Value): bool =
+  case v.kind
+  of VkGene:
+    return tuple_type_annotation_valid(v)
+  of VkSymbol:
+    let token = v.str
+    if token.len == 0 or token.endsWith(":"):
+      return false
+    if lookup_builtin_type(token) != NO_TYPE_ID:
+      return true
+    if type_aliases.hasKey(token):
+      return true
+    if type_desc_index.hasKey(token):
+      return true
+    return token[0].isUpperAscii()
+  of VkString:
+    return v.str.len > 0
+  else:
+    return false
+
+proc tuple_declaration_shape_error(tuple_name: string): string =
+  "tuple " & tuple_name &
+    " cannot mix named fields and positional type slots; use either all named fields or all positional type slots"
+
+proc parse_tuple_declaration_fields(self: Compiler, tuple_name: string, gene: ptr Gene,
+                                    type_desc_index: var Table[string, TypeId]): TupleCompileMetadata =
+  result.payload_shape = EpsUnit
+  if gene.props.len > 0:
+    not_allowed("tuple " & tuple_name & " field declarations must be positional, not properties")
+
+  var seen_fields = initTable[string, bool]()
+  var i = 1
+  while i < gene.children.len:
+    let child = gene.children[i]
+
+    if child.kind == VkSymbol and child.str.endsWith(":"):
+      if result.payload_shape == EpsPositional:
+        not_allowed(tuple_declaration_shape_error(tuple_name))
+      result.payload_shape = EpsNamed
+      let field_name = child.str[0..^2]
+      if field_name.len == 0:
+        not_allowed("tuple " & tuple_name & " has an empty field name")
+      if i + 1 >= gene.children.len:
+        not_allowed("tuple " & tuple_name & " field " & field_name & " is missing a type after ':'")
+      let type_node = gene.children[i + 1]
+      if type_node.kind == VkSymbol and type_node.str.endsWith(":"):
+        not_allowed("tuple " & tuple_name & " field " & field_name & " is missing a type after ':'")
+      if not tuple_type_annotation_valid(type_node):
+        not_allowed("tuple " & tuple_name & " field " & field_name & " has an invalid type annotation")
+      if seen_fields.hasKey(field_name):
+        not_allowed("tuple " & tuple_name & " has duplicate field " & field_name)
+      seen_fields[field_name] = true
+      let field_type_id = resolve_type_value_to_id_with_index(
+        type_node, self.output.type_descriptors, type_desc_index, self.output.type_aliases,
+        initTable[string, TypeId](), self.output.module_path)
+      result.fields.add(field_name)
+      result.field_type_ids.add(field_type_id)
+      i += 2
+      continue
+
+    if is_tuple_positional_type_slot(type_desc_index, self.output.type_aliases, child):
+      if result.payload_shape == EpsNamed:
+        not_allowed(tuple_declaration_shape_error(tuple_name))
+      result.payload_shape = EpsPositional
+      let field_type_id = resolve_type_value_to_id_with_index(
+        child, self.output.type_descriptors, type_desc_index, self.output.type_aliases,
+        initTable[string, TypeId](), self.output.module_path)
+      result.field_type_ids.add(field_type_id)
+      i.inc()
+      continue
+
+    not_allowed("tuple " & tuple_name & " fields must be declared as field: Type or positional Type")
+
+  result.payload_arity = result.field_type_ids.len
+  if result.payload_arity == 0:
+    result.payload_shape = EpsUnit
+
+proc compile_tuple(self: Compiler, gene: ptr Gene) =
+  if gene.children.len < 1:
+    not_allowed("tuple expects at least a name")
+
+  let name_node = gene.children[0]
+  if name_node.kind != VkSymbol:
+    not_allowed("tuple name must be a symbol")
+
+  let tuple_name = parse_tuple_declaration_name(name_node.str)
+
+  var type_desc_index = initTable[string, TypeId]()
+  ensure_type_desc_index(self.output.type_descriptors, type_desc_index)
+  let metadata = self.parse_tuple_declaration_fields(tuple_name, gene, type_desc_index)
+
+  self.emit(Instruction(kind: IkPushValue, arg0: tuple_name.to_value()))
+  self.emit(Instruction(kind: IkPushValue, arg0: string_array_value(metadata.fields)))
+  self.emit(Instruction(
+    kind: IkCreateTuple,
+    arg0: type_id_array_value(metadata.field_type_ids),
+    arg1: metadata.payload_shape.ord.int32))
+
+  let index = self.scope_tracker.next_index
+  self.scope_tracker.mappings[tuple_name.to_key()] = index
+  self.add_scope_start()
+  self.scope_tracker.next_index.inc()
+  self.emit(Instruction(kind: IkVar, arg0: index.to_value()))
 
 proc compile_enum(self: Compiler, gene: ptr Gene) =
   # (enum Color red green blue)

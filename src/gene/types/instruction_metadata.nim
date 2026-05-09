@@ -127,6 +127,9 @@ proc instruction_metadata*(kind: InstructionKind): InstructionMetadata =
     meta(dynamic(1, "enum creation consumes a variable shape"), "types", touches_refs = true)
   of IkEnumAddMember:
     meta(dynamic(1, "enum member creation uses enum state and stack operands"), "types", touches_refs = true)
+  of IkCreateTuple:
+    meta(fixed(2, 1, "tuple creation consumes tuple name and field metadata"),
+      "types", IokValue, IokFlags, touches_refs = true)
   of IkCompileInit:
     meta(fixed(0, 0), "module")
   of IkThrow:

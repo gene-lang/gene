@@ -774,7 +774,8 @@ proc is_infix_rewrite_eligible(expr_type: Value): bool {.inline.} =
     return true
   expr_type.str notin [
     "var", "if", "ifel", "fn", "do", "loop", "while", "for", "ns", "class",
-    "try", "throw", "import", "export", "interface", "implement", "field", "$", "$vm", "$vmstmt", ".", "->", "@"
+    "try", "throw", "import", "export", "interface", "implement", "field", "type", "enum", "tuple",
+    "$", "$vm", "$vmstmt", ".", "->", "@"
   ]
 
 proc is_comparison_op(op: string): bool {.inline.} =
@@ -1265,6 +1266,9 @@ proc compile_gene(self: Compiler, input: Value) =
         return
       of "enum":
         self.compile_enum(gene)
+        return
+      of "tuple":
+        self.compile_tuple(gene)
         return
       of "..":
         self.compile_range_operator(gene)

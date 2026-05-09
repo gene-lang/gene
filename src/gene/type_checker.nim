@@ -920,7 +920,7 @@ proc resolve_import_gir_path(self: TypeChecker, module_path: string): string =
 proc is_importable_module_type(node: ModuleTypeNode): bool =
   if node == nil:
     return false
-  node.kind in {MtkClass, MtkEnum, MtkInterface, MtkAlias, MtkObject}
+  node.kind in {MtkClass, MtkEnum, MtkTuple, MtkInterface, MtkAlias, MtkObject}
 
 proc find_module_type_node(nodes: seq[ModuleTypeNode], path: seq[string]): ModuleTypeNode =
   if path.len == 0:
@@ -1221,6 +1221,95 @@ proc check_enum(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   self.add_adt(enum_name, type_params, variants)
   return enum_type
+
+proc parse_tuple_declaration_name(raw_name: string): string =
+  if raw_name.contains(":"):
+    raise new_exception(types.Exception, "tuple generic declarations are not supported; use (tuple Name field: Type ...)")
+  if raw_name.len == 0:
+    raise new_exception(types.Exception, "tuple name must not be empty")
+  raw_name
+
+proc tuple_type_annotation_valid(v: Value): bool =
+  enum_type_annotation_valid(v)
+
+proc is_tuple_positional_type_slot(self: TypeChecker, v: Value): bool =
+  case v.kind
+  of VkGene:
+    return tuple_type_annotation_valid(v)
+  of VkSymbol:
+    let token = v.str
+    if token.len == 0 or token.endsWith(":"):
+      return false
+    if self.is_known_type_name(token):
+      return true
+    return token[0].isUpperAscii()
+  of VkString:
+    return v.str.len > 0
+  else:
+    return false
+
+proc mixed_tuple_declaration_shape_error(tuple_name: string): ref types.Exception =
+  new_exception(types.Exception, "tuple " & tuple_name &
+    " cannot mix named fields and positional type slots; use either all named fields or all positional type slots")
+
+proc parse_tuple_declaration_fields(self: TypeChecker, tuple_name: string, gene: ptr Gene) =
+  var payload_shape = EpsUnit
+  if gene.props.len > 0:
+    raise new_exception(types.Exception, "tuple " & tuple_name & " field declarations must be positional, not properties")
+
+  var seen_fields = initTable[string, bool]()
+  var i = 1
+  while i < gene.children.len:
+    let child = gene.children[i]
+
+    if child.kind == VkSymbol and child.str.endsWith(":"):
+      if payload_shape == EpsPositional:
+        raise mixed_tuple_declaration_shape_error(tuple_name)
+      payload_shape = EpsNamed
+      let field_name = child.str[0..^2]
+      if field_name.len == 0:
+        raise new_exception(types.Exception, "tuple " & tuple_name & " has an empty field name")
+      if i + 1 >= gene.children.len:
+        raise new_exception(types.Exception, "tuple " & tuple_name & " field " & field_name & " is missing a type after ':'")
+      let type_node = gene.children[i + 1]
+      if type_node.kind == VkSymbol and type_node.str.endsWith(":"):
+        raise new_exception(types.Exception, "tuple " & tuple_name & " field " & field_name & " is missing a type after ':'")
+      if not tuple_type_annotation_valid(type_node):
+        raise new_exception(types.Exception, "tuple " & tuple_name & " field " & field_name & " has an invalid type annotation")
+      if seen_fields.hasKey(field_name):
+        raise new_exception(types.Exception, "tuple " & tuple_name & " has duplicate field " & field_name)
+      seen_fields[field_name] = true
+      discard self.parse_type_expr(type_node)
+      i += 2
+      continue
+
+    if self.is_tuple_positional_type_slot(child):
+      if payload_shape == EpsNamed:
+        raise mixed_tuple_declaration_shape_error(tuple_name)
+      payload_shape = EpsPositional
+      discard self.parse_type_expr(child)
+      i.inc()
+      continue
+
+    raise new_exception(types.Exception,
+      "tuple " & tuple_name & " fields must be declared as field: Type or positional Type")
+
+proc check_tuple(self: TypeChecker, gene: ptr Gene): TypeExpr =
+  if gene.children.len < 1:
+    raise new_exception(types.Exception, "tuple expects at least a name")
+
+  let name_node = gene.children[0]
+  if name_node.kind != VkSymbol:
+    raise new_exception(types.Exception, "tuple name must be a symbol")
+
+  let tuple_name = parse_tuple_declaration_name(name_node.str)
+  ensure_user_type_name(tuple_name, "tuple")
+
+  let tuple_type = TypeExpr(kind: TkNamed, name: tuple_name)
+  self.types[tuple_name] = tuple_type
+  discard self.intern_type_desc(tuple_type)
+  self.parse_tuple_declaration_fields(tuple_name, gene)
+  return tuple_type
 
 proc parse_fn_params(self: TypeChecker, v: Value): seq[ParamType] =
   if v.kind != VkArray:
@@ -2435,7 +2524,7 @@ proc check_ifel(self: TypeChecker, gene: ptr Gene): TypeExpr =
 proc is_infix_special_form(expr_type: Value): bool {.inline.} =
   expr_type.kind == VkSymbol and expr_type.str in [
     "var", "if", "ifel", "fn", "do", "loop", "while", "for", "ns", "class",
-    "try", "throw", "import", "export", "interface", "implement", "field", "comptime", "type", "enum",
+    "try", "throw", "import", "export", "interface", "implement", "field", "comptime", "type", "enum", "tuple",
     "object", "$", ".", "->", "@"
   ]
 
@@ -3661,6 +3750,8 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         return ANY_TYPE
       of "enum":
         return self.check_enum(gene)
+      of "tuple":
+        return self.check_tuple(gene)
       of "case":
         return self.check_case(gene)
       of "for":

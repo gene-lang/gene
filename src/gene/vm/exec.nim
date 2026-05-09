@@ -3566,6 +3566,68 @@ proc exec*(self: ptr VirtualMachine): Value =
         enum_val.add_member(name.str, value.int64.int, fields, field_type_ids,
           self.cu.type_descriptors, payload_shape, payload_arity)
 
+      of IkCreateTuple:
+        let fields_arr = self.frame.pop()
+        let name = self.frame.pop()
+        if name.kind != VkString:
+          not_allowed("tuple name must be a string")
+        if fields_arr.kind != VkArray:
+          not_allowed("tuple " & name.str & " field metadata must be an array")
+        var fields: seq[string] = @[]
+        for f in array_data(fields_arr):
+          case f.kind
+          of VkString, VkSymbol:
+            fields.add(f.str)
+          else:
+            not_allowed("tuple " & name.str & " field metadata must contain strings")
+
+        var field_type_ids: seq[TypeId] = @[]
+        let raw_field_type_ids = cast[uint64](inst.arg0)
+        if raw_field_type_ids == 0 or inst.arg0.kind != VkArray:
+          not_allowed("tuple " & name.str & " field type metadata must be an array")
+        for t in array_data(inst.arg0):
+          if t.kind != VkInt:
+            not_allowed("tuple " & name.str & " field type metadata must contain integers")
+          let type_id = t.int64.TypeId
+          if type_id < 0 or type_id.int >= self.cu.type_descriptors.len:
+            not_allowed("tuple " & name.str & " field type metadata references invalid TypeId " & $type_id)
+          field_type_ids.add(type_id)
+
+        let payload_shape =
+          if inst.arg1 == EpsNamed.ord.int32:
+            EpsNamed
+          elif inst.arg1 == EpsPositional.ord.int32:
+            EpsPositional
+          else:
+            EpsUnit
+        let payload_arity =
+          if payload_shape == EpsNamed:
+            fields.len
+          elif payload_shape == EpsPositional:
+            field_type_ids.len
+          else:
+            0
+
+        if payload_shape == EpsNamed and field_type_ids.len != fields.len:
+          not_allowed("tuple " & name.str & " field type metadata count " & $field_type_ids.len &
+                      " does not match field count " & $fields.len)
+        if payload_shape == EpsPositional and fields.len != 0:
+          not_allowed("tuple " & name.str & " positional payload metadata must not contain field names")
+        if field_type_ids.len != payload_arity:
+          not_allowed("tuple " & name.str & " field type metadata count " & $field_type_ids.len &
+                      " does not match payload arity " & $payload_arity)
+
+        let tuple_def = new_tuple_def(
+          name = name.str,
+          fields = fields,
+          field_type_ids = field_type_ids,
+          field_type_descs = self.cu.type_descriptors,
+          payload_shape = payload_shape,
+          payload_arity = payload_arity,
+          module_path = self.cu.module_path,
+          internal_path = name.str)
+        self.frame.push(tuple_def.to_value())
+
       of IkCompileInit:
         let input = self.frame.pop()
         let compiled = compile_init(input)

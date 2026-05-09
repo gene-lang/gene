@@ -1033,6 +1033,7 @@ type
     IkVmDuration
     IkVarDestructure  # Matcher-based var destructuring (arg0=[pattern, [target-indices]])
     IkMatchEnumVariant # Identity-aware enum variant pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
+    IkCreateTuple     # Nominal tuple declaration (stack: name, fields; arg0=TypeId array, arg1=payload shape)
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object
@@ -1061,6 +1062,7 @@ type
     MtkInterface
     MtkAlias
     MtkObject
+    MtkTuple
 
   ModuleTypeNode* = ref object
     name*: string

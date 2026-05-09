@@ -403,6 +403,8 @@ proc validate_instruction_metadata(ctx: MetadataVerificationContext,
       validate_type_id_array_value(ctx, instr_owner & ".arg0", instr.arg0,
         allow_no_type_id = true,
         optional = true)
+    of IkCreateTuple:
+      validate_type_id_array_value(ctx, instr_owner & ".arg0", instr.arg0)
     of IkPushTypeValue:
       validate_type_id_value(ctx, instr_owner & ".arg0", instr.arg0)
     of IkFunction, IkBlock:
