@@ -9,6 +9,8 @@ import ./logging_core
 from ./types/runtime_types import
   validate_type,
   validate_or_coerce_type,
+  GuardContext,
+  GpReturn,
   emit_type_warning,
   is_compatible,
   runtime_type_name,

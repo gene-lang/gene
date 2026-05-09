@@ -43,24 +43,29 @@ proc expect_strict_nil_admitted(type_id: TypeId, type_descs: seq[TypeDesc], cont
   check warning == ""
   check value == NIL
 
-proc expect_vm_strict_nil_mismatch(code: string, filename: string, expected_parts: openArray[string]) =
-  reset_runtime(strict_nil = true)
+proc expect_vm_type_mismatch(code: string, filename: string, strict_nil: bool,
+                             expected_parts: openArray[string]): string =
+  reset_runtime(strict_nil)
   var raised = false
   try:
     discard VM.exec(code.strip(), filename)
   except CatchableError as e:
     raised = true
-    checkpoint e.msg
-    check e.msg.contains(TYPE_DIAG_MISMATCH_CODE)
-    check e.msg.contains("strict nil mode")
-    check e.msg.contains(StrictNilAllowedTargets)
-    check e.msg.contains("got Nil")
+    result = e.msg
+    checkpoint result
+    check result.contains(TYPE_DIAG_MISMATCH_CODE)
     for part in expected_parts:
-      check e.msg.contains(part)
+      check result.contains(part)
   finally:
     if VM != nil:
       VM.strict_nil = false
   check raised
+
+proc expect_vm_strict_nil_mismatch(code: string, filename: string, expected_parts: openArray[string]) =
+  let message = expect_vm_type_mismatch(code, filename, strict_nil = true, expected_parts)
+  check message.contains("strict nil mode")
+  check message.contains(StrictNilAllowedTargets)
+  check message.contains("got Nil")
 
 suite "Strict nil policy":
   test "descriptor admissibility admits only explicit nil-capable targets":
@@ -116,6 +121,29 @@ suite "Strict nil policy":
     check value == NIL
     check VM.strict_nil == false
 
+  test "default VM execution remains nil-compatible for typed Int returns":
+    let value = exec_gene("""
+      (fn nil_return [] -> Int nil)
+      (nil_return)
+    """, "strict_nil_default_return.gene")
+    check value == NIL
+    check VM.strict_nil == false
+
+  test "VM return mismatch diagnostics include callable guard context":
+    let message = expect_vm_type_mismatch("""
+      (fn wrong_return [] -> Int "oops")
+      (wrong_return)
+    """, "return_mismatch.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "return value of wrong_return",
+      "phase=return",
+      "producer=callee",
+      "consumer=caller",
+      "site="
+    ])
+    check not message.contains("strict nil mode")
+
   test "strict VM execution rejects nil at representative typed boundaries":
     expect_vm_strict_nil_mismatch("""
       (fn strict_arg [x: Int] x)
@@ -125,7 +153,14 @@ suite "Strict nil policy":
     expect_vm_strict_nil_mismatch("""
       (fn strict_return [] -> Int nil)
       (strict_return)
-    """, "strict_nil_return.gene", ["expected Int", "return value of strict_return"])
+    """, "strict_nil_return.gene", [
+      "expected Int",
+      "return value of strict_return",
+      "phase=return",
+      "producer=callee",
+      "consumer=caller",
+      "site="
+    ])
 
     expect_vm_strict_nil_mismatch("""
       (var local_value: Int nil)

@@ -47,8 +47,15 @@ proc validate_return_type_constraint(self: ptr VirtualMachine, value: var Value)
     return
   if value == NIL and not self.strict_nil:
     return
+  let context = GuardContext(
+    enabled: true,
+    phase: GpReturn,
+    producer: "callee",
+    consumer: "caller",
+    site: self.runtime_type_error_location())
   let warning = validate_or_coerce_type(value, f.matcher.return_type_id, f.matcher.type_descriptors,
-    "return value of " & f.name, self.runtime_type_error_location(), strict_nil = self.strict_nil)
+    "return value of " & f.name, self.runtime_type_error_location(), strict_nil = self.strict_nil,
+    context = context)
   emit_type_warning(warning)
 
 proc find_named_type_descriptor(cu: CompilationUnit, name: string): tuple[type_id: TypeId, desc: TypeDesc, found: bool] =
