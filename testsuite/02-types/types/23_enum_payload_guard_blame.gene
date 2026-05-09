@@ -1,0 +1,70 @@
+# Enum payload guard blame fixture
+# Program args:
+#   positional -> fail at typed enum payload positional constructor boundary
+#   keyword    -> fail at typed enum payload keyword constructor boundary
+#   strict-nil -> fail at typed enum payload constructor boundary when --strict-nil is enabled
+#   default or omitted -> prove valid typed positional/keyword constructors plus gradual enum payload compatibility
+# Expected: typed positional enum payload ok
+# Expected: typed keyword enum payload ok
+# Expected: untyped enum payload ok
+# Expected: generic enum payload ok
+
+(fn fixture_string []
+  "not-an-int")
+
+(enum Metric
+  (Counter value: Int))
+(var Counter Metric/Counter)
+
+(enum Bag
+  (Item value))
+
+(enum Box:T
+  (Wrapped value: T))
+
+(fn fixture_bad_positional []
+  (Counter (fixture_string)))
+
+(fn fixture_bad_keyword []
+  (Counter ^value (fixture_string)))
+
+(fn fixture_bad_strict_nil []
+  (Counter nil))
+
+(fn fixture_typed_positional []
+  (var counter (Counter 7))
+  (assert ((counter .value) == 7))
+  "typed positional enum payload ok")
+
+(fn fixture_typed_keyword []
+  (var counter (Counter ^value 8))
+  (assert ((counter .value) == 8))
+  "typed keyword enum payload ok")
+
+(fn fixture_untyped_payload []
+  (var item (Bag/Item "free"))
+  (assert ((item .value) == "free"))
+  "untyped enum payload ok")
+
+(fn fixture_generic_payload []
+  (var wrapped (Box/Wrapped "generic stays gradual"))
+  (assert ((wrapped .value) == "generic stays gradual"))
+  "generic enum payload ok")
+
+(var mode
+  (if ((args .size) > 0)
+    args/0
+  else
+    "default"))
+
+(if (mode == "positional")
+  (fixture_bad_positional)
+elif (mode == "keyword")
+  (fixture_bad_keyword)
+elif (mode == "strict-nil")
+  (fixture_bad_strict_nil)
+else
+  (println (fixture_typed_positional))
+  (println (fixture_typed_keyword))
+  (println (fixture_untyped_payload))
+  (println (fixture_generic_payload)))
