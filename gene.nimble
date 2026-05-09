@@ -72,6 +72,7 @@ task test, "Runs unit tests only":
   exec "nim c -r tests/test_types.nim"
   exec "nim c -r tests/test_type_checker.nim"
   exec "nim c -r tests/test_runtime_guard_contract.nim"
+  exec "nim c -r tests/test_strict_nil_policy.nim"
   exec "nim c -r tests/test_parser.nim"
   exec "nim c -r tests/test_parser_interpolation.nim"
   exec "nim c -r tests/test_stream_parser.nim"

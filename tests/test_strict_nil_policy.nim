@@ -242,6 +242,38 @@ suite "Strict nil policy":
     ])
     check not super_method_message.contains("strict nil mode")
 
+    let caller_site_message = expect_vm_type_mismatch("""
+      (fn typed_arg [x: Int] x)
+
+      (typed_arg "oops")
+    """, "callable_argument_site.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in x",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site=callable_argument_site.gene:3"
+    ])
+    check not caller_site_message.contains("site=callable_argument_site.gene:1")
+
+    let strict_caller_site_message = expect_vm_type_mismatch("""
+      (fn typed_arg [x: Int] x)
+
+      (typed_arg nil)
+    """, "strict_nil_callable_site.gene", strict_nil = true, [
+      "expected Int",
+      "got Nil",
+      "in x",
+      "strict nil mode",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site=strict_nil_callable_site.gene:3"
+    ])
+    check strict_caller_site_message.contains(StrictNilAllowedTargets)
+    check not strict_caller_site_message.contains("site=strict_nil_callable_site.gene:1")
+
     let block_message = expect_vm_error("""
       (var b (block [x y] x))
       (b "oops")
@@ -297,6 +329,32 @@ suite "Strict nil policy":
     ])
     check not assignment_message.contains("strict nil mode")
 
+    let inherited_assignment_message = expect_vm_type_mismatch("""
+      (fn assign_inherited_bad []
+        (var local_value: Int 1)
+        (fn inner []
+          (local_value = "oops"))
+        (inner))
+      (assign_inherited_bad)
+    """, "local_inherited_assignment_mismatch.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in variable",
+      "phase=local",
+      "producer=assignment",
+      "consumer=local",
+      "site="
+    ])
+    check not inherited_assignment_message.contains("strict nil mode")
+
+    let updated_value = exec_gene("""
+      (var local_value: Int 1)
+      (local_value += 1)
+      local_value
+    """, "local_update_guarded_success.gene")
+    check updated_value.kind == VkInt
+    check updated_value.int64 == 2
+
   test "VM property mismatch diagnostics include property guard context":
     let direct_message = expect_vm_type_mismatch("""
       (class GuardedPoint
@@ -316,6 +374,14 @@ suite "Strict nil policy":
       ($set point (@ (property_name)) "oops")
     """, "property_dynamic_mismatch.gene", strict_nil = false, property_guard_parts())
     check not dynamic_message.contains("strict nil mode")
+
+    let map_value = exec_gene("""
+      (var values {})
+      ($set values (@ "x") "oops")
+      ((@ "x") values)
+    """, "property_non_instance_map_write.gene")
+    check map_value.kind == VkString
+    check map_value.str == "oops"
 
   test "default VM execution remains nil-compatible for typed properties":
     let value = exec_gene("""
@@ -418,6 +484,15 @@ suite "Strict nil policy":
       "consumer=enum-variant",
       "site="
     ])
+
+  test "default VM execution remains nil-compatible for typed enum payloads":
+    let value = exec_gene("""
+      (enum Metric (Counter value: Int))
+      (var counter (Metric/Counter nil))
+      counter/value
+    """, "strict_nil_default_enum_payload.gene")
+    check value == NIL
+    check VM.strict_nil == false
 
   test "strict VM execution admits nil through compiled Any Nil Option and union descriptors":
     let value = exec_gene("""

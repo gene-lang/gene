@@ -12,6 +12,7 @@ const ExpectedFixtureLines = @[
   "direct property coercion ok",
   "dynamic property coercion ok",
   "property param coercion ok",
+  "non-instance member write ok",
   "untyped property ok",
 ]
 
@@ -79,6 +80,11 @@ proc strict_property_guard_parts(): seq[string] =
   result.add("strict nil mode")
   result.add(StrictNilAllowedTargets)
 
+proc strict_local_guard_parts(): seq[string] =
+  result = local_guard_parts("got Nil")
+  result.add("strict nil mode")
+  result.add(StrictNilAllowedTargets)
+
 proc check_fixture_success(label: string, run_result: tuple[output: string, exitCode: int]) =
   checkpoint label & " output:\n" & run_result.output
   check run_result.exitCode == 0
@@ -126,6 +132,21 @@ suite "Local and property guard blame CLI/GIR":
     check_contains_all("source fixture local assignment diagnostic", source_assignment_result.output,
       local_guard_parts())
 
+    let source_inherited_local_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "inherited-local"])
+    check source_inherited_local_result.exitCode != 0
+    check_contains_all("source fixture inherited local assignment diagnostic", source_inherited_local_result.output,
+      local_guard_parts())
+
+    let source_update_local_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "update-local"])
+    check source_update_local_result.exitCode != 0
+    check_contains_all("source fixture optimized local update diagnostic", source_update_local_result.output,
+      local_guard_parts("got Float"))
+
+    let source_strict_local_result = run_gene(@["run", "--strict-nil", "--no-gir-cache", LocalPropertyGuardFixture, "strict-local"])
+    check source_strict_local_result.exitCode != 0
+    check_contains_all("source fixture strict local diagnostic", source_strict_local_result.output,
+      strict_local_guard_parts())
+
     let source_property_direct_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "prop-direct"])
     check source_property_direct_result.exitCode != 0
     check_contains_all("source fixture direct property diagnostic", source_property_direct_result.output,
@@ -140,6 +161,16 @@ suite "Local and property guard blame CLI/GIR":
     check source_property_param_result.exitCode != 0
     check_contains_all("source fixture property parameter diagnostic", source_property_param_result.output,
       property_guard_parts("score", "Float"))
+
+    let source_inherited_property_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "inherited-prop"])
+    check source_inherited_property_result.exitCode != 0
+    check_contains_all("source fixture inherited property diagnostic", source_inherited_property_result.output,
+      property_guard_parts())
+
+    let source_method_property_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "method-prop"])
+    check source_method_property_result.exitCode != 0
+    check_contains_all("source fixture optimized method property-param diagnostic", source_method_property_result.output,
+      property_guard_parts())
 
     let source_strict_property_result = run_gene(@["run", "--strict-nil", "--no-gir-cache", LocalPropertyGuardFixture, "strict-prop"])
     check source_strict_property_result.exitCode != 0
@@ -166,6 +197,21 @@ suite "Local and property guard blame CLI/GIR":
     check_contains_all("loaded GIR fixture local assignment diagnostic", gir_assignment_result.output,
       local_guard_parts())
 
+    let gir_inherited_local_result = run_gene(@["run", gir_path, "inherited-local"])
+    check gir_inherited_local_result.exitCode != 0
+    check_contains_all("loaded GIR fixture inherited local assignment diagnostic", gir_inherited_local_result.output,
+      local_guard_parts())
+
+    let gir_update_local_result = run_gene(@["run", gir_path, "update-local"])
+    check gir_update_local_result.exitCode != 0
+    check_contains_all("loaded GIR fixture optimized local update diagnostic", gir_update_local_result.output,
+      local_guard_parts("got Float"))
+
+    let gir_strict_local_result = run_gene(@["run", "--strict-nil", gir_path, "strict-local"])
+    check gir_strict_local_result.exitCode != 0
+    check_contains_all("loaded GIR fixture strict local diagnostic", gir_strict_local_result.output,
+      strict_local_guard_parts())
+
     let gir_property_direct_result = run_gene(@["run", gir_path, "prop-direct"])
     check gir_property_direct_result.exitCode != 0
     check_contains_all("loaded GIR fixture direct property diagnostic", gir_property_direct_result.output,
@@ -180,6 +226,16 @@ suite "Local and property guard blame CLI/GIR":
     check gir_property_param_result.exitCode != 0
     check_contains_all("loaded GIR fixture property parameter diagnostic", gir_property_param_result.output,
       property_guard_parts("score", "Float"))
+
+    let gir_inherited_property_result = run_gene(@["run", gir_path, "inherited-prop"])
+    check gir_inherited_property_result.exitCode != 0
+    check_contains_all("loaded GIR fixture inherited property diagnostic", gir_inherited_property_result.output,
+      property_guard_parts())
+
+    let gir_method_property_result = run_gene(@["run", gir_path, "method-prop"])
+    check gir_method_property_result.exitCode != 0
+    check_contains_all("loaded GIR fixture optimized method property-param diagnostic", gir_method_property_result.output,
+      property_guard_parts())
 
     let gir_strict_property_result = run_gene(@["run", "--strict-nil", gir_path, "strict-prop"])
     check gir_strict_property_result.exitCode != 0

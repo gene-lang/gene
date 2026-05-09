@@ -2,9 +2,14 @@
 # Program args:
 #   declare        -> fail at typed local declaration boundary
 #   assign         -> fail at typed local assignment boundary
+#   inherited-local -> fail at inherited lexical local assignment boundary
+#   update-local   -> fail at optimized typed local update boundary
+#   strict-local   -> fail at typed local assignment with strict nil enabled
 #   prop-direct    -> fail at typed direct property assignment boundary
 #   prop-dynamic   -> fail at typed dynamic property assignment boundary
 #   prop-param     -> fail at typed property-parameter shorthand boundary
+#   inherited-prop -> fail at inherited typed property assignment boundary
+#   method-prop    -> fail at optimized method property-parameter boundary
 #   strict-prop    -> fail at typed property assignment with strict nil enabled
 #   default or omitted -> prove non-strict typed local/property nil compatibility,
 #                         property coercion, and untyped property behavior
@@ -13,6 +18,7 @@
 # Expected: direct property coercion ok
 # Expected: dynamic property coercion ok
 # Expected: property param coercion ok
+# Expected: non-instance member write ok
 # Expected: untyped property ok
 
 (fn fixture_string []
@@ -32,6 +38,16 @@
     (/x = 1)
     (/loose = "start")))
 
+(class ParentFixtureBox
+  (field x: Int))
+
+(class ChildFixtureBox < ParentFixtureBox)
+
+(class MethodPropertyParamBox
+  (field x: Int)
+  (method set_x [/x]
+    nil))
+
 (fn fixture_bad_local_declaration []
   (var local_value: Int (fixture_string))
   local_value)
@@ -39,6 +55,22 @@
 (fn fixture_bad_local_assignment []
   (var local_value: Int 1)
   (local_value = (fixture_string))
+  local_value)
+
+(fn fixture_bad_inherited_local_assignment []
+  (var local_value: Int 1)
+  (fn inner []
+    (local_value = (fixture_string)))
+  (inner)
+  local_value)
+
+(fn fixture_bad_local_update []
+  (var local_value: Int 1)
+  (local_value += 2.5)
+  local_value)
+
+(fn fixture_bad_strict_local_nil []
+  (var local_value: Int nil)
   local_value)
 
 (fn fixture_bad_property_direct []
@@ -53,6 +85,16 @@
 
 (fn fixture_bad_property_param []
   (new FixtureBox ^score (fixture_string)))
+
+(fn fixture_bad_inherited_property []
+  (var box (new ChildFixtureBox))
+  (box/x = (fixture_string))
+  box/x)
+
+(fn fixture_bad_method_property_param []
+  (var box (new MethodPropertyParamBox))
+  (box .set_x (fixture_string))
+  box/x)
 
 (fn fixture_bad_strict_property_nil []
   (var box (new FixtureBox ^score 1))
@@ -97,6 +139,14 @@
   else
     "property param coercion missing"))
 
+(fn fixture_non_instance_member_write []
+  (var values {})
+  ($set values (@ "x") (fixture_string))
+  (if (((@ "x") values) == (fixture_string))
+    "non-instance member write ok"
+  else
+    "non-instance member write missing"))
+
 (fn fixture_untyped_property_acceptance []
   (var box (new FixtureBox ^score 1))
   (box/loose = 42)
@@ -115,12 +165,22 @@
   (fixture_bad_local_declaration)
 elif (mode == "assign")
   (fixture_bad_local_assignment)
+elif (mode == "inherited-local")
+  (fixture_bad_inherited_local_assignment)
+elif (mode == "update-local")
+  (fixture_bad_local_update)
+elif (mode == "strict-local")
+  (fixture_bad_strict_local_nil)
 elif (mode == "prop-direct")
   (fixture_bad_property_direct)
 elif (mode == "prop-dynamic")
   (fixture_bad_property_dynamic)
 elif (mode == "prop-param")
   (fixture_bad_property_param)
+elif (mode == "inherited-prop")
+  (fixture_bad_inherited_property)
+elif (mode == "method-prop")
+  (fixture_bad_method_property_param)
 elif (mode == "strict-prop")
   (fixture_bad_strict_property_nil)
 else
@@ -129,4 +189,5 @@ else
   (println (fixture_direct_property_coercion))
   (println (fixture_dynamic_property_coercion))
   (println (fixture_property_param_coercion))
+  (println (fixture_non_instance_member_write))
   (println (fixture_untyped_property_acceptance)))

@@ -468,6 +468,8 @@ proc validate_enum_payload_types(member: EnumMember, payload: var seq[Value], co
                   enum_payload_slot_label(member, i) & ": TypeId " & $type_id & " is unavailable")
 
     var item = payload[i]
+    if item == NIL:
+      continue
     var warning = ""
     {.cast(gcsafe).}:
       warning = validate_or_coerce_type(item, type_id, member.field_type_descs,

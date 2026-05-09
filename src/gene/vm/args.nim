@@ -43,6 +43,14 @@ proc property_assignment_guard_context*(site: string): GuardContext {.inline.} =
     consumer: "property",
     site: site)
 
+proc resolve_property_type(cls: Class, key: Key): tuple[found: bool, type_id: TypeId, type_descs: seq[TypeDesc]] =
+  var current = cls
+  while current != nil:
+    if current.prop_types.hasKey(key):
+      return (true, current.prop_types[key], current.prop_type_descs)
+    current = current.parent
+  (false, NO_TYPE_ID, @[])
+
 proc validate_property_assignment*(instance: Value, key: Key, value: var Value,
                                    type_check: bool, strict_nil: bool,
                                    location: string) {.inline.} =
@@ -54,14 +62,17 @@ proc validate_property_assignment*(instance: Value, key: Key, value: var Value,
   if instance.kind != VkInstance:
     return
   let cls = instance.instance_class
-  if cls == nil or key notin cls.prop_types:
+  if cls == nil:
     return
-  let expected_type_id = cls.prop_types[key]
-  if expected_type_id == NO_TYPE_ID or cls.prop_type_descs.len == 0:
+  let resolved = resolve_property_type(cls, key)
+  if not resolved.found:
+    return
+  let expected_type_id = resolved.type_id
+  if expected_type_id == NO_TYPE_ID or resolved.type_descs.len == 0:
     return
   if value == NIL and not strict_nil:
     return
-  let warning = validate_or_coerce_type(value, expected_type_id, cls.prop_type_descs,
+  let warning = validate_or_coerce_type(value, expected_type_id, resolved.type_descs,
     "property " & key_to_name(key), location, strict_nil = strict_nil,
     context = property_assignment_guard_context(location))
   emit_type_warning(warning)

@@ -222,6 +222,9 @@ proc validate_enum_payload_fields(self: ptr VirtualMachine, member: EnumMember,
                   enum_payload_slot_label(member, i) & ": TypeId " & $type_id & " is unavailable")
 
     var value = payload[i]
+    if value == NIL and not self.strict_nil:
+      payload[i] = value
+      continue
     let location = self.runtime_type_error_location()
     let warning = validate_or_coerce_type(value, type_id, member.field_type_descs,
       enum_payload_type_label(qualified_name, member, i), location,
@@ -2441,6 +2444,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 when DEBUG_VM:
                   vm_log(LlDebug, VmExecLogger, fmt"  Function name = {f.name}, has compiled body = {load_published_body(f) != nil}")
                 let compiled = require_published_body(f)
+                let arg_context = callable_argument_guard_context()
                 when DEBUG_VM:
                   vm_log(LlDebug, VmExecLogger, "  After compile, scope_tracker.mappings = " & $f.scope_tracker.mappings)
 
@@ -2471,10 +2475,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                   # For methods, the matcher includes self as a parameter
                   # So we should pass ALL arguments including self
                   if is_method_frame(frame):
-                    process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                    process_args(f.matcher, frame.args, frame.scope, arg_context)
                   elif f.matcher.has_type_annotations:
                     # Type-annotated functions must go through process_args for runtime type validation
-                    process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                    process_args(f.matcher, frame.args, frame.scope, arg_context)
                   else:
                     # Optimization: Fast paths for common argument patterns
                     if frame.args.kind == VkGene:
@@ -2499,10 +2503,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                             frame.scope.members[idx] = frame.args.gene.children[0]
                           else:
                             # Fall back to normal processing if we can't find the index
-                            process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                            process_args(f.matcher, frame.args, frame.scope, arg_context)
                         else:
                           # Complex matcher - use normal processing
-                          process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                          process_args(f.matcher, frame.args, frame.scope, arg_context)
 
                       # Two-argument optimization
                       elif arg_count == 2 and param_count == 2:
@@ -2535,17 +2539,17 @@ proc exec*(self: ptr VirtualMachine): Value =
                             frame.scope.members[idx2] = frame.args.gene.children[1]
                           else:
                             # Fall back if we can't find indices
-                            process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                            process_args(f.matcher, frame.args, frame.scope, arg_context)
                         else:
                           # Complex matcher - use normal processing
-                          process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                          process_args(f.matcher, frame.args, frame.scope, arg_context)
 
                       else:
                         # Regular function call - 3+ args or mismatched counts
-                        process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                        process_args(f.matcher, frame.args, frame.scope, arg_context)
                     else:
                       # Non-gene args - use normal processing
-                      process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                      process_args(f.matcher, frame.args, frame.scope, arg_context)
 
                 # If this is an async function, set up exception handler
                 if f.async:
@@ -2568,6 +2572,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 # Handle macro-like function (VkFunction with is_macro_like=true)
                 let f = frame.target.ref.fn
                 let compiled = require_published_body(f)
+                let arg_context = callable_argument_guard_context()
 
                 self.pc.inc()
                 # Pop the VkFrame value from the stack before switching context
@@ -2582,7 +2587,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
                 # Process arguments if matcher exists
                 if not f.matcher.is_empty():
-                  process_args(f.matcher, frame.args, frame.scope, callable_argument_guard_context())
+                  process_args(f.matcher, frame.args, frame.scope, arg_context)
 
                 self.pc = 0
                 inst = self.cu.instructions[self.pc].addr
@@ -6408,6 +6413,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                     while scope.members.len <= arg_idx:
                       scope.members.add(NIL)
                     scope.members[arg_idx] = arg
+                  assign_property_params(f.matcher, scope, obj)
                 else:
                   let args_arr = [obj, arg]
                   process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 2, false, scope, callable_argument_guard_context())
@@ -6564,6 +6570,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                     while scope.members.len <= arg2_idx:
                       scope.members.add(NIL)
                     scope.members[arg2_idx] = arg2
+                  assign_property_params(f.matcher, scope, obj)
                 else:
                   let args_arr = [obj, arg1, arg2]
                   process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 3, false, scope, callable_argument_guard_context())
