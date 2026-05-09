@@ -12,6 +12,60 @@ proc resolve_property_instance(scope: Scope): Value =
       return scope.members[idx.int]
   NIL
 
+proc key_to_name(key: Key): string {.inline.} =
+  try:
+    result = cast[Value](key).str
+  except CatchableError:
+    result = "<keyword>"
+
+proc current_type_check(): bool {.inline.} =
+  VM != nil and VM.type_check
+
+proc current_strict_nil(): bool {.inline.} =
+  VM != nil and VM.strict_nil
+
+proc current_type_error_location(): string {.inline.} =
+  if VM == nil or VM.cu == nil:
+    return ""
+  var trace: SourceTrace = nil
+  if VM.pc >= 0 and VM.pc < VM.cu.instruction_traces.len:
+    trace = VM.cu.instruction_traces[VM.pc]
+  if trace == nil and VM.cu.trace_root != nil:
+    trace = VM.cu.trace_root
+  trace_location(trace)
+
+proc property_assignment_guard_context*(site: string): GuardContext {.inline.} =
+  ## Build the explicit guard context used for typed instance property writes.
+  GuardContext(
+    enabled: true,
+    phase: GpProperty,
+    producer: "assignment",
+    consumer: "property",
+    site: site)
+
+proc validate_property_assignment*(instance: Value, key: Key, value: var Value,
+                                   type_check: bool, strict_nil: bool,
+                                   location: string) {.inline.} =
+  ## Validate and coerce typed instance property assignment through the shared
+  ## runtime guard path. Untyped properties, non-instance targets, missing class
+  ## metadata, and non-strict nil preserve the legacy fast/compatible paths.
+  if not type_check:
+    return
+  if instance.kind != VkInstance:
+    return
+  let cls = instance.instance_class
+  if cls == nil or key notin cls.prop_types:
+    return
+  let expected_type_id = cls.prop_types[key]
+  if expected_type_id == NO_TYPE_ID or cls.prop_type_descs.len == 0:
+    return
+  if value == NIL and not strict_nil:
+    return
+  let warning = validate_or_coerce_type(value, expected_type_id, cls.prop_type_descs,
+    "property " & key_to_name(key), location, strict_nil = strict_nil,
+    context = property_assignment_guard_context(location))
+  emit_type_warning(warning)
+
 proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instance: Value = NIL) =
   ## Assign shorthand property parameters (e.g. [/x]) directly onto the instance.
   if matcher.is_nil or scope.is_nil or matcher.children.len == 0:
@@ -24,9 +78,14 @@ proc assign_property_params*(matcher: RootMatcher, scope: Scope, explicit_instan
   if instance.kind != VkInstance:
     return
 
+  let type_check = matcher.type_check and current_type_check()
+  let strict_nil = current_strict_nil()
+  let location = current_type_error_location()
   for i, param in matcher.children:
     if param.is_prop and i < scope.members.len:
-      let value = scope.members[i]
+      var value = scope.members[i]
+      validate_property_assignment(instance, param.name_key, value,
+        type_check, strict_nil, location)
       if value.kind != VkNil:
         instance_props(instance)[param.name_key] = value
 
@@ -43,25 +102,6 @@ template ensure_scope_capacity(scope: Scope, count: int) =
     scope.members.setLen(count)
     for idx in old_len..<count:
       scope.members[idx] = NIL
-
-proc key_to_name(key: Key): string {.inline.} =
-  try:
-    result = cast[Value](key).str
-  except CatchableError:
-    result = "<keyword>"
-
-proc current_strict_nil(): bool {.inline.} =
-  VM != nil and VM.strict_nil
-
-proc current_type_error_location(): string {.inline.} =
-  if VM == nil or VM.cu == nil:
-    return ""
-  var trace: SourceTrace = nil
-  if VM.pc >= 0 and VM.pc < VM.cu.instruction_traces.len:
-    trace = VM.cu.instruction_traces[VM.pc]
-  if trace == nil and VM.cu.trace_root != nil:
-    trace = VM.cu.trace_root
-  trace_location(trace)
 
 proc callable_argument_guard_context*(): GuardContext {.inline.} =
   ## Build the explicit guard context used for function-call argument validation.

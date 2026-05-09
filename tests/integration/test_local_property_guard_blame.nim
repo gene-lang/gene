@@ -5,8 +5,14 @@ import gene/compiler
 import gene/gir
 
 const LocalPropertyGuardFixture = "testsuite/02-types/types/22_local_property_guard_blame.gene"
+const StrictNilAllowedTargets = "Any, Nil, Option[T], or unions containing Nil"
 const ExpectedFixtureLines = @[
   "default local nil ok",
+  "default property nil ok",
+  "direct property coercion ok",
+  "dynamic property coercion ok",
+  "property param coercion ok",
+  "untyped property ok",
 ]
 
 var cachedGeneBin = ""
@@ -57,6 +63,22 @@ proc local_guard_parts(got_text = "got String"): seq[string] = @[
   "site=",
 ]
 
+proc property_guard_parts(prop_name = "x", expected_type = "Int", got_text = "got String"): seq[string] = @[
+  "GENE_TYPE_MISMATCH",
+  "expected " & expected_type,
+  got_text,
+  "property " & prop_name,
+  "phase=property",
+  "producer=assignment",
+  "consumer=property",
+  "site=",
+]
+
+proc strict_property_guard_parts(): seq[string] =
+  result = property_guard_parts("x", "Int", "got Nil")
+  result.add("strict nil mode")
+  result.add(StrictNilAllowedTargets)
+
 proc check_fixture_success(label: string, run_result: tuple[output: string, exitCode: int]) =
   checkpoint label & " output:\n" & run_result.output
   check run_result.exitCode == 0
@@ -88,7 +110,7 @@ suite "Local and property guard blame CLI/GIR":
     check_contains_all("source local assignment diagnostic", assignment_result.output,
       local_guard_parts())
 
-  test "tracked fixture proves source and loaded GIR local guard parity":
+  test "tracked fixture proves source and loaded GIR local/property guard parity":
     check fileExists(LocalPropertyGuardFixture)
 
     let source_default_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture])
@@ -103,6 +125,26 @@ suite "Local and property guard blame CLI/GIR":
     check source_assignment_result.exitCode != 0
     check_contains_all("source fixture local assignment diagnostic", source_assignment_result.output,
       local_guard_parts())
+
+    let source_property_direct_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "prop-direct"])
+    check source_property_direct_result.exitCode != 0
+    check_contains_all("source fixture direct property diagnostic", source_property_direct_result.output,
+      property_guard_parts())
+
+    let source_property_dynamic_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "prop-dynamic"])
+    check source_property_dynamic_result.exitCode != 0
+    check_contains_all("source fixture dynamic property diagnostic", source_property_dynamic_result.output,
+      property_guard_parts())
+
+    let source_property_param_result = run_gene(@["run", "--no-gir-cache", LocalPropertyGuardFixture, "prop-param"])
+    check source_property_param_result.exitCode != 0
+    check_contains_all("source fixture property parameter diagnostic", source_property_param_result.output,
+      property_guard_parts("score", "Float"))
+
+    let source_strict_property_result = run_gene(@["run", "--strict-nil", "--no-gir-cache", LocalPropertyGuardFixture, "strict-prop"])
+    check source_strict_property_result.exitCode != 0
+    check_contains_all("source fixture strict property diagnostic", source_strict_property_result.output,
+      strict_property_guard_parts())
 
     let out_dir = createTempDir("gene_local_property_guard_gir_", "")
     defer:
@@ -123,6 +165,26 @@ suite "Local and property guard blame CLI/GIR":
     check gir_assignment_result.exitCode != 0
     check_contains_all("loaded GIR fixture local assignment diagnostic", gir_assignment_result.output,
       local_guard_parts())
+
+    let gir_property_direct_result = run_gene(@["run", gir_path, "prop-direct"])
+    check gir_property_direct_result.exitCode != 0
+    check_contains_all("loaded GIR fixture direct property diagnostic", gir_property_direct_result.output,
+      property_guard_parts())
+
+    let gir_property_dynamic_result = run_gene(@["run", gir_path, "prop-dynamic"])
+    check gir_property_dynamic_result.exitCode != 0
+    check_contains_all("loaded GIR fixture dynamic property diagnostic", gir_property_dynamic_result.output,
+      property_guard_parts())
+
+    let gir_property_param_result = run_gene(@["run", gir_path, "prop-param"])
+    check gir_property_param_result.exitCode != 0
+    check_contains_all("loaded GIR fixture property parameter diagnostic", gir_property_param_result.output,
+      property_guard_parts("score", "Float"))
+
+    let gir_strict_property_result = run_gene(@["run", "--strict-nil", gir_path, "strict-prop"])
+    check gir_strict_property_result.exitCode != 0
+    check_contains_all("loaded GIR fixture strict property diagnostic", gir_strict_property_result.output,
+      strict_property_guard_parts())
 
   test "default nil acceptance remains compatible at local boundary":
     let eval_result = run_gene(@[

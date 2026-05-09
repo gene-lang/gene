@@ -83,6 +83,17 @@ proc expect_vm_strict_nil_mismatch(code: string, filename: string, expected_part
   check message.contains(StrictNilAllowedTargets)
   check message.contains("got Nil")
 
+proc property_guard_parts(got_text = "got String"): seq[string] = @[
+  TYPE_DIAG_MISMATCH_CODE,
+  "expected Int",
+  got_text,
+  "property x",
+  "phase=property",
+  "producer=assignment",
+  "consumer=property",
+  "site=",
+]
+
 suite "Strict nil policy":
   test "descriptor admissibility admits only explicit nil-capable targets":
     var descs = builtin_type_descs()
@@ -286,6 +297,57 @@ suite "Strict nil policy":
     ])
     check not assignment_message.contains("strict nil mode")
 
+  test "VM property mismatch diagnostics include property guard context":
+    let direct_message = expect_vm_type_mismatch("""
+      (class GuardedPoint
+        (field x: Int)
+        (ctor [] (/x = 1)))
+      (var point (new GuardedPoint))
+      (point/x = "oops")
+    """, "property_direct_mismatch.gene", strict_nil = false, property_guard_parts())
+    check not direct_message.contains("strict nil mode")
+
+    let dynamic_message = expect_vm_type_mismatch("""
+      (class GuardedPoint
+        (field x: Int)
+        (ctor [] (/x = 1)))
+      (fn property_name [] "x")
+      (var point (new GuardedPoint))
+      ($set point (@ (property_name)) "oops")
+    """, "property_dynamic_mismatch.gene", strict_nil = false, property_guard_parts())
+    check not dynamic_message.contains("strict nil mode")
+
+  test "default VM execution remains nil-compatible for typed properties":
+    let value = exec_gene("""
+      (class DefaultNilPoint
+        (field x: Int)
+        (ctor [] (/x = 1)))
+      (var point (new DefaultNilPoint))
+      (point/x = nil)
+      point/x
+    """, "strict_nil_default_property.gene")
+    check value == NIL
+    check VM.strict_nil == false
+
+  test "property parameter shorthand guards values and stores coerced values":
+    let coerced = exec_gene("""
+      (class Metric
+        (field x: Float)
+        (ctor [/x] nil))
+      (var metric (new Metric ^x 3))
+      metric/x
+    """, "property_param_coercion.gene")
+    check coerced.kind == VkFloat
+    check coerced.float == 3.0
+
+    let message = expect_vm_type_mismatch("""
+      (class GuardedPropertyParam
+        (field x: Int)
+        (ctor [/x] nil))
+      (new GuardedPropertyParam ^x "oops")
+    """, "property_param_mismatch.gene", strict_nil = false, property_guard_parts())
+    check not message.contains("strict nil mode")
+
   test "strict VM execution rejects nil at representative typed boundaries":
     expect_vm_strict_nil_mismatch("""
       (fn strict_arg [x: Int] x)
@@ -334,7 +396,15 @@ suite "Strict nil policy":
         (ctor [] (/x = 1)))
       (var point (new StrictNilPoint))
       (point/x = nil)
-    """, "strict_nil_property.gene", ["expected Int", "property x", "strict_nil_property.gene"])
+    """, "strict_nil_property.gene", [
+      "expected Int",
+      "property x",
+      "strict_nil_property.gene",
+      "phase=property",
+      "producer=assignment",
+      "consumer=property",
+      "site="
+    ])
 
   test "strict VM execution admits nil through compiled Any Nil Option and union descriptors":
     let value = exec_gene("""

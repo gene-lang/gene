@@ -1,12 +1,36 @@
-# Local/property guard blame fixture (local portion)
+# Local/property guard blame fixture
 # Program args:
-#   declare -> fail at typed local declaration boundary
-#   assign  -> fail at typed local assignment boundary
-#   default or omitted -> prove non-strict typed local nil compatibility
+#   declare        -> fail at typed local declaration boundary
+#   assign         -> fail at typed local assignment boundary
+#   prop-direct    -> fail at typed direct property assignment boundary
+#   prop-dynamic   -> fail at typed dynamic property assignment boundary
+#   prop-param     -> fail at typed property-parameter shorthand boundary
+#   strict-prop    -> fail at typed property assignment with strict nil enabled
+#   default or omitted -> prove non-strict typed local/property nil compatibility,
+#                         property coercion, and untyped property behavior
 # Expected: default local nil ok
+# Expected: default property nil ok
+# Expected: direct property coercion ok
+# Expected: dynamic property coercion ok
+# Expected: property param coercion ok
+# Expected: untyped property ok
 
 (fn fixture_string []
   "not-an-int")
+
+(fn fixture_property_name []
+  "x")
+
+(fn fixture_score_name []
+  "score")
+
+(class FixtureBox
+  (field x: Int)
+  (field score: Float)
+  (field loose)
+  (ctor [/score]
+    (/x = 1)
+    (/loose = "start")))
 
 (fn fixture_bad_local_declaration []
   (var local_value: Int (fixture_string))
@@ -17,12 +41,69 @@
   (local_value = (fixture_string))
   local_value)
 
+(fn fixture_bad_property_direct []
+  (var box (new FixtureBox ^score 1))
+  (box/x = (fixture_string))
+  box/x)
+
+(fn fixture_bad_property_dynamic []
+  (var box (new FixtureBox ^score 1))
+  ($set box (@ (fixture_property_name)) (fixture_string))
+  box/x)
+
+(fn fixture_bad_property_param []
+  (new FixtureBox ^score (fixture_string)))
+
+(fn fixture_bad_strict_property_nil []
+  (var box (new FixtureBox ^score 1))
+  (box/x = nil)
+  box/x)
+
 (fn fixture_default_local_nil []
   (var local_value: Int nil)
   (if (local_value == nil)
     "default local nil ok"
   else
     "default local nil missing"))
+
+(fn fixture_default_property_nil []
+  (var box (new FixtureBox ^score 1))
+  (box/x = nil)
+  (if (box/x == nil)
+    "default property nil ok"
+  else
+    "default property nil missing"))
+
+(fn fixture_direct_property_coercion []
+  (var box (new FixtureBox ^score 1))
+  (box/score = 4)
+  (if (box/score == 4.0)
+    "direct property coercion ok"
+  else
+    "direct property coercion missing"))
+
+(fn fixture_dynamic_property_coercion []
+  (var box (new FixtureBox ^score 1))
+  ($set box (@ (fixture_score_name)) 5)
+  (if (box/score == 5.0)
+    "dynamic property coercion ok"
+  else
+    "dynamic property coercion missing"))
+
+(fn fixture_property_param_coercion []
+  (var box (new FixtureBox ^score 6))
+  (if (box/score == 6.0)
+    "property param coercion ok"
+  else
+    "property param coercion missing"))
+
+(fn fixture_untyped_property_acceptance []
+  (var box (new FixtureBox ^score 1))
+  (box/loose = 42)
+  (if (box/loose == 42)
+    "untyped property ok"
+  else
+    "untyped property missing"))
 
 (var mode
   (if ((args .size) > 0)
@@ -34,5 +115,18 @@
   (fixture_bad_local_declaration)
 elif (mode == "assign")
   (fixture_bad_local_assignment)
+elif (mode == "prop-direct")
+  (fixture_bad_property_direct)
+elif (mode == "prop-dynamic")
+  (fixture_bad_property_dynamic)
+elif (mode == "prop-param")
+  (fixture_bad_property_param)
+elif (mode == "strict-prop")
+  (fixture_bad_strict_property_nil)
 else
-  (println (fixture_default_local_nil)))
+  (println (fixture_default_local_nil))
+  (println (fixture_default_property_nil))
+  (println (fixture_direct_property_coercion))
+  (println (fixture_dynamic_property_coercion))
+  (println (fixture_property_param_coercion))
+  (println (fixture_untyped_property_acceptance)))

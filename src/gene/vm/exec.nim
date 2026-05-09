@@ -911,16 +911,8 @@ proc exec*(self: ptr VirtualMachine): Value =
             target.ref.class.ns[name] = value
           of VkInstance:
             guard_deep_frozen_write(target, "IkSetMember")
-            # Check property type if class has type annotations
-            if self.type_check:
-              let cls = target.instance_class
-              if cls != nil and name in cls.prop_types:
-                let expected_type_id = cls.prop_types[name]
-                if expected_type_id != NO_TYPE_ID and cls.prop_type_descs.len > 0 and (value != NIL or self.strict_nil):
-                  let prop_name = get_symbol((cast[uint64](name) and PAYLOAD_MASK).int)
-                  let warning = validate_or_coerce_type(value, expected_type_id, cls.prop_type_descs,
-                    "property " & prop_name, self.runtime_type_error_location(), strict_nil = self.strict_nil)
-                  emit_type_warning(warning)
+            validate_property_assignment(target, name, value, self.type_check,
+              self.strict_nil, self.runtime_type_error_location())
             instance_props(target)[name] = value
           of VkAdapter:
             adapter_set_member(target.ref.adapter, name, value)
@@ -965,6 +957,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               target.ref.class.ns[key] = value
             of VkInstance:
               guard_deep_frozen_write(target, "IkSetMemberDynamic")
+              validate_property_assignment(target, key, value, self.type_check,
+                self.strict_nil, self.runtime_type_error_location())
               instance_props(target)[key] = value
             of VkAdapter:
               adapter_set_member(target.ref.adapter, key, value)
