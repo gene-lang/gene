@@ -145,6 +145,14 @@ suite "Strict nil policy":
     check value == NIL
     check VM.strict_nil == false
 
+  test "default VM execution remains nil-compatible for typed Int locals":
+    let value = exec_gene("""
+      (var local_value: Int nil)
+      local_value
+    """, "strict_nil_default_local.gene")
+    check value == NIL
+    check VM.strict_nil == false
+
   test "VM argument mismatch diagnostics include callable guard context":
     let simple_message = expect_vm_type_mismatch("""
       (fn wrong_arg [x: Int] x)
@@ -248,6 +256,36 @@ suite "Strict nil policy":
     ])
     check not message.contains("strict nil mode")
 
+  test "VM local mismatch diagnostics include local guard context":
+    let declaration_message = expect_vm_type_mismatch("""
+      (var local_value: Int "oops")
+    """, "local_declaration_mismatch.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in variable",
+      "phase=local",
+      "producer=assignment",
+      "consumer=local",
+      "site="
+    ])
+    check not declaration_message.contains("strict nil mode")
+
+    let assignment_message = expect_vm_type_mismatch("""
+      (fn assign_bad []
+        (var local_value: Int 1)
+        (local_value = "oops"))
+      (assign_bad)
+    """, "local_assignment_mismatch.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in variable",
+      "phase=local",
+      "producer=assignment",
+      "consumer=local",
+      "site="
+    ])
+    check not assignment_message.contains("strict nil mode")
+
   test "strict VM execution rejects nil at representative typed boundaries":
     expect_vm_strict_nil_mismatch("""
       (fn strict_arg [x: Int] x)
@@ -276,7 +314,15 @@ suite "Strict nil policy":
 
     let local_message = expect_vm_type_mismatch("""
       (var local_value: Int nil)
-    """, "strict_nil_local.gene", strict_nil = true, ["expected Int", "in variable", "strict_nil_local.gene"])
+    """, "strict_nil_local.gene", strict_nil = true, [
+      "expected Int",
+      "in variable",
+      "strict_nil_local.gene",
+      "phase=local",
+      "producer=assignment",
+      "consumer=local",
+      "site="
+    ])
     check local_message.contains("strict nil mode")
     check local_message.contains(StrictNilAllowedTargets)
     check local_message.contains("got Nil")

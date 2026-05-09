@@ -21,6 +21,14 @@ proc runtime_type_error_location(self: ptr VirtualMachine): string {.inline.} =
     trace = self.cu.trace_root
   trace_location(trace)
 
+proc local_guard_context(site: string): GuardContext {.inline.} =
+  GuardContext(
+    enabled: true,
+    phase: GpLocal,
+    producer: "assignment",
+    consumer: "local",
+    site: site)
+
 proc validate_local_type_constraint(self: ptr VirtualMachine, tracker: ScopeTracker, index: int,
                                     value: Value, context = "variable") {.inline.} =
   if self == nil or tracker == nil or not self.type_check:
@@ -32,8 +40,9 @@ proc validate_local_type_constraint(self: ptr VirtualMachine, tracker: ScopeTrac
     return
   if value == NIL and not self.strict_nil:
     return
+  let location = self.runtime_type_error_location()
   validate_type(value, expected_id, self.cu.type_descriptors, context,
-    self.runtime_type_error_location(), strict_nil = self.strict_nil)
+    location, strict_nil = self.strict_nil, context = local_guard_context(location))
 
 proc validate_return_type_constraint(self: ptr VirtualMachine, value: var Value) {.inline.} =
   if self == nil or not self.type_check:

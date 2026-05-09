@@ -1,0 +1,38 @@
+# Local/property guard blame fixture (local portion)
+# Program args:
+#   declare -> fail at typed local declaration boundary
+#   assign  -> fail at typed local assignment boundary
+#   default or omitted -> prove non-strict typed local nil compatibility
+# Expected: default local nil ok
+
+(fn fixture_string []
+  "not-an-int")
+
+(fn fixture_bad_local_declaration []
+  (var local_value: Int (fixture_string))
+  local_value)
+
+(fn fixture_bad_local_assignment []
+  (var local_value: Int 1)
+  (local_value = (fixture_string))
+  local_value)
+
+(fn fixture_default_local_nil []
+  (var local_value: Int nil)
+  (if (local_value == nil)
+    "default local nil ok"
+  else
+    "default local nil missing"))
+
+(var mode
+  (if ((args .size) > 0)
+    args/0
+  else
+    "default"))
+
+(if (mode == "declare")
+  (fixture_bad_local_declaration)
+elif (mode == "assign")
+  (fixture_bad_local_assignment)
+else
+  (println (fixture_default_local_nil)))

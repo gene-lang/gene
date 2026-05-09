@@ -440,8 +440,9 @@ proc exec*(self: ptr VirtualMachine): Value =
           not_allowed("IkVar: scope is nil")
         # Type check: first from instruction arg1, then from scope tracker metadata.
         if inst.arg1 != NO_TYPE_ID and self.type_check and (value != NIL or self.strict_nil) and self.cu != nil and self.cu.type_descriptors.len > 0:
+          let location = self.runtime_type_error_location()
           validate_type(value, inst.arg1.TypeId, self.cu.type_descriptors, "variable",
-            self.runtime_type_error_location(), strict_nil = self.strict_nil)
+            location, strict_nil = self.strict_nil, context = local_guard_context(location))
         else:
           self.validate_local_type_constraint(self.frame.scope.tracker, index, value)
         # Ensure the scope has enough space for the index

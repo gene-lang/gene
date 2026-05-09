@@ -11,6 +11,7 @@ from ./types/runtime_types import
   validate_or_coerce_type,
   GuardContext,
   GpReturn,
+  GpLocal,
   emit_type_warning,
   is_compatible,
   runtime_type_name,
