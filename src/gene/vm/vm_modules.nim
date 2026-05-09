@@ -159,11 +159,11 @@ proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran
     let args = @[module_ns.to_value()]
     if not f.matcher.is_empty():
       if args.len == 0:
-        process_args_zero(f.matcher, module_scope)
+        process_args_zero(f.matcher, module_scope, callable_argument_guard_context())
       elif args.len == 1:
-        process_args_one(f.matcher, args[0], module_scope)
+        process_args_one(f.matcher, args[0], module_scope, callable_argument_guard_context())
       else:
-        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, module_scope)
+        process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, module_scope, callable_argument_guard_context())
 
     let new_frame = new_frame()
     new_frame.kind = FkFunction

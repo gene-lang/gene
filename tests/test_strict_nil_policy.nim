@@ -61,6 +61,22 @@ proc expect_vm_type_mismatch(code: string, filename: string, strict_nil: bool,
       VM.strict_nil = false
   check raised
 
+proc expect_vm_error(code: string, filename: string, expected_parts: openArray[string]): string =
+  reset_runtime(false)
+  var raised = false
+  try:
+    discard VM.exec(code.strip(), filename)
+  except CatchableError as e:
+    raised = true
+    result = e.msg
+    checkpoint result
+    for part in expected_parts:
+      check result.contains(part)
+  finally:
+    if VM != nil:
+      VM.strict_nil = false
+  check raised
+
 proc expect_vm_strict_nil_mismatch(code: string, filename: string, expected_parts: openArray[string]) =
   let message = expect_vm_type_mismatch(code, filename, strict_nil = true, expected_parts)
   check message.contains("strict nil mode")
@@ -157,6 +173,65 @@ suite "Strict nil policy":
       "site="
     ])
     check not regular_message.contains("strict nil mode")
+
+  test "secondary VM argument mismatch diagnostics include callable guard context":
+    let keyword_message = expect_vm_type_mismatch("""
+      (fn wrong_arg_keyword [^limit: Int] limit)
+      (wrong_arg_keyword ^limit "oops")
+    """, "arg_mismatch_keyword.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in limit",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site="
+    ])
+    check not keyword_message.contains("strict nil mode")
+
+    let callable_method_message = expect_vm_type_mismatch("""
+      (class CallableTarget
+        (method call [^value: Int] value))
+      (var target (new CallableTarget))
+      (target ^value "oops")
+    """, "arg_mismatch_callable_method.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in value",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site="
+    ])
+    check not callable_method_message.contains("strict nil mode")
+
+    let super_method_message = expect_vm_type_mismatch("""
+      (class Base
+        (method take [x: Int] x))
+      (class Child < Base
+        (method call_super [x]
+          (super .take x)))
+      ((new Child) .call_super "oops")
+    """, "arg_mismatch_super_method.gene", strict_nil = false, [
+      "expected Int",
+      "got String",
+      "in x",
+      "phase=argument",
+      "producer=caller",
+      "consumer=function",
+      "site="
+    ])
+    check not super_method_message.contains("strict nil mode")
+
+    let block_message = expect_vm_error("""
+      (var b (block [x y] x))
+      (b "oops")
+    """, "arg_mismatch_block.gene", [
+      "Expected 2 arguments, got 1"
+    ])
+    check not block_message.contains("phase=argument")
+    check not block_message.contains("producer=caller")
+    check not block_message.contains("consumer=function")
 
   test "VM return mismatch diagnostics include callable guard context":
     let message = expect_vm_type_mismatch("""

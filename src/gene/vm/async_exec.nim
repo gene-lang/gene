@@ -37,7 +37,7 @@ proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: V
       scope = new_scope(f.scope_tracker, f.parent_scope)
       # Process the single argument
       var args_arr = [arg]
-      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope)
+      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope, callable_argument_guard_context())
 
     # Create new frame
     var new_frame = new_frame()
@@ -67,6 +67,7 @@ proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: V
     else:
       scope = new_scope(blk.scope_tracker, blk.frame.scope)
       var args_arr = [arg]
+      # Block callbacks are not S02 typed Function boundaries; keep no-context diagnostics.
       process_args_direct(blk.matcher, cast[ptr UncheckedArray[Value]](args_arr[0].addr), 1, false, scope)
 
     var new_frame = new_frame()

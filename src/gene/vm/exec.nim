@@ -2536,6 +2536,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
                 # Process arguments if matcher exists
                 if not b.matcher.is_empty():
+                  # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
                   process_args(b.matcher, frame.args, frame.scope)
 
                 self.pc = 0
@@ -5074,6 +5075,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           new_frame.scope = scope
           new_frame.args = new_gene_value()
           if not b.matcher.is_empty():
+            # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
             process_args_zero(b.matcher, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()
@@ -5262,6 +5264,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           new_frame.args = new_gene_value()
           new_frame.args.gene.children.add(arg)
           if not b.matcher.is_empty():
+            # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
             process_args_one(b.matcher, arg, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()
@@ -5505,6 +5508,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           for arg in args:
             new_frame.args.gene.children.add(arg)
           if not b.matcher.is_empty():
+            # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
             process_args_direct(b.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()
@@ -5774,6 +5778,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             new_frame.args.gene.children.add(arg)
           if not b.matcher.is_empty():
             let args_ptr = if args.len > 0: cast[ptr UncheckedArray[Value]](args[0].addr) else: nil
+            # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
             process_args_direct_kw(b.matcher, args_ptr, args.len, kw_pairs, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()
@@ -5922,6 +5927,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           for arg in args:
             new_frame.args.gene.children.add(arg)
           if not b.matcher.is_empty():
+            # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
             process_args_direct(b.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
           new_frame.caller_frame = self.frame
           self.frame.ref_count.inc()

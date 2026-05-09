@@ -74,11 +74,11 @@ proc unified_call_dispatch*(vm: ptr VirtualMachine, callable: Callable,
       # OPTIMIZATION: Direct argument processing for tail calls
       if not f.matcher.is_empty():
         if final_args.len == 0:
-          process_args_zero(f.matcher, vm.frame.scope)
+          process_args_zero(f.matcher, vm.frame.scope, callable_argument_guard_context())
         elif final_args.len == 1:
-          process_args_one(f.matcher, final_args[0], vm.frame.scope)
+          process_args_one(f.matcher, final_args[0], vm.frame.scope, callable_argument_guard_context())
         else:
-          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, vm.frame.scope)
+          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, vm.frame.scope, callable_argument_guard_context())
       # No need to set vm.frame.args for optimized tail calls
 
       # Jump to beginning of new function
@@ -108,11 +108,11 @@ proc unified_call_dispatch*(vm: ptr VirtualMachine, callable: Callable,
       # OPTIMIZATION: Direct argument processing without Gene objects
       if not f.matcher.is_empty():
         if final_args.len == 0:
-          process_args_zero(f.matcher, new_frame.scope)
+          process_args_zero(f.matcher, new_frame.scope, callable_argument_guard_context())
         elif final_args.len == 1:
-          process_args_one(f.matcher, final_args[0], new_frame.scope)
+          process_args_one(f.matcher, final_args[0], new_frame.scope, callable_argument_guard_context())
         else:
-          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, new_frame.scope)
+          process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](final_args[0].addr), final_args.len, false, new_frame.scope, callable_argument_guard_context())
       # No need to set new_frame.args for optimized argument processing
 
       # Switch to new frame and execute
@@ -151,6 +151,7 @@ proc unified_call_dispatch*(vm: ptr VirtualMachine, callable: Callable,
 
     # Process arguments if matcher exists
     if not blk.matcher.is_empty():
+      # Blocks are not S02 typed Function boundaries; keep legacy no-context diagnostics.
       process_args(blk.matcher, args_gene, new_frame.scope)
 
     # Switch to new frame and execute
@@ -321,9 +322,9 @@ proc call_instance_method(self: ptr VirtualMachine, instance: Value, method_name
       if all_args.len > 0:
         let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
         if kw_pairs.len > 0:
-          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope, callable_argument_guard_context())
         else:
-          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
+          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope, callable_argument_guard_context())
 
     var new_frame = new_frame()
     new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
@@ -427,9 +428,9 @@ proc call_super_method_resolved(self: ptr VirtualMachine, parent_class: Class, i
       if all_args.len > 0:
         let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
         if kw_pairs.len > 0:
-          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope, callable_argument_guard_context())
         else:
-          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
+          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope, callable_argument_guard_context())
 
     var new_frame = new_frame()
     new_frame.kind = FkMethod
@@ -520,9 +521,9 @@ proc invoke_method_value(self: ptr VirtualMachine, value: Value, meth: Method,
       if all_args.len > 0:
         let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
         if kw_pairs.len > 0:
-          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+          process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope, callable_argument_guard_context())
         else:
-          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope)
+          process_args_direct(f.matcher, args_ptr, all_args.len, false, scope, callable_argument_guard_context())
 
     var new_frame = new_frame()
     new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
@@ -889,9 +890,9 @@ proc call_super_constructor(self: ptr VirtualMachine, parent_class: Class, insta
         else:
           cast[ptr UncheckedArray[Value]](nil)
       if kw_pairs.len > 0:
-        process_args_direct_kw(f.matcher, args_ptr, user_args.len, kw_pairs, scope)
+        process_args_direct_kw(f.matcher, args_ptr, user_args.len, kw_pairs, scope, callable_argument_guard_context())
       else:
-        process_args_direct(f.matcher, args_ptr, user_args.len, false, scope)
+        process_args_direct(f.matcher, args_ptr, user_args.len, false, scope, callable_argument_guard_context())
       assign_property_params(f.matcher, scope, instance)
 
     var new_frame = new_frame()

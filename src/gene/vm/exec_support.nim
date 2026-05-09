@@ -54,11 +54,11 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
   # OPTIMIZATION: Direct argument processing for exec_function
   if not f.matcher.is_empty():
     if args.len == 0:
-      process_args_zero(f.matcher, scope)
+      process_args_zero(f.matcher, scope, callable_argument_guard_context())
     elif args.len == 1:
-      process_args_one(f.matcher, args[0], scope)
+      process_args_one(f.matcher, args[0], scope, callable_argument_guard_context())
     else:
-      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope, callable_argument_guard_context())
 
   # Set frame.args so IkSelf can access arguments (especially self in methods)
   let args_gene = new_gene_value()
@@ -109,7 +109,7 @@ proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args
     all_args[0] = instance
     for i, arg in args:
       all_args[i + 1] = arg
-    process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope)
+    process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](all_args[0].addr), all_args.len, false, scope, callable_argument_guard_context())
 
   # Create a new frame for the method
   let new_frame = new_frame()
@@ -176,7 +176,7 @@ proc exec_method_kw_impl(self: ptr VirtualMachine, fn: Value, instance: Value, a
 
   if not f.matcher.is_empty():
     let args_ptr = cast[ptr UncheckedArray[Value]](all_args[0].addr)
-    process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope)
+    process_args_direct_kw(f.matcher, args_ptr, all_args.len, kw_pairs, scope, callable_argument_guard_context())
 
   let new_frame = new_frame()
   new_frame.kind = if f.is_macro_like: FkMacroMethod else: FkMethod
@@ -267,6 +267,7 @@ proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value])
     new_frame.args = args_gene
 
     if not blk.matcher.is_empty():
+      # Blocks are callable values but not S02 typed Function boundaries; keep legacy no-context diagnostics.
       process_args(blk.matcher, args_gene, new_frame.scope)
 
     self.frame = new_frame
@@ -299,11 +300,11 @@ proc exec_function_with_self*(self: ptr VirtualMachine, fn: Value, self_value: V
     scope = new_scope(f.scope_tracker, f.parent_scope)
     # Only pass actual args to the matcher (NOT self_value)
     if args.len == 0:
-      process_args_zero(f.matcher, scope)
+      process_args_zero(f.matcher, scope, callable_argument_guard_context())
     elif args.len == 1:
-      process_args_one(f.matcher, args[0], scope)
+      process_args_one(f.matcher, args[0], scope, callable_argument_guard_context())
     else:
-      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope)
+      process_args_direct(f.matcher, cast[ptr UncheckedArray[Value]](args[0].addr), args.len, false, scope, callable_argument_guard_context())
 
   let new_frame = new_frame()
   new_frame.kind = FkFunction
@@ -371,10 +372,11 @@ proc exec_callable_with_self*(self: ptr VirtualMachine, callable: Value, self_va
     new_frame.args = args_gene
 
     if not blk.matcher.is_empty():
-      # Only pass actual args (not self) to matcher
+      # Blocks remain no-context for S02; only pass actual args (not self) to matcher.
       var matcher_args = new_gene_value()
       for arg in args:
         matcher_args.gene.children.add(arg)
+      # Blocks remain no-context for S02; this matcher is not a typed Function boundary.
       process_args(blk.matcher, matcher_args, new_frame.scope)
 
     self.frame = new_frame
@@ -431,7 +433,7 @@ proc exec_generator_impl*(self: ptr VirtualMachine, gen: GeneratorObj): Value {.
 
       # Process arguments through matcher if needed
       if not gen.function.matcher.is_empty():
-        process_args(gen.function.matcher, args_gene.to_gene_value(), scope)
+        process_args(gen.function.matcher, args_gene.to_gene_value(), scope, callable_argument_guard_context())
 
     # Initialize execution state
     gen.pc = 0

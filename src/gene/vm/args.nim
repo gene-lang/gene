@@ -302,6 +302,7 @@ proc append_bound_values_for_children(children: seq[Matcher], input: Value, out_
 
   let level_scope = new_scope(new_scope_tracker())
   try:
+    # Destructuring matcher binding is not an S02 callable Function boundary; keep default no-context diagnostics.
     process_args_core(matcher, pos_ptr, positional.len, keywords, level_scope)
     for i, param in matcher.children:
       let bound =
