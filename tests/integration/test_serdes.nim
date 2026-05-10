@@ -628,6 +628,36 @@ test "Serdes: tuple tree serialization roundtrips recursive tuple payloads":
       check serialized_child.contains("TupleValue")
       check serialized_child.contains("TupleRef")
 
+test "Serdes: tree array manifests reject unsafe child ids before path resolution":
+  init_all()
+  init_serdes()
+  let root_path = fresh_s05_tree_path("unsafe-array-child")
+  let outside_path = joinPath(parentDir(root_path), "outside.gene")
+  createDir(root_path)
+  writeFile(joinPath(root_path, "_genearray.gene"), "[\"../outside\"]")
+  writeFile(outside_path, "123")
+
+  defer:
+    remove_s05_tree(root_path)
+    if fileExists(outside_path):
+      removeFile(outside_path)
+
+  var raised = false
+  var message = ""
+  try:
+    discard VM.exec(cleanup("""
+      (gene/serdes/read_tree "$ROOT")
+    """).replace("$ROOT", root_path), "serdes_s05_tree_unsafe_array_child")
+  except CatchableError as e:
+    raised = true
+    message = e.msg
+
+  checkpoint("read_tree unsafe array child error: " & message)
+  check raised
+  check message.contains("_genearray.gene")
+  check message.contains("unsafe child id")
+  check message.contains("../outside")
+
 test "Serdes: malformed TupleValue records reject before constructing values":
   init_all()
   init_serdes()

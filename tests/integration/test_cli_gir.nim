@@ -221,6 +221,80 @@ proc tuple_value_payload_count_offset_for_test(gir_path: string): int =
   skip_tuple_def_metadata_for_test(stream)
   result = stream.getPosition().int
 
+proc tuple_value_first_type_id_offset_for_test(gir_path: string): int =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for tuple value TypeId offset lookup"
+  defer:
+    stream.close()
+
+  seek_first_instruction_arg0_for_test(stream, VkTupleValue)
+  discard read_gir_string_payload(stream)
+  discard read_gir_string_payload(stream)
+  discard read_gir_string_payload(stream)
+  discard stream.readUint8()
+  discard stream.readInt32()
+  let field_count = stream.readUint32()
+  for _ in 0..<field_count:
+    discard read_gir_string_payload(stream)
+  let type_id_count = stream.readUint32()
+  doAssert type_id_count > 0, "tuple value TypeId corruption fixture expects at least one TypeId"
+  result = stream.getPosition().int
+
+proc tuple_value_first_union_member_offset_for_test(gir_path: string): int =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for tuple value union-member offset lookup"
+  defer:
+    stream.close()
+
+  seek_first_instruction_arg0_for_test(stream, VkTupleValue)
+  discard read_gir_string_payload(stream)  # tuple name
+  discard read_gir_string_payload(stream)  # module path
+  discard read_gir_string_payload(stream)  # internal path
+  discard stream.readUint8()               # payload shape
+  discard stream.readInt32()               # payload arity
+
+  let field_count = stream.readUint32()
+  for _ in 0..<field_count:
+    discard read_gir_string_payload(stream)
+
+  let type_id_count = stream.readUint32()
+  for _ in 0..<type_id_count:
+    discard stream.readInt32()
+
+  let desc_count = stream.readUint32()
+  for _ in 0..<desc_count:
+    let kind = cast[TypeDescKind](stream.readUint8())
+    discard read_gir_string_payload(stream) # module_path
+    case kind
+    of TdkAny:
+      discard
+    of TdkNamed:
+      discard read_gir_string_payload(stream)
+    of TdkApplied:
+      discard read_gir_string_payload(stream)
+      let arg_count = stream.readUint32()
+      for _ in 0..<arg_count:
+        discard stream.readInt32()
+    of TdkUnion:
+      let member_count = stream.readUint32()
+      doAssert member_count > 0, "tuple value union corruption fixture expects at least one member"
+      return stream.getPosition().int
+    of TdkFn:
+      let param_count = stream.readUint32()
+      for _ in 0..<param_count:
+        discard stream.readUint8()
+        discard read_gir_string_payload(stream)
+        discard stream.readInt32()
+      discard stream.readInt32()
+      let effect_count = stream.readUint32()
+      for _ in 0..<effect_count:
+        discard read_gir_string_payload(stream)
+    of TdkVar:
+      discard stream.readInt32()
+
+  doAssert false, "tuple value union corruption fixture did not find a union descriptor"
+  result = -1
+
 proc alternate_same_len_digits(value: string): string =
   result = repeat("9", value.len)
   if result == value:
@@ -1159,6 +1233,87 @@ suite "GIR CLI":
       "Point",
       "expects 2 payload value(s)",
       "got 1",
+      gir_path,
+    ])
+
+  test "load_gir rejects tuple value typed payload mismatch":
+    let module_path = absolutePath("tmp/tuple_payload_type_mismatch.gene")
+    let descs = builtin_type_descs()
+    let point_type = new_tuple_def(
+      name = "Point",
+      fields = @["x"],
+      field_type_ids = @[BUILTIN_TYPE_INT_ID],
+      field_type_descs = descs,
+      payload_shape = EpsNamed,
+      payload_arity = 1,
+      module_path = module_path,
+      internal_path = "Point").to_value()
+    let point_value = new_tuple_value(point_type, @[10.to_value()])
+    let cu = new_compilation_unit()
+    cu.module_path = module_path
+    cu.type_descriptors = descs
+    cu.type_registry = populate_registry(cu.type_descriptors, module_path)
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: point_value))
+
+    let gir_path = "build/tests/tuple_payload_type_mismatch.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(cu, gir_path, module_path)
+    overwrite_gir_int32(gir_path, tuple_value_first_type_id_offset_for_test(gir_path), BUILTIN_TYPE_STRING_ID)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [
+      "GIR load TupleValue",
+      "Point",
+      "field x",
+      "GENE_TYPE_MISMATCH",
+      "expected String",
+      "got Int",
+      gir_path,
+    ])
+
+  test "load_gir rejects malformed nested tuple descriptor graph metadata":
+    let module_path = absolutePath("tmp/tuple_nested_descriptor_graph.gene")
+    var descs = builtin_type_descs()
+    let union_id = descs.len.TypeId
+    descs.add(TypeDesc(
+      module_path: module_path,
+      kind: TdkUnion,
+      members: @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_STRING_ID]))
+    let maybe_type = new_tuple_def(
+      name = "MaybeValue",
+      fields = @["value"],
+      field_type_ids = @[union_id],
+      field_type_descs = descs,
+      payload_shape = EpsNamed,
+      payload_arity = 1,
+      module_path = module_path,
+      internal_path = "MaybeValue").to_value()
+    let maybe_value = new_tuple_value(maybe_type, @[10.to_value()])
+    let cu = new_compilation_unit()
+    cu.module_path = module_path
+    cu.type_descriptors = descs
+    cu.type_registry = populate_registry(cu.type_descriptors, module_path)
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: maybe_value))
+
+    let gir_path = "build/tests/tuple_nested_descriptor_graph.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(cu, gir_path, module_path)
+    overwrite_gir_int32(gir_path, tuple_value_first_union_member_offset_for_test(gir_path), CorruptTypeIdForTest)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [
+      "GIR load TupleValue",
+      "MaybeValue",
+      "descriptor graph",
+      "members[0]",
+      "TypeId " & $CorruptTypeIdForTest,
+      "tuple descriptor table length",
       gir_path,
     ])
 

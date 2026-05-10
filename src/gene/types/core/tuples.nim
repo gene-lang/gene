@@ -36,6 +36,51 @@ proc infer_tuple_payload_shape(fields: seq[string], field_type_ids: seq[TypeId],
   elif result.arity == 0:
     result.shape = EpsUnit
 
+proc validate_tuple_type_id_edge(context, owner: string, type_id: TypeId,
+                                 descriptor_count: int,
+                                 allow_no_type_id = false) =
+  if type_id == NO_TYPE_ID:
+    if allow_no_type_id:
+      return
+    not_allowed(context & " descriptor graph " & owner &
+                " uses NO_TYPE_ID where a concrete TypeId is required")
+  if type_id < 0'i32 or type_id.int >= descriptor_count:
+    not_allowed(context & " descriptor graph " & owner &
+                " references TypeId " & $type_id &
+                " outside tuple descriptor table length " & $descriptor_count)
+
+proc validate_tuple_type_desc_graph(context: string, field_type_descs: seq[TypeDesc]) =
+  let descriptor_count = field_type_descs.len
+  for desc_index, desc in field_type_descs:
+    let base_owner = "type_descriptors[" & $desc_index & "]"
+    case desc.kind
+    of TdkApplied:
+      for arg_index, arg_id in desc.args:
+        validate_tuple_type_id_edge(context,
+          base_owner & ".args[" & $arg_index & "]",
+          arg_id,
+          descriptor_count)
+    of TdkUnion:
+      for member_index, member_id in desc.members:
+        validate_tuple_type_id_edge(context,
+          base_owner & ".members[" & $member_index & "]",
+          member_id,
+          descriptor_count)
+    of TdkFn:
+      for param_index, param in desc.params:
+        validate_tuple_type_id_edge(context,
+          base_owner & ".params[" & $param_index & "].type_id",
+          param.type_id,
+          descriptor_count,
+          allow_no_type_id = true)
+      validate_tuple_type_id_edge(context,
+        base_owner & ".ret",
+        desc.ret,
+        descriptor_count,
+        allow_no_type_id = true)
+    else:
+      discard
+
 proc validate_tuple_metadata_parts(name: string,
                                    fields: seq[string],
                                    field_type_ids: seq[TypeId],
@@ -77,6 +122,9 @@ proc validate_tuple_metadata_parts(name: string,
     if field_type_descs.len == 0 or type_id.int >= field_type_descs.len:
       not_allowed(context & " field " & label & " TypeId " & $type_id &
                   " has no matching type descriptor")
+
+  if field_type_descs.len > 0:
+    validate_tuple_type_desc_graph(context, field_type_descs)
 
 proc tuple_payload_arity*(tuple_def: TupleDef): int {.inline.} =
   if tuple_def == nil:

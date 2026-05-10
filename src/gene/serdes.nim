@@ -1465,6 +1465,21 @@ proc read_known_map_dir(path: string, node_segments: seq[string], options: LazyT
     else:
       discard
 
+proc safe_tree_array_child_id(child_id: string): bool {.gcsafe.} =
+  if child_id.len == 0:
+    return false
+  if child_id == "." or child_id == "..":
+    return false
+  if child_id.isAbsolute():
+    return false
+  if child_id.contains('/') or child_id.contains('\\'):
+    return false
+  true
+
+proc reject_unsafe_tree_array_child_id(child_id: string) {.gcsafe.} =
+  if not safe_tree_array_child_id(child_id):
+    not_allowed(TreeArrayName & ".gene contains unsafe child id: " & child_id)
+
 proc can_decode_as_array_dir(path: string): bool {.gcsafe.} =
   let manifest_path = joinPath(path, TreeArrayName & ".gene")
   if not fileExists(manifest_path):
@@ -1479,6 +1494,7 @@ proc can_decode_as_array_dir(path: string): bool {.gcsafe.} =
     if item.kind != VkString:
       return false
     let child_id = item.str
+    reject_unsafe_tree_array_child_id(child_id)
     if child_ids.contains(child_id):
       return false
     child_ids.incl(child_id)
@@ -1523,6 +1539,7 @@ proc read_array_dir(path: string, node_segments: seq[string], options: LazyTreeR
     if item.kind != VkString:
       not_allowed(TreeArrayName & ".gene child ids must be strings")
     let child_id = item.str
+    reject_unsafe_tree_array_child_id(child_id)
     let inline_path = joinPath(path, child_id & ".gene")
     let dir_path = joinPath(path, child_id)
     let child_segments = node_segments & @[$index]
