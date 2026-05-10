@@ -16,6 +16,26 @@
 # Expected: method spread combined result 13
 # Expected: method spread unexpected keyword caught
 # Expected: method spread too many positional caught
+# Expected: class direct filter shape 2 3 5
+# Expected: class direct before shape 2 3 5
+# Expected: class direct invariant shape 2 3 5
+# Expected: class direct around shape 2 3 5
+# Expected: class direct target shape 2 3 5
+# Expected: class direct around inner result 10
+# Expected: class direct invariant shape 2 3 5
+# Expected: class direct after no result shape 2 3 5
+# Expected: class direct after result shape 2 3 5 10
+# Expected: class direct advice result 10
+# Expected: class spread filter shape 4 6 8
+# Expected: class spread before shape 4 6 8
+# Expected: class spread invariant shape 4 6 8
+# Expected: class spread around shape 4 6 8
+# Expected: class spread target shape 4 6 8
+# Expected: class spread around inner result 18
+# Expected: class spread invariant shape 4 6 8
+# Expected: class spread after no result shape 4 6 8
+# Expected: class spread after result shape 4 6 8 18
+# Expected: class spread advice result 18
 
 (interceptor MethodShapeTrace [direct run]
   (before direct [x y ^limit]
@@ -75,3 +95,82 @@ catch *
 catch *
   (println "method spread too many positional caught")
 )
+
+(fn class_direct_around_advice [_self x y ^limit wrapped]
+  (println "class direct around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "class direct around inner result" r)
+  r
+)
+
+(fn class_spread_around_advice [_self x y ^limit = 8 wrapped]
+  (println "class spread around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "class spread around inner result" r)
+  r
+)
+
+(interceptor ClassAdviceShapeTrace [direct run]
+  (before_filter direct [x y ^limit]
+    (println "class direct filter" /name x y limit)
+    true
+  )
+  (before direct [x y ^limit]
+    (println "class direct before" /name x y limit)
+  )
+  (invariant direct [x y ^limit]
+    (println "class direct invariant" /name x y limit)
+  )
+  (around direct class_direct_around_advice)
+  (after direct [x y ^limit]
+    (println "class direct after no result" /name x y limit)
+  )
+  (after direct [x y ^limit result]
+    (println "class direct after result" /name x y limit result)
+  )
+  (before_filter run [x y ^limit = 8]
+    (println "class spread filter" /name x y limit)
+    true
+  )
+  (before run [x y ^limit = 8]
+    (println "class spread before" /name x y limit)
+  )
+  (invariant run [x y ^limit = 8]
+    (println "class spread invariant" /name x y limit)
+  )
+  (around run class_spread_around_advice)
+  (after run [x y ^limit = 8]
+    (println "class spread after no result" /name x y limit)
+  )
+  (after run [x y ^limit = 8 result]
+    (println "class spread after result" /name x y limit result)
+  )
+)
+
+(class ClassAdviceShapeTarget
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method direct [x y ^limit]
+    (println "class direct target" /name x y limit)
+    (+ x y limit)
+  )
+  (method run [x y ^limit = 8]
+    (println "class spread target" /name x y limit)
+    (+ x y limit)
+  )
+)
+
+(var class_advice_apps (ClassAdviceShapeTrace ClassAdviceShapeTarget "direct" "run"))
+(var class_advice_subject (new ClassAdviceShapeTarget "shape"))
+
+(println "class direct advice result" (class_advice_subject .direct 2 3 ^limit 5))
+
+(var class_advice_args [4 6])
+(var class_advice_kws {^limit 8})
+(println "class spread advice result" (class_advice_subject .run class_advice_args... ^... class_advice_kws))
