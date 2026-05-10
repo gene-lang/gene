@@ -1,0 +1,42 @@
+# Tuple constructor validation happy paths
+
+(tuple Point x: Int y: Int)
+(tuple Box Int)
+(tuple Unit)
+
+(var named_pos (Point 11 22))
+(var named_kw (Point ^y 44 ^x 33))
+(var box (Box 55))
+(var unit (Unit))
+
+(assert (named_pos/x == 11))
+(assert (named_pos/y == 22))
+(assert (named_pos/0 == 11))
+(assert (named_pos/1 == 22))
+
+(assert (named_kw/x == 33))
+(assert (named_kw/y == 44))
+(assert (named_kw/0 == 33))
+(assert (named_kw/1 == 44))
+
+(assert (box/0 == 55))
+(assert (box/1 == void))
+(assert (unit/0 == void))
+
+(println named_pos/x)
+# Expected: 11
+
+(println named_pos/y)
+# Expected: 22
+
+(println named_kw/x)
+# Expected: 33
+
+(println named_kw/y)
+# Expected: 44
+
+(println box/0)
+# Expected: 55
+
+(println (if (unit/0 == void) "unit-empty" else "unit-present"))
+# Expected: unit-empty
