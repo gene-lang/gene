@@ -70,6 +70,11 @@
 # Expected: nested reenabled result 23
 # Expected: nested unexpected keyword caught
 
+(fn expect_no_intercept_marker [e]
+  (assert (not ((e .message) .contains "GENE.INTERCEPT")))
+  (assert (not ((e .message) .contains "GENE.INTERCEPT.KEYWORD_UNSUPPORTED")))
+)
+
 (interceptor MethodShapeTrace [direct run]
   (before direct [x y ^limit]
     (println "method direct before" /name x y limit)
@@ -118,14 +123,16 @@
 (var method_bad_kw {^limit 5 ^unexpected true})
 (try
   (method_subject .run 2 3 ^... method_bad_kw)
-catch *
+catch e
+  (expect_no_intercept_marker e)
   (println "method spread unexpected keyword caught")
 )
 
 (var method_too_many_args [1 2 3])
 (try
   (method_subject .run method_too_many_args...)
-catch *
+catch e
+  (expect_no_intercept_marker e)
   (println "method spread too many positional caught")
 )
 
@@ -285,6 +292,7 @@ nested_inner_app/.enable
 (var nested_bad_kws {^limit 3 ^unexpected true})
 (try
   (nested_subject .run 1 2 ^... nested_bad_kws)
-catch *
+catch e
+  (expect_no_intercept_marker e)
   (println "nested unexpected keyword caught")
 )

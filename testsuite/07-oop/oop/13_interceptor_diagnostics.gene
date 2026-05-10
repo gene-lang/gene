@@ -1,11 +1,12 @@
 # Expected: direct scalar target [GENE.INTERCEPT.CLASS_TARGET]
 # Expected: direct macro target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
+# Expected: direct fn bang target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
 # Expected: direct missing class [GENE.INTERCEPT.CLASS_TARGET]
 # Expected: direct too few mappings [GENE.INTERCEPT.MAPPING_ARITY]
 # Expected: direct too many mappings [GENE.INTERCEPT.MAPPING_ARITY]
 # Expected: direct mapping name [GENE.INTERCEPT.MAPPING_NAME]
 # Expected: direct missing method [GENE.INTERCEPT.MISSING_METHOD]
-# Expected: direct keyword [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: application keyword rejected [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
 # Expected: legacy aspect definition removed
 # Expected: legacy apply removed
 # Expected: atomic missing method [GENE.INTERCEPT.MISSING_METHOD]
@@ -45,6 +46,10 @@
   )
 )
 
+(fn diagnostic_quote! [expr]
+  expr
+)
+
 (try
   (Audit "not a class" "run" "stop")
 catch e
@@ -55,6 +60,12 @@ catch e
   (Audit fn-interceptor "run" "stop")
 catch e
   (expect_marker "direct macro target" MACRO_MARKER e)
+)
+
+(try
+  (Audit diagnostic_quote! "run" "stop")
+catch e
+  (expect_marker "direct fn bang target" MACRO_MARKER e)
 )
 
 (try
@@ -90,7 +101,7 @@ catch e
 (try
   (Audit DiagnosticC "run" "stop" ^unexpected true)
 catch e
-  (expect_marker "direct keyword" KEYWORD_MARKER e)
+  (expect_marker "application keyword rejected" KEYWORD_MARKER e)
 )
 
 (try
