@@ -67,10 +67,15 @@ proc validate_tuple_metadata_parts(name: string,
   for i, type_id in field_type_ids:
     if type_id == NO_TYPE_ID:
       continue
+    let label =
+      if payload_shape == EpsNamed and i >= 0 and i < fields.len:
+        fields[i]
+      else:
+        "#" & $i
     if type_id < 0:
-      not_allowed(context & " field " & $i & " has invalid type id " & $type_id)
+      not_allowed(context & " field " & label & " has invalid TypeId " & $type_id)
     if field_type_descs.len == 0 or type_id.int >= field_type_descs.len:
-      not_allowed(context & " field " & $i & " type id " & $type_id &
+      not_allowed(context & " field " & label & " TypeId " & $type_id &
                   " has no matching type descriptor")
 
 proc tuple_payload_arity*(tuple_def: TupleDef): int {.inline.} =

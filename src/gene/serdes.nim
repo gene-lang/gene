@@ -16,6 +16,7 @@ type
     SrkClass
     SrkFunction
     SrkEnum
+    SrkTuple
     SrkInstance
 
   SerializationOrigin* = object
@@ -128,6 +129,7 @@ proc ref_kind_name(kind: SerializationRefKind): string {.inline.} =
   of SrkClass: "ClassRef"
   of SrkFunction: "FunctionRef"
   of SrkEnum: "EnumRef"
+  of SrkTuple: "TupleRef"
   of SrkInstance: "InstanceRef"
 
 proc make_origin(kind: SerializationRefKind, module_path, internal_path: string): SerializationOrigin {.inline.} =
@@ -158,6 +160,12 @@ proc new_serialized_instance(class_ref: Value, props: Value): Value =
 proc new_serialized_enum_value(member_ref: Value, payloads: Value): Value =
   let gene = new_gene("EnumValue".to_symbol_value())
   gene.children.add(member_ref)
+  gene.children.add(payloads)
+  gene.to_gene_value()
+
+proc new_serialized_tuple_value(tuple_ref: Value, payloads: Value): Value =
+  let gene = new_gene("TupleValue".to_symbol_value())
+  gene.children.add(tuple_ref)
   gene.children.add(payloads)
   gene.to_gene_value()
 
@@ -233,6 +241,10 @@ proc assign_value_origin(value: Value, origin: SerializationOrigin) {.gcsafe.} =
     if value.ref.enum_member != nil:
       value.ref.enum_member.module_path = origin.module_path
       value.ref.enum_member.internal_path = origin.internal_path
+  of VkTupleDef:
+    if value.ref.tuple_def != nil:
+      value.ref.tuple_def.module_path = origin.module_path
+      value.ref.tuple_def.internal_path = origin.internal_path
   of VkInstance:
     let data = instance_ptr(value)
     if data != nil:
@@ -290,6 +302,9 @@ proc simple_member_origin(ns: Namespace, name: string, target: Value,
       return (true, make_origin(kind, namespace_runtime_module_path(ns), name))
     if member.kind == VkFunction and target.kind == VkFunction and member.ref.fn == target.ref.fn:
       return (true, make_origin(kind, namespace_runtime_module_path(ns), name))
+  of SrkTuple:
+    if member.kind == VkTupleDef and target.kind == VkTupleDef and member.ref.tuple_def == target.ref.tuple_def:
+      return (true, make_origin(kind, namespace_runtime_module_path(ns), name))
   else:
     discard
   (false, SerializationOrigin())
@@ -330,6 +345,9 @@ proc find_live_origin_in_namespace(ns: Namespace, target: Value, module_path: st
         for member_name, enum_member in member_value.ref.enum_def.members:
           if enum_member == target.ref.enum_member:
             return (true, make_origin(SrkEnum, module_path, join_origin_path(path, member_name)))
+    of VkTupleDef:
+      if member_value.kind == VkTupleDef and member_value.ref.tuple_def == target.ref.tuple_def:
+        return (true, make_origin(SrkTuple, module_path, path))
     of VkInstance:
       if member_value.raw == target.raw:
         return (true, make_origin(SrkInstance, module_path, path))
@@ -405,6 +423,16 @@ proc lookup_value_origin(value: Value): tuple[found: bool, origin: Serialization
   of VkEnumMember:
     if value.ref.enum_member != nil and value.ref.enum_member.internal_path.len > 0:
       return (true, make_origin(SrkEnum, value.ref.enum_member.module_path, value.ref.enum_member.internal_path))
+  of VkTupleDef:
+    if value.ref.tuple_def != nil and value.ref.tuple_def.internal_path.len > 0:
+      return (true, make_origin(SrkTuple, value.ref.tuple_def.module_path, value.ref.tuple_def.internal_path))
+    if value.ref.tuple_def != nil and value.ref.tuple_def.name.len > 0:
+      if VM != nil and VM.frame != nil and VM.frame.ns != nil:
+        let current = simple_member_origin(VM.frame.ns, value.ref.tuple_def.name, value, SrkTuple)
+        if current.found:
+          value.ref.tuple_def.module_path = current.origin.module_path
+          value.ref.tuple_def.internal_path = current.origin.internal_path
+          return current
   of VkInstance:
     let data = instance_ptr(value)
     if data != nil and data.internal_path.len > 0:
@@ -474,6 +502,62 @@ proc validate_enum_payload_types(member: EnumMember, payload: var seq[Value], co
     {.cast(gcsafe).}:
       warning = validate_or_coerce_type(item, type_id, member.field_type_descs,
         "field " & qualified_name & (if enum_payload_shape(member) == EpsNamed and i < member.fields.len: "." & member.fields[i] else: "[" & $i & "]"))
+    payload[i] = item
+    emit_type_warning(warning)
+
+proc qualified_tuple_name(tuple_def: TupleDef): string {.gcsafe.} =
+  if tuple_def == nil:
+    return "<nil>"
+  if tuple_def.module_path.len > 0:
+    return tuple_def.module_path & ":" & tuple_def.name
+  tuple_def.name
+
+proc tuple_payload_type_label(tuple_def: TupleDef, index: int): string {.gcsafe.} =
+  if tuple_def != nil and tuple_payload_shape(tuple_def) == EpsNamed and
+      index >= 0 and index < tuple_def.fields.len:
+    return tuple_def.name & "." & tuple_def.fields[index]
+  (if tuple_def == nil: "<tuple>" else: tuple_def.name) & "[" & $index & "]"
+
+proc require_tuple_def_value(tuple_def_value: Value, context: string): TupleDef {.gcsafe.} =
+  if tuple_def_value.kind != VkTupleDef or tuple_def_value.ref == nil or tuple_def_value.ref.tuple_def == nil:
+    not_allowed(context & " requires a resolved VkTupleDef, got " & $tuple_def_value.kind)
+  result = tuple_def_value.ref.tuple_def
+  try:
+    validate_tuple_metadata(result, context)
+  except CatchableError as e:
+    not_allowed(context & " " & qualified_tuple_name(result) & " metadata validation failed: " & e.msg)
+
+proc validate_tuple_payload_arity_for_serdes(tuple_def: TupleDef, actual: int, context: string) {.gcsafe.} =
+  let expected = tuple_payload_arity(tuple_def)
+  if actual != expected:
+    let field_names = if expected > 0 and tuple_payload_shape(tuple_def) == EpsNamed: " (" & tuple_def.fields.join(", ") & ")" else: ""
+    not_allowed(context & " " & qualified_tuple_name(tuple_def) &
+                " expects " & $expected & " payload value(s)" & field_names &
+                ", got " & $actual)
+
+proc validate_tuple_payload_types(tuple_def: TupleDef, payload: var seq[Value], context: string) {.gcsafe.} =
+  let expected = tuple_payload_arity(tuple_def)
+  if tuple_def.field_type_ids.len != expected:
+    not_allowed(context & " " & qualified_tuple_name(tuple_def) & " has malformed field type metadata: expected " &
+                $expected & " field type id(s), got " & $tuple_def.field_type_ids.len)
+
+  for i in 0..<expected:
+    let type_id = tuple_def.field_type_ids[i]
+    if type_id == NO_TYPE_ID:
+      continue
+    let label = tuple_payload_type_label(tuple_def, i)
+    if type_id < 0 or type_id.int >= tuple_def.field_type_descs.len:
+      not_allowed(context & " " & qualified_tuple_name(tuple_def) &
+                  " has malformed field type descriptor metadata for " & label &
+                  ": TypeId " & $type_id & " is unavailable")
+
+    var item = payload[i]
+    if item == NIL:
+      continue
+    var warning = ""
+    {.cast(gcsafe).}:
+      warning = validate_or_coerce_type(item, type_id, tuple_def.field_type_descs,
+        "field " & label)
     payload[i] = item
     emit_type_warning(warning)
 
@@ -583,6 +667,21 @@ proc resolve_typed_ref(gene: ptr Gene): Value {.gcsafe.} =
   let parsed = parse_typed_ref(gene)
   resolve_named_reference(parsed.module_path, parsed.path)
 
+proc resolve_tuple_ref(gene: ptr Gene, context: string): Value {.gcsafe.} =
+  var parsed: tuple[module_path: string, path: string]
+  try:
+    parsed = parse_typed_ref(gene)
+  except CatchableError as e:
+    not_allowed(context & " TupleRef parse failed: " & e.msg)
+
+  try:
+    result = resolve_named_reference(parsed.module_path, parsed.path)
+  except CatchableError as e:
+    not_allowed(context & " TupleRef resolution failed for module '" & parsed.module_path &
+                "' path '" & parsed.path & "': " & e.msg)
+
+  discard require_tuple_def_value(result, context & " TupleRef")
+
 proc find_serialize_hook(cls: Class): Value =
   if cls == nil:
     return NIL
@@ -662,6 +761,9 @@ proc has_direct_value_origin(value: Value): tuple[has_origin: bool, origin: Seri
   of VkEnumMember:
     if value.ref.enum_member != nil and value.ref.enum_member.internal_path.len > 0:
       return (true, make_origin(SrkEnum, value.ref.enum_member.module_path, value.ref.enum_member.internal_path))
+  of VkTupleDef:
+    if value.ref.tuple_def != nil and value.ref.tuple_def.internal_path.len > 0:
+      return (true, make_origin(SrkTuple, value.ref.tuple_def.module_path, value.ref.tuple_def.internal_path))
   of VkInstance:
     let data = instance_ptr(value)
     if data != nil and data.internal_path.len > 0:
@@ -682,6 +784,7 @@ proc tag_value_origin(value: Value, module_path, internal_path: string) {.gcsafe
     of VkClass: SrkClass
     of VkFunction, VkNativeFn, VkNativeMacro: SrkFunction
     of VkEnum, VkEnumMember: SrkEnum
+    of VkTupleDef: SrkTuple
     of VkInstance: SrkInstance
     else: return
   assign_value_origin(value, make_origin(kind, module_path, internal_path))
@@ -761,7 +864,7 @@ proc serialize*(self: Serialization, value: Value): Value =
     for child in value.gene.children:
       gene.children.add(self.serialize(child))
     return gene.to_gene_value()
-  of VkNamespace, VkClass, VkFunction, VkNativeFn, VkNativeMacro, VkEnum, VkEnumMember:
+  of VkNamespace, VkClass, VkFunction, VkNativeFn, VkNativeMacro, VkEnum, VkEnumMember, VkTupleDef:
     return typed_ref_for_value(value)
   of VkEnumValue:
     let variant = value.ref.ev_variant
@@ -773,6 +876,18 @@ proc serialize*(self: Serialization, value: Value): Value =
     for item in payload:
       array_data(payloads).add(self.serialize(item))
     return new_serialized_enum_value(typed_ref_for_value(variant), payloads)
+  of VkTupleValue:
+    if value.ref == nil:
+      not_allowed("TupleValue serialization requires tuple value data")
+    let tuple_def_value = value.ref.tv_def
+    let tuple_def = require_tuple_def_value(tuple_def_value, "TupleValue serialization")
+    validate_tuple_payload_arity_for_serdes(tuple_def, value.ref.tv_data.len, "TupleValue")
+    var payload = value.ref.tv_data
+    validate_tuple_payload_types(tuple_def, payload, "TupleValue")
+    let payloads = new_array_value(@[])
+    for item in payload:
+      array_data(payloads).add(self.serialize(item))
+    return new_serialized_tuple_value(typed_ref_for_value(tuple_def_value), payloads)
   of VkInstance:
     let (named, _) = lookup_value_origin(value)
     if named:
@@ -1080,7 +1195,7 @@ proc tree_serialized_hash(value: Value): Hash =
       result_hash = result_hash !& tree_serialized_hash(v)
     for child in value.gene.children:
       result_hash = result_hash !& tree_serialized_hash(child)
-  of VkNamespace, VkClass, VkFunction, VkNativeFn, VkNativeMacro, VkEnum, VkEnumMember:
+  of VkNamespace, VkClass, VkFunction, VkNativeFn, VkNativeMacro, VkEnum, VkEnumMember, VkTupleDef:
     let (_, origin) = lookup_value_origin(value)
     let typed_ref = typed_ref_for_value(value)
     result_hash.mix_tree_hash(ref_kind_name(origin.kind))
@@ -1093,6 +1208,17 @@ proc tree_serialized_hash(value: Value): Hash =
     result_hash.mix_tree_hash("EnumValue")
     result_hash = result_hash !& hash(value_to_gene_str(typed_ref))
     for item in value.ref.ev_data:
+      result_hash = result_hash !& tree_serialized_hash(item)
+  of VkTupleValue:
+    if value.ref == nil:
+      not_allowed("TupleValue tree hash requires tuple value data")
+    let tuple_def_value = value.ref.tv_def
+    let tuple_def = require_tuple_def_value(tuple_def_value, "TupleValue tree hash")
+    validate_tuple_payload_arity_for_serdes(tuple_def, value.ref.tv_data.len, "TupleValue")
+    let typed_ref = typed_ref_for_value(tuple_def_value)
+    result_hash.mix_tree_hash("TupleValue")
+    result_hash = result_hash !& hash(value_to_gene_str(typed_ref))
+    for item in value.ref.tv_data:
       result_hash = result_hash !& tree_serialized_hash(item)
   of VkInstance:
     let (named, _) = lookup_value_origin(value)
@@ -1599,6 +1725,40 @@ proc deserialize_enum_value(self: Serialization, gene: ptr Gene): Value {.gcsafe
     return variant
   new_enum_value(variant, payload)
 
+proc deserialize_tuple_value(self: Serialization, gene: ptr Gene): Value {.gcsafe.} =
+  if gene.children.len != 2:
+    not_allowed("TupleValue expects a TupleRef and payload array, got " & $gene.children.len & " child(ren)")
+
+  let ref_form = gene.children[0]
+  let ref_kind = serialized_gene_type_name(ref_form)
+  if ref_kind != "TupleRef":
+    let got = if ref_kind.len > 0: ref_kind else: $ref_form.kind
+    not_allowed("TupleValue expects first child to be TupleRef, got " & got)
+
+  let tuple_def_value = resolve_tuple_ref(ref_form.gene, "TupleValue")
+  let tuple_def = require_tuple_def_value(tuple_def_value, "TupleValue")
+
+  let payload_form = gene.children[1]
+  if payload_form.kind != VkArray:
+    not_allowed("TupleValue payload must be an array, got " & $payload_form.kind)
+
+  validate_tuple_payload_arity_for_serdes(tuple_def, array_data(payload_form).len, "TupleValue")
+
+  var payload = newSeqOfCap[Value](array_data(payload_form).len)
+  for i, item in array_data(payload_form):
+    try:
+      payload.add(self.deserialize(item))
+    except CatchableError as e:
+      not_allowed("TupleValue payload deserialization failed at " &
+                  tuple_payload_type_label(tuple_def, i) & ": " & e.msg)
+
+  try:
+    validate_tuple_payload_types(tuple_def, payload, "TupleValue")
+  except CatchableError as e:
+    not_allowed("TupleValue payload validation failed: " & e.msg)
+
+  new_tuple_value(tuple_def_value, payload)
+
 proc deserialize*(s: string): Value =
   var ser = Serialization(
     references: initTable[string, Value](),
@@ -1607,6 +1767,15 @@ proc deserialize*(s: string): Value =
 
 proc deserialize*(self: Serialization, value: Value): Value =
   case value.kind:
+  of VkArray:
+    result = new_array_value(@[], frozen = array_is_frozen(value))
+    for item in array_data(value):
+      array_data(result).add(self.deserialize(item))
+  of VkMap:
+    result = new_map_value(map_is_frozen(value))
+    map_data(result) = initTable[Key, Value]()
+    for k, v in map_data(value):
+      map_data(result)[k] = self.deserialize(v)
   of VkGene:
     var type_str: string
     if value.gene.type.kind == VkSymbol:
@@ -1629,8 +1798,12 @@ proc deserialize*(self: Serialization, value: Value): Value =
         return NIL
     of "NamespaceRef", "ClassRef", "FunctionRef", "EnumRef", "InstanceRef":
       return resolve_typed_ref(value.gene)
+    of "TupleRef":
+      return resolve_tuple_ref(value.gene, "TupleRef")
     of "EnumValue":
       return self.deserialize_enum_value(value.gene)
+    of "TupleValue":
+      return self.deserialize_tuple_value(value.gene)
     of "gene/ref":
       if value.gene.children.len > 0:
         return self.deref(value.gene.children[0].str)

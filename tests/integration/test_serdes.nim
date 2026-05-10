@@ -373,12 +373,57 @@ proc expect_deserialize_error_contains(serialized: string, expected_parts: openA
   except CatchableError as e:
     raised = true
     message = e.msg
+  checkpoint("deserialize error message: " & message)
   check raised
   for part in expected_parts:
+    checkpoint("expecting error part: " & part)
     check message.contains(part)
 
 proc s05_identity_left_module_path(): string =
   absolutePath("tests/fixtures/s05_identity_left")
+
+proc s05_tuple_left_module_path(): string =
+  absolutePath("tests/fixtures/s05_tuple_identity_left.gene")
+
+proc s05_tuple_right_module_path(): string =
+  absolutePath("tests/fixtures/s05_tuple_identity_right.gene")
+
+proc remove_s05_tree(path: string) =
+  if fileExists(path):
+    removeFile(path)
+    return
+  if not dirExists(path):
+    return
+
+  for kind, child in walkDir(path):
+    case kind
+    of pcFile, pcLinkToFile:
+      removeFile(child)
+    of pcDir:
+      remove_s05_tree(child)
+    of pcLinkToDir:
+      removeDir(child)
+    else:
+      discard
+  removeDir(path)
+
+proc fresh_s05_tree_path(name: string): string =
+  result = joinPath(getTempDir(), "gene-s05-serdes-" & name)
+  remove_s05_tree(result)
+  remove_s05_tree(result & ".gene")
+
+proc tuple_def_from_value(value: Value): TupleDef =
+  check value.kind == VkTupleDef
+  if value.kind != VkTupleDef or value.ref == nil:
+    return nil
+  result = value.ref.tuple_def
+  check result != nil
+
+proc tuple_def_from_tuple_value(value: Value): TupleDef =
+  check value.kind == VkTupleValue
+  if value.kind != VkTupleValue or value.ref == nil:
+    return nil
+  tuple_def_from_value(value.ref.tv_def)
 
 test "Serdes: enum payload values use explicit EnumValue refs and stable roundtrip":
   init_all()
@@ -441,3 +486,220 @@ test "Serdes: malformed EnumValue records reject before constructing values":
     (EnumRef ^path "Identity/Box" ^module "$MODULE")
     ["wrong"]))
 """.replace("$MODULE", module_path), ["GENE_TYPE_MISMATCH", "Identity/Box.value"])
+
+test "Serdes: tuple definitions use TupleRef and auto-import":
+  init_all()
+  init_serdes()
+  let defs = VM.exec(cleanup("""
+    (import NamedPair PosBox UnitTuple from "tests/fixtures/s05_tuple_identity_left")
+    [NamedPair PosBox UnitTuple]
+  """), "serdes_s05_tuple_defs_source")
+  check defs.kind == VkArray
+
+  let names = @["NamedPair", "PosBox", "UnitTuple"]
+  for i, expected_name in names:
+    let tuple_def_value = array_data(defs)[i]
+    let serialized = serialize(tuple_def_value).to_s()
+    check serialized.contains("TupleRef")
+    check serialized.contains(expected_name)
+    check serialized.contains("s05_tuple_identity_left")
+
+    reset_module_cache()
+    discard VM.exec("1", "serdes_s05_tuple_defs_other_module")
+    let roundtripped = deserialize(serialized)
+    let tuple_def = tuple_def_from_value(roundtripped)
+    check tuple_def.name == expected_name
+    check tuple_def.module_path.contains("s05_tuple_identity_left")
+    check tuple_def.internal_path == expected_name
+    case expected_name
+    of "NamedPair":
+      check tuple_payload_shape(tuple_def) == EpsNamed
+      check tuple_payload_arity(tuple_def) == 2
+      check tuple_def.fields == @[
+        "left",
+        "right",
+      ]
+    of "PosBox":
+      check tuple_payload_shape(tuple_def) == EpsPositional
+      check tuple_payload_arity(tuple_def) == 2
+      check tuple_def.fields.len == 0
+    of "UnitTuple":
+      check tuple_payload_shape(tuple_def) == EpsUnit
+      check tuple_payload_arity(tuple_def) == 0
+      check tuple_def.fields.len == 0
+    else:
+      fail()
+
+    check serialize(roundtripped).to_s() == serialized
+
+test "Serdes: tuple values use TupleValue refs and preserve ordered payloads":
+  init_all()
+  init_serdes()
+  let values = VM.exec(cleanup("""
+    (import NamedPair PosBox UnitTuple from "tests/fixtures/s05_tuple_identity_left")
+    [(NamedPair ^right 8 ^left 7) (PosBox "token" 3) (UnitTuple)]
+  """), "serdes_s05_tuple_values_source")
+  check values.kind == VkArray
+
+  let serialized = serialize(values).to_s()
+  check serialized.contains("TupleValue")
+  check serialized.contains("TupleRef")
+  check serialized.contains("NamedPair")
+  check serialized.contains("PosBox")
+  check serialized.contains("UnitTuple")
+  check serialized.contains("s05_tuple_identity_left")
+
+  reset_module_cache()
+  discard VM.exec("1", "serdes_s05_tuple_values_other_module")
+  let roundtripped = deserialize(serialized)
+  check roundtripped.kind == VkArray
+  let items = array_data(roundtripped)
+  check items.len == 3
+  if items.len == 3:
+    let named_def = tuple_def_from_tuple_value(items[0])
+    check named_def.name == "NamedPair"
+    check items[0].ref.tv_data == @[7.to_value(), 8.to_value()]
+
+    let positional_def = tuple_def_from_tuple_value(items[1])
+    check positional_def.name == "PosBox"
+    check items[1].ref.tv_data == @[
+      "token".to_value(),
+      3.to_value(),
+    ]
+
+    let unit_def = tuple_def_from_tuple_value(items[2])
+    check unit_def.name == "UnitTuple"
+    check items[2].ref.tv_data.len == 0
+
+  check serialize(roundtripped).to_s() == serialized
+
+test "Serdes: same-shaped tuple values from different modules stay nominally distinct":
+  init_all()
+  init_serdes()
+  let values = VM.exec(cleanup("""
+    (import NamedPair:LeftPair from "tests/fixtures/s05_tuple_identity_left")
+    (import NamedPair:RightPair from "tests/fixtures/s05_tuple_identity_right")
+    [(LeftPair 1 2) (RightPair 1 2)]
+  """), "serdes_s05_tuple_cross_module_source")
+  let serialized = serialize(values).to_s()
+  check serialized.contains("s05_tuple_identity_left")
+  check serialized.contains("s05_tuple_identity_right")
+
+  let roundtripped = deserialize(serialized)
+  check roundtripped.kind == VkArray
+  let items = array_data(roundtripped)
+  check items.len == 2
+  if items.len == 2:
+    check items[0] != items[1]
+    let left_def = tuple_def_from_tuple_value(items[0])
+    let right_def = tuple_def_from_tuple_value(items[1])
+    check left_def.name == "NamedPair"
+    check right_def.name == "NamedPair"
+    check left_def.module_path.contains("s05_tuple_identity_left")
+    check right_def.module_path.contains("s05_tuple_identity_right")
+
+test "Serdes: tuple tree serialization roundtrips recursive tuple payloads":
+  init_all()
+  init_serdes()
+  let root_path = fresh_s05_tree_path("tuple-recursive")
+  let code = cleanup("""
+    (import NamedPair Wrapper from "tests/fixtures/s05_tuple_identity_left")
+    (var nested (Wrapper (NamedPair 3 4)))
+    (var second (NamedPair 5 6))
+    (gene/serdes/write_tree "$ROOT" [nested second] ^separate [/*])
+    (var loaded (gene/serdes/read_tree "$ROOT"))
+    (assert ((loaded/0 == nested) == true))
+    (assert (loaded/0/payload/left == 3))
+    (assert (loaded/0/payload/right == 4))
+    (assert (loaded/1/left == 5))
+    (assert (loaded/1/right == 6))
+    true
+  """).replace("$ROOT", root_path)
+  check VM.exec(code, "serdes_s05_tuple_tree_roundtrip") == TRUE
+
+  let manifest = deserialize(readFile(joinPath(root_path, "_genearray.gene")))
+  check manifest.kind == VkArray
+  let ids = array_data(manifest)
+  check ids.len == 2
+  for item in ids:
+    check item.kind == VkString
+    if item.kind == VkString:
+      let serialized_child = readFile(joinPath(root_path, item.str & ".gene"))
+      check serialized_child.contains("TupleValue")
+      check serialized_child.contains("TupleRef")
+
+test "Serdes: malformed TupleValue records reject before constructing values":
+  init_all()
+  init_serdes()
+  let module_path = s05_tuple_left_module_path()
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (ClassRef ^path "NamedPair" ^module "$MODULE")
+    [1 2]))
+""".replace("$MODULE", module_path), ["TupleValue", "TupleRef"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^module "$MODULE")
+    [1 2]))
+""".replace("$MODULE", module_path), ["TupleValue", "TupleRef", "path"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "NamedPair" ^module "$MODULE.missing")
+    [1 2]))
+""".replace("$MODULE", module_path), ["TupleValue", "TupleRef", "module"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "MissingPair" ^module "$MODULE")
+    [1 2]))
+""".replace("$MODULE", module_path), ["TupleValue", "MissingPair"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "NamedPair" ^module "$MODULE")
+    {^left 1 ^right 2}))
+""".replace("$MODULE", module_path), ["TupleValue", "payload", "array"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "NamedPair" ^module "$MODULE")
+    [1]))
+""".replace("$MODULE", module_path), ["TupleValue", "NamedPair", "expects 2"])
+
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "NamedPair" ^module "$MODULE")
+    ["wrong" 2]))
+""".replace("$MODULE", module_path), ["GENE_TYPE_MISMATCH", "NamedPair.left"])
+
+  let tuple_def_value = VM.exec(cleanup("""
+    (import NamedPair from "tests/fixtures/s05_tuple_identity_left")
+    NamedPair
+  """), "serdes_s05_tuple_malformed_metadata_source")
+  let tuple_def = tuple_def_from_value(tuple_def_value)
+  tuple_def.field_type_ids = @[1.TypeId]
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "NamedPair" ^module "$MODULE")
+    [1 2]))
+""".replace("$MODULE", module_path), ["TupleValue", "NamedPair", "field type metadata"])
+
+  tuple_def.field_type_ids = @[99.TypeId, 1.TypeId]
+  tuple_def.field_type_descs = builtin_type_descs()
+  expect_deserialize_error_contains("""
+(gene/serialization
+  (TupleValue
+    (TupleRef ^path "NamedPair" ^module "$MODULE")
+    [1 2]))
+""".replace("$MODULE", module_path), ["TupleValue", "NamedPair", "left", "TypeId"])

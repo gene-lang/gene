@@ -1,0 +1,10 @@
+(tuple NamedPair left: Int right: Int)
+(tuple PosBox String Int)
+(tuple UnitTuple)
+(tuple Wrapper payload: Any)
+
+(fn make_pair [] -> NamedPair
+  (NamedPair 1 2)
+)
+
+(export NamedPair PosBox UnitTuple Wrapper make_pair)
