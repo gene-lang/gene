@@ -22,21 +22,6 @@ proc interception_application_label(label: string, definition_name: string): str
 proc raise_interception_diagnostic(marker: string, label: string, definition_name: string, detail: string) =
   not_allowed(marker & " " & interception_application_label(label, definition_name) & ": " & detail)
 
-proc matcher_name(matcher: Matcher): string =
-  if matcher != nil and matcher.name_key != Key(0):
-    try:
-      return cast[Value](matcher.name_key).str
-    except CatchableError:
-      discard
-  "<keyword>"
-
-proc function_keyword_param_name(fn: Function): string =
-  if fn != nil and fn.matcher != nil:
-    for matcher in fn.matcher.children:
-      if matcher.kind == MatchProp or matcher.is_prop:
-        return matcher_name(matcher)
-  ""
-
 proc function_target_kind(fn_arg: Value): string =
   case fn_arg.kind
   of VkFunction:
@@ -45,8 +30,6 @@ proc function_target_kind(fn_arg: Value): string =
       "macro-like function"
     elif fn.async:
       "async function"
-    elif function_keyword_param_name(fn).len > 0:
-      "function with keyword parameters"
     else:
       "function"
   of VkNativeFn:
