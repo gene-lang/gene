@@ -35,6 +35,7 @@ Gene uses a NaN-boxed 64-bit representation. Every value is one of the following
 | `DateTime`  | Date + time snapshot                  |
 | `Bytes`     | Byte sequence                         |
 | `Enum`      | Enumeration and enum ADT definitions, members, and values |
+| `Tuple`     | Nominal product-data definitions and values |
 
 ### Nil and Void
 
@@ -213,7 +214,49 @@ Enum type annotations accept values whose parent enum matches the annotated enum
 
 Enum payload field annotations are part of the construction and type-checking contract. Constructors validate concrete annotated fields when values are built, and annotated boundaries use the parent enum name plus generic arguments to check enum values.
 
-## 2.5 Enum ADTs
+## 2.5 Tuple Product Types
+
+`tuple` declares nominal product-data types. The current public contract covers named tuples, positional tuples, and unit tuples:
+
+```gene
+(tuple Point x: Int y: Int)
+(tuple Box Int)
+(tuple Unit)
+
+(var point (Point 10 20))
+(var same_point (Point ^y 20 ^x 10))
+(var box (Box 9))
+(var unit (Unit))
+```
+
+Tuple construction calls the tuple name directly. Named tuples support positional construction in declaration order and keyword construction by field name. Positional tuples support positional construction only. Unit tuples are constructed with no arguments. A single constructor call cannot mix positional and keyword arguments.
+
+Tuple product data is read with slash selectors. Use `value/field` for named fields and `value/0` for zero-based positional slots:
+
+```gene
+(assert (point/x == 10))
+(assert (point/y == 20))
+(assert (point/0 == 10))
+(assert (point/1 == 20))
+(assert (box/0 == 9))
+(assert (unit/0 == void))
+```
+
+Tuple identity is nominal: two tuple values compare equal only when they come from the same tuple declaration and all payload values compare equal. Display uses the tuple name and declaration-order payload values, such as `(Point 10 20)`.
+
+Tuple values can be matched with `case` patterns using the tuple name. Binders follow declaration order, named fields can use aliases such as `y:yy`, and unit tuple patterns use the tuple name with no binders:
+
+```gene
+(case point
+  when (Point x y:yy)
+    (+ x yy)
+  else
+    0)
+```
+
+Tuples do not promise anonymous structural tuple literals, `new`-based tuple construction, mixed named-and-positional declarations, tuple-specific methods or adapters, mutation/copy-update helpers, or array-style tuple destructuring.
+
+## 2.6 Enum ADTs
 
 `enum` is the only public ADT declaration model. The same declaration form covers simple symbolic enumerations, unit variants, and payload variants:
 
@@ -227,12 +270,12 @@ Enum payload field annotations are part of the construction and type-checking co
 (var rect (Shape/Rect ^height 20 ^width 10))
 (var point Shape/Point)
 
-(assert ((circle .radius) == 5.0))
-(assert ((rect .width) == 10))
+(assert (circle/radius == 5.0))
+(assert (rect/width == 10))
 (assert ((typeof circle) == "Shape"))
 ```
 
-A unit variant has no payload fields and can be used directly (`Shape/Point`) or called with no arguments (`(Shape/Point)`). A payload variant declares fields in order; those names define positional construction order, keyword construction names, field access names, and pattern binding order. Positional and keyword construction are both supported, but a single constructor call cannot mix the two forms.
+A unit variant has no payload fields and can be used directly (`Shape/Point`) or called with no arguments (`(Shape/Point)`). A payload variant declares fields in order; those names define positional construction order, keyword construction names, slash field selectors, and pattern binding order. Positional and keyword construction are both supported, but a single constructor call cannot mix the two forms. Read named payload data with `value/field` selectors and positional payload data with `value/0` selectors; dot dispatch remains behavior dispatch.
 
 ```gene
 (var by_position (Shape/Rect 10 20))
@@ -273,7 +316,7 @@ Legacy Gene-expression ADT declarations such as `(type (Result T E) ...)` are mi
 
 The declaration contract includes diagnostics for malformed enum declarations, duplicate variants, duplicate fields, invalid generic parameters, invalid field annotations, constructor arity errors, missing or unknown keyword arguments, mixed positional/keyword calls, and typed payload mismatches.
 
-## 2.6 Enumerations
+## 2.7 Enumerations
 
 Simple symbolic enumerations are the unit-variant subset of enum ADTs:
 

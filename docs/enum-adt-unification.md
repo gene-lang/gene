@@ -111,12 +111,12 @@ Unit variants can be used directly or called with no arguments. Calling a unit v
 
 ## Field access, equality, display, and `typeof`
 
-Named payload fields are accessed by their declaration names:
+Enum payload data is read with slash selectors. Named payload fields are accessed by declaration name:
 
 ```gene
-(assert ((rect .width) == 10))
-(assert ((rect .height) == 20))
+(assert (circle/radius == 5.0))
 (assert (rect/width == 10))
+(assert (rect/height == 20))
 ```
 
 Positional payload fields are accessed by zero-based ordinal:
@@ -125,6 +125,8 @@ Positional payload fields are accessed by zero-based ordinal:
 (assert (x/0 == 1))
 (assert (x/1 == 2))
 ```
+
+The general rule is `value/field` for named payload data and `value/0` for positional payload data. Dot dispatch remains behavior dispatch; payload fields are not methods.
 
 Enum value equality is nominal by variant and structural by payload. Two payload values compare equal when they come from the same enum variant and all payload values compare equal. Unit variants from the same enum member compare equal.
 
@@ -235,8 +237,9 @@ Migration guidance:
 
 - Replace legacy `type` ADT declarations with `enum` declarations.
 - Use colon-prefixed generic parameters in the enum head.
-- Give payload fields names; those names become constructor keywords, field accessors, and pattern documentation.
+- Give payload fields names; those names become constructor keywords, slash field selectors, and pattern documentation.
 - Construct values with enum variants such as `(Result/Ok value)` or `(Ok value)` for built-ins.
+- Read named payload data with slash selectors such as `result/value` and positional payload data with slash selectors such as `value/0`.
 - Match values with enum variant patterns.
 - Do not treat quoted legacy Result/Option-shaped Gene values as enum ADT values; they do not satisfy enum ADT type boundaries.
 

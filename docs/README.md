@@ -19,7 +19,8 @@ matrix and stable-core boundary.
 - [regex.md](regex.md) — current regex syntax and helper behavior
 - [package_support.md](package_support.md) — current package/import behavior
 - [type-system-mvp.md](type-system-mvp.md) — current gradual typing status
-- [enum-adt-unification.md](enum-adt-unification.md) — current enum ADT model, construction, matching, identity, and migration guidance
+- [enum-adt-unification.md](enum-adt-unification.md) — current enum ADT model, construction, slash payload reads, matching, identity, and migration guidance
+- [tuple-support.md](tuple-support.md) — current nominal tuple product-data model, direct construction, slash reads, equality/display, case patterns, persistence notes, and non-goals
 - [deserialize_command.md](deserialize_command.md) — `gene deser` command behavior
 - [how-types-work.md](how-types-work.md) — runnable typing walkthrough
 - [adapter-design.md](adapter-design.md) — interface and adapter system design

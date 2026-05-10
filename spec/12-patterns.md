@@ -1,6 +1,6 @@
 # 12. Pattern Matching & Destructuring
 
-Pattern matching is a Beta language surface for a deliberately small, tested subset. The current public contract covers direct argument binding, `var` destructuring, simple `case/when`, and enum ADT `case` patterns. The standalone `(match ...)` expression is removed. Other pattern-language forms are unsupported unless this page explicitly includes them in the Beta contract.
+Pattern matching is a Beta language surface for a deliberately small, tested subset. The current public contract covers direct argument binding, `var` destructuring for arrays and Gene values, simple `case/when`, enum ADT `case` patterns, and tuple product-data `case` patterns. The standalone `(match ...)` expression is removed. Other pattern-language forms are unsupported unless this page explicitly includes them in the Beta contract.
 
 ## Public Beta contract
 
@@ -120,6 +120,41 @@ A `case` over a statically known enum value is checked for exhaustiveness when i
 
 Legacy Gene-expression ADT matching is not a supported public model. Quoted or stale legacy Result/Option-shaped Gene values should be migrated to enum-backed values and matched with enum variant patterns.
 
+## Tuple product-data case patterns in the Beta contract
+
+Tuple values match through the same `case` and `when` surface. A tuple pattern names the tuple declaration and binds payload values in declaration order.
+
+```gene
+(tuple Point x: Int y: Int)
+(tuple Box Int)
+(tuple Unit)
+
+(fn point_total [point: Point] -> Int
+  (case point
+    when (Point x y:yy)
+      (+ x yy)
+    else
+      0))
+
+(fn box_value [box: Box] -> Int
+  (case box
+    when (Box value)
+      value
+    else
+      0))
+
+(fn unit_value [unit: Unit] -> Int
+  (case unit
+    when (Unit)
+      30
+    else
+      0))
+```
+
+Named tuple patterns bind by declaration order and may use field aliases such as `y:yy`. Positional tuple patterns bind by slot order. Unit tuple patterns use the tuple name with no binders. The special binder `_` consumes a payload position without creating a binding.
+
+Outside `case`, tuple product data is read with slash selectors such as `value/field` and `value/0`. Tuple values do not use array-style tuple destructuring; use slash reads for direct access and tuple `case` patterns for branching and binding.
+
 ## Removed: standalone `(match ...)`
 
 The standalone `(match ...)` expression is not part of the Beta subset. The compiler rejects it with a removed-surface diagnostic that directs users to `(var pattern value)` for binding or `(case ...)` for branching.
@@ -141,6 +176,7 @@ The following forms are outside the Beta contract and are not promised for any r
 - Literal quote patterns.
 - Or-patterns.
 - As-patterns.
+- Array-style destructuring of tuple values.
 - Any standalone match expression.
 
 Some non-enum destructuring failures still come from the matcher/runtime path. Invalid Beta-subset destructuring should produce targeted diagnostics where tests cover those failures; unsupported forms should not be documented as roadmap commitments.

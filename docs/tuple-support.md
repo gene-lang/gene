@@ -1,164 +1,162 @@
 # Tuple Support
 
-## Overview
+Tuples are nominal product-data types. Use them when a value has a fixed shape, a declared name, and no attached behavior. Classes bundle data and methods; tuples carry data only.
 
-Tuples are lightweight, immutable, fixed-size data structures. They serve as pure data containers -- behavior is provided through standalone functions, not methods.
+The product-data access rule is simple:
 
-**Key distinction from classes:** Classes bundle data + behavior. Tuples are just structured data.
+- Use slash selectors to read tuple fields and slots, such as `value/field` and `value/0`.
+- Use dot dispatch for behavior that already exists on values, such as display conversion helpers.
+- Do not treat tuple fields as methods.
 
-**Key distinction from frozen arrays (`#[...]`):** Frozen arrays are untyped, homogeneous-feeling collections. Named tuples carry a type tag, enforce per-field types at construction, support named field access. Anonymous tuples are closer to frozen arrays but still support type enforcement and destructuring.
+Tuples are currently a Beta surface. The implemented contract covers named tuples, positional tuples, unit tuples, direct construction, slash reads, equality/display, `case` patterns, and persistence continuity.
 
-## Syntax
+## Declaration forms
 
-### Defining a tuple type
+Declare a tuple with `tuple`, a nominal type name, and zero or more fields.
+
+```gene
+(tuple Point x: Int y: Int)  # named fields
+(tuple Box Int)              # positional slots
+(tuple Unit)                 # no payload
+```
+
+A named tuple gives every payload position a field name. A positional tuple gives payload positions only zero-based slots. A unit tuple has no payload values.
+
+Named and positional payload styles are separate declaration shapes. Do not mix named fields and positional slots in one tuple declaration.
+
+## Construction
+
+Construct tuple values by calling the tuple name directly.
 
 ```gene
 (tuple Point x: Int y: Int)
-(tuple X first: String Int Int)    # mixed named/positional fields
-(tuple Pair Int Int)               # all positional
+(tuple Box Int)
+(tuple Unit)
+
+(var point (Point 10 20))
+(var same_point (Point ^y 20 ^x 10))
+(var box (Box 9))
+(var unit (Unit))
 ```
 
-Fields can be named (`x: Int`) or positional (`Int`). Named fields are accessed by name or index; positional fields by index only.
+Named tuples support positional construction in declaration order and keyword construction by field name. A single call must use one style. Positional tuples support positional construction only. Unit tuples are constructed with no arguments.
 
-### Field ordering
+Tuple construction validates arity, missing keyword fields, unknown keyword fields, duplicate keyword fields, mixed positional/keyword calls, keyword use on positional tuples, and annotated field types.
 
-Fields are ordered by declaration order, left to right. Index 0 is always the first declared field, regardless of whether it is named or positional. In `(tuple X first: String Int Int)`:
+## Reading product data
 
-| Index | Name    | Type   |
-|-------|---------|--------|
-| 0     | `first` | String |
-| 1     | (none)  | Int    |
-| 2     | (none)  | Int    |
-
-### Creating instances
+Read tuple payload data with slash selectors.
 
 ```gene
-# Named tuple type
-(var p (new Point 3 4))
-
-# Anonymous tuple
-(var pair (new tuple "hello" 42))
+(assert (point/x == 10))
+(assert (point/y == 20))
+(assert (point/0 == 10))
+(assert (point/1 == 20))
+(assert (box/0 == 9))
+(assert (unit/0 == void))
 ```
 
-Constructor arguments are positional, matching declaration order.
-
-### Accessing fields
+Named fields can be read by field name or by zero-based slot. Positional tuple slots can be read only by zero-based slot. Missing fields and out-of-range slots return `void`; selector defaults can replace that `void` result.
 
 ```gene
-# By name (named fields only)
-p/x    => 3
-p/y    => 4
-
-# By index (all fields)
-p/0    => 3
-p/1    => 4
-
-# Anonymous tuples - index only
-pair/0 => "hello"
-pair/1 => 42
+(assert ((./ point "missing" 99) == 99))
+(assert ((./ box 1 77) == 77))
 ```
 
-## Properties
+Slash selectors are the public product-data read surface. Dot dispatch remains behavior dispatch and is not a tuple field-access syntax.
 
-### Immutability
+## Equality and display
 
-Tuples are immutable after construction. To create a modified copy, use the `.clone` builtin:
-
-```gene
-(var p1 (new Point 3 4))
-(var p2 (p1 .clone ^x 10))
-p2/x => 10
-p2/y => 4
-
-# Positional update by index:
-(var t (new tuple 1 2 3))
-(var t2 (t .clone ^0 10))
-t2/0 => 10
-```
-
-`.clone` is a standalone method. It returns a new tuple; the original is unchanged.
-
-### Type enforcement
-
-Field types are enforced at construction time (and by `.clone`). Passing a value that doesn't match the declared type is a runtime error.
-
-```gene
-(tuple Pair String Int)
-(new Pair "hello" 42)     # ok
-(new Pair 42 "hello")     # runtime error: expected String, got Int
-```
-
-### Nominal typing
-
-Tuple types are nominal -- the type name is the identity. Two tuple types with the same fields but different names are distinct types.
+Tuple identity is nominal. Two tuple values compare equal only when they come from the same tuple declaration and all payload values compare equal.
 
 ```gene
 (tuple Point x: Int y: Int)
-(tuple Vec2 x: Int y: Int)
+(tuple Other x: Int y: Int)
 
-(== (new Point 3 4) (new Point 3 4))   => true   # same type, same values
-(== (new Point 3 4) (new Vec2 3 4))    => false   # different types
-(== (new Point 3 4) (new Point 3 5))   => false   # same type, different values
+(var point (Point 10 20))
+(var same (Point ^y 20 ^x 10))
+(var different (Point 10 21))
+(var other (Other 10 20))
+
+(assert (point == same))
+(assert (point != different))
+(assert (point != other))
 ```
 
-Anonymous tuples compare structurally by field count and values (they have no type name).
-
-### Destructuring
+Display uses the tuple name followed by payload values in declaration order.
 
 ```gene
-(var [x y] p)           # positional destructure
-x => 3
-y => 4
-
-(var [first _ third] t)  # skip fields with _
+(println point)
+# => (Point 10 20)
 ```
 
-### Pattern matching
+Display is for humans and diagnostics. It is not a substitute for nominal tuple identity.
 
-Uses `case`/`when` (Gene's pattern matching construct):
+## Tuple `case` patterns
+
+Use `case` to branch on tuple shape and bind payload values.
+
+```gene
+(tuple Point x: Int y: Int)
+(tuple Box Int)
+(tuple Unit)
+
+(var point (Point 10 20))
+(var box (Box 9))
+(var unit (Unit))
+
+(var point_total
+  (case point
+    when (Point x y:yy)
+      (+ x yy)
+    else
+      -1))
+
+(var box_value
+  (case box
+    when (Box value)
+      value
+    else
+      -1))
+
+(var unit_value
+  (case unit
+    when (Unit)
+      30
+    else
+      -1))
+```
+
+Tuple `case` binders follow declaration order. Named tuple patterns can use field aliases such as `y:yy` to bind a field to a different local name. Positional tuple patterns bind by slot order. Unit tuple patterns use the tuple name with no binders.
+
+Use `_` to consume a payload position without creating a binding.
 
 ```gene
 (case point
-  when (Point 0 0)      "origin"
-  when (Point x 0)      #"on x-axis at #{x}"
-  when (Point 0 y)      #"on y-axis at #{y}"
-  when (Point x y)      #"at #{x}, #{y}"
-)
+  when (Point _ y)
+    y
+  else
+    0)
 ```
 
-## Behavior model
+Tuple values do not use array-style tuple destructuring. Use slash reads for direct access and tuple `case` patterns for branching and binding.
 
-Tuples are pure data. Use standalone functions to operate on them:
+## Persistence and module boundaries
 
-```gene
-(fn distance [a b]
-  (math/sqrt ((((a/x - b/x) ** 2)) + ((a/y - b/y) ** 2)))
-)
+Tuple declarations and values preserve their nominal identity, shape, arity, field names, and field type descriptors across supported serialization, deserialization, imports, and GIR cached execution. A deserialized or cached tuple value should continue to compare, display, read through slash selectors, and match in `case` according to the original tuple declaration.
 
-(var p1 (new Point 0 0))
-(var p2 (new Point 3 4))
-(distance p1 p2)  => 5.0
-```
+Malformed tuple metadata is rejected at load or reconstruction boundaries rather than silently becoming an untyped product value.
 
-## Examples
+## Non-goals and unsupported surfaces
 
-```gene
-# RGB color as a tuple
-(tuple Color r: Int g: Int b: Int)
-(var red (new Color 255 0 0))
+The current tuple contract does not include:
 
-(fn color_to_hex [c]
-  #"##(hex c/r)#(hex c/g)#(hex c/b)"
-)
+- anonymous or structural tuple literals;
+- `new`-based tuple construction;
+- mixed named-and-positional tuple declarations;
+- tuple-specific methods, adapters, or field-method dispatch;
+- mutation or copy-update helpers;
+- array-style tuple destructuring;
+- stable-core promotion.
 
-# Return multiple values from a function
-(fn divmod [a b]
-  (new tuple (a / b) (a % b))
-)
-(var [quotient remainder] (divmod 10 3))
-
-# Lightweight records
-(tuple HttpResponse status: Int body: String)
-(var resp (new HttpResponse 200 "OK"))
-resp/status => 200
-```
+These exclusions keep tuples focused on nominal product data: declare a type, construct it by name, read data with slash selectors, and branch with tuple `case` patterns.
