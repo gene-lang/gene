@@ -1,0 +1,38 @@
+# Tuple core declarations, construction, and slash access
+
+(tuple Point x: Int y: Int)
+(tuple Box Int)
+
+(var p (Point 10 20))
+(var p2 (Point ^y 40 ^x 30))
+(var box (Box 9))
+
+(assert (p/x == 10))
+(assert (p/y == 20))
+(assert (p/0 == 10))
+(assert (p/1 == 20))
+(assert (p2/x == 30))
+(assert (p2/y == 40))
+(assert (box/0 == 9))
+(assert (p/missing == void))
+(assert (box/1 == void))
+(assert ((./ p "missing" 99) == 99))
+(assert ((./ box 1 77) == 77))
+
+(println p/x)
+# Expected: 10
+
+(println p/y)
+# Expected: 20
+
+(println p/0)
+# Expected: 10
+
+(println p/1)
+# Expected: 20
+
+(println box/0)
+# Expected: 9
+
+(println (./ p "missing" 99))
+# Expected: 99

@@ -156,6 +156,45 @@ test_vm """
         check unit.ref.tv_data.len == 0
 
 
+test_vm """
+  (tuple Point x: Int y: Int)
+  (tuple Box Int)
+  (var p (Point 10 20))
+  (var box (Box 9))
+  [p/x p/y p/0 p/1 box/0 (if (p/z == void) "missing-field" else "present") (if (box/1 == void) "missing-slot" else "present") (./ p "z" 99) (./ box 1 77)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 9
+    if values.len == 9:
+      check values[0] == 10.to_value()
+      check values[1] == 20.to_value()
+      check values[2] == 10.to_value()
+      check values[3] == 20.to_value()
+      check values[4] == 9.to_value()
+      check values[5] == "missing-field".to_value()
+      check values[6] == "missing-slot".to_value()
+      check values[7] == 99.to_value()
+      check values[8] == 77.to_value()
+
+
+test "tuple strict slash lookup reports missing fields before method fallback":
+  expect_tuple_source_error("""
+    (tuple Point x: Int y: Int)
+    (var p (Point 1 2))
+    (p/missing += 1)
+  """, "Tuple Point has no field missing")
+
+
+test "tuple payload dot access does not fall back to tuple fields":
+  expect_tuple_source_error("""
+    (tuple Point x: Int y: Int)
+    (var p (Point 1 2))
+    (p .x)
+  """, "Unified method call not supported for VkTupleValue")
+
+
 test "tuple constructors reject minimal invalid call shapes":
   expect_tuple_source_error("""
     (tuple Point x: Int y: Int)

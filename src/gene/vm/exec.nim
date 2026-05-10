@@ -171,6 +171,33 @@ proc enum_value_payload_or(target: Value, prop: Value, missing: Value): Value {.
         return target.ref.ev_data[i]
   missing
 
+proc tuple_value_payload_or(target: Value, prop: Value, missing: Value): Value {.inline.} =
+  if target.kind != VkTupleValue or target.ref == nil or
+      target.ref.tv_def.kind != VkTupleDef or target.ref.tv_def.ref == nil:
+    return missing
+  let tuple_def = target.ref.tv_def.ref.tuple_def
+  if tuple_def == nil:
+    return missing
+
+  if prop.kind == VkInt:
+    let idx64 = prop.int64
+    let arity = target.ref.tv_data.len.int64
+    var resolved = idx64
+    if resolved < 0:
+      resolved = arity + resolved
+    if resolved >= 0 and resolved < arity:
+      return target.ref.tv_data[resolved.int]
+    return missing
+
+  if prop.kind == VkString or prop.kind == VkSymbol:
+    if tuple_payload_shape(tuple_def) != EpsNamed:
+      return missing
+    let field_name = prop.str
+    for i, field in tuple_def.fields:
+      if field == field_name and i < target.ref.tv_data.len:
+        return target.ref.tv_data[i]
+  missing
+
 proc enum_payload_method_slot(method_name: string): int {.inline.} =
   if method_name.len == 0:
     return -1
@@ -1337,6 +1364,19 @@ proc exec*(self: ptr VirtualMachine): Value =
               self.frame.push(member)
             else:
               not_allowed("Variant " & value.ref.ev_variant.ref.enum_member.name & " has no field " & prop.str)
+          of VkTupleValue:
+            let prop = cast[Value](name)
+            let member = tuple_value_payload_or(value, prop, VOID)
+            if member != VOID:
+              retain(member)
+              self.frame.push(member)
+            else:
+              let tuple_name = if value.ref != nil and value.ref.tv_def.kind == VkTupleDef and
+                  value.ref.tv_def.ref != nil and value.ref.tv_def.ref.tuple_def != nil:
+                value.ref.tv_def.ref.tuple_def.name
+              else:
+                "<malformed>"
+              not_allowed("Tuple " & tuple_name & " has no field " & prop.str)
           of VkAdapter:
             # Access member through adapter mapping
             let member = adapter_get_member(self, value, name)
@@ -1526,6 +1566,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(VOID)
             of VkEnumValue:
               let member = enum_value_payload_or(target, prop, VOID)
+              retain(member)
+              self.frame.push(member)
+            of VkTupleValue:
+              let member = tuple_value_payload_or(target, prop, VOID)
               retain(member)
               self.frame.push(member)
             of VkInstance:
@@ -1736,6 +1780,10 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.frame.push(default_val)
             of VkEnumValue:
               let member = enum_value_payload_or(target, prop, default_val)
+              retain(member)
+              self.frame.push(member)
+            of VkTupleValue:
+              let member = tuple_value_payload_or(target, prop, default_val)
               retain(member)
               self.frame.push(member)
             of VkInstance:
