@@ -14,6 +14,25 @@
 # Expected: advice wrapped result 10
 # Expected: veto filter 4 1 7
 # Expected: veto wrapped result nil
+# Expected: spread before 6 4 8
+# Expected: spread target 6 4 8
+# Expected: spread after 6 4 18
+# Expected: spread pos result 18
+# Expected: spread before 2 3 9
+# Expected: spread target 2 3 9
+# Expected: spread after 2 3 14
+# Expected: spread kw result 14
+# Expected: spread before 1 5 7
+# Expected: spread target 1 5 7
+# Expected: spread after 1 5 13
+# Expected: spread combined result 13
+# Expected: chain outer around 8 1 6
+# Expected: spread before 8 1 6
+# Expected: spread target 8 1 6
+# Expected: spread after 8 1 15
+# Expected: chain outer inner result 15
+# Expected: chain result 15
+# Expected: spread unexpected keyword caught
 
 (fn-interceptor DirectKeywordTrace [f]
   (before f [x y ^limit]
@@ -85,3 +104,56 @@
 
 (var keyword_veto_wrapped (KeywordVetoTrace keyword_veto_target))
 (println "veto wrapped result" (keyword_veto_wrapped 4 1 ^limit 7))
+
+(fn-interceptor SpreadTrace [f]
+  (before f [x y ^limit = 8]
+    (println "spread before" x y limit)
+  )
+  (after f [x y ^limit = 8 result]
+    (println "spread after" x y result)
+  )
+)
+
+(fn spread_keyword_target [x y ^limit = 8]
+  (println "spread target" x y limit)
+  (+ x y limit)
+)
+
+(var spread_wrapped (SpreadTrace spread_keyword_target))
+(var spread_pos_args [6 4])
+(println "spread pos result" (spread_wrapped spread_pos_args...))
+
+(var spread_kw {^limit 9})
+(println "spread kw result" (spread_wrapped 2 3 ^... spread_kw))
+
+(var spread_combined_args [1 5])
+(var spread_combined_kw {^limit 7})
+(println "spread combined result" (spread_wrapped spread_combined_args... ^... spread_combined_kw))
+
+(fn spread_outer_forward_advice [_self x y ^limit wrapped]
+  (println "chain outer around" x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "chain outer inner result" r)
+  r
+)
+
+(fn-interceptor SpreadOuterForward [f]
+  (around f spread_outer_forward_advice)
+)
+
+(var spread_chain_inner (SpreadTrace spread_keyword_target))
+(var spread_chain_outer (SpreadOuterForward spread_chain_inner))
+(var chain_args [8 1])
+(var chain_kws {^limit 6})
+(println "chain result" (spread_chain_outer chain_args... ^... chain_kws))
+
+(fn-interceptor SpreadNoAdvice [f])
+(var spread_plain_wrapped (SpreadNoAdvice spread_keyword_target))
+(var spread_bad_kw {^limit 5 ^unexpected true})
+(try
+  (spread_plain_wrapped 2 3 ^... spread_bad_kw)
+catch *
+  (println "spread unexpected keyword caught")
+)

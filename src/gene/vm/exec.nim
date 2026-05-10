@@ -79,6 +79,14 @@ proc call_native_with_gene_args(self: ptr VirtualMachine, native_fn: NativeFn, a
     native_args[i + 1] = arg
   call_native_fn(native_fn, self, native_args, true)
 
+proc gene_keyword_pairs(args_gene: Value): seq[(Key, Value)] {.inline.} =
+  if args_gene.kind != VkGene or args_gene.gene.props.len == 0:
+    return @[]
+
+  result = newSeq[(Key, Value)](0)
+  for k, v in args_gene.gene.props:
+    result.add((k, v))
+
 proc validate_instance_native_method_arity(meth: Method, positional_count: int, keyword_count = 0) {.inline.} =
   if meth == nil or not meth.native_signature_known:
     return
@@ -2372,6 +2380,17 @@ proc exec*(self: ptr VirtualMachine): Value =
             inst = self.cu.instructions[self.pc].addr
             continue
 
+          of VkInterception:
+            # Interception wrappers are eager standalone callables. Spread-bearing
+            # wrapper calls compile through this Gene-builder path, so collect
+            # evaluated children/properties in a Gene and dispatch at IkGeneEnd.
+            var g = new_gene_value()
+            g.gene.type = gene_type
+            self.frame.replace(g)
+            self.pc = inst.arg0.int64.int
+            inst = self.cu.instructions[self.pc].addr
+            continue
+
           of VkBoundMethod:
             # Handle bound method calls
             let bm = gene_type.ref.bound_method
@@ -2946,6 +2965,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               let tuple_def = require_tuple_constructor_def(value.gene.type)
               let kw_pairs = deterministic_tuple_keyword_pairs(tuple_def, value.gene.props)
               self.frame.replace(self.construct_tuple(value.gene.type, value.gene.children, kw_pairs))
+            elif value.kind == VkGene and value.gene.type.kind == VkInterception:
+              let kw_pairs = gene_keyword_pairs(value)
+              self.frame.replace(self.run_intercepted_method(value.gene.type.ref.interception, NIL, value.gene.children, kw_pairs))
             elif value.kind == VkGene and (inst.arg1 and 2'i32) != 0:
               value.gene.frozen = true
             if value.kind == VkGene and (inst.arg1 and 1'i32) != 0:
