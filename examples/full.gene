@@ -473,7 +473,7 @@
 (println "square nexts =" [squares/.next squares/.next squares/.next squares/.next squares/.next])
 
 # ============================================================================
-# 13) OPTION/RESULT, ?, ENUMS, REGEX, AND COLLECTION METHODS
+# 13) OPTION/RESULT, ?, ENUMS, TUPLES, REGEX, AND COLLECTION METHODS
 # ============================================================================
 
 # Enum-backed Option / Result
@@ -503,7 +503,7 @@
 (var shape_rect (Shape/Rect ^height 4 ^width 3))
 (var shape_point Shape/Point)
 (println "Shape circle typeof =" (typeof shape_circle))
-(println "Shape fields =" (shape_circle .radius) (shape_rect .width) (shape_rect .height))
+(println "Shape fields =" shape_circle/radius shape_rect/width shape_rect/height)
 (println "Shape rect area ="
   (case shape_rect
     when (Shape/Circle radius)
@@ -527,6 +527,35 @@
  catch *
   (println "Shape/Circle typed payload rejected")
 )
+
+# Tuple product data
+(tuple Reading label: String value: Int)
+(tuple TupleBox Int)
+(tuple EmptyTuple)
+(var reading_pos (Reading "temp" 21))
+(var reading_kw (Reading ^value 21 ^label "temp"))
+(var boxed_count (TupleBox 7))
+(var empty_tuple (EmptyTuple))
+(println "tuple slash =" reading_kw/label reading_kw/value reading_kw/0 reading_kw/1 boxed_count/0)
+(println "tuple equality/display =" (reading_pos == reading_kw) reading_kw)
+(println "tuple named case ="
+  (case reading_kw
+    when (Reading label value:v)
+      #"#{label}=#{v}"
+    else
+      "unknown"))
+(println "tuple positional case ="
+  (case boxed_count
+    when (TupleBox value)
+      value
+    else
+      -1))
+(println "tuple unit case ="
+  (case empty_tuple
+    when (EmptyTuple)
+      "empty"
+    else
+      "payload"))
 
 # Regex
 (var re #/(\d+)/)
