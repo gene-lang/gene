@@ -398,6 +398,18 @@ proc require_tuple_constructor_def(tuple_type: Value): TupleDef {.inline.} =
   validate_tuple_metadata(tuple_def, "Tuple constructor")
   tuple_def
 
+proc require_tuple_pattern_def(pattern: Value): TupleDef {.inline.} =
+  if pattern.kind != VkTupleDef:
+    not_allowed("Tuple pattern expected VkTupleDef, got " & $pattern.kind)
+
+  let tuple_ref = pattern.ref
+  if tuple_ref == nil or tuple_ref.tuple_def == nil:
+    not_allowed("Malformed tuple pattern: missing tuple metadata")
+
+  let tuple_def = tuple_ref.tuple_def
+  validate_tuple_metadata(tuple_def, "Tuple pattern")
+  tuple_def
+
 proc tuple_keyword_name(key: Key): string {.inline.} =
   get_symbol(symbol_index(key))
 
@@ -408,6 +420,20 @@ proc tuple_payload_expected_fields(tuple_def: TupleDef): string {.inline.} =
   for i in 0..<tuple_payload_arity(tuple_def):
     slots.add("#" & $i)
   slots.join(", ")
+
+proc tuple_pattern_arity_message(tuple_def: TupleDef, got: int): string {.inline.} =
+  let expected = tuple_payload_arity(tuple_def)
+  let expected_detail =
+    case tuple_payload_shape(tuple_def)
+    of EpsNamed:
+      if expected > 0: "fields: " & tuple_def.fields.join(", ") else: ""
+    of EpsPositional:
+      if expected > 0: "slots: " & tuple_payload_expected_fields(tuple_def) else: ""
+    of EpsUnit:
+      ""
+  let detail = if expected_detail.len > 0: " (" & expected_detail & ")" else: ""
+  "tuple " & tuple_def.name & " pattern expects " & $expected &
+    " binding(s)" & detail & ", got " & $got
 
 proc tuple_payload_type_label(tuple_name: string, tuple_def: TupleDef, index: int): string {.inline.} =
   if tuple_payload_shape(tuple_def) == EpsNamed and index >= 0 and index < tuple_def.fields.len:
@@ -4101,6 +4127,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         f.scope_tracker = scope_tracker_obj
         if f.matcher != nil:
           f.matcher.type_check = self.type_check
+          if info.tuple_pattern_metadata_initialized:
+            f.matcher.tuple_pattern_metadata_initialized = true
+            f.matcher.tuple_pattern_by_name = info.tuple_pattern_by_name
           let compiled_body = load_published_body(f)
           if compiled_body != nil and compiled_body.type_descriptors.len > 0:
             f.matcher.type_descriptors = compiled_body.type_descriptors
@@ -4181,6 +4210,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         b.scope_tracker = new_scope_tracker(info.scope_tracker)
         if b.matcher != nil:
           b.matcher.type_check = self.type_check
+          if info.tuple_pattern_metadata_initialized:
+            b.matcher.tuple_pattern_metadata_initialized = true
+            b.matcher.tuple_pattern_by_name = info.tuple_pattern_by_name
           if self.cu != nil and self.cu.type_descriptors.len > 0:
             b.matcher.type_descriptors = self.cu.type_descriptors
             b.matcher.type_aliases = self.cu.type_aliases
@@ -5264,6 +5296,38 @@ proc exec*(self: ptr VirtualMachine): Value =
         elif val.kind == VkEnumMember:
           if val.ref != nil and val.ref.enum_member != nil:
             matched = val.ref.enum_member == expected_member
+
+        self.frame.push(val)
+        self.frame.push(if matched: TRUE else: FALSE)
+        {.pop.}
+
+      of IkMatchTuple:
+        # Identity-aware tuple pattern matching. The compiler leaves the case
+        # target below a runtime-resolved VkTupleDef pattern; this instruction
+        # restores [target, bool] and fails closed for malformed tuple targets.
+        {.push checks: off.}
+        let pattern = self.frame.pop()
+        let val = self.frame.pop()
+        let expected_def = require_tuple_pattern_def(pattern)
+        let binder_count = inst.arg1.int
+        if binder_count != tuple_payload_arity(expected_def):
+          not_allowed(tuple_pattern_arity_message(expected_def, binder_count))
+
+        var matched = false
+        if val.kind == VkTupleValue and val.ref != nil:
+          let tuple_def_value = val.ref.tv_def
+          if tuple_def_value.kind == VkTupleDef and tuple_def_value.ref != nil and
+              tuple_def_value.ref.tuple_def != nil:
+            let actual_def = tuple_def_value.ref.tuple_def
+            var target_metadata_valid = false
+            try:
+              validate_tuple_metadata(actual_def, "Tuple pattern target")
+              target_metadata_valid = true
+            except CatchableError:
+              target_metadata_valid = false
+            if target_metadata_valid and actual_def == expected_def and
+                val.ref.tv_data.len == binder_count:
+              matched = true
 
         self.frame.push(val)
         self.frame.push(if matched: TRUE else: FALSE)

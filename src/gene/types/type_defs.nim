@@ -55,6 +55,12 @@ type
     field_type_ids*: seq[TypeId]  # parallel to payload arity; NO_TYPE_ID means untyped
     field_type_descs*: seq[TypeDesc]
 
+  TuplePatternMetadata* = object
+    tuple_name*: string
+    payload_shape*: EnumPayloadShapeKind
+    payload_arity*: int
+    fields*: seq[string]
+
   FutureState* = enum
     FsPending
     FsSuccess
@@ -384,6 +390,8 @@ type
     compiled_body*: Value
     type_expectation_ids*: seq[TypeId]
     return_type_id*: TypeId
+    tuple_pattern_metadata_initialized*: bool
+    tuple_pattern_by_name*: Table[string, TuplePatternMetadata]
 
   SourceTrace* = ref object
     parent*: SourceTrace
@@ -711,6 +719,8 @@ type
     return_type_id*: TypeId
     type_descriptors*: seq[TypeDesc]
     type_aliases*: Table[string, TypeId]
+    tuple_pattern_metadata_initialized*: bool
+    tuple_pattern_by_name*: Table[string, TuplePatternMetadata]
 
   MatchingHintMode* {.size: sizeof(int16) .} = enum
     MhDefault
@@ -792,6 +802,8 @@ type
     enum_pattern_metadata_initialized*: bool
     enum_pattern_by_qualified*: Table[string, EnumVariantPatternMetadata]
     enum_pattern_by_name*: Table[string, seq[EnumVariantPatternMetadata]]
+    tuple_pattern_metadata_initialized*: bool
+    tuple_pattern_by_name*: Table[string, TuplePatternMetadata]
 
   InstructionKind* {.size: sizeof(int16).} = enum
     IkNoop
@@ -1034,6 +1046,7 @@ type
     IkVarDestructure  # Matcher-based var destructuring (arg0=[pattern, [target-indices]])
     IkMatchEnumVariant # Identity-aware enum variant pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
     IkCreateTuple     # Nominal tuple declaration (stack: name, fields; arg0=TypeId array, arg1=payload shape)
+    IkMatchTuple      # Identity-aware tuple pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object

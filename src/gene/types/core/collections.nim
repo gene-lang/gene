@@ -260,7 +260,9 @@ proc materialize_scope_tracker*(snapshot: ScopeTrackerSnapshot): ScopeTracker =
 
 proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil, input: Value = NIL,
                             type_expectation_ids: seq[TypeId] = @[],
-                            return_type_id: TypeId = NO_TYPE_ID): FunctionDefInfo =
+                            return_type_id: TypeId = NO_TYPE_ID,
+                            tuple_pattern_metadata_initialized = false,
+                            tuple_pattern_by_name: Table[string, TuplePatternMetadata] = initTable[string, TuplePatternMetadata]()): FunctionDefInfo =
   var body_value = NIL
   if body != nil:
     let cu_ref = new_ref(VkCompiledUnit)
@@ -272,7 +274,9 @@ proc new_function_def_info*(tracker: ScopeTracker, body: CompilationUnit = nil, 
     scope_tracker: tracker,
     compiled_body: body_value,
     type_expectation_ids: type_expectation_ids,
-    return_type_id: return_type_id
+    return_type_id: return_type_id,
+    tuple_pattern_metadata_initialized: tuple_pattern_metadata_initialized,
+    tuple_pattern_by_name: tuple_pattern_by_name,
   )
 
 proc to_value*(info: FunctionDefInfo): Value =

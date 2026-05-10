@@ -227,6 +227,151 @@ proc split_enum_pattern_alias(token: string): tuple[has_alias: bool, field_name:
     return (true, "", "")
   (true, token[0..<colon], token[colon + 1..^1])
 
+proc ensure_tuple_pattern_metadata(self: Compiler) =
+  if self.tuple_pattern_metadata_initialized:
+    return
+  self.tuple_pattern_by_name = initTable[string, TuplePatternMetadata]()
+  self.tuple_pattern_metadata_initialized = true
+
+proc register_tuple_pattern_metadata(self: Compiler, tuple_name: string,
+                                     fields: seq[string], payload_shape: EnumPayloadShapeKind,
+                                     payload_arity: int) =
+  self.ensure_tuple_pattern_metadata()
+  self.tuple_pattern_by_name[tuple_name] = TuplePatternMetadata(
+    tuple_name: tuple_name,
+    payload_shape: payload_shape,
+    payload_arity: payload_arity,
+    fields: fields)
+
+proc tuple_pattern_expected_detail(info: TuplePatternMetadata): string =
+  case info.payload_shape
+  of EpsNamed:
+    if info.fields.len > 0:
+      "fields: " & info.fields.join(", ")
+    else:
+      "fields: <none>"
+  of EpsPositional:
+    var slots: seq[string] = @[]
+    for i in 0..<info.payload_arity:
+      slots.add("#" & $i)
+    "slots: " & slots.join(", ")
+  of EpsUnit:
+    ""
+
+proc tuple_pattern_binding_message(info: TuplePatternMetadata, got: int): string =
+  let expected = info.payload_arity
+  let expected_detail = info.tuple_pattern_expected_detail()
+  let detail = if expected_detail.len > 0: " (" & expected_detail & ")" else: ""
+  "tuple " & info.tuple_name & " pattern expects " & $expected &
+    " binding(s)" & detail & ", got " & $got
+
+proc tuple_pattern_field_index(info: TuplePatternMetadata, field_name: string): int =
+  for i, field in info.fields:
+    if field == field_name:
+      return i
+  -1
+
+type TupleCasePatternBinding = object
+  field_index: int
+  field_name: string
+  local_name: string
+
+type TupleCasePattern = object
+  matched: bool
+  head: Value
+  bindings: seq[TupleCasePatternBinding]
+  metadata: TuplePatternMetadata
+
+proc resolve_tuple_case_pattern_head(self: Compiler, head: Value): TupleCasePattern =
+  if head.kind != VkSymbol:
+    return
+
+  let name = head.str
+  if name.len == 0:
+    return
+
+  if self.tuple_pattern_metadata_initialized and self.tuple_pattern_by_name.hasKey(name):
+    result.matched = true
+    result.head = head
+    result.metadata = self.tuple_pattern_by_name[name]
+
+proc resolve_tuple_case_bindings(info: TuplePatternMetadata,
+                                 raw_bindings: seq[string]): seq[TupleCasePatternBinding] =
+  if raw_bindings.len != info.payload_arity:
+    not_allowed(info.tuple_pattern_binding_message(raw_bindings.len))
+
+  let expected_detail = info.tuple_pattern_expected_detail()
+  let expected_suffix = if expected_detail.len > 0: "; expected " & expected_detail else: ""
+
+  case info.payload_shape
+  of EpsUnit:
+    return
+  of EpsPositional:
+    for i, raw in raw_bindings:
+      let alias = split_enum_pattern_alias(raw)
+      if alias.has_alias:
+        not_allowed("tuple pattern " & info.tuple_name &
+          " uses field alias " & raw & " on a positional tuple" & expected_suffix)
+      result.add(TupleCasePatternBinding(field_index: i, field_name: "", local_name: raw))
+  of EpsNamed:
+    var seen_fields = initTable[string, bool]()
+    for i, raw in raw_bindings:
+      let alias = split_enum_pattern_alias(raw)
+      var field_name = raw
+      var local_name = raw
+      if alias.has_alias:
+        if alias.field_name.len == 0 or alias.local_name.len == 0:
+          not_allowed("tuple pattern " & info.tuple_name &
+            " has invalid field alias " & raw & expected_suffix)
+        field_name = alias.field_name
+        local_name = alias.local_name
+      elif raw == "_":
+        field_name = info.fields[i]
+        local_name = raw
+
+      let field_index = tuple_pattern_field_index(info, field_name)
+      if field_index < 0:
+        not_allowed("tuple pattern " & info.tuple_name &
+          " references unknown field " & field_name &
+          " from binding " & raw & expected_suffix)
+      if seen_fields.hasKey(field_name):
+        not_allowed("tuple pattern " & info.tuple_name &
+          " references duplicate field " & field_name &
+          " from binding " & raw & expected_suffix)
+      seen_fields[field_name] = true
+      result.add(TupleCasePatternBinding(field_index: field_index, field_name: field_name, local_name: local_name))
+
+proc extract_tuple_case_pattern(self: Compiler, v: Value): TupleCasePattern =
+  var raw_bindings: seq[string] = @[]
+  case v.kind
+  of VkSymbol:
+    result = self.resolve_tuple_case_pattern_head(v)
+  of VkGene:
+    if v.gene == nil:
+      return
+    result = self.resolve_tuple_case_pattern_head(v.gene.`type`)
+    if not result.matched:
+      return
+    for child in v.gene.children:
+      if child.kind != VkSymbol:
+        let expected_detail = result.metadata.tuple_pattern_expected_detail()
+        let expected_suffix = if expected_detail.len > 0: "; expected " & expected_detail else: ""
+        not_allowed("tuple pattern " & result.metadata.tuple_name &
+          " binding must be a symbol" & expected_suffix)
+      raw_bindings.add(child.str)
+  else:
+    discard
+
+  if result.matched:
+    result.bindings = resolve_tuple_case_bindings(result.metadata, raw_bindings)
+
+proc tuple_case_binding_access_value(info: TuplePatternMetadata,
+                                     binding: TupleCasePatternBinding): Value =
+  if info.payload_shape == EpsNamed:
+    binding.field_name.to_symbol_value()
+  else:
+    binding.field_index.to_value()
+
 proc enum_pattern_field_index(info: EnumVariantPatternMetadata, field_name: string): int =
   for i, field in info.fields:
     if field == field_name:
@@ -353,12 +498,53 @@ proc compile_case(self: Compiler, gene: ptr Gene) =
         self.emit(Instruction(kind: IkNoop, label: next_label))
         next_label = new_label()
 
-      let enum_pattern = self.extract_enum_case_pattern(when_value)
+      let tuple_pattern = self.extract_tuple_case_pattern(when_value)
+      let enum_pattern =
+        if tuple_pattern.matched:
+          EnumCasePattern()
+        else:
+          self.extract_enum_case_pattern(when_value)
+
+      # Tuple patterns are resolved before the uppercase enum fallback so a local
+      # tuple constructor like `Point` is not misclassified as an enum variant.
+      if tuple_pattern.matched:
+        self.compile(tuple_pattern.head)
+        self.emit(Instruction(kind: IkMatchTuple, arg1: tuple_pattern.bindings.len.int32))
+        # Stack: [target, bool]
+
+        # Jump to next when if not matched
+        self.emit(Instruction(kind: IkJumpIfFalse, arg0: next_label.to_value()))
+        # Stack: [target]
+
+        # Start scope for body with potential bindings
+        self.start_scope()
+
+        # Extract tuple payload fields through member lookup only; named tuple
+        # binders use declared field symbols, positional tuple binders use slot ints.
+        for binding in tuple_pattern.bindings:
+          let local_name = binding.local_name
+          if local_name.len == 0 or local_name == "_":
+            continue
+          self.emit(Instruction(kind: IkDup))
+          self.emit(Instruction(kind: IkPushValue,
+            arg0: tuple_case_binding_access_value(tuple_pattern.metadata, binding)))
+          self.emit(Instruction(kind: IkGetMemberOrNil))
+          self.bind_case_pattern_local(local_name)
+
+        # Pop the target before executing body
+        self.emit(Instruction(kind: IkPop))
+        # Stack: []
+
+        # Compile the when body
+        let old_tail = self.tail_position
+        self.compile(when_body)
+        self.tail_position = old_tail
+        self.end_scope()
 
       # Check if this is an enum variant pattern.  Pattern heads are compiled as
       # values (e.g. Shape/Circle -> VkEnumMember) and matched by identity in the
       # VM, while the target remains on stack for later when/else clauses.
-      if enum_pattern.matched:
+      elif enum_pattern.matched:
         self.compile(enum_pattern.head)
         self.emit(Instruction(kind: IkMatchEnumVariant, arg1: enum_pattern.bindings.len.int32))
         # Stack: [target, bool]
@@ -1611,6 +1797,8 @@ proc compile_tuple(self: Compiler, gene: ptr Gene) =
   var type_desc_index = initTable[string, TypeId]()
   ensure_type_desc_index(self.output.type_descriptors, type_desc_index)
   let metadata = self.parse_tuple_declaration_fields(tuple_name, gene, type_desc_index)
+  self.register_tuple_pattern_metadata(tuple_name, metadata.fields,
+    metadata.payload_shape, metadata.payload_arity)
 
   self.emit(Instruction(kind: IkPushValue, arg0: tuple_name.to_value()))
   self.emit(Instruction(kind: IkPushValue, arg0: string_array_value(metadata.fields)))

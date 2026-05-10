@@ -223,6 +223,9 @@ proc seed_nested_type_context(self: Compiler, matcher: RootMatcher, body: seq[Va
   if matcher != nil and matcher.type_descriptors.len > 0:
     self.output.type_descriptors = copy_type_descs(matcher.type_descriptors)
     self.output.type_aliases = matcher.type_aliases
+  if matcher != nil and matcher.tuple_pattern_metadata_initialized:
+    self.tuple_pattern_metadata_initialized = true
+    self.tuple_pattern_by_name = matcher.tuple_pattern_by_name
 
   let module_path = infer_nested_module_path(matcher, body)
   if module_path.len > 0:
@@ -235,6 +238,8 @@ proc finalize_nested_type_context(self: Compiler, matcher: RootMatcher, phase: s
     self.output.matcher = matcher
     matcher.type_descriptors = self.output.type_descriptors
     matcher.type_aliases = self.output.type_aliases
+    matcher.tuple_pattern_metadata_initialized = self.tuple_pattern_metadata_initialized
+    matcher.tuple_pattern_by_name = self.tuple_pattern_by_name
   self.finalize_type_metadata(phase, source_path)
 
 #################### Forward Declarations #################

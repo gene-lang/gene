@@ -445,6 +445,105 @@ test "tuple declaration rejects malformed source syntax":
   """, "tuple Bad cannot mix named fields and positional type slots")
 
 
+test_vm """
+  (tuple Point x: Int y: Int)
+  (tuple Box Int)
+  (tuple Unit)
+  (tuple Other x: Int y: Int)
+  (var p (Point 10 20))
+  (var b (Box 9))
+  (var u (Unit))
+  (var other (Other 10 20))
+  [
+    (case p
+      when (Point x y:yy) (+ x yy)
+      else -1)
+    (case b
+      when (Box value) value
+      else -1)
+    (case u
+      when (Unit) 30
+      else -1)
+    (case other
+      when (Point x y) (+ x y)
+      else 40)
+  ]
+""", proc(r: Value) =
+  check r == @[30, 9, 30, 40].to_value()
+
+
+test "tuple case patterns validate binder shape and field names":
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (var p (Point 1 2))
+    (case p
+      when (Point x) x
+      else -1)
+  """, [
+    "tuple Point pattern expects 2 binding(s)",
+    "fields: x, y",
+    "got 1",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (var p (Point 1 2))
+    (case p
+      when (Point z y) y
+      else -1)
+  """, [
+    "tuple pattern Point references unknown field z",
+    "binding z",
+    "expected fields: x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (var p (Point 1 2))
+    (case p
+      when (Point z:zz y) zz
+      else -1)
+  """, [
+    "tuple pattern Point references unknown field z",
+    "binding z:zz",
+    "expected fields: x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (var p (Point 1 2))
+    (case p
+      when (Point x x) x
+      else -1)
+  """, [
+    "tuple pattern Point references duplicate field x",
+    "binding x",
+    "expected fields: x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Box Int)
+    (var b (Box 9))
+    (case b
+      when (Box value:v) v
+      else -1)
+  """, [
+    "tuple pattern Box uses field alias value:v on a positional tuple",
+    "expected slots: #0",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Unit)
+    (var u (Unit))
+    (case u
+      when (Unit extra) extra
+      else -1)
+  """, [
+    "tuple Unit pattern expects 0 binding(s)",
+    "got 1",
+  ])
+
+
 test "tuple declaration metadata verifier rejects invalid field TypeId":
   let cu = new_compilation_unit()
   cu.type_registry = populate_registry(cu.type_descriptors, cu.module_path)

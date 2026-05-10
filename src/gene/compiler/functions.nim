@@ -142,6 +142,9 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
 
   var fn_obj = to_function(input, self.output.type_descriptors, self.output.type_aliases,
     self.output.module_path, self.output.type_registry)
+  if fn_obj.matcher != nil and self.tuple_pattern_metadata_initialized:
+    fn_obj.matcher.tuple_pattern_metadata_initialized = true
+    fn_obj.matcher.tuple_pattern_by_name = self.tuple_pattern_by_name
   var type_expectation_ids: seq[TypeId] = @[]
   if fn_obj.matcher != nil:
     type_expectation_ids = newSeq[TypeId](fn_obj.matcher.children.len)
@@ -155,7 +158,8 @@ proc compile_fn(self: Compiler, input: Value, define_binding = true) =
     compiled_body = fn_obj.body_compiled
 
   let info = new_function_def_info(tracker_copy, compiled_body, input,
-    type_expectation_ids, if fn_obj.matcher != nil: fn_obj.matcher.return_type_id else: NO_TYPE_ID)
+    type_expectation_ids, if fn_obj.matcher != nil: fn_obj.matcher.return_type_id else: NO_TYPE_ID,
+    self.tuple_pattern_metadata_initialized, self.tuple_pattern_by_name)
   self.emit(Instruction(kind: IkFunction, arg0: info.to_value()))
 
   if local_binding:
@@ -176,7 +180,9 @@ proc compile_return(self: Compiler, gene: ptr Gene) =
   self.emit(Instruction(kind: IkReturn))
 
 proc compile_block(self: Compiler, input: Value) =
-  let info = new_function_def_info(self.scope_tracker, nil, input)
+  let info = new_function_def_info(self.scope_tracker, nil, input,
+    tuple_pattern_metadata_initialized = self.tuple_pattern_metadata_initialized,
+    tuple_pattern_by_name = self.tuple_pattern_by_name)
   self.emit(Instruction(kind: IkBlock, arg0: info.to_value()))
 
 proc compile_ns(self: Compiler, gene: ptr Gene) =
