@@ -1,0 +1,64 @@
+# Tuple serdes continuity for named, positional, and unit tuple values
+
+(tuple PersistedPair left: Int right: Int)
+(tuple PersistedBox Int Int)
+(tuple PersistedUnit)
+(export PersistedPair PersistedBox PersistedUnit)
+
+(var named (PersistedPair ^right 22 ^left 11))
+(var named_again (PersistedPair 11 22))
+(var positional (PersistedBox 33 44))
+(var unit (PersistedUnit))
+
+(var serialized (gene/serdes/serialize [named positional unit]))
+(var roundtrip (gene/serdes/deserialize serialized))
+
+(assert ((roundtrip/0 == named) == true))
+(assert ((roundtrip/0 == named_again) == true))
+(assert ((roundtrip/1 == positional) == true))
+(assert ((roundtrip/2 == unit) == true))
+(assert (roundtrip/0/left == 11))
+(assert (roundtrip/0/right == 22))
+(assert (roundtrip/0/0 == 11))
+(assert (roundtrip/0/1 == 22))
+(assert (roundtrip/1/0 == 33))
+(assert (roundtrip/1/1 == 44))
+(assert (roundtrip/2/0 == void))
+(assert ((gene/serdes/serialize roundtrip) == serialized))
+(assert (((roundtrip/0 .to_s) == "(PersistedPair 11 22)") == true))
+(assert (((roundtrip/1 .to_s) == "(PersistedBox 33 44)") == true))
+(assert (((roundtrip/2 .to_s) == "(PersistedUnit)") == true))
+
+(var named_case
+  (case roundtrip/0
+    when (PersistedPair left right:r)
+      (+ left r)
+    else
+      -1))
+
+(var positional_case
+  (case roundtrip/1
+    when (PersistedBox left right)
+      (+ left right)
+    else
+      -1))
+
+(var unit_case
+  (case roundtrip/2
+    when (PersistedUnit)
+      99
+    else
+      -1))
+
+(assert (named_case == 33))
+(assert (positional_case == 77))
+(assert (unit_case == 99))
+
+(println "tuple serdes slash =" roundtrip/0/left roundtrip/0/right roundtrip/1/0 roundtrip/1/1)
+# Expected: tuple serdes slash = 11 22 33 44
+
+(println "tuple serdes display =" roundtrip/0 roundtrip/1 roundtrip/2)
+# Expected: tuple serdes display = (PersistedPair 11 22) (PersistedBox 33 44) (PersistedUnit)
+
+(println "tuple serdes case =" named_case positional_case unit_case)
+# Expected: tuple serdes case = 33 77 99

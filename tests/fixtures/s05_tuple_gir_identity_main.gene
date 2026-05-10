@@ -1,0 +1,132 @@
+(import NamedPair:LeftPair PosBox:LeftBox UnitTuple:LeftUnit Wrapper:LeftWrapper make_named:make_left_named make_named_positional:make_left_named_positional make_positional:make_left_positional make_unit:make_left_unit wrap_named:wrap_left_named from "tests/fixtures/s05_tuple_identity_left")
+(import NamedPair:RightPair PosBox:RightBox UnitTuple:RightUnit Wrapper:RightWrapper make_named:make_right_named make_named_positional:make_right_named_positional make_positional:make_right_positional make_unit:make_right_unit wrap_named:wrap_right_named from "tests/fixtures/s05_tuple_identity_right")
+
+(tuple LocalPair left: Int right: Int)
+(tuple LocalBox Int Int)
+(tuple LocalUnit)
+(export LocalPair LocalBox LocalUnit)
+
+(var left_named (make_left_named))
+(var left_named_again (make_left_named_positional))
+(var right_named (make_right_named))
+(var right_named_again (make_right_named_positional))
+(var left_positional (make_left_positional))
+(var right_positional (make_right_positional))
+(var left_unit (make_left_unit))
+(var right_unit (make_right_unit))
+(var left_wrapped (wrap_left_named))
+(var right_wrapped (wrap_right_named))
+(var local_named (LocalPair ^right 8 ^left 7))
+(var local_named_again (LocalPair 7 8))
+(var local_positional (LocalBox 9 10))
+(var local_unit (LocalUnit))
+
+(assert (left_named/left == 7))
+(assert (left_named/right == 8))
+(assert (left_named/0 == 7))
+(assert (left_named/1 == 8))
+(assert (left_positional/0 == "left"))
+(assert (left_positional/1 == 9))
+(assert (left_wrapped/payload/left == 7))
+(assert (left_unit/0 == void))
+(assert (local_named/left == 7))
+(assert (local_named/right == 8))
+(assert (local_named/0 == 7))
+(assert (local_named/1 == 8))
+(assert (local_positional/0 == 9))
+(assert (local_positional/1 == 10))
+(assert (local_unit/0 == void))
+
+(assert ((left_named == left_named_again) == true))
+(assert ((right_named == right_named_again) == true))
+(assert ((left_named == right_named) == false))
+(assert ((left_positional == right_positional) == false))
+(assert ((left_unit == right_unit) == false))
+(assert ((local_named == local_named_again) == true))
+(assert (((left_named .to_s) == "(NamedPair 7 8)") == true))
+(assert (((left_positional .to_s) == "(PosBox \"left\" 9)") == true))
+(assert (((local_named .to_s) == "(LocalPair 7 8)") == true))
+(assert (((local_positional .to_s) == "(LocalBox 9 10)") == true))
+(assert (((local_unit .to_s) == "(LocalUnit)") == true))
+
+(var top_named_case
+  (case local_named
+    when (LocalPair left right:r)
+      (+ left r)
+    else
+      -1))
+
+(var top_positional_case
+  (case local_positional
+    when (LocalBox left right)
+      (+ left right)
+    else
+      -1))
+
+(var top_unit_case
+  (case local_unit
+    when (LocalUnit)
+      30
+    else
+      -1))
+
+(assert (top_named_case == 15))
+(assert (top_positional_case == 19))
+(assert (top_unit_case == 30))
+
+(fn lazy_tuple_score [value]
+  (case value
+    when (LocalPair left right:r)
+      (+ left r)
+    when (LocalBox left right)
+      (+ left right)
+    when (LocalUnit)
+      40
+    else
+      -1))
+
+(assert ((lazy_tuple_score local_named) == 15))
+(assert ((lazy_tuple_score local_positional) == 19))
+(assert ((lazy_tuple_score local_unit) == 40))
+
+(var left_serialized (gene/serdes/serialize left_named))
+(var right_serialized (gene/serdes/serialize right_named))
+(assert ((left_serialized == right_serialized) == false))
+(var left_roundtrip (gene/serdes/deserialize left_serialized))
+(var right_roundtrip (gene/serdes/deserialize right_serialized))
+(assert ((left_roundtrip == left_named) == true))
+(assert ((right_roundtrip == right_named) == true))
+(assert ((left_roundtrip == right_roundtrip) == false))
+(assert (left_roundtrip/left == 7))
+(assert (right_roundtrip/right == 8))
+
+(var local_serialized (gene/serdes/serialize [local_named local_positional local_unit]))
+(var local_roundtrip (gene/serdes/deserialize local_serialized))
+(assert ((local_roundtrip/0 == local_named) == true))
+(assert ((local_roundtrip/1 == local_positional) == true))
+(assert ((local_roundtrip/2 == local_unit) == true))
+(assert ((lazy_tuple_score local_roundtrip/0) == 15))
+(assert ((lazy_tuple_score local_roundtrip/1) == 19))
+(assert ((lazy_tuple_score local_roundtrip/2) == 40))
+
+(var tree_root "/tmp/gene_s05_tuple_gir_identity_tree")
+(gene/serdes/write_tree tree_root [left_named right_named left_positional right_positional left_unit right_unit left_wrapped right_wrapped local_named local_positional local_unit] ^separate [/*])
+(var loaded (gene/serdes/read_tree tree_root))
+(assert ((loaded/0 == left_named) == true))
+(assert ((loaded/1 == right_named) == true))
+(assert ((loaded/0 == loaded/1) == false))
+(assert ((loaded/2 == left_positional) == true))
+(assert ((loaded/3 == right_positional) == true))
+(assert ((loaded/4 == left_unit) == true))
+(assert ((loaded/5 == right_unit) == true))
+(assert ((loaded/4 == loaded/5) == false))
+(assert (loaded/6/payload/left == 7))
+(assert (loaded/7/payload/right == 8))
+(assert ((loaded/8 == local_named) == true))
+(assert ((loaded/9 == local_positional) == true))
+(assert ((loaded/10 == local_unit) == true))
+(assert ((lazy_tuple_score loaded/8) == 15))
+(assert ((lazy_tuple_score loaded/9) == 19))
+(assert ((lazy_tuple_score loaded/10) == 40))
+
+(println "s05 tuple gir identity ok")

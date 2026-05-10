@@ -1754,3 +1754,25 @@ suite "GIR CLI":
     checkpoint second.output
     check second.exitCode == 0
     check second.output == first.output
+
+  test "cached GIR preserves S05 imported tuple identity fixture":
+    let source_path = absolutePath("tests/fixtures/s05_tuple_gir_identity_main.gene")
+    let gir_path = gir.get_gir_path(source_path, "build")
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    let gene_bin = ensure_gene_bin_for_test()
+    let first = execCmdEx(gene_bin & " run " & source_path)
+    checkpoint first.output
+    check first.exitCode == 0
+    check first.output == "s05 tuple gir identity ok\n"
+    check fileExists(gir_path)
+
+    let second = execCmdEx(gene_bin & " run " & source_path)
+    checkpoint second.output
+    check second.exitCode == 0
+    check second.output == first.output
