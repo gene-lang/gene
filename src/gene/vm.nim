@@ -13,6 +13,7 @@ from ./types/runtime_types import
   GpReturn,
   GpLocal,
   GpEnumPayload,
+  GpTuplePayload,
   emit_type_warning,
   is_compatible,
   runtime_type_name,

@@ -26,6 +26,17 @@ proc expect_tuple_source_error(code: string, expected_message_part: string) =
     check err.msg.contains(expected_message_part)
 
 
+proc expect_tuple_source_error_parts(code: string, expected_message_parts: openArray[string]) =
+  init_all()
+  try:
+    discard VM.exec(cleanup(code), "test_code")
+    fail()
+  except CatchableError as err:
+    checkpoint err.msg
+    for expected_message_part in expected_message_parts:
+      check err.msg.contains(expected_message_part)
+
+
 proc tuple_type_id_array_value(items: openArray[TypeId]): Value =
   var values: seq[Value] = @[]
   for item in items:
@@ -71,6 +82,106 @@ test_vm """
       let desc = tupleDef.field_type_descs[BUILTIN_TYPE_INT_ID]
       check desc.kind == TdkNamed
       check desc.name == "Int"
+
+
+test_vm """
+  (tuple Point x: Int y: Int)
+  [Point (Point 1 2)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 2
+    if values.len == 2:
+      let pointDef = values[0]
+      let point = values[1]
+      check pointDef.kind == VkTupleDef
+      check point.kind == VkTupleValue
+      if pointDef.kind == VkTupleDef and point.kind == VkTupleValue:
+        check point.ref.tv_def == pointDef
+        check point.ref.tv_data == @[1.to_value(), 2.to_value()]
+
+
+test_vm """
+  (tuple Point x: Int y: Int)
+  [Point (Point ^y 20 ^x 10)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 2
+    if values.len == 2:
+      let pointDef = values[0]
+      let point = values[1]
+      check pointDef.kind == VkTupleDef
+      check point.kind == VkTupleValue
+      if pointDef.kind == VkTupleDef and point.kind == VkTupleValue:
+        check point.ref.tv_def == pointDef
+        check point.ref.tv_data == @[10.to_value(), 20.to_value()]
+
+
+test_vm """
+  (tuple Box Int)
+  [Box (Box 9)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 2
+    if values.len == 2:
+      let boxDef = values[0]
+      let box = values[1]
+      check boxDef.kind == VkTupleDef
+      check box.kind == VkTupleValue
+      if boxDef.kind == VkTupleDef and box.kind == VkTupleValue:
+        check box.ref.tv_def == boxDef
+        check box.ref.tv_data == @[9.to_value()]
+
+
+test_vm """
+  (tuple Unit)
+  [Unit (Unit)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 2
+    if values.len == 2:
+      let unitDef = values[0]
+      let unit = values[1]
+      check unitDef.kind == VkTupleDef
+      check unit.kind == VkTupleValue
+      if unitDef.kind == VkTupleDef and unit.kind == VkTupleValue:
+        check unit.ref.tv_def == unitDef
+        check unit.ref.tv_data.len == 0
+
+
+test "tuple constructors reject minimal invalid call shapes":
+  expect_tuple_source_error("""
+    (tuple Point x: Int y: Int)
+    (Point 1 ^y 2)
+  """, "Tuple Point cannot mix positional and keyword arguments")
+
+  expect_tuple_source_error("""
+    (tuple Box Int)
+    (Box ^value 9)
+  """, "Tuple Box has positional payload slots and does not accept keyword argument(s): value")
+
+
+test "tuple typed payload constructor diagnostics include tuple guard context":
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (Point "bad" 2)
+  """, [
+    "Type error [GENE_TYPE_MISMATCH]",
+    "expected Int",
+    "got String",
+    "field Point.x",
+    "phase=tuple-payload",
+    "producer=tuple-constructor",
+    "consumer=tuple-definition",
+    "site=",
+  ])
 
 
 test "tuple declaration rejects malformed source syntax":

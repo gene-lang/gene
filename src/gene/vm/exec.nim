@@ -359,6 +359,175 @@ proc construct_enum_variant(self: ptr VirtualMachine, variant: Value, positional
   self.validate_enum_payload_fields(member, qualified_name, data)
   new_enum_value(variant, data)
 
+proc require_tuple_constructor_def(tuple_type: Value): TupleDef {.inline.} =
+  if tuple_type.kind != VkTupleDef:
+    not_allowed("Tuple constructor expected VkTupleDef, got " & $tuple_type.kind)
+
+  let tuple_ref = tuple_type.ref
+  if tuple_ref == nil or tuple_ref.tuple_def == nil:
+    not_allowed("Malformed tuple constructor: missing tuple metadata")
+
+  let tuple_def = tuple_ref.tuple_def
+  validate_tuple_metadata(tuple_def, "Tuple constructor")
+  tuple_def
+
+proc tuple_keyword_name(key: Key): string {.inline.} =
+  get_symbol(symbol_index(key))
+
+proc tuple_payload_expected_fields(tuple_def: TupleDef): string {.inline.} =
+  if tuple_payload_shape(tuple_def) == EpsNamed:
+    return tuple_def.fields.join(", ")
+  var slots: seq[string] = @[]
+  for i in 0..<tuple_payload_arity(tuple_def):
+    slots.add("#" & $i)
+  slots.join(", ")
+
+proc tuple_payload_type_label(tuple_name: string, tuple_def: TupleDef, index: int): string {.inline.} =
+  if tuple_payload_shape(tuple_def) == EpsNamed and index >= 0 and index < tuple_def.fields.len:
+    return "field " & tuple_name & "." & tuple_def.fields[index]
+  "field " & tuple_name & "[" & $index & "]"
+
+proc tuple_payload_guard_context(site: string): GuardContext {.inline.} =
+  GuardContext(
+    enabled: true,
+    phase: GpTuplePayload,
+    producer: "tuple-constructor",
+    consumer: "tuple-definition",
+    site: site)
+
+proc deterministic_tuple_keyword_pairs(tuple_def: TupleDef, props: Table[Key, Value]): seq[(Key, Value)] {.inline.} =
+  ## Gene.props is a Table, so materialize a deterministic keyword stream:
+  ## declared fields first, then unknown keys sorted by name for stable diagnostics.
+  if props.len == 0:
+    return @[]
+
+  var emitted = initTable[Key, bool]()
+  for field_name in tuple_def.fields:
+    let field_key = field_name.to_key()
+    if props.hasKey(field_key):
+      result.add((field_key, props[field_key]))
+      emitted[field_key] = true
+
+  var unknown_keys: seq[Key] = @[]
+  for key in props.keys:
+    if not emitted.hasKey(key):
+      unknown_keys.add(key)
+  unknown_keys.sort(proc(a, b: Key): int = cmp(tuple_keyword_name(a), tuple_keyword_name(b)))
+  for key in unknown_keys:
+    result.add((key, props[key]))
+
+proc validate_tuple_payload_fields(self: ptr VirtualMachine, tuple_def: TupleDef,
+                                   tuple_name: string, payload: var seq[Value]) {.inline.} =
+  if self == nil or not self.type_check:
+    return
+
+  let expected = tuple_payload_arity(tuple_def)
+  if tuple_def.field_type_ids.len != expected:
+    not_allowed("Tuple " & tuple_name & " has malformed field type metadata: expected " &
+                $expected & " field type id(s), got " & $tuple_def.field_type_ids.len)
+
+  for i in 0..<expected:
+    let type_id = tuple_def.field_type_ids[i]
+    if type_id == NO_TYPE_ID:
+      continue
+    if type_id < 0 or type_id.int >= tuple_def.field_type_descs.len:
+      not_allowed("Tuple " & tuple_name & " has malformed field type descriptor metadata for " &
+                  tuple_payload_slot_label(tuple_def, i) & ": TypeId " & $type_id & " is unavailable")
+
+    var value = payload[i]
+    if value == NIL and not self.strict_nil:
+      payload[i] = value
+      continue
+    let location = self.runtime_type_error_location()
+    let warning = validate_or_coerce_type(value, type_id, tuple_def.field_type_descs,
+      tuple_payload_type_label(tuple_name, tuple_def, i), location,
+      strict_nil = self.strict_nil,
+      context = tuple_payload_guard_context(location))
+    payload[i] = value
+    emit_type_warning(warning)
+
+proc construct_tuple(self: ptr VirtualMachine, tuple_type: Value, positional: seq[Value],
+                     keywords: seq[(Key, Value)] = @[]): Value {.inline.} =
+  let tuple_def = require_tuple_constructor_def(tuple_type)
+  let tuple_name = tuple_def.name
+  let expected = tuple_payload_arity(tuple_def)
+  let expected_fields = tuple_payload_expected_fields(tuple_def)
+
+  if positional.len > 0 and keywords.len > 0:
+    not_allowed("Tuple " & tuple_name & " cannot mix positional and keyword arguments")
+
+  var duplicate_names: seq[string] = @[]
+  if keywords.len > 0:
+    var seen = initTable[Key, bool]()
+    var duplicate_seen = initTable[Key, bool]()
+    for (key, _) in keywords:
+      if seen.hasKey(key):
+        if not duplicate_seen.hasKey(key):
+          duplicate_names.add(tuple_keyword_name(key))
+          duplicate_seen[key] = true
+      else:
+        seen[key] = true
+    if duplicate_names.len > 0:
+      duplicate_names.sort(system.cmp[string])
+      not_allowed("Tuple " & tuple_name & " got duplicate keyword argument(s): " & duplicate_names.join(", "))
+
+  if expected == 0:
+    if positional.len == 0 and keywords.len == 0:
+      return new_tuple_value(tuple_type, @[])
+    if keywords.len > 0:
+      var names: seq[string] = @[]
+      for (key, _) in keywords:
+        names.add(tuple_keyword_name(key))
+      names.sort(system.cmp[string])
+      not_allowed("Unit tuple " & tuple_name & " expects 0 keyword arguments, got: " & names.join(", "))
+    not_allowed("Unit tuple " & tuple_name & " expects 0 arguments, got " & $positional.len)
+
+  if tuple_payload_shape(tuple_def) == EpsPositional and keywords.len > 0:
+    var names: seq[string] = @[]
+    for (key, _) in keywords:
+      names.add(tuple_keyword_name(key))
+    names.sort(system.cmp[string])
+    not_allowed("Tuple " & tuple_name & " has positional payload slots and does not accept keyword argument(s): " & names.join(", "))
+
+  if keywords.len == 0:
+    if positional.len != expected:
+      not_allowed("Tuple " & tuple_name & " expects " & $expected &
+                  " arguments (" & expected_fields & "), got " & $positional.len)
+    var data = positional
+    self.validate_tuple_payload_fields(tuple_def, tuple_name, data)
+    return new_tuple_value(tuple_type, data)
+
+  var field_indices = initTable[Key, int]()
+  for i, field_name in tuple_def.fields:
+    field_indices[field_name.to_key()] = i
+
+  var data = newSeq[Value](expected)
+  var bound = newSeq[bool](expected)
+  var unknown_names: seq[string] = @[]
+  for (key, value) in keywords:
+    if field_indices.hasKey(key):
+      let index = field_indices[key]
+      data[index] = value
+      bound[index] = true
+    else:
+      unknown_names.add(tuple_keyword_name(key))
+
+  if unknown_names.len > 0:
+    unknown_names.sort(system.cmp[string])
+    not_allowed("Tuple " & tuple_name & " got unknown keyword argument(s): " &
+                unknown_names.join(", ") & "; expected fields: " & expected_fields)
+
+  var missing_names: seq[string] = @[]
+  for i, field_name in tuple_def.fields:
+    if not bound[i]:
+      missing_names.add(field_name)
+  if missing_names.len > 0:
+    not_allowed("Tuple " & tuple_name & " missing keyword argument(s): " &
+                missing_names.join(", ") & "; expected fields: " & expected_fields)
+
+  self.validate_tuple_payload_fields(tuple_def, tuple_name, data)
+  new_tuple_value(tuple_type, data)
+
 proc require_dynamic_method_name(value: Value): string {.inline.} =
   case value.kind
   of VkSymbol, VkString:
@@ -2246,6 +2415,13 @@ proc exec*(self: ptr VirtualMachine): Value =
             g.gene.type = gene_type
             self.frame.push(g)
 
+          of VkTupleDef:
+            # Tuple types collect call arguments as a Gene; IkGeneEnd delegates
+            # all constructor validation/allocation to construct_tuple.
+            var g = new_gene_value()
+            g.gene.type = gene_type
+            self.frame.push(g)
+
           else:
             # For non-callable types (like integers, strings, etc.),
             # create a gene with this value as the type
@@ -2684,6 +2860,10 @@ proc exec*(self: ptr VirtualMachine): Value =
               let member = require_enum_constructor_member(value.gene.type)
               let kw_pairs = deterministic_enum_keyword_pairs(member, value.gene.props)
               self.frame.replace(self.construct_enum_variant(value.gene.type, value.gene.children, kw_pairs))
+            elif value.kind == VkGene and value.gene.type.kind == VkTupleDef:
+              let tuple_def = require_tuple_constructor_def(value.gene.type)
+              let kw_pairs = deterministic_tuple_keyword_pairs(tuple_def, value.gene.props)
+              self.frame.replace(self.construct_tuple(value.gene.type, value.gene.children, kw_pairs))
             elif value.kind == VkGene and (inst.arg1 and 2'i32) != 0:
               value.gene.frozen = true
             if value.kind == VkGene and (inst.arg1 and 1'i32) != 0:
@@ -5261,6 +5441,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkEnumMember:
           self.frame.push(self.construct_enum_variant(target, @[]))
 
+        of VkTupleDef:
+          self.frame.push(self.construct_tuple(target, @[]))
+
         of VkBlock:
           let b = target.ref.block
           let compiled = require_published_body(b)
@@ -5565,6 +5748,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkEnumMember:
           self.frame.push(self.construct_enum_variant(target, @[arg]))
 
+        of VkTupleDef:
+          self.frame.push(self.construct_tuple(target, @[arg]))
+
         else:
           not_allowed("IkUnifiedCall1 requires a callable, got " & $target.kind)
         {.pop}
@@ -5729,6 +5915,9 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         of VkEnumMember:
           self.frame.push(self.construct_enum_variant(target, args))
+
+        of VkTupleDef:
+          self.frame.push(self.construct_tuple(target, args))
 
         else:
           not_allowed("IkUnifiedCall requires a callable, got " & $target.kind)
@@ -6000,6 +6189,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         of VkEnumMember:
           self.frame.push(self.construct_enum_variant(target, args, kw_pairs))
 
+        of VkTupleDef:
+          self.frame.push(self.construct_tuple(target, args, kw_pairs))
+
         of VkInterface:
           if args.len < 1:
             raise new_exception(types.Exception, "Interface call requires at least 1 argument (the object to adapt)")
@@ -6156,6 +6348,9 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         of VkEnumMember:
           self.frame.push(self.construct_enum_variant(target, args))
+
+        of VkTupleDef:
+          self.frame.push(self.construct_tuple(target, args))
 
         else:
           not_allowed("IkUnifiedCallDynamic requires a callable, got " & $target.kind)

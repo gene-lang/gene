@@ -17,7 +17,8 @@ type
     GpReturn,
     GpLocal,
     GpProperty,
-    GpEnumPayload
+    GpEnumPayload,
+    GpTuplePayload
 
   GuardContext* = object
     enabled*: bool
@@ -798,6 +799,8 @@ proc guard_phase_name*(phase: GuardPhase): string =
     "property"
   of GpEnumPayload:
     "enum-payload"
+  of GpTuplePayload:
+    "tuple-payload"
 
 proc guard_field_value(value: string, fallback: string): string =
   if value.len == 0:
