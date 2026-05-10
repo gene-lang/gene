@@ -2444,8 +2444,17 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.pc = inst.arg0.int64.int
                 inst = self.cu.instructions[self.pc].addr
                 continue
+              of VkInterception:
+                # Intercepted bound methods must keep self separate from user
+                # args while still collecting spread-expanded args/properties.
+                var g = new_gene_value()
+                g.gene.type = gene_type
+                self.frame.replace(g)
+                self.pc = inst.arg0.int64.int
+                inst = self.cu.instructions[self.pc].addr
+                continue
               else:
-                not_allowed("Method must be a function, got " & $target.kind)
+                not_allowed("Method must be a function, native function, or interception, got " & $target.kind)
 
           of VkInstance, VkCustom:
             # Check if instance has a call method
@@ -2968,6 +2977,9 @@ proc exec*(self: ptr VirtualMachine): Value =
             elif value.kind == VkGene and value.gene.type.kind == VkInterception:
               let kw_pairs = gene_keyword_pairs(value)
               self.frame.replace(self.run_intercepted_method(value.gene.type.ref.interception, NIL, value.gene.children, kw_pairs))
+            elif value.kind == VkGene and value.gene.type.kind == VkBoundMethod:
+              let kw_pairs = gene_keyword_pairs(value)
+              self.frame.replace(self.call_bound_method(value.gene.type, value.gene.children, kw_pairs))
             elif value.kind == VkGene and (inst.arg1 and 2'i32) != 0:
               value.gene.frozen = true
             if value.kind == VkGene and (inst.arg1 and 1'i32) != 0:
@@ -4659,15 +4671,21 @@ proc exec*(self: ptr VirtualMachine): Value =
         exec_adapter(self)
 
       of IkResolveMethod:
-        # Peek at the object without popping it
+        # Peek at the object without popping it. arg1 bit 0 asks for a bound
+        # method value, used by spread-bearing method calls so receiver binding
+        # survives the Gene-builder call path.
         let v = self.frame.current()
         let method_name = inst.arg0.str
+        let bind_receiver = (inst.arg1 and 1'i32) != 0
 
         if v.kind == VkAdapter:
           let member = adapter_get_member(self, v, method_name.to_key())
           if member == NIL or member == VOID:
             not_allowed("Method '" & method_name & "' not found on adapter")
-          self.frame.push(member)
+          if bind_receiver:
+            self.frame.replace(member)
+          else:
+            self.frame.push(member)
           self.pc.inc()
           inst = self.cu.instructions[self.pc].addr
           continue
@@ -4677,8 +4695,13 @@ proc exec*(self: ptr VirtualMachine): Value =
         if meth == nil:
           not_allowed("Method '" & method_name & "' not found on " & $v.kind)
 
-        # Push the method callable on top of the object
-        self.frame.push(meth.callable)
+        if bind_receiver:
+          let r = new_ref(VkBoundMethod)
+          r.bound_method = BoundMethod(self: v, `method`: meth)
+          self.frame.replace(r.to_ref_value())
+        else:
+          # Push the method callable on top of the object for legacy method references.
+          self.frame.push(meth.callable)
 
       of IkThrow:
         {.push checks: off}

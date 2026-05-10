@@ -1,0 +1,77 @@
+# Expected: method direct before shape 2 3 5
+# Expected: method direct target shape 2 3 5
+# Expected: method direct after shape 2 3 10
+# Expected: method direct result 10
+# Expected: method spread before shape 6 4 8
+# Expected: method spread target shape 6 4 8
+# Expected: method spread after shape 6 4 18
+# Expected: method spread pos result 18
+# Expected: method spread before shape 2 3 9
+# Expected: method spread target shape 2 3 9
+# Expected: method spread after shape 2 3 14
+# Expected: method spread kw result 14
+# Expected: method spread before shape 1 5 7
+# Expected: method spread target shape 1 5 7
+# Expected: method spread after shape 1 5 13
+# Expected: method spread combined result 13
+# Expected: method spread unexpected keyword caught
+# Expected: method spread too many positional caught
+
+(interceptor MethodShapeTrace [direct run]
+  (before direct [x y ^limit]
+    (println "method direct before" /name x y limit)
+  )
+  (after direct [x y ^limit result]
+    (println "method direct after" /name x y result)
+  )
+  (before run [x y ^limit = 8]
+    (println "method spread before" /name x y limit)
+  )
+  (after run [x y ^limit = 8 result]
+    (println "method spread after" /name x y result)
+  )
+)
+
+(class MethodShapeTarget
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method direct [x y ^limit]
+    (println "method direct target" /name x y limit)
+    (+ x y limit)
+  )
+  (method run [x y ^limit = 8]
+    (println "method spread target" /name x y limit)
+    (+ x y limit)
+  )
+)
+
+(var method_apps (MethodShapeTrace MethodShapeTarget "direct" "run"))
+(var method_subject (new MethodShapeTarget "shape"))
+
+(println "method direct result" (method_subject .direct 2 3 ^limit 5))
+
+(var method_pos_args [6 4])
+(println "method spread pos result" (method_subject .run method_pos_args...))
+
+(var method_kw {^limit 9})
+(println "method spread kw result" (method_subject .run 2 3 ^... method_kw))
+
+(var method_combined_args [1 5])
+(var method_combined_kw {^limit 7})
+(println "method spread combined result" (method_subject .run method_combined_args... ^... method_combined_kw))
+
+(var method_bad_kw {^limit 5 ^unexpected true})
+(try
+  (method_subject .run 2 3 ^... method_bad_kw)
+catch *
+  (println "method spread unexpected keyword caught")
+)
+
+(var method_too_many_args [1 2 3])
+(try
+  (method_subject .run method_too_many_args...)
+catch *
+  (println "method spread too many positional caught")
+)
