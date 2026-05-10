@@ -1,6 +1,8 @@
 import unittest, strutils
 
 import gene/compiler
+import gene/parser
+import gene/type_checker
 import gene/types except Exception
 import gene/vm
 
@@ -30,6 +32,22 @@ proc expect_tuple_source_error_parts(code: string, expected_message_parts: openA
   init_all()
   try:
     discard VM.exec(cleanup(code), "test_code")
+    fail()
+  except CatchableError as err:
+    checkpoint err.msg
+    for expected_message_part in expected_message_parts:
+      check err.msg.contains(expected_message_part)
+
+
+proc typecheck_tuple_source(code: string) =
+  let checker = type_checker.new_type_checker(strict = true, module_filename = "tuple_typecheck_test.gene")
+  for node in parser.read_all(cleanup(code)):
+    checker.type_check_node(node)
+
+
+proc expect_tuple_typecheck_error_parts(code: string, expected_message_parts: openArray[string]) =
+  try:
+    typecheck_tuple_source(code)
     fail()
   except CatchableError as err:
     checkpoint err.msg
@@ -470,6 +488,112 @@ test_vm """
   ]
 """, proc(r: Value) =
   check r == @[30, 9, 30, 40].to_value()
+
+
+test "tuple case patterns type branch locals from tuple payload metadata":
+  typecheck_tuple_source("""
+    (tuple Point x: Int y: String)
+    (fn use_int [value: Int] -> Int value)
+    (fn use_string [value: String] -> String value)
+    (var p (Point 10 "label"))
+    (case p
+      when (Point x y:label)
+        (do
+          (use_int x)
+          (use_string label))
+      else 0)
+  """)
+
+  expect_tuple_typecheck_error_parts("""
+    (tuple Point x: Int y: String)
+    (fn use_string [value: String] -> String value)
+    (var p (Point 10 "label"))
+    (case p
+      when (Point x y)
+        (use_string x)
+      else "fallback")
+  """, [
+    "Type error: expected String, got Int",
+    "call",
+  ])
+
+
+test "tuple type checker validates tuple case pattern diagnostics":
+  expect_tuple_typecheck_error_parts("""
+    (tuple Point x: Int y: String)
+    (var p (Point 1 "two"))
+    (case p
+      when (Point x) x
+      else 0)
+  """, [
+    "tuple Point pattern expects 2 binding(s)",
+    "fields: x, y",
+    "got 1",
+  ])
+
+  expect_tuple_typecheck_error_parts("""
+    (tuple Point x: Int y: String)
+    (var p (Point 1 "two"))
+    (case p
+      when (Point z:local y) local
+      else 0)
+  """, [
+    "tuple pattern Point references unknown field z",
+    "binding z:local",
+    "expected fields: x, y",
+  ])
+
+  expect_tuple_typecheck_error_parts("""
+    (tuple Box Int)
+    (var b (Box 9))
+    (case b
+      when (Box value:v) v
+      else 0)
+  """, [
+    "tuple pattern Box uses field alias value:v on a positional tuple",
+    "expected slots: #0",
+  ])
+
+  expect_tuple_typecheck_error_parts("""
+    (tuple Unit)
+    (var u (Unit))
+    (case u
+      when (Unit extra) extra
+      else 0)
+  """, [
+    "tuple Unit pattern expects 0 binding(s)",
+    "got 1",
+  ])
+
+  expect_tuple_typecheck_error_parts("""
+    (tuple Point x: Int y: String)
+    (var p (Point 1 "two"))
+    (case p
+      when (Point 1 y) y
+      else "fallback")
+  """, [
+    "tuple pattern Point binding must be a symbol",
+    "expected fields: x, y",
+  ])
+
+  typecheck_tuple_source("""
+    (tuple Point x: Int y: String)
+    (fn use_string [value: String] -> String value)
+    (var p (Point 1 "two"))
+    (case p
+      when (Point _ y)
+        (use_string y)
+      else "fallback")
+  """)
+
+  typecheck_tuple_source("""
+    (fn use_string [value: String] -> String value)
+    (var v "not-a-tuple")
+    (case v
+      when (UnknownTuple x)
+        (use_string x)
+      else "fallback")
+  """)
 
 
 test "tuple case patterns validate binder shape and field names":

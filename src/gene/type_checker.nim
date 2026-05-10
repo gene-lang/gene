@@ -76,6 +76,23 @@ type
     field_index*: int
     local_name*: string
 
+  TupleInfo = ref object
+    name*: string
+    payload_shape*: EnumPayloadShapeKind
+    field_count*: int
+    fields*: seq[string]
+    field_types*: seq[TypeExpr]
+
+  TuplePatternBinding = object
+    field_index*: int
+    field_name*: string
+    local_name*: string
+
+  TuplePatternResolution = object
+    matched*: bool
+    tuple_info*: TupleInfo
+    bindings*: seq[TuplePatternBinding]
+
   AdtDef = ref object
     name*: string
     params*: seq[string]
@@ -104,6 +121,7 @@ type
     subs*: Table[int, TypeExpr]
     scopes*: seq[Table[string, TypeExpr]]
     types*: Table[string, TypeExpr]
+    tuples*: Table[string, TupleInfo]
     adts*: Table[string, AdtDef]
     classes*: Table[string, ClassInfo]
     interfaces*: Table[string, InterfaceInfo]
@@ -244,6 +262,7 @@ proc new_type_checker*(strict: bool = true, module_filename: string = ""): TypeC
     subs: initTable[int, TypeExpr](),
     scopes: @[initTable[string, TypeExpr]()],
     types: initTable[string, TypeExpr](),
+    tuples: initTable[string, TupleInfo](),
     adts: initTable[string, AdtDef](),
     classes: initTable[string, ClassInfo](),
     interfaces: initTable[string, InterfaceInfo](),
@@ -1252,8 +1271,8 @@ proc mixed_tuple_declaration_shape_error(tuple_name: string): ref types.Exceptio
   new_exception(types.Exception, "tuple " & tuple_name &
     " cannot mix named fields and positional type slots; use either all named fields or all positional type slots")
 
-proc parse_tuple_declaration_fields(self: TypeChecker, tuple_name: string, gene: ptr Gene) =
-  var payload_shape = EpsUnit
+proc parse_tuple_declaration_fields(self: TypeChecker, tuple_name: string, gene: ptr Gene): tuple[payload_shape: EnumPayloadShapeKind, field_count: int, fields: seq[string], field_types: seq[TypeExpr]] =
+  result.payload_shape = EpsUnit
   if gene.props.len > 0:
     raise new_exception(types.Exception, "tuple " & tuple_name & " field declarations must be positional, not properties")
 
@@ -1263,9 +1282,9 @@ proc parse_tuple_declaration_fields(self: TypeChecker, tuple_name: string, gene:
     let child = gene.children[i]
 
     if child.kind == VkSymbol and child.str.endsWith(":"):
-      if payload_shape == EpsPositional:
+      if result.payload_shape == EpsPositional:
         raise mixed_tuple_declaration_shape_error(tuple_name)
-      payload_shape = EpsNamed
+      result.payload_shape = EpsNamed
       let field_name = child.str[0..^2]
       if field_name.len == 0:
         raise new_exception(types.Exception, "tuple " & tuple_name & " has an empty field name")
@@ -1279,20 +1298,25 @@ proc parse_tuple_declaration_fields(self: TypeChecker, tuple_name: string, gene:
       if seen_fields.hasKey(field_name):
         raise new_exception(types.Exception, "tuple " & tuple_name & " has duplicate field " & field_name)
       seen_fields[field_name] = true
-      discard self.parse_type_expr(type_node)
+      result.fields.add(field_name)
+      result.field_types.add(self.parse_type_expr(type_node))
       i += 2
       continue
 
     if self.is_tuple_positional_type_slot(child):
-      if payload_shape == EpsNamed:
+      if result.payload_shape == EpsNamed:
         raise mixed_tuple_declaration_shape_error(tuple_name)
-      payload_shape = EpsPositional
-      discard self.parse_type_expr(child)
+      result.payload_shape = EpsPositional
+      result.field_types.add(self.parse_type_expr(child))
       i.inc()
       continue
 
     raise new_exception(types.Exception,
       "tuple " & tuple_name & " fields must be declared as field: Type or positional Type")
+
+  result.field_count = result.field_types.len
+  if result.field_count == 0:
+    result.payload_shape = EpsUnit
 
 proc check_tuple(self: TypeChecker, gene: ptr Gene): TypeExpr =
   if gene.children.len < 1:
@@ -1308,7 +1332,13 @@ proc check_tuple(self: TypeChecker, gene: ptr Gene): TypeExpr =
   let tuple_type = TypeExpr(kind: TkNamed, name: tuple_name)
   self.types[tuple_name] = tuple_type
   discard self.intern_type_desc(tuple_type)
-  self.parse_tuple_declaration_fields(tuple_name, gene)
+  let parsed_fields = self.parse_tuple_declaration_fields(tuple_name, gene)
+  self.tuples[tuple_name] = TupleInfo(
+    name: tuple_name,
+    payload_shape: parsed_fields.payload_shape,
+    field_count: parsed_fields.field_count,
+    fields: parsed_fields.fields,
+    field_types: parsed_fields.field_types)
   return tuple_type
 
 proc parse_fn_params(self: TypeChecker, v: Value): seq[ParamType] =
@@ -1599,6 +1629,141 @@ proc split_adt_pattern_alias(token: string): tuple[has_alias: bool, field_name: 
     return (true, "", "")
   (true, token[0..<colon], token[colon + 1..^1])
 
+proc tuple_pattern_expected_detail(info: TupleInfo): string =
+  if info == nil:
+    return ""
+  case info.payload_shape
+  of EpsNamed:
+    if info.fields.len > 0:
+      "fields: " & info.fields.join(", ")
+    else:
+      "fields: <none>"
+  of EpsPositional:
+    var slots: seq[string] = @[]
+    for i in 0..<info.field_count:
+      slots.add("#" & $i)
+    "slots: " & slots.join(", ")
+  of EpsUnit:
+    ""
+
+proc tuple_pattern_binding_message(info: TupleInfo, got: int): string =
+  let expected = if info == nil: 0 else: info.field_count
+  let expected_detail = info.tuple_pattern_expected_detail()
+  let detail = if expected_detail.len > 0: " (" & expected_detail & ")" else: ""
+  "tuple " & (if info == nil: "<unknown>" else: info.name) & " pattern expects " &
+    $expected & " binding(s)" & detail & ", got " & $got
+
+proc tuple_pattern_field_index(info: TupleInfo, field_name: string): int =
+  if info == nil:
+    return -1
+  for i, field in info.fields:
+    if field == field_name:
+      return i
+  -1
+
+proc tuple_metadata_is_valid(info: TupleInfo): bool =
+  if info == nil:
+    return false
+  if info.field_count < 0 or info.field_types.len != info.field_count:
+    return false
+  case info.payload_shape
+  of EpsNamed:
+    info.fields.len == info.field_count
+  of EpsPositional:
+    info.fields.len == 0
+  of EpsUnit:
+    info.field_count == 0 and info.fields.len == 0
+
+proc resolve_tuple_pattern_bindings(self: TypeChecker, info: TupleInfo,
+                                    raw_bindings: seq[string]): seq[TuplePatternBinding] =
+  if not tuple_metadata_is_valid(info):
+    self.warn("tuple " & (if info == nil: "<unknown>" else: info.name) &
+      " has invalid local tuple metadata for case pattern")
+    return @[]
+
+  if raw_bindings.len != info.field_count:
+    self.warn(info.tuple_pattern_binding_message(raw_bindings.len))
+    return @[]
+
+  let expected_detail = info.tuple_pattern_expected_detail()
+  let expected_suffix = if expected_detail.len > 0: "; expected " & expected_detail else: ""
+
+  case info.payload_shape
+  of EpsUnit:
+    return @[]
+  of EpsPositional:
+    for i, raw in raw_bindings:
+      let alias = split_adt_pattern_alias(raw)
+      if alias.has_alias:
+        self.warn("tuple pattern " & info.name &
+          " uses field alias " & raw & " on a positional tuple" & expected_suffix)
+        return @[]
+      result.add(TuplePatternBinding(field_index: i, field_name: "", local_name: raw))
+  of EpsNamed:
+    var seen_fields = initTable[string, bool]()
+    for i, raw in raw_bindings:
+      let alias = split_adt_pattern_alias(raw)
+      var field_name = raw
+      var local_name = raw
+      if alias.has_alias:
+        if alias.field_name.len == 0 or alias.local_name.len == 0:
+          self.warn("tuple pattern " & info.name &
+            " has invalid field alias " & raw & expected_suffix)
+          return @[]
+        field_name = alias.field_name
+        local_name = alias.local_name
+      elif raw == "_":
+        field_name = info.fields[i]
+        local_name = raw
+
+      let field_index = tuple_pattern_field_index(info, field_name)
+      if field_index < 0:
+        self.warn("tuple pattern " & info.name &
+          " references unknown field " & field_name &
+          " from binding " & raw & expected_suffix)
+        return @[]
+      if seen_fields.hasKey(field_name):
+        self.warn("tuple pattern " & info.name &
+          " references duplicate field " & field_name &
+          " from binding " & raw & expected_suffix)
+        return @[]
+      seen_fields[field_name] = true
+      result.add(TuplePatternBinding(field_index: field_index, field_name: field_name, local_name: local_name))
+
+proc resolve_tuple_pattern(self: TypeChecker, pattern: Value): TuplePatternResolution =
+  var head = NIL
+  var raw_bindings: seq[string] = @[]
+  case pattern.kind
+  of VkSymbol:
+    head = pattern
+  of VkGene:
+    if pattern.gene == nil:
+      return
+    head = pattern.gene.`type`
+  else:
+    return
+
+  if head.kind != VkSymbol:
+    return
+  let tuple_name = head.str
+  if tuple_name.len == 0 or not self.tuples.hasKey(tuple_name):
+    return
+
+  result.matched = true
+  result.tuple_info = self.tuples[tuple_name]
+
+  if pattern.kind == VkGene:
+    for child in pattern.gene.children:
+      if child.kind != VkSymbol:
+        let expected_detail = result.tuple_info.tuple_pattern_expected_detail()
+        let expected_suffix = if expected_detail.len > 0: "; expected " & expected_detail else: ""
+        self.warn("tuple pattern " & result.tuple_info.name &
+          " binding must be a symbol" & expected_suffix)
+        return
+      raw_bindings.add(child.str)
+
+  result.bindings = self.resolve_tuple_pattern_bindings(result.tuple_info, raw_bindings)
+
 proc resolve_adt_pattern_bindings(self: TypeChecker, adt: AdtDef, variant: AdtVariant,
                                   raw_bindings: seq[string]): seq[AdtPatternBinding] =
   if raw_bindings.len != variant.field_count:
@@ -1726,6 +1891,11 @@ proc substitute_adt_type_params(self: TypeChecker, scrutinee_type: TypeExpr, adt
       rn
 
   clone(declared)
+
+proc tuple_field_binding_type(self: TypeChecker, info: TupleInfo, field_index: int): TypeExpr =
+  if info == nil or field_index < 0 or field_index >= info.field_types.len:
+    return ANY_TYPE
+  effective_type(info.field_types[field_index])
 
 proc adt_field_binding_type(self: TypeChecker, scrutinee_type: TypeExpr, adt: AdtDef, variant: AdtVariant, field_index: int): TypeExpr =
   let rt = self.resolve_self(self.resolve(scrutinee_type))
@@ -2649,12 +2819,15 @@ proc check_case(self: TypeChecker, gene: ptr Gene): TypeExpr =
   for pair in when_pairs:
     let when_value = pair.pattern
     let when_body = pair.body
+    var tuple_pattern = TuplePatternResolution()
     var adt_pattern = AdtPatternResolution()
 
     if is_wildcard_pattern(when_value):
       has_catch_all = true
     else:
-      adt_pattern = self.resolve_adt_pattern(when_value, scrutinee_type)
+      tuple_pattern = self.resolve_tuple_pattern(when_value)
+      if not tuple_pattern.matched:
+        adt_pattern = self.resolve_adt_pattern(when_value, scrutinee_type)
 
     if adt_pattern.matched:
       add_unique_string(matched_adt_names, adt_pattern.adt.name)
@@ -2662,10 +2835,20 @@ proc check_case(self: TypeChecker, gene: ptr Gene): TypeExpr =
         covered_variants[adt_pattern.variant.name] = true
 
     self.push_scope()
-    if adt_pattern.matched and scrutinee_name.len > 0:
+    if tuple_pattern.matched and scrutinee_name.len > 0:
+      self.define(scrutinee_name, TypeExpr(kind: TkNamed, name: tuple_pattern.tuple_info.name))
+    elif adt_pattern.matched and scrutinee_name.len > 0:
       self.define(scrutinee_name, self.narrow_type_to_adt(scrutinee_type, adt_pattern.adt.name))
 
-    if adt_pattern.matched:
+    if tuple_pattern.matched:
+      for binding in tuple_pattern.bindings:
+        let bound_name = binding.local_name
+        if bound_name.len == 0 or bound_name == "_":
+          continue
+        ensure_user_value_name(bound_name, "case pattern binding")
+        let bound_type = self.tuple_field_binding_type(tuple_pattern.tuple_info, binding.field_index)
+        self.define(bound_name, bound_type)
+    elif adt_pattern.matched:
       for binding in adt_pattern.bindings:
         let bound_name = binding.local_name
         if bound_name.len == 0 or bound_name == "_":

@@ -1,0 +1,68 @@
+# Tuple value semantics and direct tuple case destructuring
+
+(tuple Point x: Int y: Int)
+(tuple Other x: Int y: Int)
+(tuple Box Int)
+(tuple Unit)
+
+(var p (Point 10 20))
+(var same (Point ^y 20 ^x 10))
+(var different (Point 10 21))
+(var other (Other 10 20))
+(var box (Box 9))
+(var unit (Unit))
+
+(assert (p == same))
+(assert (p != different))
+(assert (p != other))
+(assert (p/x == 10))
+(assert (p/y == 20))
+(assert (p/0 == 10))
+(assert (p/1 == 20))
+(assert (box/0 == 9))
+(assert (unit/0 == void))
+
+(var named_case
+  (case p
+    when (Point x y:yy)
+      (+ x yy)
+    else
+      -1))
+
+(var positional_case
+  (case box
+    when (Box value)
+      value
+    else
+      -1))
+
+(var unit_case
+  (case unit
+    when (Unit)
+      30
+    else
+      -1))
+
+(var mismatch_case
+  (case other
+    when (Point x y)
+      (+ x y)
+    else
+      40))
+
+(assert (named_case == 30))
+(assert (positional_case == 9))
+(assert (unit_case == 30))
+(assert (mismatch_case == 40))
+
+(println "display =" p)
+# Expected: display = (Point 10 20)
+
+(println "equality =" (if (p == same) "same" else "different"))
+# Expected: equality = same
+
+(println "slash =" p/x p/y p/0 p/1 box/0)
+# Expected: slash = 10 20 10 20 9
+
+(println "case =" named_case positional_case unit_case mismatch_case)
+# Expected: case = 30 9 30 40
