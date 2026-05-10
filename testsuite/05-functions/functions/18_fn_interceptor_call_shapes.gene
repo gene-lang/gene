@@ -33,6 +33,12 @@
 # Expected: chain outer inner result 15
 # Expected: chain result 15
 # Expected: spread unexpected keyword caught
+# Expected: spread too many positional caught
+
+(fn expect_no_intercept_marker [e]
+  (assert (not ((e .message) .contains "GENE.INTERCEPT")))
+  (assert (not ((e .message) .contains "GENE.INTERCEPT.KEYWORD_UNSUPPORTED")))
+)
 
 (fn-interceptor DirectKeywordTrace [f]
   (before f [x y ^limit]
@@ -154,6 +160,15 @@
 (var spread_bad_kw {^limit 5 ^unexpected true})
 (try
   (spread_plain_wrapped 2 3 ^... spread_bad_kw)
-catch *
+catch e
+  (expect_no_intercept_marker e)
   (println "spread unexpected keyword caught")
+)
+
+(var spread_too_many_args [1 2 3])
+(try
+  (spread_plain_wrapped spread_too_many_args...)
+catch e
+  (expect_no_intercept_marker e)
+  (println "spread too many positional caught")
 )
