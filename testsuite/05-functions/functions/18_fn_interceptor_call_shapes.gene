@@ -2,12 +2,24 @@
 # Expected: direct kw target 2 3 5
 # Expected: direct kw after 2 3 10
 # Expected: direct kw wrapped result 10
+# Expected: advice filter allow 2 3 5
+# Expected: advice before 2 3 5
+# Expected: advice invariant 2 3 5
+# Expected: advice around 2 3 5
+# Expected: advice target 2 3 5
+# Expected: advice wrapped inner result 10
+# Expected: advice invariant 2 3 5
+# Expected: advice after no result 2 3 5
+# Expected: advice after result 2 3 5 10
+# Expected: advice wrapped result 10
+# Expected: veto filter 4 1 7
+# Expected: veto wrapped result nil
 
 (fn-interceptor DirectKeywordTrace [f]
-  (before f [x y]
+  (before f [x y ^limit]
     (println "direct kw before" x y)
   )
-  (after f [x y result]
+  (after f [x y ^limit result]
     (println "direct kw after" x y result)
   )
 )
@@ -19,3 +31,57 @@
 
 (var direct_keyword_wrapped (DirectKeywordTrace direct_keyword_target))
 (println "direct kw wrapped result" (direct_keyword_wrapped 2 3 ^limit 5))
+
+(fn-interceptor KeywordAdviceTrace [f]
+  (before_filter f [x y ^limit]
+    (println "advice filter allow" x y limit)
+    true
+  )
+  (before f [x y ^limit]
+    (println "advice before" x y limit)
+  )
+  (invariant f [x y ^limit]
+    (println "advice invariant" x y limit)
+  )
+  (around f [x y ^limit wrapped]
+    (println "advice around" x y limit)
+    (var r (wrapped x y ^limit limit))
+    (println "advice wrapped inner result" r)
+    r
+  )
+  (after f [x y ^limit]
+    (println "advice after no result" x y limit)
+  )
+  (after f [x y ^limit result]
+    (println "advice after result" x y limit result)
+  )
+)
+
+(fn keyword_advice_target [x y ^limit]
+  (println "advice target" x y limit)
+  (+ x y limit)
+)
+
+(var keyword_advice_wrapped (KeywordAdviceTrace keyword_advice_target))
+(println "advice wrapped result" (keyword_advice_wrapped 2 3 ^limit 5))
+
+(fn-interceptor KeywordVetoTrace [f]
+  (before_filter f [x y ^limit]
+    (println "veto filter" x y limit)
+    false
+  )
+  (before f [x y ^limit]
+    (println "veto before should not run" x y limit)
+  )
+  (after f [x y ^limit result]
+    (println "veto after should not run" x y limit result)
+  )
+)
+
+(fn keyword_veto_target [x y ^limit]
+  (println "veto target should not run" x y limit)
+  (+ x y limit)
+)
+
+(var keyword_veto_wrapped (KeywordVetoTrace keyword_veto_target))
+(println "veto wrapped result" (keyword_veto_wrapped 4 1 ^limit 7))

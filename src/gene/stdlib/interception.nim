@@ -84,17 +84,18 @@ proc normalize_advice_args(args_val: Value): Value =
     not_allowed("advice arguments must be an array or symbol")
   normalized
 
-proc advice_user_arg_count(args_val: Value): int =
-  case args_val.kind
-  of VkArray:
-    return array_data(args_val).len
-  of VkSymbol:
-    if args_val.str == "_" or args_val.str == "self":
-      return 0
-    return 1
-  else:
-    not_allowed("advice arguments must be an array or symbol")
+proc advice_user_arg_count(matcher: RootMatcher): int =
+  ## Count caller-supplied positional matcher slots after normalization.
+  ## The generated advice matcher always starts with self; keyword/property slots
+  ## bind from kw_pairs and must not make after-advice appear to request result.
+  if matcher == nil:
     return 0
+  for i, param in matcher.children:
+    if i == 0:
+      continue
+    if param.kind == MatchProp or param.is_prop:
+      continue
+    result.inc()
 
 proc resolve_advice_callable(callable_val: Value, caller_frame: Frame): Value =
   case callable_val.kind
@@ -202,11 +203,11 @@ proc parse_interceptor_macro(form_label: string, definition_kind: InterceptorDef
       if advice_gene.children.len == 2:
         advice_val = resolve_advice_callable(advice_gene.children[1], caller_frame)
       else:
-        user_arg_count = advice_user_arg_count(advice_gene.children[1])
         let matcher = new_arg_matcher()
         let matcher_args = normalize_advice_args(advice_gene.children[1])
         matcher.parse(matcher_args)
         matcher.check_hint()
+        user_arg_count = advice_user_arg_count(matcher)
 
         var body: seq[Value] = @[]
         for j in 2..<advice_gene.children.len:
@@ -227,7 +228,7 @@ proc parse_interceptor_macro(form_label: string, definition_kind: InterceptorDef
           else:
             new_scope_tracker()
         for m in matcher.children:
-          if m.kind == MatchData and m.name_key != Key(0):
+          if m.name_key != Key(0) and not scope_tracker.mappings.hasKey(m.name_key):
             scope_tracker.add(m.name_key)
         advice_fn.scope_tracker = scope_tracker
 
