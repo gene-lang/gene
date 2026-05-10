@@ -8,7 +8,7 @@
 # Expected: scalar target [GENE.INTERCEPT.FN_TARGET]
 # Expected: native macro target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
 # Expected: fn bang target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
-# Expected: keyword target [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: keyword target Interception
 # Expected: async target [GENE.INTERCEPT.ASYNC_UNSUPPORTED]
 
 (var FN_ARITY_MARKER "[GENE.INTERCEPT.FN_ARITY]")
@@ -102,11 +102,8 @@ catch e
   (expect_marker "fn bang target" MACRO_MARKER e)
 )
 
-(try
-  (DiagnosticTrace diagnostic_keyword)
-catch e
-  (expect_marker "keyword target" KEYWORD_MARKER e)
-)
+(var keyword_app (DiagnosticTrace diagnostic_keyword))
+(println "keyword target" keyword_app/.class/.name)
 
 (try
   (DiagnosticTrace diagnostic_async)
