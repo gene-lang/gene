@@ -306,8 +306,48 @@ test "tuple typed payload constructor diagnostics include tuple guard context":
     "site=",
   ])
 
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (Point ^x "bad" ^y 2)
+  """, [
+    "Type error [GENE_TYPE_MISMATCH]",
+    "expected Int",
+    "got String",
+    "field Point.x",
+    "phase=tuple-payload",
+    "producer=tuple-constructor",
+    "consumer=tuple-definition",
+    "site=",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Box Int)
+    (Box "bad")
+  """, [
+    "Type error [GENE_TYPE_MISMATCH]",
+    "expected Int",
+    "got String",
+    "field Box[0]",
+    "phase=tuple-payload",
+    "producer=tuple-constructor",
+    "consumer=tuple-definition",
+    "site=",
+  ])
+
 
 test "tuple declaration rejects malformed source syntax":
+  expect_tuple_source_error("""
+    (tuple Bad : Int)
+  """, "tuple Bad has an empty field name")
+
+  expect_tuple_source_error("""
+    (tuple Bad x: 123)
+  """, "tuple Bad field x has an invalid type annotation")
+
+  expect_tuple_source_error("""
+    (tuple Bad ^x Int)
+  """, "tuple Bad field declarations must be positional, not properties")
+
   expect_tuple_source_error("""
     (tuple Bad x: Int x: Int)
   """, "tuple Bad has duplicate field x")
@@ -341,6 +381,27 @@ test "tuple declarations are collected as module type metadata":
   if cu.module_types.len == 1:
     check cu.module_types[0].name == "Point"
     check cu.module_types[0].kind == MtkTuple
+
+
+test_vm """
+  (tuple Point x: Int y: Int)
+  (tuple Box Int)
+  (tuple Unit)
+  [Point Box Unit]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 3
+    if values.len == 3:
+      for i, expectedName in ["Point", "Box", "Unit"]:
+        let tupleType = values[i]
+        check tupleType.kind == VkTupleDef
+        if tupleType.kind == VkTupleDef:
+          let tupleDef = tupleType.ref.tuple_def
+          check tupleDef.name == expectedName
+          check tupleDef.module_path == "test_code"
+          check tupleDef.internal_path == expectedName
 
 
 test "direct named tuple definition and value allocation":
