@@ -153,7 +153,7 @@ And `/.method` for no-arg method calls: `obj/.method` → `(obj .method)`
 
 | Level | You write | Gene gives you |
 |-------|-----------|---------------|
-| **Day 1** | `(print "hi")`, `(var x 10)`, `(if (x > 5) "big" "small")` | A scripting language |
+| **Day 1** | `(print "hi")`, `(var x 10)`, `(if (x > 5) "big" else "small")` | A scripting language |
 | **Week 1** | Functions, classes, collections, loops | An application language |
 | **Month 1** | Macros, async, pattern matching, namespaces | A power-user language |
 | **Expert** | DSLs, code generation, custom dispatch | A language-building language |
@@ -210,22 +210,20 @@ Both build on homoiconic cores. But Gene's data model (type + props + children) 
 
 ### Mid-Term (Making It Useful)
 6. **Package manager** — `gene deps`, registry, version resolution
-7. **Pattern matching** — nested patterns, guards, exhaustiveness checking
+7. **Pattern matching** — nested patterns, exhaustiveness checking
 8. **Type system** — gradual typing with inference (already partially implemented)
 9. **LSP** — already exists, needs polish
 10. **Real-world examples** — web server, CLI tools, data pipelines
 
 ### Long-Term (Making It Special)
-11. **Effect system** — track side effects in function signatures
-12. **AI-friendly features** — tool definitions, code introspection, observability
-13. **Native JIT** — hot-path compilation for competitive performance
-14. **WASM target** — run Gene in the browser (runtime already exists)
+11. **Native JIT** — hot-path compilation for competitive performance
+12. **WASM target** — run Gene in the browser (runtime already exists)
 
 ## The Pitch
 
 **Gene is what happens when you take Lisp's homoiconicity, Ruby's object model, and a data structure that actually matches how we think about information — and make them the same thing.**
 
-The Gene expression — type + props + children — isn't just a syntax choice. It's a unified model for code, data, configuration, DSLs, and AI tool definitions. One structure, infinite expression.
+The Gene expression — type + props + children — isn't just a syntax choice. It's a unified model for code, data, configuration, and DSLs. One structure, infinite expression.
 
 The language meets you where you are: scripting on day one, application development within a week, and language extension whenever you're ready. The complexity curve is a ramp, not a cliff.
 
