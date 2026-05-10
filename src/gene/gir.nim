@@ -1,10 +1,11 @@
 # Gene Intermediate Representation (GIR) serialization/deserialization
 import streams, hashes, os, times, json, strutils, tables
 import ./types
+from ./types/runtime_types import validate_or_coerce_type
 
 const
   GIR_MAGIC = "GENE"
-  GIR_VERSION* = 24'u32  # Enum member payload-shape metadata added to IkEnumAddMember.
+  GIR_VERSION* = 25'u32  # Tuple definitions/values and tuple case metadata added to GIR.
   COMPILER_VERSION* = "0.1.3"
   VALUE_ABI_VERSION* = 2'u32  # Version 2: Value is object wrapper with GC
   INSTRUCTION_ABI_VERSION* = 3'u32  # Version 3: HashMap opcodes added
@@ -302,6 +303,331 @@ proc readCompilationUnitBlock(stream: Stream): CompilationUnit
 proc write_value(stream: Stream, v: Value)
 proc read_value(stream: Stream): Value
 
+var gir_read_path {.threadvar.}: string
+var gir_tuple_def_cache {.threadvar.}: Table[string, Value]
+var gir_tuple_def_cache_initialized {.threadvar.}: bool
+
+proc ensure_gir_tuple_def_cache() =
+  if not gir_tuple_def_cache_initialized:
+    gir_tuple_def_cache = initTable[string, Value]()
+    gir_tuple_def_cache_initialized = true
+
+proc reset_gir_tuple_def_cache() =
+  gir_tuple_def_cache = initTable[string, Value]()
+  gir_tuple_def_cache_initialized = true
+
+proc tuple_gir_context(surface: string, name = "", module_path = "", internal_path = ""): string =
+  result = "GIR load " & surface
+  if name.len > 0:
+    result.add(" " & name)
+  if module_path.len > 0:
+    result.add(" module=" & module_path)
+  if internal_path.len > 0:
+    result.add(" path=" & internal_path)
+  if gir_read_path.len > 0:
+    result.add(" source path=" & gir_read_path)
+
+proc tuple_def_cache_key(tuple_def: TupleDef): string =
+  if tuple_def == nil:
+    return "<nil>"
+  tuple_def.module_path & "\0" & tuple_def.internal_path & "\0" & tuple_def.name
+
+proc type_desc_equal_for_gir(a, b: TypeDesc): bool =
+  if a.kind != b.kind or a.module_path != b.module_path:
+    return false
+  case a.kind
+  of TdkAny:
+    true
+  of TdkNamed:
+    a.name == b.name
+  of TdkApplied:
+    a.ctor == b.ctor and a.args == b.args
+  of TdkUnion:
+    a.members == b.members
+  of TdkFn:
+    if a.params.len != b.params.len or a.ret != b.ret or a.effects != b.effects:
+      return false
+    for i in 0..<a.params.len:
+      if a.params[i].kind != b.params[i].kind or
+          a.params[i].keyword_name != b.params[i].keyword_name or
+          a.params[i].type_id != b.params[i].type_id:
+        return false
+    true
+  of TdkVar:
+    a.var_id == b.var_id
+
+proc type_descs_equal_for_gir(a, b: seq[TypeDesc]): bool =
+  if a.len != b.len:
+    return false
+  for i in 0..<a.len:
+    if not type_desc_equal_for_gir(a[i], b[i]):
+      return false
+  true
+
+proc tuple_def_metadata_equal(a, b: TupleDef): bool =
+  if a == nil or b == nil:
+    return a == b
+  a.name == b.name and
+    a.module_path == b.module_path and
+    a.internal_path == b.internal_path and
+    a.payload_shape == b.payload_shape and
+    tuple_payload_arity(a) == tuple_payload_arity(b) and
+    a.fields == b.fields and
+    a.field_type_ids == b.field_type_ids and
+    type_descs_equal_for_gir(a.field_type_descs, b.field_type_descs)
+
+proc cached_tuple_def_value(tuple_def: TupleDef, context: string): Value =
+  ensure_gir_tuple_def_cache()
+  let key = tuple_def_cache_key(tuple_def)
+  if gir_tuple_def_cache.hasKey(key):
+    let existing = gir_tuple_def_cache[key]
+    if existing.kind != VkTupleDef or existing.ref == nil or existing.ref.tuple_def == nil:
+      not_allowed(context & " found a corrupt tuple-definition cache entry")
+    if not tuple_def_metadata_equal(existing.ref.tuple_def, tuple_def):
+      not_allowed(context & " conflicts with previously loaded tuple metadata for module=" &
+        tuple_def.module_path & " path=" & tuple_def.internal_path)
+    return existing
+
+  result = tuple_def.to_value()
+  gir_tuple_def_cache[key] = result
+
+proc read_payload_shape(stream: Stream, context: string): EnumPayloadShapeKind =
+  let raw = stream.readUint8().int
+  if raw == EpsUnit.ord:
+    return EpsUnit
+  if raw == EpsNamed.ord:
+    return EpsNamed
+  if raw == EpsPositional.ord:
+    return EpsPositional
+  not_allowed(context & " has invalid payload shape " & $raw)
+  EpsUnit
+
+proc write_string_seq(stream: Stream, values: seq[string]) =
+  stream.write(values.len.uint32)
+  for value in values:
+    stream.write_string(value)
+
+proc read_string_seq(stream: Stream): seq[string] =
+  let count = stream.readUint32()
+  result = @[]
+  for _ in 0..<count:
+    result.add(stream.read_string())
+
+proc write_type_id_seq(stream: Stream, values: seq[TypeId]) =
+  stream.write(values.len.uint32)
+  for value in values:
+    stream.write(value.int32)
+
+proc read_type_id_seq(stream: Stream): seq[TypeId] =
+  let count = stream.readUint32()
+  result = @[]
+  for _ in 0..<count:
+    result.add(stream.readInt32())
+
+proc validate_tuple_shape_counts(name: string, fields: seq[string], field_type_ids: seq[TypeId],
+                                 payload_shape: EnumPayloadShapeKind, payload_arity: int,
+                                 context: string) =
+  if payload_arity < 0:
+    not_allowed(context & " payload arity must not be negative")
+  case payload_shape
+  of EpsNamed:
+    if fields.len != payload_arity:
+      not_allowed(context & " field metadata count " & $fields.len &
+        " does not match payload arity " & $payload_arity)
+  of EpsPositional:
+    if fields.len != 0:
+      not_allowed(context & " positional payload metadata must not contain field names")
+  of EpsUnit:
+    if fields.len != 0 or payload_arity != 0:
+      not_allowed(context & " unit payload metadata must be empty")
+  if field_type_ids.len != payload_arity:
+    not_allowed(context & " field TypeId metadata count " & $field_type_ids.len &
+      " does not match payload arity " & $payload_arity)
+  if name.len == 0:
+    not_allowed(context & " requires a tuple name")
+
+proc validate_tuple_pattern_metadata(info: TuplePatternMetadata, context: string) =
+  if info.tuple_name.len == 0:
+    not_allowed(context & " requires a tuple name")
+  if info.payload_arity < 0:
+    not_allowed(context & " payload arity must not be negative")
+  case info.payload_shape
+  of EpsNamed:
+    if info.fields.len != info.payload_arity:
+      not_allowed(context & " field metadata count " & $info.fields.len &
+        " does not match payload arity " & $info.payload_arity)
+  of EpsPositional:
+    if info.fields.len != 0:
+      not_allowed(context & " positional payload metadata must not contain field names")
+  of EpsUnit:
+    if info.fields.len != 0 or info.payload_arity != 0:
+      not_allowed(context & " unit payload metadata must be empty")
+
+proc write_tuple_pattern_metadata(stream: Stream, info: TuplePatternMetadata) =
+  validate_tuple_pattern_metadata(info, "GIR write TuplePatternMetadata " & info.tuple_name)
+  stream.write_string(info.tuple_name)
+  stream.write(info.payload_shape.uint8)
+  stream.write(info.payload_arity.int32)
+  write_string_seq(stream, info.fields)
+
+proc read_tuple_pattern_metadata(stream: Stream, key: string): TuplePatternMetadata =
+  let tuple_name = stream.read_string()
+  let context = tuple_gir_context("TuplePatternMetadata", tuple_name)
+  let payload_shape = read_payload_shape(stream, context)
+  let payload_arity = stream.readInt32().int
+  let fields = read_string_seq(stream)
+  result = TuplePatternMetadata(
+    tuple_name: tuple_name,
+    payload_shape: payload_shape,
+    payload_arity: payload_arity,
+    fields: fields)
+  validate_tuple_pattern_metadata(result, context)
+  if key.len == 0:
+    not_allowed(context & " has an empty table key")
+  if key != tuple_name:
+    not_allowed(context & " table key " & key & " does not match tuple name " & tuple_name)
+
+proc write_tuple_pattern_table(stream: Stream, initialized: bool,
+                               table: Table[string, TuplePatternMetadata]) =
+  stream.write(if initialized: 1'u8 else: 0'u8)
+  if not initialized:
+    stream.write(0'u32)
+    return
+
+  stream.write(table.len.uint32)
+  for key, info in table:
+    stream.write_string(key)
+    write_tuple_pattern_metadata(stream, info)
+
+proc read_tuple_pattern_table(stream: Stream): tuple[initialized: bool, table: Table[string, TuplePatternMetadata]] =
+  result.initialized = stream.readUint8() == 1'u8
+  result.table = initTable[string, TuplePatternMetadata]()
+  let count = stream.readUint32()
+  if not result.initialized and count != 0:
+    not_allowed(tuple_gir_context("TuplePatternMetadata") &
+      " has entries but tuple_pattern_metadata_initialized is false")
+
+  for _ in 0..<count:
+    let key = stream.read_string()
+    let metadata = read_tuple_pattern_metadata(stream, key)
+    if result.table.hasKey(key):
+      not_allowed(tuple_gir_context("TuplePatternMetadata", key) & " has duplicate tuple pattern metadata")
+    result.table[key] = metadata
+
+proc write_tuple_def_metadata(stream: Stream, tuple_def: TupleDef, surface = "TupleDef") =
+  if tuple_def == nil:
+    not_allowed("GIR write " & surface & " requires tuple metadata")
+  try:
+    validate_tuple_metadata(tuple_def, "GIR write " & surface)
+  except CatchableError as e:
+    not_allowed("GIR write " & surface & " " & tuple_def.name & " metadata validation failed: " & e.msg)
+
+  stream.write_string(tuple_def.name)
+  stream.write_string(tuple_def.module_path)
+  stream.write_string(tuple_def.internal_path)
+  stream.write(tuple_payload_shape(tuple_def).uint8)
+  stream.write(tuple_payload_arity(tuple_def).int32)
+  write_string_seq(stream, tuple_def.fields)
+  write_type_id_seq(stream, tuple_def.field_type_ids)
+  writeTypeDescTable(stream, tuple_def.field_type_descs)
+
+proc read_tuple_def_value(stream: Stream, surface = "TupleDef"): Value =
+  let name = stream.read_string()
+  let module_path = stream.read_string()
+  let internal_path = stream.read_string()
+  let context = tuple_gir_context(surface, name, module_path, internal_path)
+  let payload_shape = read_payload_shape(stream, context)
+  let payload_arity = stream.readInt32().int
+  let fields = read_string_seq(stream)
+  let field_type_ids = read_type_id_seq(stream)
+  let field_type_descs = readTypeDescTable(stream)
+
+  validate_tuple_shape_counts(name, fields, field_type_ids, payload_shape, payload_arity, context)
+  var tuple_def: TupleDef
+  try:
+    tuple_def = new_tuple_def(
+      name = name,
+      fields = fields,
+      field_type_ids = field_type_ids,
+      field_type_descs = field_type_descs,
+      payload_shape = payload_shape,
+      payload_arity = payload_arity,
+      module_path = module_path,
+      internal_path = internal_path)
+    validate_tuple_metadata(tuple_def, context)
+  except CatchableError as e:
+    not_allowed(context & " metadata validation failed: " & e.msg)
+
+  result = cached_tuple_def_value(tuple_def, context)
+
+proc tuple_payload_label_for_gir(tuple_def: TupleDef, index: int): string =
+  if tuple_def != nil and tuple_payload_shape(tuple_def) == EpsNamed and
+      index >= 0 and index < tuple_def.fields.len:
+    return tuple_def.fields[index]
+  "#" & $index
+
+proc validate_tuple_payload_for_gir(tuple_def: TupleDef, payload: var seq[Value], context: string) =
+  if tuple_def == nil:
+    not_allowed(context & " requires tuple metadata")
+  validate_tuple_metadata(tuple_def, context)
+  let expected = tuple_payload_arity(tuple_def)
+  if payload.len != expected:
+    let field_names = if expected > 0 and tuple_payload_shape(tuple_def) == EpsNamed:
+      " (" & tuple_def.fields.join(", ") & ")"
+    else:
+      ""
+    not_allowed(context & " expects " & $expected & " payload value(s)" &
+      field_names & ", got " & $payload.len)
+  if tuple_def.field_type_ids.len != expected:
+    not_allowed(context & " field TypeId metadata count " & $tuple_def.field_type_ids.len &
+      " does not match payload arity " & $expected)
+
+  for i in 0..<expected:
+    let type_id = tuple_def.field_type_ids[i]
+    if type_id == NO_TYPE_ID:
+      continue
+    let label = tuple_payload_label_for_gir(tuple_def, i)
+    if type_id < 0 or type_id.int >= tuple_def.field_type_descs.len:
+      not_allowed(context & " field " & label & " TypeId " & $type_id &
+        " has no matching type descriptor")
+    var item = payload[i]
+    try:
+      discard validate_or_coerce_type(item, type_id, tuple_def.field_type_descs,
+        "field " & tuple_def.name & "." & label)
+    except CatchableError as e:
+      not_allowed(context & " payload validation failed at field " & label & ": " & e.msg)
+    payload[i] = item
+
+proc read_tuple_value(stream: Stream): Value =
+  let tuple_def_value = read_tuple_def_value(stream, "TupleValue")
+  let tuple_def = tuple_def_value.ref.tuple_def
+  let context = tuple_gir_context("TupleValue", tuple_def.name,
+    tuple_def.module_path, tuple_def.internal_path)
+  let payload_count = stream.readUint32()
+  var payload: seq[Value] = @[]
+  for _ in 0..<payload_count:
+    payload.add(read_value(stream))
+  validate_tuple_payload_for_gir(tuple_def, payload, context)
+  try:
+    result = new_tuple_value(tuple_def_value, payload)
+  except CatchableError as e:
+    not_allowed(context & " construction failed: " & e.msg)
+
+proc write_tuple_value(stream: Stream, v: Value) =
+  if v.kind != VkTupleValue or v.ref == nil:
+    not_allowed("GIR write TupleValue requires a tuple value")
+  let tuple_def_value = v.ref.tv_def
+  if tuple_def_value.kind != VkTupleDef or tuple_def_value.ref == nil or tuple_def_value.ref.tuple_def == nil:
+    not_allowed("GIR write TupleValue requires a resolved VkTupleDef")
+  let tuple_def = tuple_def_value.ref.tuple_def
+  var payload = v.ref.tv_data
+  validate_tuple_payload_for_gir(tuple_def, payload,
+    "GIR write TupleValue " & tuple_def.name)
+  write_tuple_def_metadata(stream, tuple_def, "TupleValue")
+  stream.write(payload.len.uint32)
+  for item in payload:
+    write_value(stream, item)
+
 proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
   write_value(stream, info.input)
   writeScopeTrackerSnapshot(stream, snapshot_scope_tracker(info.scope_tracker))
@@ -309,6 +635,8 @@ proc writeFunctionDef(stream: Stream, info: FunctionDefInfo) =
   for type_id in info.type_expectation_ids:
     stream.write(type_id.int32)
   stream.write(info.return_type_id.int32)
+  write_tuple_pattern_table(stream, info.tuple_pattern_metadata_initialized,
+    info.tuple_pattern_by_name)
   if info.compiled_body.kind == VkCompiledUnit:
     stream.write(1'u8)
     writeCompilationUnitBlock(stream, info.compiled_body.ref.cu)
@@ -323,6 +651,7 @@ proc readFunctionDef(stream: Stream): FunctionDefInfo =
   for _ in 0..<type_expectation_count:
     type_expectation_ids.add(stream.readInt32())
   let return_type_id = stream.readInt32()
+  let tuple_patterns = read_tuple_pattern_table(stream)
   var compiled_value = NIL
   if stream.readUint8() == 1:
     let compiled = readCompilationUnitBlock(stream)
@@ -334,7 +663,9 @@ proc readFunctionDef(stream: Stream): FunctionDefInfo =
     scope_tracker: materialize_scope_tracker(snapshot),
     compiled_body: compiled_value,
     type_expectation_ids: type_expectation_ids,
-    return_type_id: return_type_id
+    return_type_id: return_type_id,
+    tuple_pattern_metadata_initialized: tuple_patterns.initialized,
+    tuple_pattern_by_name: tuple_patterns.table
   )
 
 proc write_value(stream: Stream, v: Value) =
@@ -407,6 +738,12 @@ proc write_value(stream: Stream, v: Value) =
     writeCompilationUnitBlock(stream, v.ref.cu)
   of VkScopeTracker:
     writeScopeTrackerSnapshot(stream, snapshot_scope_tracker(v.ref.scope_tracker))
+  of VkTupleDef:
+    if v.ref == nil or v.ref.tuple_def == nil:
+      not_allowed("GIR write TupleDef requires tuple metadata")
+    write_tuple_def_metadata(stream, v.ref.tuple_def, "TupleDef")
+  of VkTupleValue:
+    write_tuple_value(stream, v)
   else:
     not_allowed("GIR serialization not implemented for kind " & $v.kind)
 
@@ -490,6 +827,10 @@ proc read_value(stream: Stream): Value =
     let ref_value = new_ref(VkScopeTracker)
     ref_value.scope_tracker = tracker
     result = ref_value.to_ref_value()
+  of VkTupleDef:
+    result = read_tuple_def_value(stream, "TupleDef")
+  of VkTupleValue:
+    result = read_tuple_value(stream)
   else:
     not_allowed("GIR read not implemented for kind " & $kind)
 
@@ -741,7 +1082,18 @@ proc load_gir_file*(path: string): GirFile =
   var stream = newFileStream(path, fmRead)
   if stream == nil:
     raise new_exception(types.Exception, "Failed to open GIR file: " & path)
-  defer: stream.close()
+  let previous_read_path = gir_read_path
+  let previous_tuple_cache_initialized = gir_tuple_def_cache_initialized
+  var previous_tuple_cache = initTable[string, Value]()
+  if gir_tuple_def_cache_initialized:
+    previous_tuple_cache = gir_tuple_def_cache
+  gir_read_path = path
+  reset_gir_tuple_def_cache()
+  defer:
+    stream.close()
+    gir_read_path = previous_read_path
+    gir_tuple_def_cache = previous_tuple_cache
+    gir_tuple_def_cache_initialized = previous_tuple_cache_initialized
 
   var header: GirHeader
   discard stream.readData(header.magic[0].addr, 4)

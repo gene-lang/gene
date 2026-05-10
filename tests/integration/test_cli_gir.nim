@@ -83,6 +83,144 @@ proc overwrite_gir_bytes(gir_path: string, offset: int, value: string) =
   stream.setPosition(offset)
   stream.write(value)
 
+proc overwrite_gir_uint32(gir_path: string, offset: int, value: uint32) =
+  var stream = newFileStream(gir_path, fmReadWriteExisting)
+  doAssert stream != nil, "Failed to open GIR for uint32 overwrite"
+  defer:
+    stream.close()
+
+  stream.setPosition(offset)
+  stream.write(value)
+
+proc overwrite_gir_int32(gir_path: string, offset: int, value: int32) =
+  var stream = newFileStream(gir_path, fmReadWriteExisting)
+  doAssert stream != nil, "Failed to open GIR for int32 overwrite"
+  defer:
+    stream.close()
+
+  stream.setPosition(offset)
+  stream.write(value)
+
+proc skip_gir_type_desc_payload(stream: Stream) =
+  let kind = cast[TypeDescKind](stream.readUint8())
+  discard read_gir_string_payload(stream) # module_path
+  case kind
+  of TdkAny:
+    discard
+  of TdkNamed:
+    discard read_gir_string_payload(stream)
+  of TdkApplied:
+    discard read_gir_string_payload(stream)
+    let arg_count = stream.readUint32()
+    for _ in 0..<arg_count:
+      discard stream.readInt32()
+  of TdkUnion:
+    let member_count = stream.readUint32()
+    for _ in 0..<member_count:
+      discard stream.readInt32()
+  of TdkFn:
+    let param_count = stream.readUint32()
+    for _ in 0..<param_count:
+      discard stream.readUint8()
+      discard read_gir_string_payload(stream)
+      discard stream.readInt32()
+    discard stream.readInt32()
+    let effect_count = stream.readUint32()
+    for _ in 0..<effect_count:
+      discard read_gir_string_payload(stream)
+  of TdkVar:
+    discard stream.readInt32()
+
+proc skip_gir_type_desc_table(stream: Stream) =
+  let count = stream.readUint32()
+  for _ in 0..<count:
+    skip_gir_type_desc_payload(stream)
+
+proc seek_first_instruction_arg0_for_test(stream: Stream, expected_kind: ValueKind) =
+  var magic: array[4, char]
+  doAssert stream.readData(magic[0].addr, 4) == 4, "Failed to read GIR magic"
+  discard stream.readUint32()              # GIR_VERSION
+  discard read_gir_string_payload(stream)  # compiler_version
+  discard read_gir_string_payload(stream)  # vm_abi
+  discard stream.readInt64()               # timestamp
+  discard stream.readBool()                # debug
+  discard stream.readBool()                # published
+  discard stream.readInt64()               # source_hash
+
+  let constant_count = stream.readUint32()
+  doAssert constant_count == 0, "tuple corruption fixtures expect no constant pool"
+
+  let symbol_count = stream.readUint32()
+  for _ in 0..<symbol_count:
+    discard read_gir_string_payload(stream)
+
+  let instruction_count = stream.readUint32()
+  doAssert instruction_count > 0, "tuple corruption fixtures expect at least one instruction"
+  discard stream.readUint16()              # instruction kind
+  discard stream.readUint32()              # instruction label
+
+  let value_kind = cast[ValueKind](stream.readUint16())
+  doAssert value_kind == expected_kind, "expected first instruction arg0 kind " & $expected_kind & ", got " & $value_kind
+
+proc skip_tuple_def_metadata_for_test(stream: Stream) =
+  discard read_gir_string_payload(stream)  # tuple name
+  discard read_gir_string_payload(stream)  # module path
+  discard read_gir_string_payload(stream)  # internal path
+  discard stream.readUint8()               # payload shape
+  discard stream.readInt32()               # payload arity
+
+  let field_count = stream.readUint32()
+  for _ in 0..<field_count:
+    discard read_gir_string_payload(stream)
+
+  let type_id_count = stream.readUint32()
+  for _ in 0..<type_id_count:
+    discard stream.readInt32()
+
+  skip_gir_type_desc_table(stream)
+
+proc tuple_def_payload_arity_offset_for_test(gir_path: string): int =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for tuple payload-arity offset lookup"
+  defer:
+    stream.close()
+
+  seek_first_instruction_arg0_for_test(stream, VkTupleDef)
+  discard read_gir_string_payload(stream)
+  discard read_gir_string_payload(stream)
+  discard read_gir_string_payload(stream)
+  discard stream.readUint8()
+  result = stream.getPosition().int
+
+proc tuple_def_first_type_id_offset_for_test(gir_path: string): int =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for tuple TypeId offset lookup"
+  defer:
+    stream.close()
+
+  seek_first_instruction_arg0_for_test(stream, VkTupleDef)
+  discard read_gir_string_payload(stream)
+  discard read_gir_string_payload(stream)
+  discard read_gir_string_payload(stream)
+  discard stream.readUint8()
+  discard stream.readInt32()
+  let field_count = stream.readUint32()
+  for _ in 0..<field_count:
+    discard read_gir_string_payload(stream)
+  let type_id_count = stream.readUint32()
+  doAssert type_id_count > 0, "tuple TypeId corruption fixture expects at least one TypeId"
+  result = stream.getPosition().int
+
+proc tuple_value_payload_count_offset_for_test(gir_path: string): int =
+  var stream = newFileStream(gir_path, fmRead)
+  doAssert stream != nil, "Failed to open GIR for tuple payload-count offset lookup"
+  defer:
+    stream.close()
+
+  seek_first_instruction_arg0_for_test(stream, VkTupleValue)
+  skip_tuple_def_metadata_for_test(stream)
+  result = stream.getPosition().int
+
 proc alternate_same_len_digits(value: string): string =
   result = repeat("9", value.len)
   if result == value:
@@ -825,6 +963,239 @@ suite "GIR CLI":
 
     check saw_fn_info
     removeFile(gir_path)
+
+  test "gir preserves direct tuple definitions and values with nominal metadata":
+    let module_path = absolutePath("tmp/tuple_gir_direct_roundtrip.gene")
+    let descs = builtin_type_descs()
+    let point_def = new_tuple_def(
+      name = "Point",
+      fields = @["x", "y"],
+      field_type_ids = @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID],
+      field_type_descs = descs,
+      payload_shape = EpsNamed,
+      payload_arity = 2,
+      module_path = module_path,
+      internal_path = "Point")
+    let point_type = point_def.to_value()
+    let point_value = new_tuple_value(point_type, @[10.to_value(), 20.to_value()])
+
+    let cu = new_compilation_unit()
+    cu.module_path = module_path
+    cu.type_descriptors = descs
+    cu.type_registry = populate_registry(cu.type_descriptors, module_path)
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: point_type))
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: point_value))
+
+    let gir_path = "build/tests/tuple_direct_roundtrip.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(cu, gir_path, module_path)
+    let loaded = gir.load_gir(gir_path)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    check loaded.instructions.len == 2
+    let loaded_type = loaded.instructions[0].arg0
+    let loaded_value = loaded.instructions[1].arg0
+    check loaded_type.kind == VkTupleDef
+    check loaded_value.kind == VkTupleValue
+    if loaded_type.kind == VkTupleDef and loaded_value.kind == VkTupleValue:
+      let tuple_def = loaded_type.ref.tuple_def
+      check tuple_def.name == "Point"
+      check tuple_def.module_path == module_path
+      check tuple_def.internal_path == "Point"
+      check tuple_def.payload_shape == EpsNamed
+      check tuple_payload_arity(tuple_def) == 2
+      check tuple_def.fields == @["x", "y"]
+      check tuple_def.field_type_ids == @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID]
+      check tuple_def.field_type_descs.len == descs.len
+      check loaded_value.ref.tv_def.kind == VkTupleDef
+      check loaded_value.ref.tv_def.raw == loaded_type.raw
+      check loaded_value.ref.tv_def.ref.tuple_def.name == "Point"
+      check loaded_value.ref.tv_def.ref.tuple_def.module_path == module_path
+      check loaded_value.ref.tv_data == @[10.to_value(), 20.to_value()]
+
+  test "gir preserves tuple pattern metadata in function definitions":
+    let module_path = absolutePath("tmp/tuple_function_metadata_roundtrip.gene")
+    let code = """
+      (tuple Point x: Int y: Int)
+      (fn score [p]
+        (case p
+          when (Point x y:yy)
+            (+ x yy)
+          else
+            -1))
+    """
+    let compiled = compiler.parse_and_compile(code, module_path)
+    let gir_path = "build/tests/tuple_function_metadata_roundtrip.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(compiled, gir_path, module_path)
+    let loaded = gir.load_gir(gir_path)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    var saw_loaded_fn_info = false
+    for inst in loaded.instructions:
+      if inst.kind == IkFunction and inst.arg0.kind == VkFunctionDef:
+        let info = to_function_def_info(inst.arg0)
+        check info.tuple_pattern_metadata_initialized
+        check info.tuple_pattern_by_name.hasKey("Point")
+        if info.tuple_pattern_by_name.hasKey("Point"):
+          let meta = info.tuple_pattern_by_name["Point"]
+          check meta.tuple_name == "Point"
+          check meta.payload_shape == EpsNamed
+          check meta.payload_arity == 2
+          check meta.fields == @["x", "y"]
+        saw_loaded_fn_info = true
+        break
+
+    check saw_loaded_fn_info
+
+  test "load_gir rejects malformed tuple definition metadata":
+    let module_path = absolutePath("tmp/tuple_malformed_definition.gene")
+    let descs = builtin_type_descs()
+    let point_type = new_tuple_def(
+      name = "Point",
+      fields = @["x", "y"],
+      field_type_ids = @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID],
+      field_type_descs = descs,
+      payload_shape = EpsNamed,
+      payload_arity = 2,
+      module_path = module_path,
+      internal_path = "Point").to_value()
+    let cu = new_compilation_unit()
+    cu.module_path = module_path
+    cu.type_descriptors = descs
+    cu.type_registry = populate_registry(cu.type_descriptors, module_path)
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: point_type))
+
+    let gir_path = "build/tests/tuple_malformed_definition.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(cu, gir_path, module_path)
+    overwrite_gir_int32(gir_path, tuple_def_payload_arity_offset_for_test(gir_path), 1'i32)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [
+      "GIR load TupleDef",
+      "Point",
+      module_path,
+      "field metadata count",
+      "payload arity",
+      gir_path,
+    ])
+
+  test "load_gir rejects tuple definition TypeId descriptor gaps":
+    let module_path = absolutePath("tmp/tuple_type_id_gap.gene")
+    let descs = builtin_type_descs()
+    let point_type = new_tuple_def(
+      name = "Point",
+      fields = @["x"],
+      field_type_ids = @[BUILTIN_TYPE_INT_ID],
+      field_type_descs = descs,
+      payload_shape = EpsNamed,
+      payload_arity = 1,
+      module_path = module_path,
+      internal_path = "Point").to_value()
+    let cu = new_compilation_unit()
+    cu.module_path = module_path
+    cu.type_descriptors = descs
+    cu.type_registry = populate_registry(cu.type_descriptors, module_path)
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: point_type))
+
+    let gir_path = "build/tests/tuple_type_id_gap.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(cu, gir_path, module_path)
+    overwrite_gir_int32(gir_path, tuple_def_first_type_id_offset_for_test(gir_path), CorruptTypeIdForTest)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [
+      "GIR load TupleDef",
+      "Point",
+      "field x",
+      "TypeId " & $CorruptTypeIdForTest,
+      "type descriptor",
+      gir_path,
+    ])
+
+  test "load_gir rejects tuple value payload arity mismatch":
+    let module_path = absolutePath("tmp/tuple_payload_arity_mismatch.gene")
+    let descs = builtin_type_descs()
+    let point_type = new_tuple_def(
+      name = "Point",
+      fields = @["x", "y"],
+      field_type_ids = @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID],
+      field_type_descs = descs,
+      payload_shape = EpsNamed,
+      payload_arity = 2,
+      module_path = module_path,
+      internal_path = "Point").to_value()
+    let point_value = new_tuple_value(point_type, @[10.to_value(), 20.to_value()])
+    let cu = new_compilation_unit()
+    cu.module_path = module_path
+    cu.type_descriptors = descs
+    cu.type_registry = populate_registry(cu.type_descriptors, module_path)
+    cu.instructions.add(Instruction(kind: IkPushValue, arg0: point_value))
+
+    let gir_path = "build/tests/tuple_payload_arity_mismatch.gir"
+    createDir(parentDir(gir_path))
+    gir.save_gir(cu, gir_path, module_path)
+    overwrite_gir_uint32(gir_path, tuple_value_payload_count_offset_for_test(gir_path), 1'u32)
+
+    defer:
+      if fileExists(gir_path):
+        removeFile(gir_path)
+
+    expect_load_gir_error(gir_path, [
+      "GIR load TupleValue",
+      "Point",
+      "expects 2 payload value(s)",
+      "got 1",
+      gir_path,
+    ])
+
+  test "cached GIR preserves lazy tuple case metadata":
+    let source_path = absolutePath("tmp/tuple_lazy_case_cached.gene")
+    let gir_path = gir.get_gir_path(source_path, "build")
+    createDir(parentDir(source_path))
+    writeFile(source_path, """
+      (tuple Point x: Int y: Int)
+      (fn classify [p]
+        (case p
+          when (Point x y:yy)
+            (+ x yy)
+          else
+            -1))
+      (println (classify (Point 2 3)))
+    """)
+    if fileExists(gir_path):
+      removeFile(gir_path)
+
+    defer:
+      for path in [source_path, gir_path]:
+        if fileExists(path):
+          removeFile(path)
+
+    let gene_bin = ensure_gene_bin_for_test()
+    let first = execCmdEx(gene_bin & " run " & source_path)
+    checkpoint first.output
+    check first.exitCode == 0
+    check first.output == "5\n"
+    check fileExists(gir_path)
+
+    let second = execCmdEx(gene_bin & " run " & source_path)
+    checkpoint second.output
+    check second.exitCode == 0
+    check second.output == first.output
+    check not second.output.contains("Enum pattern expected VkEnumMember, got VkTupleDef")
 
   test "cached GIR preserves immutable array runtime semantics":
     let code = """
