@@ -481,7 +481,14 @@ proc construct_tuple(self: ptr VirtualMachine, tuple_type: Value, positional: se
   let expected_fields = tuple_payload_expected_fields(tuple_def)
 
   if positional.len > 0 and keywords.len > 0:
-    not_allowed("Tuple " & tuple_name & " cannot mix positional and keyword arguments")
+    var names: seq[string] = @[]
+    for (key, _) in keywords:
+      names.add(tuple_keyword_name(key))
+    names.sort(system.cmp[string])
+    let expected_label = if tuple_payload_shape(tuple_def) == EpsNamed: "fields" else: "slots"
+    not_allowed("Tuple " & tuple_name & " cannot mix positional and keyword arguments; received " &
+                $positional.len & " positional argument(s) and keyword argument(s): " &
+                names.join(", ") & "; expected " & expected_label & ": " & expected_fields)
 
   var duplicate_names: seq[string] = @[]
   if keywords.len > 0:
@@ -514,7 +521,8 @@ proc construct_tuple(self: ptr VirtualMachine, tuple_type: Value, positional: se
     for (key, _) in keywords:
       names.add(tuple_keyword_name(key))
     names.sort(system.cmp[string])
-    not_allowed("Tuple " & tuple_name & " has positional payload slots and does not accept keyword argument(s): " & names.join(", "))
+    not_allowed("Tuple " & tuple_name & " has positional payload slots and does not accept keyword argument(s): " &
+                names.join(", ") & "; expected slots: " & expected_fields)
 
   if keywords.len == 0:
     if positional.len != expected:

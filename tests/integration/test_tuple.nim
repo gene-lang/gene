@@ -195,16 +195,100 @@ test "tuple payload dot access does not fall back to tuple fields":
   """, "Unified method call not supported for VkTupleValue")
 
 
-test "tuple constructors reject minimal invalid call shapes":
-  expect_tuple_source_error("""
+test "tuple constructors reject deterministic invalid call shapes":
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (Point 1)
+  """, [
+    "Tuple Point expects 2 arguments (x, y), got 1",
+    "Point",
+    "x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (Point 1 2 3)
+  """, [
+    "Tuple Point expects 2 arguments (x, y), got 3",
+    "Point",
+    "x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
     (tuple Point x: Int y: Int)
     (Point 1 ^y 2)
-  """, "Tuple Point cannot mix positional and keyword arguments")
+  """, [
+    "Tuple Point cannot mix positional and keyword arguments",
+    "received 1 positional argument(s)",
+    "keyword argument(s): y",
+    "expected fields: x, y",
+  ])
 
-  expect_tuple_source_error("""
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (Point ^x 1)
+  """, [
+    "Tuple Point missing keyword argument(s): y; expected fields: x, y",
+    "Point",
+    "x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Point x: Int y: Int)
+    (Point ^x 1 ^z 3)
+  """, [
+    "Tuple Point got unknown keyword argument(s): z; expected fields: x, y",
+    "Point",
+    "z",
+    "x, y",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Box Int)
+    (Box)
+  """, [
+    "Tuple Box expects 1 arguments (#0), got 0",
+    "Box",
+    "#0",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Box Int)
+    (Box 9 10)
+  """, [
+    "Tuple Box expects 1 arguments (#0), got 2",
+    "Box",
+    "#0",
+  ])
+
+  expect_tuple_source_error_parts("""
     (tuple Box Int)
     (Box ^value 9)
-  """, "Tuple Box has positional payload slots and does not accept keyword argument(s): value")
+  """, [
+    "Tuple Box has positional payload slots and does not accept keyword argument(s): value",
+    "expected slots: #0",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Unit)
+    (Unit 1)
+  """, [
+    "Unit tuple Unit expects 0 arguments, got 1",
+    "Unit",
+  ])
+
+  expect_tuple_source_error_parts("""
+    (tuple Unit)
+    (Unit ^value 1)
+  """, [
+    "Unit tuple Unit expects 0 keyword arguments, got: value",
+    "Unit",
+    "value",
+  ])
+
+  # Duplicate `^key` source syntax remains parser-owned; this matrix covers
+  # constructor-visible arity, mixed-call, missing, unknown, positional-keyword,
+  # and unit payload failures.
 
 
 test "tuple typed payload constructor diagnostics include tuple guard context":
