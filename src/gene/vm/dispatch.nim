@@ -709,24 +709,38 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   defer:
     discard self.interception_contexts.pop()
 
+  proc advice_receives_call_shape(advice_fn: Value): bool =
+    ## Advice normalized from `_` or `[self]` intentionally observes only the
+    ## receiver. Do not leak method positional/keyword arguments into that
+    ## matcher; callers that need them must declare matcher slots explicitly.
+    if advice_fn.kind == VkFunction:
+      let fn = advice_fn.ref.fn
+      if fn.matcher != nil and fn.matcher.children.len <= 1:
+        return false
+    true
+
   proc call_advice(advice_fn: Value, instance: Value, args: seq[Value],
                    kw_pairs: seq[(Key, Value)]): Value =
+    let include_call_shape = advice_receives_call_shape(advice_fn)
+    let advice_args: seq[Value] = if include_call_shape: args else: @[]
+    let advice_kw_pairs: seq[(Key, Value)] = if include_call_shape: kw_pairs else: @[]
+
     case advice_fn.kind
     of VkFunction:
-      if kw_pairs.len > 0:
-        return self.exec_method_kw(advice_fn, instance, args, kw_pairs)
-      return self.exec_method(advice_fn, instance, args)
+      if advice_kw_pairs.len > 0:
+        return self.exec_method_kw(advice_fn, instance, advice_args, advice_kw_pairs)
+      return self.exec_method(advice_fn, instance, advice_args)
     of VkNativeFn:
-      let has_kw = kw_pairs.len > 0
+      let has_kw = advice_kw_pairs.len > 0
       let offset = if has_kw: 1 else: 0
-      var call_args = newSeq[Value](args.len + 1 + offset)
+      var call_args = newSeq[Value](advice_args.len + 1 + offset)
       if has_kw:
         var kw_map = new_map_value()
-        for (k, v) in kw_pairs:
+        for (k, v) in advice_kw_pairs:
           map_data(kw_map)[k] = v
         call_args[0] = kw_map
       call_args[offset] = instance
-      for i, arg in args:
+      for i, arg in advice_args:
         call_args[i + offset + 1] = arg
       return call_native_fn(advice_fn.ref.native_fn, self, call_args, has_kw)
     else:

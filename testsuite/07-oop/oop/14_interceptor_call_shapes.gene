@@ -36,6 +36,39 @@
 # Expected: class spread after no result shape 4 6 8
 # Expected: class spread after result shape 4 6 8 18
 # Expected: class spread advice result 18
+# Expected: nested outer before chain 3 4 5
+# Expected: nested outer around chain 3 4 5
+# Expected: nested inner before chain 3 4 5
+# Expected: nested inner around chain 3 4 5
+# Expected: nested target chain 3 4 5
+# Expected: nested inner around inner result 12
+# Expected: nested inner after chain 3 4 5 12
+# Expected: nested outer around inner result 12
+# Expected: nested outer after chain 3 4 5 12
+# Expected: nested active result 12
+# Expected: nested inner before chain 2 6 7
+# Expected: nested inner around chain 2 6 7
+# Expected: nested target chain 2 6 7
+# Expected: nested inner around inner result 15
+# Expected: nested inner after chain 2 6 7 15
+# Expected: nested outer disabled result 15
+# Expected: nested outer before chain 1 8 9
+# Expected: nested outer around chain 1 8 9
+# Expected: nested target chain 1 8 9
+# Expected: nested outer around inner result 18
+# Expected: nested outer after chain 1 8 9 18
+# Expected: nested inner disabled result 18
+# Expected: nested outer before chain 5 7 11
+# Expected: nested outer around chain 5 7 11
+# Expected: nested inner before chain 5 7 11
+# Expected: nested inner around chain 5 7 11
+# Expected: nested target chain 5 7 11
+# Expected: nested inner around inner result 23
+# Expected: nested inner after chain 5 7 11 23
+# Expected: nested outer around inner result 23
+# Expected: nested outer after chain 5 7 11 23
+# Expected: nested reenabled result 23
+# Expected: nested unexpected keyword caught
 
 (interceptor MethodShapeTrace [direct run]
   (before direct [x y ^limit]
@@ -174,3 +207,84 @@ catch *
 (var class_advice_args [4 6])
 (var class_advice_kws {^limit 8})
 (println "class spread advice result" (class_advice_subject .run class_advice_args... ^... class_advice_kws))
+
+(fn nested_outer_around_advice [_self x y ^limit = 10 wrapped]
+  (println "nested outer around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "nested outer around inner result" r)
+  r
+)
+
+(fn nested_inner_around_advice [_self x y ^limit = 10 wrapped]
+  (println "nested inner around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "nested inner around inner result" r)
+  r
+)
+
+(interceptor NestedOuterShapeTrace [run]
+  (before run [x y ^limit = 10]
+    (println "nested outer before" /name x y limit)
+  )
+  (around run nested_outer_around_advice)
+  (after run [x y ^limit = 10 result]
+    (println "nested outer after" /name x y limit result)
+  )
+)
+
+(interceptor NestedInnerShapeTrace [run]
+  (before run [x y ^limit = 10]
+    (println "nested inner before" /name x y limit)
+  )
+  (around run nested_inner_around_advice)
+  (after run [x y ^limit = 10 result]
+    (println "nested inner after" /name x y limit result)
+  )
+)
+
+(class NestedShapeTarget
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method run [x y ^limit = 10]
+    (println "nested target" /name x y limit)
+    (+ x y limit)
+  )
+)
+
+(var nested_inner_apps (NestedInnerShapeTrace NestedShapeTarget "run"))
+(var nested_inner_app nested_inner_apps/0)
+(var nested_outer_apps (NestedOuterShapeTrace NestedShapeTarget "run"))
+(var nested_outer_app nested_outer_apps/0)
+(var nested_subject (new NestedShapeTarget "chain"))
+
+(var nested_active_args [3 4])
+(var nested_active_kws {^limit 5})
+(println "nested active result" (nested_subject .run nested_active_args... ^... nested_active_kws))
+
+nested_outer_app/.disable
+(var nested_outer_disabled_args [2 6])
+(var nested_outer_disabled_kws {^limit 7})
+(println "nested outer disabled result" (nested_subject .run nested_outer_disabled_args... ^... nested_outer_disabled_kws))
+
+nested_outer_app/.enable
+nested_inner_app/.disable
+(var nested_inner_disabled_kws {^limit 9})
+(println "nested inner disabled result" (nested_subject .run 1 8 ^... nested_inner_disabled_kws))
+
+nested_inner_app/.enable
+(var nested_reenabled_args [5 7])
+(var nested_reenabled_kws {^limit 11})
+(println "nested reenabled result" (nested_subject .run nested_reenabled_args... ^... nested_reenabled_kws))
+
+(var nested_bad_kws {^limit 3 ^unexpected true})
+(try
+  (nested_subject .run 1 2 ^... nested_bad_kws)
+catch *
+  (println "nested unexpected keyword caught")
+)
