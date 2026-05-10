@@ -157,6 +157,90 @@ test_vm """
 
 
 test_vm """
+  (tuple Point label: String x: Int)
+  (tuple Pair label: String x: Int)
+  (var p (Point "hello" 7))
+  [p (p .to_s) ((Point "hello" 7) == p) ((Point "hello" 8) == p) ((Pair "hello" 7) == p)]
+""", proc(r: Value) =
+  check r.kind == VkArray
+  if r.kind == VkArray:
+    let values = array_data(r)
+    check values.len == 5
+    if values.len == 5:
+      check values[0].kind == VkTupleValue
+      if values[0].kind == VkTupleValue:
+        check values[0].str_no_quotes() == "(Point hello 7)"
+        check $values[0] == "(Point \"hello\" 7)"
+      check values[1] == "(Point \"hello\" 7)".to_value()
+      check values[2] == TRUE
+      check values[3] == FALSE
+      check values[4] == FALSE
+
+
+test "tuple equality compares nested payload values recursively":
+  let descs = builtin_type_descs()
+  let pointDef = new_tuple_def(
+    name = "Point",
+    fields = @[
+      "x", "y",
+    ],
+    field_type_ids = @[BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID],
+    field_type_descs = descs,
+    payload_shape = EpsNamed,
+  )
+  let pointTypeValue = pointDef.to_value()
+  let wrapperDef = new_tuple_def(
+    name = "Wrapper",
+    field_type_ids = @[NO_TYPE_ID],
+    payload_shape = EpsPositional,
+  )
+  let wrapperTypeValue = wrapperDef.to_value()
+
+  let left = new_tuple_value(wrapperTypeValue, @[
+    new_tuple_value(pointTypeValue, @[1.to_value(), 2.to_value()]),
+  ])
+  let right = new_tuple_value(wrapperTypeValue, @[
+    new_tuple_value(pointTypeValue, @[1.to_value(), 2.to_value()]),
+  ])
+  let differentNestedPayload = new_tuple_value(wrapperTypeValue, @[
+    new_tuple_value(pointTypeValue, @[1.to_value(), 3.to_value()]),
+  ])
+
+  check left == right
+  check left != differentNestedPayload
+
+
+test "tuple equality and display reject malformed tuple metadata safely":
+  let forgedDef = TupleDef(
+    name: "Forged",
+    payload_shape: EpsNamed,
+    payload_arity: 2,
+    fields: @[
+      "x",
+    ],
+    field_type_ids: @[NO_TYPE_ID, NO_TYPE_ID],
+  )
+  let forgedTypeRef = new_ref(VkTupleDef)
+  forgedTypeRef.tuple_def = forgedDef
+  let forgedTypeValue = forgedTypeRef.to_ref_value()
+
+  let leftRef = new_ref(VkTupleValue)
+  leftRef.tv_def = forgedTypeValue
+  leftRef.tv_data = @[1.to_value(), 2.to_value()]
+  let left = leftRef.to_ref_value()
+
+  let rightRef = new_ref(VkTupleValue)
+  rightRef.tv_def = forgedTypeValue
+  rightRef.tv_data = @[1.to_value(), 2.to_value()]
+  let right = rightRef.to_ref_value()
+
+  check not (left == left)
+  check not (left == right)
+  check left.str_no_quotes() == "<TupleValue>"
+  check $left == "<TupleValue>"
+
+
+test_vm """
   (tuple Point x: Int y: Int)
   (tuple Box Int)
   (var p (Point 10 20))

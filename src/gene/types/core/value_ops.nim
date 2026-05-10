@@ -360,8 +360,63 @@ proc setShared*(v: Value) {.inline.} =
 # Forward declaration
 converter to_int*(v: Value): int64 {.inline, noSideEffect.}
 
+proc tuple_def_metadata_valid_for_value_ops(tuple_def: TupleDef): bool {.inline, gcsafe.} =
+  if tuple_def == nil:
+    return false
+  if tuple_def.name.len == 0:
+    return false
+  if tuple_def.payload_arity < 0:
+    return false
+
+  case tuple_def.payload_shape
+  of EpsNamed:
+    if tuple_def.fields.len != tuple_def.payload_arity:
+      return false
+  of EpsPositional:
+    if tuple_def.fields.len != 0:
+      return false
+  of EpsUnit:
+    if tuple_def.fields.len != 0 or tuple_def.payload_arity != 0:
+      return false
+
+  if tuple_def.field_type_ids.len != tuple_def.payload_arity:
+    return false
+
+  for type_id in tuple_def.field_type_ids:
+    if type_id == NO_TYPE_ID:
+      continue
+    if type_id < 0:
+      return false
+    if tuple_def.field_type_descs.len == 0 or type_id.int >= tuple_def.field_type_descs.len:
+      return false
+
+  true
+
+proc tuple_value_def_for_value_ops(tuple_value: Value): TupleDef {.inline, gcsafe.} =
+  {.cast(gcsafe).}:
+    if tuple_value.kind != VkTupleValue:
+      return nil
+    let tuple_ref = tuple_value.ref
+    if tuple_ref == nil:
+      return nil
+    if tuple_ref.tv_def.kind != VkTupleDef:
+      return nil
+    let tuple_def_ref = tuple_ref.tv_def.ref
+    if tuple_def_ref == nil or tuple_def_ref.tuple_def == nil:
+      return nil
+    let tuple_def = tuple_def_ref.tuple_def
+    if not tuple_def_metadata_valid_for_value_ops(tuple_def):
+      return nil
+    if tuple_ref.tv_data.len != tuple_def.payload_arity:
+      return nil
+    tuple_def
+
 proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
   if cast[uint64](a) == cast[uint64](b):
+    {.cast(noSideEffect).}:
+      {.cast(gcsafe).}:
+        if a.kind == VkTupleValue:
+          return tuple_value_def_for_value_ops(a) != nil
     return true
 
   {.cast(noSideEffect).}:
@@ -497,8 +552,18 @@ proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
           of VkTupleDef:
             return a.ref.tuple_def == b.ref.tuple_def
           of VkTupleValue:
-            # Final tuple equality semantics are deferred; keep helper values safe and nominal.
-            return a.ref == b.ref
+            let tupleDefA = tuple_value_def_for_value_ops(a)
+            let tupleDefB = tuple_value_def_for_value_ops(b)
+            if tupleDefA == nil or tupleDefB == nil:
+              return false
+            if tupleDefA != tupleDefB:
+              return false
+            if a.ref.tv_data.len != b.ref.tv_data.len:
+              return false
+            for i in 0 ..< a.ref.tv_data.len:
+              if a.ref.tv_data[i] != b.ref.tv_data[i]:
+                return false
+            return true
           else:
             return a.ref == b.ref
       # Only references can be equal with different bit patterns
@@ -852,10 +917,12 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         else:
           result = "<TupleDef>"
       of VkTupleValue:
-        if self.ref != nil and self.ref.tv_def.kind == VkTupleDef and
-            self.ref.tv_def.ref != nil and self.ref.tv_def.ref.tuple_def != nil and
-            self.ref.tv_def.ref.tuple_def.name.len > 0:
-          result = "<TupleValue " & self.ref.tv_def.ref.tuple_def.name & ">"
+        let tupleDef = tuple_value_def_for_value_ops(self)
+        if tupleDef != nil:
+          result = "(" & tupleDef.name
+          for v in self.ref.tv_data:
+            result &= " " & v.str_no_quotes()
+          result &= ")"
         else:
           result = "<TupleValue>"
       of VkCustom:
@@ -971,10 +1038,12 @@ proc `$`*(self: Value): string {.gcsafe.} =
         else:
           result = "<TupleDef>"
       of VkTupleValue:
-        if self.ref != nil and self.ref.tv_def.kind == VkTupleDef and
-            self.ref.tv_def.ref != nil and self.ref.tv_def.ref.tuple_def != nil and
-            self.ref.tv_def.ref.tuple_def.name.len > 0:
-          result = "<TupleValue " & self.ref.tv_def.ref.tuple_def.name & ">"
+        let tupleDef = tuple_value_def_for_value_ops(self)
+        if tupleDef != nil:
+          result = "(" & tupleDef.name
+          for v in self.ref.tv_data:
+            result &= " " & $v
+          result &= ")"
         else:
           result = "<TupleValue>"
       of VkCustom:
