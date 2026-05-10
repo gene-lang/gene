@@ -637,7 +637,7 @@ proc call_interception_original(self: ptr VirtualMachine, original: Value, insta
   of VkFunction:
     if instance == NIL:
       if kw_pairs.len > 0:
-        not_allowed("Keyword arguments are not supported for intercepted standalone functions")
+        return self.exec_function_kw(original, args, kw_pairs)
       return self.exec_function(original, args)
     if kw_pairs.len > 0:
       return self.exec_method_kw(original, instance, args, kw_pairs)

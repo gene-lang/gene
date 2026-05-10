@@ -424,15 +424,6 @@ proc validate_function_interceptor_target(label: string, definition_name: string
         definition_name,
         "expected synchronous callable target; actual async function '" & fn.name & "'"
       )
-    let keyword_name = function_keyword_param_name(fn)
-    if keyword_name.len > 0:
-      raise_interception_diagnostic(
-        InterceptKeywordUnsupportedMarker,
-        label,
-        definition_name,
-        "target function '" & fn.name & "' declares keyword parameter '" & keyword_name &
-          "', but keyword forwarding is deferred"
-      )
   of VkNativeFn, VkInterception:
     discard
   of VkNativeMacro:

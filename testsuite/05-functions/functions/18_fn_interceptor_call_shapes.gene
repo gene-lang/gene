@@ -1,0 +1,21 @@
+# Expected: direct kw before 2 3
+# Expected: direct kw target 2 3 5
+# Expected: direct kw after 2 3 10
+# Expected: direct kw wrapped result 10
+
+(fn-interceptor DirectKeywordTrace [f]
+  (before f [x y]
+    (println "direct kw before" x y)
+  )
+  (after f [x y result]
+    (println "direct kw after" x y result)
+  )
+)
+
+(fn direct_keyword_target [x y ^limit]
+  (println "direct kw target" x y limit)
+  (+ x y limit)
+)
+
+(var direct_keyword_wrapped (DirectKeywordTrace direct_keyword_target))
+(println "direct kw wrapped result" (direct_keyword_wrapped 2 3 ^limit 5))

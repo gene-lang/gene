@@ -79,6 +79,58 @@ proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Valu
   # The VM state should already be restored by return or IkEnd
   return result
 
+proc exec_function_kw*(self: ptr VirtualMachine, fn: Value, args: seq[Value],
+                       kw_pairs: seq[(Key, Value)]): Value {.exportc.} =
+  ## Execute a standalone Gene function with keyword arguments.
+  ## Mirrors exec_method_kw_impl without injecting a synthetic self argument.
+  if fn.kind != VkFunction:
+    return NIL
+
+  let f = fn.ref.fn
+  if f.body_compiled == nil:
+    f.compile()
+
+  let saved_cu = self.cu
+  let saved_pc = self.pc
+  let saved_frame = self.frame
+
+  var scope: Scope
+  if f.matcher.is_empty():
+    scope = f.parent_scope
+    if scope != nil:
+      scope.ref_count.inc()
+  else:
+    scope = new_scope(f.scope_tracker, f.parent_scope)
+    let args_ptr =
+      if args.len > 0:
+        cast[ptr UncheckedArray[Value]](args[0].addr)
+      else:
+        cast[ptr UncheckedArray[Value]](nil)
+    process_args_direct_kw(f.matcher, args_ptr, args.len, kw_pairs, scope, callable_argument_guard_context())
+
+  let new_frame = new_frame()
+  new_frame.kind = FkFunction
+  new_frame.target = fn
+  new_frame.scope = scope
+  new_frame.ns = f.ns
+  if saved_frame != nil:
+    saved_frame.ref_count.inc()
+  new_frame.caller_frame = saved_frame
+  new_frame.caller_address = Address(cu: saved_cu, pc: saved_pc)
+  new_frame.from_exec_function = true
+
+  let args_gene = new_gene_value()
+  for arg in args:
+    args_gene.gene.children.add(arg)
+  new_frame.args = args_gene
+
+  self.frame = new_frame
+  self.cu = f.body_compiled
+  self.pc = 0
+
+  let result = self.exec_continue()
+  return result
+
 proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value],
                       caller_context: Frame): Value =
   ## Execute a Gene method with given instance (self) and arguments.
