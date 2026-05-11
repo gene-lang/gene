@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
-### Requirement: Define class interceptors
-The system SHALL allow defining a class interceptor with `(interceptor <Name> [<target>...])` and one or more advice entries for the named target placeholders.
+### Requirement: Define Beta class interceptors
+The system SHALL allow defining a Beta class interceptor with `(interceptor <Name> [<target>...])` and one or more advice entries for the named target placeholders.
 
 #### Scenario: Define a class interceptor with advice
 - **WHEN** a user evaluates `(interceptor Audit [run] (before run [x] (println x)) (after run [x result] result))`
@@ -27,8 +27,21 @@ The system SHALL apply a class interceptor by directly calling the interceptor v
 - **THEN** the application fails
 - **AND** the diagnostic message includes the `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` marker.
 
-### Requirement: Define function interceptors
-The system SHALL allow defining a standalone callable interceptor with `(fn-interceptor <Name> [<target>])` and advice entries for the target placeholder.
+### Requirement: Preserve class method wrapper call shapes
+The system SHALL preserve the expanded positional arguments and keyword pairs that reach an intercepted class method wrapper, including calls made with positional spread and keyword spread syntax.
+
+#### Scenario: Intercepted methods receive keyword arguments
+- **WHEN** an intercepted class method is called with positional arguments and keyword arguments
+- **THEN** enabled advice receives the same positional values and keyword bindings as the wrapped method
+- **AND** the wrapped method receives those arguments when advice forwards or delegates normally.
+
+#### Scenario: Intercepted methods receive expanded spread arguments
+- **WHEN** an intercepted class method is called with positional spread and keyword spread arguments
+- **THEN** the wrapper observes the expanded positional values and keyword pairs
+- **AND** the runtime does not require advice to know whether the caller used literal arguments or spread syntax.
+
+### Requirement: Define Beta function interceptors
+The system SHALL allow defining a Beta standalone callable interceptor with `(fn-interceptor <Name> [<target>])` and advice entries for the target placeholder.
 
 #### Scenario: Define a function interceptor with advice
 - **WHEN** a user evaluates `(fn-interceptor Trace [f] (before f [x] (println x)) (after f [x result] result))`
@@ -58,6 +71,24 @@ The system SHALL apply a function interceptor by directly calling the intercepto
 - **THEN** the application fails
 - **AND** the diagnostic message includes the `GENE.INTERCEPT.FN_ARITY` marker.
 
+#### Scenario: Function application rejects keyword options
+- **WHEN** a function interceptor is called with keyword options during direct application
+- **THEN** the application fails
+- **AND** the diagnostic message includes the `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` marker.
+
+### Requirement: Preserve function wrapper call shapes
+The system SHALL let returned function wrappers call ordinary callable targets with positional arguments, keyword arguments, positional spread, and keyword spread when the wrapped callable supports those call shapes.
+
+#### Scenario: Function wrapper calls keyword-parameter targets
+- **WHEN** a function interceptor wraps a callable that declares keyword parameters
+- **THEN** callers can invoke the returned wrapper with those keyword arguments
+- **AND** advice can observe and forward those keyword bindings within the Beta wrapper contract.
+
+#### Scenario: Function wrapper calls spread arguments
+- **WHEN** a returned function wrapper is called with positional spread and keyword spread arguments
+- **THEN** the wrapper preserves the expanded positional values and keyword pairs
+- **AND** the wrapped callable receives those values when advice delegates normally.
+
 ### Requirement: Execute supported advice forms
 The system SHALL support `before_filter`, `before`, `invariant`, `around`, and `after` advice for explicit class and function interceptors, with inline bodies or callable advice references resolved at definition time.
 
@@ -74,11 +105,6 @@ The system SHALL support `before_filter`, `before`, `invariant`, `around`, and `
 - **WHEN** invariant advice is declared and the wrapped callable completes normally
 - **THEN** invariant advice runs before the around/original call and again after that call, before any `after` advice.
 
-#### Scenario: Around advice receives a wrapped callable
-- **WHEN** an `around` advice is configured for a target
-- **THEN** it receives the wrapped callable as its final argument
-- **AND** calling that wrapped callable delegates to the next wrapper or original callable.
-
 #### Scenario: After advice may replace the result
 - **WHEN** an `after` advice is marked with `^^replace_result`
 - **THEN** the advice return value replaces the wrapped callable result returned to the caller.
@@ -86,6 +112,32 @@ The system SHALL support `before_filter`, `before`, `invariant`, `around`, and `
 #### Scenario: Callable advice references are invoked
 - **WHEN** advice is declared by referencing an existing Gene or native callable
 - **THEN** enabled wrapper calls invoke that advice callable with the same argument convention as inline advice for that advice kind.
+
+### Requirement: Bind advice parameters with normal Gene function syntax
+The system SHALL bind advice parameters using normal Gene function parameter syntax for the wrapped call shape, including positional parameters, keyword parameters, and keyword defaults supported by the wrapped callable or method.
+
+#### Scenario: Advice binds keyword parameters
+- **WHEN** an interceptor declares advice such as `(before f [x y ^limit = 10] ...)`
+- **THEN** calls through the wrapper bind `x`, `y`, and `limit` using the normal function parameter rules
+- **AND** the keyword binding is available to the advice body before delegation or result handling.
+
+#### Scenario: Callable advice receives the same binding convention
+- **WHEN** advice is declared by referencing a helper callable
+- **THEN** the helper callable receives arguments according to the same positional and keyword binding convention as inline advice for that advice kind
+- **AND** helper advice can use keyword parameters when the wrapped call supplies matching keyword arguments.
+
+### Requirement: Around advice delegates with wrapped last
+The system SHALL pass the wrapped callable to `around` advice as the final argument, and `around` advice SHALL delegate by calling that wrapped callable with normal Gene call syntax.
+
+#### Scenario: Inline around receives wrapped last
+- **WHEN** an `around` advice is configured as `(around f [x y ^limit wrapped] (wrapped x y ^limit limit))`
+- **THEN** `wrapped` is bound after the wrapped call arguments
+- **AND** calling `wrapped` delegates to the next wrapper or original callable.
+
+#### Scenario: Around forwards with normal calls and spread
+- **WHEN** an `around` helper builds positional and keyword collections for forwarding
+- **THEN** the helper can call `wrapped` with ordinary positional arguments, keyword arguments, positional spread, or keyword spread
+- **AND** no legacy apply helper is required for forwarding.
 
 ### Requirement: Control interception enablement explicitly
 The system SHALL expose `/.enable` and `/.disable` controls on interceptor definitions and returned wrapper applications, and advice SHALL run only when both the definition and application levels are enabled.
@@ -161,16 +213,16 @@ The system SHALL reject legacy AOP public definition and application forms and S
 - **THEN** the call fails instead of mutating interception enablement state.
 
 ### Requirement: Defer unsupported interception boundaries
-The system SHALL document keyword, async, macro-style, broad pointcut, constructor/destructor, exception join point, regex selector, priority, reset/unapply, and async advice isolation boundaries as unsupported or deferred for the current Experimental surface.
+The system SHALL document async, macro-style, broad pointcut, constructor/destructor, exception join point, regex selector, priority, reset/unapply, async advice isolation, and Stable Core promotion boundaries as unsupported or deferred outside the current Beta explicit-interception surface.
 
-#### Scenario: Keyword function boundaries are not supported
-- **WHEN** a function interceptor is applied with keyword arguments or to a keyword-parameter function target
-- **THEN** the system rejects the application boundary
-- **AND** the diagnostic message includes the `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` marker.
+#### Scenario: Direct application keyword options remain unsupported
+- **WHEN** users pass keyword options to a direct class or function interceptor application
+- **THEN** the application fails with the `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` marker
+- **AND** this boundary does not prevent returned wrappers from receiving keyword calls supported by the wrapped callable or method.
 
 #### Scenario: Legacy macro-style wrapping is not macro-transparent
-- **WHEN** legacy compatibility wrapping is used around a macro-style callable
-- **THEN** the behavior is treated as migration compatibility only
+- **WHEN** users need transparent wrapping of macro-style callables
+- **THEN** that behavior requires future design and validation
 - **AND** the current explicit interception contract does not promise macro-transparent wrapping.
 
 #### Scenario: Broad pointcut features are not current behavior

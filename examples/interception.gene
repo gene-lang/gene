@@ -1,78 +1,101 @@
 #!/usr/bin/env gene run
 
-# Explicit runtime interception is Experimental.
+# Explicit runtime interception is Beta.
 # Run: ./bin/gene run examples/interception.gene
 
-(println "=== Class interception ===")
+(println "=== Beta explicit class interception ===")
 
-(interceptor AccountAudit [deposit withdraw]
-  (before deposit [amount]
-    (println "class audit before deposit" amount)
+(fn class_total_around_forward [_self amount fee ^bonus = 0 wrapped]
+  (println "class around forwarding" _self/name amount fee bonus)
+  (var args [amount fee])
+  (var kws {^bonus bonus})
+  (var result (wrapped args... ^... kws))
+  (println "class around result" result)
+  result
+)
+
+(interceptor OrderAudit [total]
+  (before total [amount fee ^bonus = 0]
+    (println "class before" /name amount fee bonus)
   )
-  (after deposit [amount result]
-    (println "class audit after deposit" result)
-  )
-  (around withdraw [amount wrapped]
-    (println "class audit around withdraw" amount)
-    (wrapped amount)
+  (around total class_total_around_forward)
+  (after total [amount fee ^bonus = 0 result]
+    (println "class after" result)
   )
 )
 
-(class Account
+(class Order
   ^fields {^name Any}
 
   (ctor [name]
     (/name = name)
   )
 
-  (method deposit [amount]
-    (println "deposit body" /name amount)
-    (amount + 10)
-  )
-
-  (method withdraw [amount]
-    (println "withdraw body" /name amount)
-    (100 - amount)
+  (method total [amount fee ^bonus = 0]
+    (println "class body" /name amount fee bonus)
+    (+ amount fee bonus)
   )
 )
 
-(var account_apps (AccountAudit Account "deposit" "withdraw"))
-(var deposit_audit account_apps/0)
-(var account (new Account "primary"))
+(var order_apps (OrderAudit Order "total"))
+(var order (new Order "cart"))
 
-(println "class deposit active result" (account .deposit 5))
+(println "class direct keyword result" (order .total 10 2 ^bonus 3))
 
-deposit_audit/.disable
-(println "class deposit disabled result" (account .deposit 6))
+(var class_pos_args [20 4])
+(println "class positional spread result" (order .total class_pos_args...))
 
-deposit_audit/.enable
-(println "class deposit reenabled result" (account .deposit 7))
-(println "class withdraw result" (account .withdraw 8))
+(var class_kws {^bonus 5})
+(println "class keyword spread result" (order .total 30 6 ^... class_kws))
+
+(var class_combined_args [40 8])
+(var class_combined_kws {^bonus 7})
+(println "class combined spread result" (order .total class_combined_args... ^... class_combined_kws))
 
 (println "")
-(println "=== Function interception ===")
+(println "=== Beta explicit function interception ===")
 
-(fn-interceptor TraceCall [f]
-  (before f [x]
-    (println "function trace before" x)
+(fn function_total_around_forward [_self amount fee ^bonus = 0 wrapped]
+  (println "function around forwarding" amount fee bonus)
+  (var args [amount fee])
+  (var kws {^bonus bonus})
+  (var result (wrapped args... ^... kws))
+  (println "function around result" result)
+  result
+)
+
+(fn-interceptor QuoteTrace [f]
+  (before f [amount fee ^bonus = 0]
+    (println "function before" amount fee bonus)
   )
-  (after f [x result]
-    (println "function trace after" x result)
+  (around f function_total_around_forward)
+  (after f [amount fee ^bonus = 0 result]
+    (println "function after" result)
   )
 )
 
-(fn add_one [x]
-  (println "add-one body" x)
-  (x + 1)
+(fn quote_total [amount fee ^bonus = 0]
+  (println "function body" amount fee bonus)
+  (+ amount fee bonus)
 )
 
-(var traced_add_one (TraceCall add_one))
+(var traced_quote_total (QuoteTrace quote_total))
 
-(println "function original result" (add_one 1))
-(println "function wrapped result" (traced_add_one 2))
+(println "function original unchanged result" (quote_total 1 2 ^bonus 3))
+(println "function wrapper direct keyword result" (traced_quote_total 5 2 ^bonus 1))
 
-traced_add_one/.disable
-(println "function wrapper disabled result" (traced_add_one 3))
+(var fn_pos_args [6 3])
+(println "function wrapper positional spread result" (traced_quote_total fn_pos_args...))
 
-traced_add_one/.enable
-(println "function wrapper reenabled result" (traced_add_one 4))
+(var fn_kws {^bonus 4})
+(println "function wrapper keyword spread result" (traced_quote_total 7 1 ^... fn_kws))
+
+(var fn_combined_args [8 2])
+(var fn_combined_kws {^bonus 5})
+(println "function wrapper combined spread result" (traced_quote_total fn_combined_args... ^... fn_combined_kws))
+
+traced_quote_total/.disable
+(println "function wrapper disabled result" (traced_quote_total 9 1 ^bonus 2))
+
+traced_quote_total/.enable
+(println "function wrapper reenabled result" (traced_quote_total 10 1 ^bonus 3))

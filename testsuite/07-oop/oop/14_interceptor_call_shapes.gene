@@ -1,0 +1,298 @@
+# Expected: method direct before shape 2 3 5
+# Expected: method direct target shape 2 3 5
+# Expected: method direct after shape 2 3 10
+# Expected: method direct result 10
+# Expected: method spread before shape 6 4 8
+# Expected: method spread target shape 6 4 8
+# Expected: method spread after shape 6 4 18
+# Expected: method spread pos result 18
+# Expected: method spread before shape 2 3 9
+# Expected: method spread target shape 2 3 9
+# Expected: method spread after shape 2 3 14
+# Expected: method spread kw result 14
+# Expected: method spread before shape 1 5 7
+# Expected: method spread target shape 1 5 7
+# Expected: method spread after shape 1 5 13
+# Expected: method spread combined result 13
+# Expected: method spread unexpected keyword caught
+# Expected: method spread too many positional caught
+# Expected: class direct filter shape 2 3 5
+# Expected: class direct before shape 2 3 5
+# Expected: class direct invariant shape 2 3 5
+# Expected: class direct around shape 2 3 5
+# Expected: class direct target shape 2 3 5
+# Expected: class direct around inner result 10
+# Expected: class direct invariant shape 2 3 5
+# Expected: class direct after no result shape 2 3 5
+# Expected: class direct after result shape 2 3 5 10
+# Expected: class direct advice result 10
+# Expected: class spread filter shape 4 6 8
+# Expected: class spread before shape 4 6 8
+# Expected: class spread invariant shape 4 6 8
+# Expected: class spread around shape 4 6 8
+# Expected: class spread target shape 4 6 8
+# Expected: class spread around inner result 18
+# Expected: class spread invariant shape 4 6 8
+# Expected: class spread after no result shape 4 6 8
+# Expected: class spread after result shape 4 6 8 18
+# Expected: class spread advice result 18
+# Expected: nested outer before chain 3 4 5
+# Expected: nested outer around chain 3 4 5
+# Expected: nested inner before chain 3 4 5
+# Expected: nested inner around chain 3 4 5
+# Expected: nested target chain 3 4 5
+# Expected: nested inner around inner result 12
+# Expected: nested inner after chain 3 4 5 12
+# Expected: nested outer around inner result 12
+# Expected: nested outer after chain 3 4 5 12
+# Expected: nested active result 12
+# Expected: nested inner before chain 2 6 7
+# Expected: nested inner around chain 2 6 7
+# Expected: nested target chain 2 6 7
+# Expected: nested inner around inner result 15
+# Expected: nested inner after chain 2 6 7 15
+# Expected: nested outer disabled result 15
+# Expected: nested outer before chain 1 8 9
+# Expected: nested outer around chain 1 8 9
+# Expected: nested target chain 1 8 9
+# Expected: nested outer around inner result 18
+# Expected: nested outer after chain 1 8 9 18
+# Expected: nested inner disabled result 18
+# Expected: nested outer before chain 5 7 11
+# Expected: nested outer around chain 5 7 11
+# Expected: nested inner before chain 5 7 11
+# Expected: nested inner around chain 5 7 11
+# Expected: nested target chain 5 7 11
+# Expected: nested inner around inner result 23
+# Expected: nested inner after chain 5 7 11 23
+# Expected: nested outer around inner result 23
+# Expected: nested outer after chain 5 7 11 23
+# Expected: nested reenabled result 23
+# Expected: nested unexpected keyword caught
+
+(fn expect_no_intercept_marker [e]
+  (assert (not ((e .message) .contains "GENE.INTERCEPT")))
+  (assert (not ((e .message) .contains "GENE.INTERCEPT.KEYWORD_UNSUPPORTED")))
+)
+
+(interceptor MethodShapeTrace [direct run]
+  (before direct [x y ^limit]
+    (println "method direct before" /name x y limit)
+  )
+  (after direct [x y ^limit result]
+    (println "method direct after" /name x y result)
+  )
+  (before run [x y ^limit = 8]
+    (println "method spread before" /name x y limit)
+  )
+  (after run [x y ^limit = 8 result]
+    (println "method spread after" /name x y result)
+  )
+)
+
+(class MethodShapeTarget
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method direct [x y ^limit]
+    (println "method direct target" /name x y limit)
+    (+ x y limit)
+  )
+  (method run [x y ^limit = 8]
+    (println "method spread target" /name x y limit)
+    (+ x y limit)
+  )
+)
+
+(var method_apps (MethodShapeTrace MethodShapeTarget "direct" "run"))
+(var method_subject (new MethodShapeTarget "shape"))
+
+(println "method direct result" (method_subject .direct 2 3 ^limit 5))
+
+(var method_pos_args [6 4])
+(println "method spread pos result" (method_subject .run method_pos_args...))
+
+(var method_kw {^limit 9})
+(println "method spread kw result" (method_subject .run 2 3 ^... method_kw))
+
+(var method_combined_args [1 5])
+(var method_combined_kw {^limit 7})
+(println "method spread combined result" (method_subject .run method_combined_args... ^... method_combined_kw))
+
+(var method_bad_kw {^limit 5 ^unexpected true})
+(try
+  (method_subject .run 2 3 ^... method_bad_kw)
+catch e
+  (expect_no_intercept_marker e)
+  (println "method spread unexpected keyword caught")
+)
+
+(var method_too_many_args [1 2 3])
+(try
+  (method_subject .run method_too_many_args...)
+catch e
+  (expect_no_intercept_marker e)
+  (println "method spread too many positional caught")
+)
+
+(fn class_direct_around_advice [_self x y ^limit wrapped]
+  (println "class direct around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "class direct around inner result" r)
+  r
+)
+
+(fn class_spread_around_advice [_self x y ^limit = 8 wrapped]
+  (println "class spread around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "class spread around inner result" r)
+  r
+)
+
+(interceptor ClassAdviceShapeTrace [direct run]
+  (before_filter direct [x y ^limit]
+    (println "class direct filter" /name x y limit)
+    true
+  )
+  (before direct [x y ^limit]
+    (println "class direct before" /name x y limit)
+  )
+  (invariant direct [x y ^limit]
+    (println "class direct invariant" /name x y limit)
+  )
+  (around direct class_direct_around_advice)
+  (after direct [x y ^limit]
+    (println "class direct after no result" /name x y limit)
+  )
+  (after direct [x y ^limit result]
+    (println "class direct after result" /name x y limit result)
+  )
+  (before_filter run [x y ^limit = 8]
+    (println "class spread filter" /name x y limit)
+    true
+  )
+  (before run [x y ^limit = 8]
+    (println "class spread before" /name x y limit)
+  )
+  (invariant run [x y ^limit = 8]
+    (println "class spread invariant" /name x y limit)
+  )
+  (around run class_spread_around_advice)
+  (after run [x y ^limit = 8]
+    (println "class spread after no result" /name x y limit)
+  )
+  (after run [x y ^limit = 8 result]
+    (println "class spread after result" /name x y limit result)
+  )
+)
+
+(class ClassAdviceShapeTarget
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method direct [x y ^limit]
+    (println "class direct target" /name x y limit)
+    (+ x y limit)
+  )
+  (method run [x y ^limit = 8]
+    (println "class spread target" /name x y limit)
+    (+ x y limit)
+  )
+)
+
+(var class_advice_apps (ClassAdviceShapeTrace ClassAdviceShapeTarget "direct" "run"))
+(var class_advice_subject (new ClassAdviceShapeTarget "shape"))
+
+(println "class direct advice result" (class_advice_subject .direct 2 3 ^limit 5))
+
+(var class_advice_args [4 6])
+(var class_advice_kws {^limit 8})
+(println "class spread advice result" (class_advice_subject .run class_advice_args... ^... class_advice_kws))
+
+(fn nested_outer_around_advice [_self x y ^limit = 10 wrapped]
+  (println "nested outer around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "nested outer around inner result" r)
+  r
+)
+
+(fn nested_inner_around_advice [_self x y ^limit = 10 wrapped]
+  (println "nested inner around" _self/name x y limit)
+  (var xs [x y])
+  (var kws {^limit limit})
+  (var r (wrapped xs... ^... kws))
+  (println "nested inner around inner result" r)
+  r
+)
+
+(interceptor NestedOuterShapeTrace [run]
+  (before run [x y ^limit = 10]
+    (println "nested outer before" /name x y limit)
+  )
+  (around run nested_outer_around_advice)
+  (after run [x y ^limit = 10 result]
+    (println "nested outer after" /name x y limit result)
+  )
+)
+
+(interceptor NestedInnerShapeTrace [run]
+  (before run [x y ^limit = 10]
+    (println "nested inner before" /name x y limit)
+  )
+  (around run nested_inner_around_advice)
+  (after run [x y ^limit = 10 result]
+    (println "nested inner after" /name x y limit result)
+  )
+)
+
+(class NestedShapeTarget
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name)
+  )
+  (method run [x y ^limit = 10]
+    (println "nested target" /name x y limit)
+    (+ x y limit)
+  )
+)
+
+(var nested_inner_apps (NestedInnerShapeTrace NestedShapeTarget "run"))
+(var nested_inner_app nested_inner_apps/0)
+(var nested_outer_apps (NestedOuterShapeTrace NestedShapeTarget "run"))
+(var nested_outer_app nested_outer_apps/0)
+(var nested_subject (new NestedShapeTarget "chain"))
+
+(var nested_active_args [3 4])
+(var nested_active_kws {^limit 5})
+(println "nested active result" (nested_subject .run nested_active_args... ^... nested_active_kws))
+
+nested_outer_app/.disable
+(var nested_outer_disabled_args [2 6])
+(var nested_outer_disabled_kws {^limit 7})
+(println "nested outer disabled result" (nested_subject .run nested_outer_disabled_args... ^... nested_outer_disabled_kws))
+
+nested_outer_app/.enable
+nested_inner_app/.disable
+(var nested_inner_disabled_kws {^limit 9})
+(println "nested inner disabled result" (nested_subject .run 1 8 ^... nested_inner_disabled_kws))
+
+nested_inner_app/.enable
+(var nested_reenabled_args [5 7])
+(var nested_reenabled_kws {^limit 11})
+(println "nested reenabled result" (nested_subject .run nested_reenabled_args... ^... nested_reenabled_kws))
+
+(var nested_bad_kws {^limit 3 ^unexpected true})
+(try
+  (nested_subject .run 1 2 ^... nested_bad_kws)
+catch e
+  (expect_no_intercept_marker e)
+  (println "nested unexpected keyword caught")
+)

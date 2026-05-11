@@ -637,16 +637,14 @@ proc compile_method_call(self: Compiler, gene: ptr Gene) {.inline.} =
       i += 1
 
   if has_spread:
-    # Resolve method to a callable, then build args via gene add/spread.
-    # This mirrors compile_gene_unknown's macro/function branching.
-    self.emit(Instruction(kind: IkResolveMethod, arg0: method_value))
+    # Resolve method to a bound callable, then build args via gene add/spread.
+    # Binding keeps the receiver out of user positional args for interceptors.
+    self.emit(Instruction(kind: IkResolveMethod, arg0: method_value, arg1: 1))
     let fn_label = new_label()
     let end_label = new_label()
     self.emit(Instruction(kind: IkGeneStartDefault, arg0: fn_label.to_value()))
 
     self.emit(Instruction(kind: IkNoop, label: fn_label))
-    self.emit(Instruction(kind: IkSwap))
-    self.emit(Instruction(kind: IkGeneAddChild))
     for arg in method_prefix_args:
       self.emit(Instruction(kind: IkPushValue, arg0: arg))
       self.emit(Instruction(kind: IkGeneAddChild))

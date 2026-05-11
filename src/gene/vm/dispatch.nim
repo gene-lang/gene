@@ -637,7 +637,7 @@ proc call_interception_original(self: ptr VirtualMachine, original: Value, insta
   of VkFunction:
     if instance == NIL:
       if kw_pairs.len > 0:
-        not_allowed("Keyword arguments are not supported for intercepted standalone functions")
+        return self.exec_function_kw(original, args, kw_pairs)
       return self.exec_function(original, args)
     if kw_pairs.len > 0:
       return self.exec_method_kw(original, instance, args, kw_pairs)
@@ -709,16 +709,40 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   defer:
     discard self.interception_contexts.pop()
 
-  proc call_advice(advice_fn: Value, instance: Value, args: seq[Value]): Value =
+  proc advice_receives_call_shape(advice_fn: Value): bool =
+    ## Advice normalized from `_` or `[self]` intentionally observes only the
+    ## receiver. Do not leak method positional/keyword arguments into that
+    ## matcher; callers that need them must declare matcher slots explicitly.
+    if advice_fn.kind == VkFunction:
+      let fn = advice_fn.ref.fn
+      if fn.matcher != nil and fn.matcher.children.len <= 1:
+        return false
+    true
+
+  proc call_advice(advice_fn: Value, instance: Value, args: seq[Value],
+                   kw_pairs: seq[(Key, Value)]): Value =
+    let include_call_shape = advice_receives_call_shape(advice_fn)
+    let advice_args: seq[Value] = if include_call_shape: args else: @[]
+    let advice_kw_pairs: seq[(Key, Value)] = if include_call_shape: kw_pairs else: @[]
+
     case advice_fn.kind
     of VkFunction:
-      return self.exec_method(advice_fn, instance, args)
+      if advice_kw_pairs.len > 0:
+        return self.exec_method_kw(advice_fn, instance, advice_args, advice_kw_pairs)
+      return self.exec_method(advice_fn, instance, advice_args)
     of VkNativeFn:
-      var call_args = newSeq[Value](args.len + 1)
-      call_args[0] = instance
-      for i, arg in args:
-        call_args[i + 1] = arg
-      return call_native_fn(advice_fn.ref.native_fn, self, call_args, false)
+      let has_kw = advice_kw_pairs.len > 0
+      let offset = if has_kw: 1 else: 0
+      var call_args = newSeq[Value](advice_args.len + 1 + offset)
+      if has_kw:
+        var kw_map = new_map_value()
+        for (k, v) in advice_kw_pairs:
+          map_data(kw_map)[k] = v
+        call_args[0] = kw_map
+      call_args[offset] = instance
+      for i, arg in advice_args:
+        call_args[i + offset + 1] = arg
+      return call_native_fn(advice_fn.ref.native_fn, self, call_args, has_kw)
     else:
       not_allowed("Advice callable must be a function or native function")
       return NIL
@@ -726,16 +750,16 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   if definition.enabled:
     if definition.before_filter_advices.hasKey(param_name):
       for advice_fn in definition.before_filter_advices[param_name]:
-        let ok = call_advice(advice_fn, instance, args)
+        let ok = call_advice(advice_fn, instance, args, kw_pairs)
         if not ok.to_bool():
           return NIL
 
     if definition.before_advices.hasKey(param_name):
       for advice_fn in definition.before_advices[param_name]:
-        discard call_advice(advice_fn, instance, args)
+        discard call_advice(advice_fn, instance, args, kw_pairs)
     if definition.invariant_advices.hasKey(param_name):
       for advice_fn in definition.invariant_advices[param_name]:
-        discard call_advice(advice_fn, instance, args)
+        discard call_advice(advice_fn, instance, args, kw_pairs)
     if self.interception_contexts[^1].exception_escaped:
       return NIL
 
@@ -745,7 +769,7 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
     let ctx_idx = self.interception_contexts.len - 1
     self.interception_contexts[ctx_idx].in_around = true
     let around_args = args & @[wrapped_value]
-    result = call_advice(around_fn, instance, around_args)
+    result = call_advice(around_fn, instance, around_args, kw_pairs)
     self.interception_contexts[ctx_idx].in_around = false
   else:
     result = self.call_interception_original(interception.original, instance, args, kw_pairs)
@@ -753,14 +777,14 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
   let exception_escaped = self.interception_contexts[^1].exception_escaped
   if not exception_escaped and definition.enabled and definition.invariant_advices.hasKey(param_name):
     for advice_fn in definition.invariant_advices[param_name]:
-      discard call_advice(advice_fn, instance, args)
+      discard call_advice(advice_fn, instance, args, kw_pairs)
 
   if not exception_escaped and definition.enabled and definition.after_advices.hasKey(param_name):
     for advice_fn in definition.after_advices[param_name]:
       var after_args = args
       if advice_fn.user_arg_count < 0 or advice_fn.user_arg_count > args.len:
         after_args = args & @[result]
-      let advice_result = call_advice(advice_fn.callable, instance, after_args)
+      let advice_result = call_advice(advice_fn.callable, instance, after_args, kw_pairs)
       if advice_fn.replace_result:
         result = advice_result
 

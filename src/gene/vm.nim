@@ -70,6 +70,7 @@ import ./vm/pubsub
 # Forward declarations needed by vm/async and vm/native
 proc exec*(self: ptr VirtualMachine): Value
 proc exec_function*(self: ptr VirtualMachine, fn: Value, args: seq[Value]): Value
+proc exec_function_kw*(self: ptr VirtualMachine, fn: Value, args: seq[Value], kw_pairs: seq[(Key, Value)]): Value
 proc exec_method*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value]): Value
 proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], kw_pairs: seq[(Key, Value)]): Value
 proc exec_method_impl(self: ptr VirtualMachine, fn: Value, instance: Value, args: seq[Value], caller_context: Frame): Value

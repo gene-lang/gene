@@ -22,21 +22,6 @@ proc interception_application_label(label: string, definition_name: string): str
 proc raise_interception_diagnostic(marker: string, label: string, definition_name: string, detail: string) =
   not_allowed(marker & " " & interception_application_label(label, definition_name) & ": " & detail)
 
-proc matcher_name(matcher: Matcher): string =
-  if matcher != nil and matcher.name_key != Key(0):
-    try:
-      return cast[Value](matcher.name_key).str
-    except CatchableError:
-      discard
-  "<keyword>"
-
-proc function_keyword_param_name(fn: Function): string =
-  if fn != nil and fn.matcher != nil:
-    for matcher in fn.matcher.children:
-      if matcher.kind == MatchProp or matcher.is_prop:
-        return matcher_name(matcher)
-  ""
-
 proc function_target_kind(fn_arg: Value): string =
   case fn_arg.kind
   of VkFunction:
@@ -45,8 +30,6 @@ proc function_target_kind(fn_arg: Value): string =
       "macro-like function"
     elif fn.async:
       "async function"
-    elif function_keyword_param_name(fn).len > 0:
-      "function with keyword parameters"
     else:
       "function"
   of VkNativeFn:
@@ -84,17 +67,18 @@ proc normalize_advice_args(args_val: Value): Value =
     not_allowed("advice arguments must be an array or symbol")
   normalized
 
-proc advice_user_arg_count(args_val: Value): int =
-  case args_val.kind
-  of VkArray:
-    return array_data(args_val).len
-  of VkSymbol:
-    if args_val.str == "_" or args_val.str == "self":
-      return 0
-    return 1
-  else:
-    not_allowed("advice arguments must be an array or symbol")
+proc advice_user_arg_count(matcher: RootMatcher): int =
+  ## Count caller-supplied positional matcher slots after normalization.
+  ## The generated advice matcher always starts with self; keyword/property slots
+  ## bind from kw_pairs and must not make after-advice appear to request result.
+  if matcher == nil:
     return 0
+  for i, param in matcher.children:
+    if i == 0:
+      continue
+    if param.kind == MatchProp or param.is_prop:
+      continue
+    result.inc()
 
 proc resolve_advice_callable(callable_val: Value, caller_frame: Frame): Value =
   case callable_val.kind
@@ -202,11 +186,11 @@ proc parse_interceptor_macro(form_label: string, definition_kind: InterceptorDef
       if advice_gene.children.len == 2:
         advice_val = resolve_advice_callable(advice_gene.children[1], caller_frame)
       else:
-        user_arg_count = advice_user_arg_count(advice_gene.children[1])
         let matcher = new_arg_matcher()
         let matcher_args = normalize_advice_args(advice_gene.children[1])
         matcher.parse(matcher_args)
         matcher.check_hint()
+        user_arg_count = advice_user_arg_count(matcher)
 
         var body: seq[Value] = @[]
         for j in 2..<advice_gene.children.len:
@@ -227,7 +211,7 @@ proc parse_interceptor_macro(form_label: string, definition_kind: InterceptorDef
           else:
             new_scope_tracker()
         for m in matcher.children:
-          if m.kind == MatchData and m.name_key != Key(0):
+          if m.name_key != Key(0) and not scope_tracker.mappings.hasKey(m.name_key):
             scope_tracker.add(m.name_key)
         advice_fn.scope_tracker = scope_tracker
 
@@ -423,15 +407,6 @@ proc validate_function_interceptor_target(label: string, definition_name: string
         label,
         definition_name,
         "expected synchronous callable target; actual async function '" & fn.name & "'"
-      )
-    let keyword_name = function_keyword_param_name(fn)
-    if keyword_name.len > 0:
-      raise_interception_diagnostic(
-        InterceptKeywordUnsupportedMarker,
-        label,
-        definition_name,
-        "target function '" & fn.name & "' declares keyword parameter '" & keyword_name &
-          "', but keyword forwarding is deferred"
       )
   of VkNativeFn, VkInterception:
     discard

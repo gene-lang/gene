@@ -3,12 +3,16 @@
 # Expected: interception target Interception
 # Expected: zero args [GENE.INTERCEPT.FN_ARITY]
 # Expected: extra args [GENE.INTERCEPT.FN_ARITY]
-# Expected: direct keyword [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: application keyword rejected [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
 # Expected: class target [GENE.INTERCEPT.FN_TARGET]
 # Expected: scalar target [GENE.INTERCEPT.FN_TARGET]
 # Expected: native macro target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
 # Expected: fn bang target [GENE.INTERCEPT.MACRO_UNSUPPORTED]
-# Expected: keyword target [GENE.INTERCEPT.KEYWORD_UNSUPPORTED]
+# Expected: keyword target Interception
+# Expected: keyword target before 11
+# Expected: keyword target fn 11
+# Expected: keyword target after 11 12
+# Expected: keyword target wrapped result 12
 # Expected: async target [GENE.INTERCEPT.ASYNC_UNSUPPORTED]
 
 (var FN_ARITY_MARKER "[GENE.INTERCEPT.FN_ARITY]")
@@ -42,8 +46,18 @@
   expr
 )
 
+(fn-interceptor DiagnosticKeywordTrace [f]
+  (before f [^x]
+    (println "keyword target before" x)
+  )
+  (after f [^x result]
+    (println "keyword target after" x result)
+  )
+)
+
 (fn diagnostic_keyword [^x]
-  x
+  (println "keyword target fn" x)
+  (x + 1)
 )
 
 (fn diagnostic_async ^^async [x]
@@ -75,7 +89,7 @@ catch e
 (try
   (DiagnosticTrace diagnostic_plain ^unexpected true)
 catch e
-  (expect_marker "direct keyword" KEYWORD_MARKER e)
+  (expect_marker "application keyword rejected" KEYWORD_MARKER e)
 )
 
 (try
@@ -102,11 +116,9 @@ catch e
   (expect_marker "fn bang target" MACRO_MARKER e)
 )
 
-(try
-  (DiagnosticTrace diagnostic_keyword)
-catch e
-  (expect_marker "keyword target" KEYWORD_MARKER e)
-)
+(var keyword_app (DiagnosticKeywordTrace diagnostic_keyword))
+(println "keyword target" keyword_app/.class/.name)
+(println "keyword target wrapped result" (keyword_app ^x 11))
 
 (try
   (DiagnosticTrace diagnostic_async)

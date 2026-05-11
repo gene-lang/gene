@@ -21,7 +21,11 @@
 # Expected: outer after 6 60
 # Expected: chain result 60
 # Expected: legacy apply-fn caught
-# Expected: keyword rejection caught
+# Expected: keyword boundary wrapper Interception
+# Expected: keyword before 12
+# Expected: keyword original 12
+# Expected: keyword after 12 24
+# Expected: keyword wrapped result 24
 
 (fn-interceptor BoundaryA [f]
   (before f [x]
@@ -84,15 +88,20 @@ catch *
   (println "legacy apply-fn caught")
 )
 
-(fn-interceptor KeywordBoundaryA [f])
+(fn-interceptor KeywordBoundaryA [f]
+  (before f [^x]
+    (println "keyword before" x)
+  )
+  (after f [^x result]
+    (println "keyword after" x result)
+  )
+)
 
 (fn keyword_target [^x]
-  (println "keyword original should not run" x)
-  x
+  (println "keyword original" x)
+  (x * 2)
 )
 
-(try
-  (KeywordBoundaryA keyword_target)
-catch *
-  (println "keyword rejection caught")
-)
+(var keyword_wrapped (KeywordBoundaryA keyword_target))
+(println "keyword boundary wrapper" keyword_wrapped/.class/.name)
+(println "keyword wrapped result" (keyword_wrapped ^x 12))

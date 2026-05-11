@@ -78,6 +78,16 @@ IMPLEMENTATION_ASSERTION_FILES = {
 }
 
 REQUIRED_APPEARANCES = {
+    "Beta": [
+        "docs/interception.md",
+        "docs/feature-status.md",
+        "examples/interception.gene",
+        "examples/README.md",
+        "openspec/changes/add-class-aspects/proposal.md",
+        "openspec/changes/add-class-aspects/design.md",
+        "openspec/changes/add-class-aspects/tasks.md",
+        "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
+    ],
     "(interceptor": [
         "docs/interception.md",
         "examples/interception.gene",
@@ -98,6 +108,27 @@ REQUIRED_APPEARANCES = {
         "examples/interception.gene",
         "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
     ],
+    "keyword": [
+        "docs/interception.md",
+        "docs/feature-status.md",
+        "examples/interception.gene",
+        "examples/README.md",
+        "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
+    ],
+    "spread": [
+        "docs/interception.md",
+        "docs/feature-status.md",
+        "examples/interception.gene",
+        "examples/README.md",
+        "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
+    ],
+    "around": [
+        "docs/interception.md",
+        "docs/feature-status.md",
+        "examples/interception.gene",
+        "examples/README.md",
+        "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md",
+    ],
     "GENE.INTERCEPT": [
         "docs/interception.md",
         "docs/feature-status.md",
@@ -106,12 +137,6 @@ REQUIRED_APPEARANCES = {
     "Removed": [
         "docs/interception.md",
         "docs/feature-status.md",
-    ],
-    "Experimental": [
-        "docs/interception.md",
-        "docs/feature-status.md",
-        "examples/interception.gene",
-        "examples/README.md",
     ],
 }
 
@@ -122,6 +147,16 @@ STALE_EXACT_PHRASES = [
     "only instance methods",
     "hard migration diagnostics are deferred",
     "Function aspects",
+    "explicit runtime interception is experimental",
+    "experimental explicit runtime interception",
+    "| explicit runtime interception | experimental |",
+    "keyword-deferred",
+    "keyword deferred",
+    "keyword support is deferred",
+    "keyword/spread support is deferred",
+    "keyword and spread support is deferred",
+    "keywords are deferred",
+    "spread support is deferred",
 ]
 
 LEGACY_API_PHRASES = [
@@ -144,7 +179,6 @@ ALLOWED_STALE_CONTEXT_WORDS = [
     "old",
     "stale",
     "unsupported",
-    "deferred",
     "not the preferred",
     "not preferred",
     "do not present",
@@ -317,8 +351,10 @@ def check_stale_phrases(public_files: list[PublicFile]) -> None:
         for line_no, line in enumerate(public_file.lines, start=1):
             context = context_for(public_file.lines, line_no - 1)
 
+            line_lower = line.lower()
+
             for phrase in STALE_EXACT_PHRASES:
-                if phrase in line:
+                if phrase.lower() in line_lower:
                     allowed = stale_phrase_allowed(public_file.rel, phrase, context)
                     check(
                         allowed,
@@ -326,7 +362,7 @@ def check_stale_phrases(public_files: list[PublicFile]) -> None:
                     )
 
             for phrase in LEGACY_API_PHRASES:
-                if phrase in line:
+                if phrase.lower() in line_lower:
                     allowed = stale_phrase_allowed(public_file.rel, phrase, context)
                     check(
                         allowed,
@@ -347,10 +383,21 @@ def check_primary_surface_presence(files_by_rel: dict[str, PublicFile]) -> None:
         )
 
     feature_status = files_by_rel.get("docs/feature-status.md") or read_public_file("docs/feature-status.md")
+    feature_rows = [line for line in feature_status.lines if line.startswith("| Explicit runtime interception |")]
     check(
-        "| Explicit runtime interception | Experimental |" in feature_status.text,
-        "docs/feature-status.md: feature matrix must name explicit runtime interception without AOP compatibility",
+        len(feature_rows) == 1,
+        "docs/feature-status.md: feature matrix must contain exactly one explicit runtime interception row",
     )
+    feature_row = feature_rows[0] if feature_rows else ""
+    check(
+        feature_row.startswith("| Explicit runtime interception | Beta |"),
+        "docs/feature-status.md: explicit runtime interception row must be Beta, not Experimental",
+    )
+    for required in ["keyword", "spread", "around", "GENE.INTERCEPT", "Historical AOP spellings have been removed"]:
+        check(
+            required in feature_row,
+            f"docs/feature-status.md: Beta interception row must mention `{required}`",
+        )
 
     spec = files_by_rel.get("openspec/changes/add-class-aspects/specs/explicit-interception/spec.md") or read_public_file(
         "openspec/changes/add-class-aspects/specs/explicit-interception/spec.md"
@@ -379,6 +426,28 @@ def check_negative_guards() -> None:
     check(
         not stale_phrase_allowed(current_doc, "No function-level AOP", bad_stale.lower()),
         "negative guard: current docs reject stale `No function-level AOP` wording",
+    )
+
+    bad_experimental = "Explicit runtime interception is Experimental and should be used for the current surface."
+    check(
+        not stale_phrase_allowed(current_doc, "explicit runtime interception is experimental", bad_experimental.lower()),
+        "negative guard: current docs reject stale Experimental status wording",
+    )
+
+    bad_feature_row = "| Explicit runtime interception | Experimental | docs/interception.md | implemented |"
+    check(
+        not stale_phrase_allowed(
+            "docs/feature-status.md",
+            "| explicit runtime interception | experimental |",
+            bad_feature_row.lower(),
+        ),
+        "negative guard: feature status rejects an Experimental explicit interception row",
+    )
+
+    bad_keyword_deferred = "Keyword/spread support is deferred for explicit runtime interception."
+    check(
+        not stale_phrase_allowed(current_doc, "keyword/spread support is deferred", bad_keyword_deferred.lower()),
+        "negative guard: current docs reject stale keyword/spread-deferred wording",
     )
 
     allowed_history = "The old `fn_aspect` name is stale migration history, not current guidance."

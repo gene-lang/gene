@@ -1,108 +1,138 @@
 # Explicit Runtime Interception
 
-Explicit runtime interception is an **Experimental** Gene surface for wrapping
-selected class methods or standalone callables with advice. It is the only
-current interception API: use `(interceptor ...)`, `(fn-interceptor ...)`, direct
-callable application, and slash enablement controls.
+Explicit runtime interception is a **Beta** Gene surface for wrapping selected
+class methods or standalone callables with advice. Use it when you want a
+specific wrapper at a specific runtime boundary and you can name the callable or
+method you are wrapping.
 
-Post-read action: after reading this page, a Gene user should be able to write a
-class method interceptor or standalone function interceptor, use the current
-enablement controls, understand the targeted diagnostics, and avoid unsupported
-keyword, async, macro-style, and broad pointcut boundaries.
+After reading this page, a Gene user or contributor should be able to choose
+between `(interceptor ...)` and `(fn-interceptor ...)`, apply the interceptor
+directly, preserve keyword and spread calls through the wrapper, use
+`/.enable` / `/.disable`, and avoid removed AOP-era APIs.
 
-This is not a stable-core or Beta contract. Treat it as a documented
-Experimental runtime surface whose compatibility rules may still change before
-promotion.
+## Beta boundary
 
-## Current posture
+The Beta contract is intentionally narrow:
 
-- **Use for class experiments:** `(interceptor Name [targets] ...)` and direct
-  callable application such as `(Name Class "method")`.
-- **Use for function experiments:** `(fn-interceptor Name [target] ...)` and
-  direct callable wrapper application such as `(Name fn_value)`.
-- **Use for enablement:** `Name/.enable`, `Name/.disable`,
-  `application/.enable`, and `application/.disable`.
-- **Removed:** legacy AOP spellings are not current API. Do not use the old
-  definition form, dot-application helpers, or old interception toggle method
-  names in new code.
-- **Not broad AspectJ-style AOP:** there are no public pointcuts,
-  constructor/destructor join points, regex method selectors, or
-  macro-transparent wrappers.
+- class method interception uses `(interceptor Name [targets] ...)` and direct
+  application such as `(Name Class "method")`;
+- standalone callable interception uses `(fn-interceptor Name [f] ...)` and
+  direct application such as `(Name callable)`;
+- returned wrappers preserve expanded positional arguments and keyword pairs for
+  supported method/function calls, including calls made with positional spread
+  and keyword spread;
+- advice matchers can bind positional and keyword parameters using normal Gene
+  function parameter syntax;
+- `around` advice receives a wrapped callable as its final argument and may
+  forward to it with normal Gene calls;
+- definition-level and application-level `/.enable` / `/.disable` controls are
+  supported;
+- direct interceptor application keyword options are rejected with
+  `GENE.INTERCEPT.KEYWORD_UNSUPPORTED`.
+
+Beta does not mean stable core. It also does not revive broad AOP features:
+there are no public pointcuts, constructor/destructor interception, exception
+interception, regex selectors, priority ordering, reset/unapply controls, or
+macro-transparent wrappers.
+
+## Choosing the interceptor form
+
+| Goal | Use | Application result |
+| --- | --- | --- |
+| Wrap one or more named class methods | `(interceptor Name [targets] ...)` | An array of method wrapper applications installed on the class. |
+| Wrap one standalone callable | `(fn-interceptor Name [f] ...)` | One callable wrapper; the original binding is unchanged. |
+
+Both forms use the same advice vocabulary: `before_filter`, `before`,
+`invariant`, `around`, and `after`.
 
 ## Advice forms
-
-Class and function interceptors share the same advice vocabulary:
 
 | Advice | Behavior |
 | --- | --- |
 | `before_filter` | Runs before other advice. A falsey result skips the wrapped callable and returns `nil`. |
 | `before` | Runs before the wrapped callable. Multiple entries run in declaration order. |
 | `invariant` | Runs before and after a non-escaped call. |
-| `around` | Receives the wrapped callable as the final argument and may delegate to it. Only one `around` advice is allowed per target parameter. |
+| `around` | Receives the wrapped callable as the final argument and may delegate to it. Only one `around` advice is allowed for each target placeholder. |
 | `after` | Runs after a non-escaped call. `^^replace_result` lets the advice return replace the wrapped result. |
 
-Advice bodies may be inline Gene bodies or symbols that resolve to callable
-advice functions. Inline advice supports the current lexical-capture boundary
-validated by runtime fixtures, but this does not make interception
-macro-transparent.
+Advice bodies may be inline Gene bodies or helper functions referenced by name.
+Inline advice uses the same parameter matcher shape as the wrapped call. Helper
+advice functions receive the receiver slot first; use a throwaway name such as
+`_self` for standalone callable wrappers when the receiver is not needed.
 
-## Class interception
+## Class method interception
 
 Define a class interceptor with `(interceptor ...)`:
 
 ```gene
-(interceptor Audit [run stop]
-  (before run [x]
-    (println "audit before run" x)
+(interceptor AccountAudit [charge]
+  (before charge [amount ^currency]
+    (println "charge before" amount currency)
   )
-  (after run [x result]
-    (println "audit after run" result)
-  )
-  (around stop [x wrapped]
-    (println "audit around stop" x)
-    (wrapped x)
+  (after charge [amount ^currency result]
+    (println "charge after" result)
   )
 )
 ```
 
-Apply it by calling the interceptor value directly with a class and one method
-name for each interceptor target:
+Define or use a class with a matching method:
 
 ```gene
-(var applications (Audit Service "run" "stop"))
-(var run_application applications/0)
+(class Account
+  (method charge [amount ^currency]
+    (println "charge body" amount currency)
+    amount
+  )
+)
+```
+
+Apply the interceptor by calling the interceptor value directly with a class and
+one method name for each target placeholder:
+
+```gene
+(var applications (AccountAudit Account "charge"))
+(var charge_audit applications/0)
 ```
 
 Class application semantics:
 
-- the second argument must be a class;
+- the first application argument must be a class;
 - each mapping must be a string or symbol naming an existing method;
 - the mapping count must match the interceptor target count;
 - application installs wrappers around the selected class methods;
 - unlisted methods remain unchanged;
-- the return value is an array of interception application wrappers;
-- installation is atomic for invalid method mappings, so a later invalid mapping
+- the return value is an array of wrapper applications;
+- installation is atomic for invalid mappings, so a later invalid method name
   does not leave earlier methods partially wrapped.
 
-Interception mutates the selected class method table. Method calls through
-instances of that class then run through the installed wrapper chain. Existing
-method dispatch assumptions are invalidated when a wrapper is installed; toggle
-operations are cheap flag changes and do not rebuild the method table.
+Calls to the intercepted method then run through the wrapper:
 
-## Function interception
+```gene
+(var args [10 5])
+(var kws {^currency "USD"})
+(account .charge args... ^... kws)
+```
 
-Define a standalone function interceptor with `(fn-interceptor ...)`:
+The wrapper receives the expanded call shape: positional arguments become
+positional arguments, keyword pairs remain keyword pairs, and advice keyword
+parameters bind normally. The runtime does not preserve whether a caller used
+literal arguments or spread syntax; it preserves the expanded arguments that the
+call produced.
+
+## Standalone callable interception
+
+Define a function interceptor with `(fn-interceptor ...)`:
 
 ```gene
 (fn-interceptor Trace [f]
-  (before f [x]
-    (println "trace before" x)
+  (before f [x y ^limit]
+    (println "trace before" x y limit)
   )
-  (around f [x wrapped]
-    (wrapped x)
+  (around f [x y ^limit wrapped]
+    (wrapped x y ^limit limit)
   )
-  (after f [x result]
-    (println "trace after" x result)
+  (after f [x y ^limit result]
+    (println "trace after" result)
   )
 )
 ```
@@ -110,10 +140,13 @@ Define a standalone function interceptor with `(fn-interceptor ...)`:
 Apply it by calling the interceptor value with exactly one callable target:
 
 ```gene
-(fn inc [x] (x + 1))
-(var wrapped (Trace inc))
-(wrapped 4)
-(inc 4) # still calls the original function without advice
+(fn bounded_add [x y ^limit]
+  (+ x y limit)
+)
+
+(var traced_add (Trace bounded_add))
+(traced_add 2 3 ^limit 5)
+(bounded_add 2 3 ^limit 5) # still calls the original function without advice
 ```
 
 Function application semantics:
@@ -123,29 +156,76 @@ Function application semantics:
 - application returns one callable wrapper;
 - the original function binding is not mutated;
 - callers must invoke the returned wrapper when they want advice to run;
-- nested wrappers are explicit when a returned wrapper is wrapped again.
+- wrapping an existing wrapper creates an explicit wrapper chain, and each
+  wrapper keeps its own enablement state.
+
+## Keyword, spread, and `around` forwarding
+
+Wrapper calls preserve supported keyword and spread call shapes for both class
+methods and standalone function wrappers:
+
+```gene
+(var args [2 3])
+(var kws {^limit 5})
+(traced_add args... ^... kws)
+```
+
+Advice can bind the same keyword parameters as the wrapped callable:
+
+```gene
+(before f [x y ^limit = 10]
+  (println "limit" limit)
+)
+```
+
+`around` advice should forward with an ordinary Gene call to the provided
+`wrapped` callable. Inline `around` advice can forward directly:
+
+```gene
+(around f [x y ^limit wrapped]
+  (wrapped x y ^limit limit)
+)
+```
+
+Helper-function `around` advice uses the same forwarding rule. Accept the
+receiver slot first, then the wrapped call arguments, then the `wrapped` callable
+as the final argument:
+
+```gene
+(fn forward_with_spread [_self x y ^limit wrapped]
+  (var xs [x y])
+  (var kw {^limit limit})
+  (wrapped xs... ^... kw)
+)
+
+(fn-interceptor ForwardingTrace [f]
+  (around f forward_with_spread)
+)
+```
+
+For class method helpers, the first argument is the receiver instance. For
+standalone callable helpers, use `_self` if that slot is not meaningful.
 
 ## Enable and disable controls
 
 Interception has two enablement levels:
 
 1. **Definition-level controls** on the interceptor value:
-   `Name/.disable` bypasses advice for every application of that interceptor,
-   and `Name/.enable` restores it.
+   `Name/.disable` bypasses advice for every application created from that
+   interceptor, and `Name/.enable` restores it.
 2. **Application-level controls** on a returned wrapper:
-   `application/.disable` bypasses only that installed wrapper, and
+   `application/.disable` bypasses only that wrapper, and
    `application/.enable` restores it.
 
-Advice runs only when both levels are enabled. When a wrapper is disabled,
-dispatch calls the wrapper's stored original callable directly. In a wrapper
-chain, disabling one wrapper bypasses only that wrapper; active outer or inner
-wrappers still use their own flags.
+Advice runs only when both levels are enabled. In a wrapper chain, disabling one
+wrapper bypasses only that wrapper; active outer or inner wrappers keep their
+own flags.
 
 ## Diagnostics
 
 Invalid interception application fails at application time with catchable
 messages that include `GENE.INTERCEPT` markers. The marker is intended to make
-tests precise while the human-readable message can improve over time.
+tests precise while human-readable wording can improve over time.
 
 Current marker families include:
 
@@ -156,10 +236,23 @@ Current marker families include:
 | `GENE.INTERCEPT.MAPPING_NAME` | A class mapping is not a string or symbol. |
 | `GENE.INTERCEPT.MISSING_METHOD` | A named class method is not present. |
 | `GENE.INTERCEPT.FN_ARITY` | A function interceptor was applied with zero or multiple positional targets. |
-| `GENE.INTERCEPT.FN_TARGET` | A function interceptor target is not an ordinary callable target. |
-| `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` | Keyword application or a keyword-parameter function target hit a deferred boundary. |
+| `GENE.INTERCEPT.FN_TARGET` | A function interceptor target is not a supported callable target. |
+| `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` | Direct interceptor application used keyword options. |
 | `GENE.INTERCEPT.MACRO_UNSUPPORTED` | A macro-style target or interception macro value was used where wrapping cannot preserve semantics. |
 | `GENE.INTERCEPT.ASYNC_UNSUPPORTED` | An async function target hit the deferred async boundary. |
+
+The `KEYWORD_UNSUPPORTED` boundary is precise: direct interceptor application is
+positional-only. These calls are rejected because they try to pass keyword
+options to the application itself:
+
+```gene
+(Trace bounded_add ^label "audit")
+(AccountAudit Account "charge" ^label "audit")
+```
+
+That boundary does **not** mean returned wrappers reject keyword calls. Calls
+through `traced_add` or an intercepted method can use keyword arguments and
+keyword spread when the wrapped callable or method supports them.
 
 ## Removed legacy AOP API
 
@@ -168,10 +261,10 @@ Use the replacements below:
 
 | Removed spelling | Replacement |
 | --- | --- |
-| old definition form | `(interceptor ...)` for classes or `(fn-interceptor ...)` for standalone callables |
-| old dot class application helper | direct class application: `(Name Class "method")` |
-| old dot function application helper | direct function application: `(Name callable)` |
-| old dot interception toggle helpers | `application/.enable` and `application/.disable` |
+| old `(aspect ...)` definition form | `(interceptor ...)` for classes or `(fn-interceptor ...)` for standalone callables |
+| old `.apply` class application helper | direct class application: `(Name Class "method")` |
+| old `.apply-fn` function application helper | direct function application: `(Name callable)` |
+| old `.enable-interception` / `.disable-interception` helpers | `application/.enable` and `application/.disable` |
 | old definition-wide toggle spelling, if present in old code | `Name/.enable` and `Name/.disable` |
 
 Existing programs that still use the removed spellings must migrate before
@@ -179,18 +272,16 @@ running on this runtime.
 
 ## Unsupported and deferred boundaries
 
-The current Experimental surface is intentionally narrow:
+The Beta surface does not include every callable shape or AOP-era feature:
 
-- standalone wrapper calls with keyword arguments are unsupported;
-- function interceptor targets with keyword parameters are rejected;
+- direct interceptor application keyword options are rejected;
 - async function targets are rejected;
 - macro-style `fn!` targets are rejected by direct `fn-interceptor` application;
-- direct class interceptor application does not accept keyword options;
-- broad pointcuts, constructor/destructor interception, exception join points,
+- native macro targets are rejected;
+- broad pointcuts, constructor/destructor interception, exception interception,
   regex or selector method matching, priority controls, reset/unapply controls,
   and async advice isolation are deferred;
-- stable-core or Beta promotion requires a later explicit decision and broader
-  proof.
+- stable-core promotion requires a later explicit decision and broader proof.
 
 Interception can wrap selected runtime callables, but it does not change Gene's
 macro evaluation model or promise transparent wrapping of every callable form.
@@ -198,4 +289,5 @@ macro evaluation model or promise transparent wrapping of every callable form.
 ## See also
 
 - [Feature status](feature-status.md) for the public stability boundary.
-- [AOP migration history](proposals/future/aop.md) for the earlier audit record.
+- [AOP migration history](proposals/future/aop.md) for the earlier removal and
+  migration record.
