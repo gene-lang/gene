@@ -143,8 +143,7 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
 
 ## Explicit Runtime Interception
 
-- Interception is an Experimental runtime surface, not part of the stable VM
-  contract.
+- Interception is a Beta runtime surface, not part of the stable VM contract.
 - Class interception uses explicit `(interceptor ...)` definitions and direct
   callable application to install wrappers around explicitly named class methods.
 - Standalone function interception uses `(fn-interceptor ...)` definitions and
@@ -152,14 +151,19 @@ See `src/gene/compiler.nim` for how AST nodes map to these instructions, and `sr
   function binding.
 - Interception wrappers carry the original callable, advice table, receiver
   context when present, and enablement flags used during dispatch.
+- Supported wrapper calls preserve expanded positional arguments and keyword
+  pairs, including calls made through positional spread and keyword spread.
 - Definition-level and application-level `/.enable` / `/.disable` controls are
   cheap flag changes; class wrapper installation invalidates method dispatch
   assumptions by updating the class method table.
+- Direct interceptor application keyword options are rejected with the targeted
+  `GENE.INTERCEPT.KEYWORD_UNSUPPORTED` diagnostic; this does not prevent returned
+  wrappers from receiving supported keyword calls.
 - Historical AOP spellings have been removed from the current runtime surface;
   maintainers should use explicit interception terminology and APIs.
 
-See `docs/interception.md` for the public Experimental boundary, diagnostics,
-and unsupported keyword/async/macro limits.
+See `docs/interception.md` for the public Beta boundary, diagnostics, and
+unsupported async/macro/AOP-era limits.
 
 ## Inline Caching
 
@@ -215,7 +219,7 @@ Core documentation:
 
 Current subsystem docs:
 - [`generator_functions.md`](generator_functions.md) — Generator implementation
-- [`interception.md`](interception.md) — Experimental explicit runtime interception boundary
+- [`interception.md`](interception.md) — Beta explicit runtime interception boundary
 
 Proposal and design-era docs:
 - [`proposals/future/selector_design.md`](proposals/future/selector_design.md) — Selector redesign and future direction

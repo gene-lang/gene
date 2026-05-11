@@ -24,7 +24,7 @@ matrix and stable-core boundary.
 - [deserialize_command.md](deserialize_command.md) — `gene deser` command behavior
 - [how-types-work.md](how-types-work.md) — runnable typing walkthrough
 - [adapter-design.md](adapter-design.md) — interface and adapter system design
-- [interception.md](interception.md) — Experimental explicit runtime interception reference and migration boundary
+- [interception.md](interception.md) — Beta explicit runtime interception reference for class methods, standalone callables, keyword/spread preservation, diagnostics, and removed AOP-era APIs
 
 ## Implementation-Only Docs
 

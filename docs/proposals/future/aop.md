@@ -1,26 +1,32 @@
 # AOP migration history
 
 This page is historical context for maintainers. It records how Gene moved from
-a broad Experimental aspect-oriented-programming experiment to the current
-explicit runtime interception surface.
+a broad aspect-oriented-programming experiment to the current **Beta** explicit
+runtime interception surface.
 
 Current users should read [`docs/interception.md`](../../interception.md). The
 current API is explicit interception only: `(interceptor ...)` for selected class
 methods, `(fn-interceptor ...)` for standalone callables, direct callable
 application, and `/.enable` / `/.disable` controls.
 
-## Status
+## Current status
 
 The legacy AOP public API has been removed from the current runtime surface. Old
 programs that used the historical definition form, dot-application helpers, or
 old interception toggle method names must migrate to explicit interception before
 running on this runtime.
 
+The current Beta contract preserves expanded positional arguments and keyword
+pairs through returned wrappers for supported class methods and standalone
+callables. Direct interceptor application remains positional-only: keyword
+options on the application call itself are rejected with
+`GENE.INTERCEPT.KEYWORD_UNSUPPORTED`.
+
 The old design-era AOP material below is not a current feature contract. Broad
-pointcuts, constructor/destructor interception, exception join points, regex
-selectors, priority controls, reset/unapply, keyword forwarding, async wrapping,
-and macro-transparent wrapping remain unsupported unless a future proposal adds
-and verifies them.
+pointcuts, constructor/destructor interception, exception interception, regex
+selectors, priority controls, reset/unapply, async wrapping, and
+macro-transparent wrapping remain unsupported unless a future proposal adds and
+verifies them.
 
 ## Migration summary
 
@@ -34,20 +40,21 @@ and verifies them.
 
 ## Evidence trail
 
-- M004 audited the original implementation and kept it Experimental while the
-  replacement direction was decided.
-- M005 introduced explicit class and function interception, two-level enablement,
-  targeted `GENE.INTERCEPT` diagnostics, public examples, and OpenSpec coverage.
-- `remove-legacy-aop-surface` removed the historical public spellings and renamed
-  practical tests/runtime-facing internals toward interception terminology.
+- The original implementation exposed broad AOP-era language that proved too
+  large for a durable public contract.
+- The replacement direction narrowed the surface to explicit class and function
+  interception, two-level enablement, targeted `GENE.INTERCEPT` diagnostics,
+  public examples, and OpenSpec coverage.
+- The historical public spellings were removed so new documentation and examples
+  teach one current interception model.
 
 ## Current implementation notes
 
-The implementation still uses one shared interception engine for class method and
+The implementation uses one shared interception engine for class method and
 standalone callable wrappers. Interceptor definitions carry advice tables;
 interception application wrappers carry the original callable, the definition
 that produced the wrapper, the mapped target parameter, and an application-level
-active flag.
+enabled flag.
 
 Class application prevalidates all mappings before installing any wrapper. This
 keeps invalid multi-method application atomic: if a later method mapping fails,
@@ -56,6 +63,6 @@ dispatch assumptions by updating class method storage and runtime-type method
 callables. Enable/disable controls remain cheap field flips and do not rebuild
 method tables or wrapper chains.
 
-Diagnostics for invalid explicit applications use stable `GENE.INTERCEPT` marker
+Diagnostics for invalid explicit applications use `GENE.INTERCEPT` marker
 families so fixtures can assert the failure category without freezing every
 human-readable word.
