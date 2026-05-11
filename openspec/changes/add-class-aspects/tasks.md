@@ -30,7 +30,7 @@
 - [x] 5.1 Publish current docs that teach Beta explicit interception and describe historical AOP only as migration history.
 - [x] 5.2 Add a runnable explicit interception example and wire it into the examples runner.
 - [x] 5.3 Retain the active `add-class-aspects` change id for continuity per D057 while maintaining the `explicit-interception` capability delta as the Beta contract.
-- [x] 5.4 Add public-surface assertions that catch stale preferred-legacy, broad-AOP, or outdated Experimental wording in tracked docs, examples, OpenSpec, and testsuite surfaces.
+- [x] 5.4 Add public-surface assertions that catch stale preferred-legacy, broad-AOP, or outdated pre-Beta wording in tracked docs, examples, OpenSpec, and testsuite surfaces.
 
 ## 6. Validation
 - [x] 6.1 Run selected class/function interception regression fixtures.

@@ -37,7 +37,7 @@ Once installed, intercepted class methods preserve the expanded call shape produ
 
 ### Function application
 
-Calling a function interceptor value directly with exactly one callable target returns one callable wrapper. The original function binding is not mutated; callers must invoke the returned wrapper when they want advice to run. Ordinary Gene callables, native callables, keyword-parameter functions, and existing interception wrappers are valid targets when the target can be called through the normal wrapper path. Classes, scalar values, native macros, `fn!` macro-style callables, async functions, and keyword options on the direct application itself are rejected or deferred with targeted diagnostics.
+Calling a function interceptor value directly with exactly one callable target returns one callable wrapper. The original function binding is not mutated; callers must invoke the returned wrapper when they want advice to run. Ordinary Gene callables, native callables, callables with keyword parameters, and existing interception wrappers are valid targets when the target can be called through the normal wrapper path. Unsupported targets and keyword options on the direct application itself are rejected or deferred with targeted diagnostics.
 
 Returned function wrappers preserve the expanded call shape produced by normal Gene calls. Callers can invoke returned wrappers with positional arguments, keyword arguments, positional spread, and keyword spread when the wrapped callable supports those forms.
 
@@ -64,4 +64,4 @@ Legacy `(aspect ...)`, `.apply`, `.apply-fn`, `.enable-interception`, and `.disa
 - Keeping the old change id can confuse readers unless the proposal clearly states that the active capability is Beta explicit interception; this document and the delta make that continuity explicit.
 - Promoting the narrowed surface to Beta while retaining unsupported boundaries is useful for users, but it requires the docs and public-surface guard to keep direct application keyword options, async targets, macro targets, and broad AOP features out of the supported contract.
 - Removing legacy compatibility breaks old AOP programs, but it leaves Gene with one public interception model and eliminates stale public syntax.
-- Supporting keyword and spread wrapper calls expands the Beta contract beyond the earlier Experimental boundary, but it matches the implemented focused fixtures without promising macro transparency or stable-core status.
+- Supporting keyword and spread wrapper calls expands the Beta contract beyond the earlier narrow boundary, but it matches the implemented focused fixtures without promising macro transparency or stable-core status.
