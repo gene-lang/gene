@@ -1,0 +1,23 @@
+# Gradual typing Beta examples within default nil-compatible mode.
+
+(type DisplayName (String | Nil))
+
+(fn typed_add [a: Int b: Int] -> Int
+  (a + b)
+)
+
+(fn greet [name: String] -> String
+  (++ "hello " name)
+)
+
+(fn /run_types_tour []
+  (var count: Int 3)
+  (var maybe_name: DisplayName "Ada")
+  (var maybe_missing: DisplayName nil)
+
+  (println "type predicates:" (42 is Int) ("hi" is String) ([1] is Array) ({^a 1} is Map))
+  (println "typeof:" (typeof count) (typeof maybe_name) (typeof maybe_missing))
+  (println "typed values:" count maybe_name maybe_missing)
+  (println "typed functions:" (typed_add 2 3) (greet "Gene"))
+  (println "union type expression:" (String | Nil))
+)

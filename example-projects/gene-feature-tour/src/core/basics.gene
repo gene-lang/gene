@@ -1,0 +1,20 @@
+# Core syntax, literals, values, collections, and Gene data examples.
+
+(fn /run_basics_tour []
+  (var an_int 42)
+  (var a_float 3.5)
+  (var a_bool true)
+  (var no_value nil)
+  (var missing_result void)
+  (var a_symbol `hello)
+  (var a_string "Gene")
+
+  (println "literals:" an_int a_float a_bool no_value missing_result a_symbol a_string)
+
+  (var xs [1 2 3])
+  (var m {^lang "Gene" ^status "tour"})
+  (println "array/map:" xs/0 xs/2 m/lang m/status)
+
+  (var person `(Person ^name "Ada" ^age 37 "engineer"))
+  (println "gene:" person/.type person/name person/0)
+)

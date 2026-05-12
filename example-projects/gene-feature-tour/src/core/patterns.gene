@@ -1,0 +1,36 @@
+# Pattern matching Beta subset: var destructuring and simple case/when.
+
+(fn /run_patterns_tour []
+  (var [a] [1])
+  (var [x y] [1 2])
+  (println "array destructuring:" a (+ x y))
+
+  (var payload `(payload ^a 10 ^x 99 20 30 40))
+  (var [^a first_child rest_children... ^rest...] payload)
+  (println "gene destructuring:" [a first_child rest_children rest/x])
+
+  (var r1 (Ok 42))
+  (case r1
+    when (Ok v)
+      (println "case result ok:" v)
+    when (Err e)
+      (println "case result err:" e)
+  )
+
+  (var o1 (Some "hello"))
+  (case o1
+    when (Some value)
+      (println "case option some:" value)
+    when None
+      (println "case option none")
+  )
+
+  (case 2
+    when 1
+      (println "case literal one")
+    when 2
+      (println "case literal two")
+    else
+      (println "case literal other")
+  )
+)

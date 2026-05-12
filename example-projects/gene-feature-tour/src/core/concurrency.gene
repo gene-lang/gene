@@ -1,0 +1,31 @@
+# Async futures and bounded actor examples.
+
+(fn make_counter_actor []
+  (gene/actor/spawn
+    ^state 0
+    (fn [ctx msg state]
+      (case msg/kind
+      when "increment"
+        (+ state 1)
+      when "get"
+        (ctx .reply state)
+        state
+      else
+        state))))
+
+(fn /run_concurrency_tour []
+  (var future_value (async 42))
+  (println "await future:" (await future_value))
+
+  (var callback_future (async "ready"))
+  (callback_future .on_success (fn [v]
+    (println "future callback:" v)))
+  (await callback_future)
+
+  (gene/actor/enable ^workers 1)
+  (var counter (make_counter_actor))
+  (counter .send {^kind "increment"})
+  (counter .send {^kind "increment"})
+  (println "actor reply:" (await (counter .send_expect_reply {^kind "get"})))
+  (counter .stop)
+)

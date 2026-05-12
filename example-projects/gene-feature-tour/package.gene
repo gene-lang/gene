@@ -1,7 +1,6 @@
-# package.gene is intentionally a metadata/property document.
-# The current package docs describe package.gene primarily as a package-root marker;
-# many manifest fields are metadata/future tooling rather than fully active runtime behavior.
-# RECOMMENDATION: make package.gene manifest semantics executable/validated by one package tool.
+# Package metadata for the Gene feature tour.
+# The local package MVP uses this file for package-root discovery, metadata,
+# package-aware imports, and `$pkg` / `$app/.pkg` examples.
 
 ^name "x/gene_feature_tour"
 ^version "0.1.0"
@@ -10,7 +9,5 @@
 ^gene-version "*"
 ^source-dir "src"
 ^main-module "index"
-^dependencies [
-  # ($dep "x/some_lib" ">=0.1.0" ^path "../some_lib")
-  # RECOMMENDATION: add registry-backed dependency resolution, lockfile UX, checksums, and signing.
-]
+^test-dir "tests"
+^dependencies []

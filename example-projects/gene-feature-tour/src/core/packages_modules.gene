@@ -1,0 +1,12 @@
+# Package metadata and module import examples.
+
+(import a b from "../mathbits")
+(import ops/inc:inc1 from "../mathbits")
+(import ops/[double:twice triple:thrice] from "../mathbits")
+
+(fn /run_packages_modules_tour []
+  (println "module values:" a b)
+  (println "module aliases:" (inc1 1) (twice 5) (thrice 5))
+  (println "package:" $pkg/.name $pkg/.version $pkg/.source_dir $pkg/.main_module)
+  (println "app package:" $app/.pkg/.name $app/.pkg/.test_dir)
+)

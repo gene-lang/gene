@@ -1,0 +1,31 @@
+# Functions, closures, higher-order calls, and macro-like functions.
+
+(fn make_counter [start]
+  (var count start)
+  (fn []
+    (count += 1)
+    count
+  )
+)
+
+(fn double [x] (x * 2))
+(fn keep_large [x] (x > 2))
+(fn add [a b] (a + b))
+
+(fn trace_value! [label expr]
+  (println "macro label:" label)
+  (println "macro AST:" expr)
+  ($caller_eval expr)
+)
+
+(fn /run_functions_macros_tour []
+  (var counter (make_counter 10))
+  (println "closure:" (counter) (counter))
+
+  (var xs [1 2 3 4])
+  (println "map/filter/reduce:" (xs .map double) (xs .filter keep_large) (xs .reduce 0 add))
+
+  (var rendered ($render `(println "hello" "macro")))
+  (println "render:" rendered)
+  (println "macro result:" (trace_value! "sum" (1 + 2 + 3)))
+)

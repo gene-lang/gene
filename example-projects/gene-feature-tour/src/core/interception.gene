@@ -1,0 +1,40 @@
+# Explicit runtime interception Beta examples. Legacy aspect/apply APIs are intentionally absent.
+
+(interceptor RunAudit [run]
+  (before run [x]
+    (println "class before run:" /name x))
+  (after run [x result]
+    (println "class after run:" result)))
+
+(class InterceptedWorker
+  ^fields {^name Any}
+  (ctor [name]
+    (/name = name))
+  (method run [x]
+    (x + 1)))
+
+(fn-interceptor TraceCall [f]
+  (before f [x]
+    (println "function before:" x))
+  (around f [x wrapped]
+    (wrapped x))
+  (after f [x result]
+    (println "function after:" result)))
+
+(fn inc_for_trace [x]
+  (x + 1))
+
+(fn /run_interception_tour []
+  (var class_apps (RunAudit InterceptedWorker "run"))
+  (var worker (new InterceptedWorker "worker-1"))
+  (println "class intercepted result:" (worker .run 4))
+
+  (var traced_inc (TraceCall inc_for_trace))
+  (println "function original unchanged:" (inc_for_trace 10))
+  (println "function intercepted result:" (traced_inc 10))
+  traced_inc/.disable
+  (println "function disabled result:" (traced_inc 10))
+  traced_inc/.enable
+  (println "function reenabled result:" (traced_inc 10))
+  (println "class interceptor applications:" (class_apps .size))
+)

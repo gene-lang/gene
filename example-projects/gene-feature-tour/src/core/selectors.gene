@@ -1,0 +1,18 @@
+# Selectors Beta subset: lookup, defaults, selector values, and simple set.
+
+(fn /run_selectors_tour []
+  (var idx 1)
+  (var key "name")
+  (var data {^users [{^name "Ada"} {^name "Bob"}] ^meta {^count 2}})
+
+  (println "slash lookup:" data/users/0/name data/users/<idx>/<key> data/meta/count)
+  (println "selector default:" (./ {} "missing" "fallback"))
+
+  (var first_name @users/0/name)
+  (var all_names @users/*/name)
+  (println "selector values:" (first_name data) (all_names data))
+
+  (var target {})
+  ($set target (@ "status") "ok")
+  (println "selector set:" target/status)
+)

@@ -1,0 +1,62 @@
+# Classes, methods, inheritance, interfaces, and adapters within the OOP Beta boundary.
+
+(interface Readable
+  (method read [])
+  (method close [])
+  (field name String))
+
+(class FileStream implements Readable
+  (field name String)
+  (ctor [name]
+    (/name = name))
+  (method read []
+    "file contents")
+  (method close []
+    void))
+
+(class DataBuffer
+  (ctor [data]
+    (/data = data))
+  (method get_data []
+    /data)
+  (method set_data [new_data]
+    (/data = new_data)))
+
+(implement Readable for DataBuffer
+  (method read []
+    (/_genevalue .get_data))
+  (method close []
+    (/_genevalue .set_data "")))
+
+(class TourShape
+  (method area []
+    0))
+
+(class TourCircle < TourShape
+  (ctor [radius]
+    (/radius = radius))
+  (method area []
+    (3 * /radius * /radius)))
+
+(class Multiplier
+  (ctor [factor]
+    (/factor = factor))
+  (method call [x]
+    (x * /factor)))
+
+(fn /run_oop_tour []
+  (var circle (new TourCircle 5))
+  (println "class/inheritance:" circle/radius (circle .area))
+
+  (var readable_file (Readable (new FileStream "tour.txt")))
+  (println "interface inline:" readable_file/name (readable_file .read))
+
+  (var buffer (new DataBuffer "payload"))
+  (var readable_buffer (Readable buffer))
+  (println "adapter external:" (readable_buffer .read))
+  (readable_buffer .close)
+  (println "adapter after close:" (buffer .get_data))
+
+  (var times3 (new Multiplier 3))
+  (println "callable instance:" (times3 7))
+)

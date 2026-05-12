@@ -1,0 +1,45 @@
+# Enum ADTs and tuple product types within the current Beta boundary.
+
+(enum Shape
+  (Circle radius: Int)
+  (Rect width: Int height: Int)
+  Point)
+
+(tuple Pair left: Int right: Int)
+(tuple Box Int)
+(tuple Unit)
+
+(fn triple_result [] -> (Result Int String)
+  (var v ((Ok 5) ?))
+  (Ok (v * 3))
+)
+
+(fn /run_sum_product_types_tour []
+  (var circle (Shape/Circle 5))
+  (var rect (Shape/Rect ^height 4 ^width 3))
+  (var point Shape/Point)
+
+  (println "enum payloads:" circle/radius rect/width rect/height point)
+  (case circle
+    when (Shape/Circle radius)
+      (println "enum case circle:" radius)
+    when (Shape/Rect width height)
+      (println "enum case rect:" (width * height))
+    when Shape/Point
+      (println "enum case point")
+  )
+
+  (var pair (Pair 10 20))
+  (var pair_kw (Pair ^right 40 ^left 30))
+  (var box (Box 9))
+  (var unit (Unit))
+  (println "tuple fields:" pair/left pair/right pair/0 pair/1 pair_kw/left pair_kw/right box/0 unit)
+  (case pair
+    when (Pair left right:r)
+      (println "tuple case pair:" (left + r))
+    else
+      (println "tuple case missed")
+  )
+
+  (println "result/option:" (Ok 7) (Err "bad") (Some "value") None (triple_result))
+)

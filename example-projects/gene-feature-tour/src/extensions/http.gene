@@ -1,0 +1,21 @@
+#!/usr/bin/env gene run
+
+# Bounded HTTP extension demo.
+# Requires native extensions to be built first:
+#   nimble buildext
+# This demo avoids starting a long-running server; server lifecycle demos should use a wrapper script.
+
+(import genex/http)
+
+(var req (new gene/Request "http://127.0.0.1:8080/health" "GET"))
+(println "request:" req/url req/method)
+
+(var resp (new gene/Response 200 "{\"ok\": true, \"feature\": \"http\"}" {^Content-Type "application/json"}))
+(var parsed (resp .json))
+(println "response:" resp/status parsed/ok parsed/feature)
+
+(var status (http_server_status))
+(println "server status:" status/status)
+
+(var invalid_status (http_server_status "not-a-handle"))
+(println "invalid status:" invalid_status/status invalid_status/status_error)

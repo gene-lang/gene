@@ -1,0 +1,18 @@
+# Safe standard library examples that do not require external services.
+
+(fn /run_stdlibs_tour []
+  (var arr [1 2 3 4])
+  (println "array methods:" (arr .map (fn [x] (x * 2))) (arr .filter (fn [x] (x > 2))) (arr .reduce 0 (fn [acc x] (acc + x))))
+
+  (println "strings:" ("hello" .to_upper) ("a你b" .reverse) ("abc" .start_with? "ab"))
+  (println "regex:" (#/a/ .match "ba") ("a1b2" .replace_all #/(\d)/[\\1]/))
+
+  (var payload [1 2 {^lang "Gene" ^typed true}])
+  (println "json:" (payload .to_json))
+
+  (var encoded (gene/base64_encode "Hello"))
+  (println "base64:" encoded (gene/base64_decode encoded))
+
+  (var now_dt (gene/now))
+  (println "time year ok:" (> (now_dt .year) 2000))
+)

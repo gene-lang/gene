@@ -1,0 +1,20 @@
+#!/usr/bin/env gene run
+
+# Local SQLite extension demo.
+# Requires native extensions to be built first:
+#   nimble buildext
+
+(import genex/sqlite)
+
+(var db_path "/tmp/gene_feature_tour.sqlite")
+(var db (genex/sqlite/open db_path))
+
+(db .exec "CREATE TABLE IF NOT EXISTS items (name TEXT)")
+(db .exec "DELETE FROM items")
+(db .exec "INSERT INTO items (name) VALUES (?)" "alpha")
+(db .exec "INSERT INTO items (name) VALUES (?)" "beta")
+
+(println "sqlite path:" db_path)
+(println "sqlite rows:" (db .query "SELECT name FROM items ORDER BY name"))
+
+(db .close)
