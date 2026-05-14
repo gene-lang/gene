@@ -1336,13 +1336,45 @@ proc ensure_parent_dir(path: string) =
   if parent.len > 0 and parent != ".":
     createDir(parent)
 
-proc write_serialized_file(path: string, value: Value) =
+proc write_serialized_text_file(path: string, serialized_text: string) =
   ensure_parent_dir(path)
   let temp_path = path & ".tmp"
   if fileExists(temp_path):
     removeFile(temp_path)
-  writeFile(temp_path, value_to_serialized_text(value))
+  writeFile(temp_path, serialized_text)
   moveFile(temp_path, path)
+
+proc write_serialized_file(path: string, value: Value) =
+  write_serialized_text_file(path, value_to_serialized_text(value))
+
+proc filesystem_write_error(target_path, reason, detail: string,
+                            option = "", child_path = "") {.noreturn, gcsafe.} =
+  var message = "gene/serdes/write failed"
+  message &= "; reason: " & reason
+  message &= "; target: " & (if target_path.len > 0: target_path else: "<missing>")
+  if option.len > 0:
+    message &= "; option: ^" & option
+  if child_path.len > 0:
+    message &= "; child: " & child_path
+  if detail.len > 0:
+    message &= "; detail: " & detail
+  not_allowed(message)
+
+proc write_value_file*(path: string, value: Value) =
+  when defined(gene_wasm):
+    filesystem_write_error(path, "unsupported option", "filesystem writes are not supported in gene_wasm")
+  else:
+    let materialized = materialize_custom_deep(value)
+    var serialized_text: string
+    try:
+      serialized_text = value_to_serialized_text(materialized)
+    except CatchableError as e:
+      filesystem_write_error(path, "serialization failed", e.msg)
+
+    try:
+      write_serialized_text_file(path, serialized_text)
+    except CatchableError as e:
+      filesystem_write_error(path, "filesystem write failed", e.msg)
 
 proc read_serialized_file(path: string): Value {.gcsafe.} =
   count_tree_serialized_file_read()
@@ -2697,6 +2729,33 @@ proc vm_read_dir(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
     let options = read_dir_options_from_keyword_args(args, has_keyword_args, "read_dir", nil, target_path)
     read_dir_value(path_arg.str, options, nil, "read_dir")
 
+proc reject_write_keyword_options(props: Table[Key, Value], target_path: string) {.gcsafe.} =
+  for key, _ in props:
+    let option_name = key_to_string(key)
+    filesystem_write_error(target_path, "unsupported option",
+                           "unknown property ^" & option_name, option_name)
+
+proc vm_write_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if gene_value.kind != VkGene:
+      filesystem_write_error("", "invalid invocation", "write must be called as a Gene form")
+
+    let positional_count = gene_value.gene.children.len
+    if positional_count != 2:
+      filesystem_write_error("", "wrong arity", "expected 2 arguments, got " & $positional_count)
+
+    let path_arg = eval_in_caller_context(vm, gene_value.gene.children[0], caller_frame)
+    let target_path = if path_arg.kind == VkString: path_arg.str else: $path_arg.kind
+    if path_arg.kind != VkString:
+      filesystem_write_error(target_path, "non-string path",
+                             "path argument must be a string, got " & $path_arg.kind)
+
+    reject_write_keyword_options(gene_value.gene.props, target_path)
+
+    let value = eval_in_caller_context(vm, gene_value.gene.children[1], caller_frame)
+    write_value_file(path_arg.str, value)
+    NIL
+
 proc vm_write_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     when defined(gene_wasm):
@@ -2742,6 +2801,9 @@ proc init_serdes*() =
   serdes_ns["read_file".to_key()] = NativeFn(vm_read_file).to_value()
   serdes_ns["read".to_key()] = NativeFn(vm_read).to_value()
   serdes_ns["read_dir".to_key()] = NativeFn(vm_read_dir).to_value()
+  var write_ref = new_ref(VkNativeMacro)
+  write_ref.native_macro = vm_write_macro
+  serdes_ns["write".to_key()] = write_ref.to_ref_value()
   var write_tree_ref = new_ref(VkNativeMacro)
   write_tree_ref.native_macro = vm_write_tree_macro
   serdes_ns["write_tree".to_key()] = write_tree_ref.to_ref_value()
