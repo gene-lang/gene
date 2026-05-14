@@ -155,7 +155,8 @@ proc instruction_metadata*(kind: InstructionKind): InstructionMetadata =
     meta(dynamic(1, "constructor invocation consumes target and arguments"), "class", touches_refs = true)
   of IkResolveMethod:
     meta(fixed(1, 1), "class", IokMethodName, touches_refs = true)
-  of IkInterface, IkInterfaceMethod, IkInterfaceProp, IkImplement, IkImplementMethod, IkImplementCtor, IkAdapter:
+  of IkInterface, IkInterfaceMethod, IkInterfaceProp, IkImplement, IkImplementMethod, IkImplementCtor, IkAdapter,
+     IkImplementField:
     meta(dynamic(0, "interface/adapter metadata is staged for checked execution"), "interface",
       IokValue, IokFlags, touches_refs = true, checked = false)
   of IkCallInit, IkDefineMethod, IkDefineConstructor, IkDefineProp,

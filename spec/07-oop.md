@@ -151,9 +151,9 @@ An external `implement` registers an adapter for an existing class.
 
 (implement Readable for DataBuffer
   (method read []
-    (/_genevalue .get_data))
+    (/_wrapped .get_data))
   (method close []
-    (/_genevalue .set_data "")))
+    (/_wrapped .set_data "")))
 
 (var buffer (new DataBuffer "payload"))
 (var readable (Readable buffer))
@@ -166,8 +166,10 @@ For external implementations:
 
 - Calling the interface creates an adapter wrapper.
 - If an interface field or method is declared but not explicitly implemented, the adapter falls back to a same-name member on the wrapped value.
-- `_genevalue` refers to the wrapped value.
-- `_geneinternal` exposes adapter-owned supplemental state.
+- `/_wrapped` refers to the wrapped value inside adapter implementation bodies.
+- `(field name ^from wrapped_name)` maps an interface field directly to a wrapped field.
+- `(field name (get [] ...) [(set [value] ...)])` maps an interface field through private accessor bodies.
+- `(field owned_name TypeExpr)` declares adapter-owned supplemental state that is directly accessible inside adapter bodies and not visible on the public interface surface unless explicitly exposed.
 
 ### Adapter Constructors
 
@@ -178,13 +180,47 @@ External implementations can define `ctor` to initialize adapter-owned state.
   (method age))
 
 (implement Ageable for Int
+  (field birth_year Int)
   (ctor [birth_year]
-    (/_geneinternal/birth_year = birth_year))
+    (/birth_year = birth_year))
   (method age []
-    (/_genevalue - /_geneinternal/birth_year)))
+    (/_wrapped - /birth_year)))
 
 ((Ageable 2026 1990) .age)   # => 36
 ```
+
+### External Field Mappings
+
+```gene
+(interface Named
+  (field name String))
+
+(class Source
+  (ctor [label]
+    (/label = label)))
+
+(implement Named for Source
+  (field name ^from label))
+
+(var named (Named (new Source "Ada")))
+named/name   # => "Ada"
+```
+
+Accessor mappings are useful when an interface field is computed or backed by
+adapter-owned state:
+
+```gene
+(implement Named for Source
+  (field cached_name String)
+  (ctor [initial]
+    (/cached_name = initial))
+  (field name
+    (get [] /cached_name)
+    (set [value] (/cached_name = value))))
+```
+
+`^readonly true` on interface fields rejects adapter writes, and readonly fields
+cannot declare `set` accessors.
 
 ## 7.7 Inheritance
 

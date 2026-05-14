@@ -50,11 +50,12 @@ suite "adapter runtime":
         (method age [] -> Int)
       )
       (implement Ageable for Int
+        (field stored_birth_year Int)
         (ctor [birth_year]
-          (/_geneinternal/birth_year = birth_year)
+          (/stored_birth_year = birth_year)
         )
         (method age []
-          (/_genevalue - /_geneinternal/birth_year)
+          (/_wrapped - /stored_birth_year)
         )
       )
       ((Ageable 2026 1990) .age)
@@ -101,13 +102,224 @@ suite "adapter runtime":
         (ctor [] (/x = 1))
       )
       (implement Readable for C
-        (method read [] /_genevalue/x)
+        (method read [] /_wrapped/x)
       )
       (var r (Readable (new C)))
       (var m r/read)
       (m)
     )
   """, 1
+
+  test_vm """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field name ^from label))
+      (var source (new Source "Ada"))
+      (var named (Named source))
+      (named/name = "Grace")
+      [named/name source/label]
+    )
+  """, @["Grace", "Grace"]
+
+  test_vm """
+    (do
+      (interface Labeled (field display String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Labeled for Source
+        (field display
+          (get [] /_wrapped/label)
+          (set [v] (/_wrapped/label = v))))
+      (var source (new Source "Ada"))
+      (var labeled (Labeled source))
+      (labeled/display = "Grace")
+      [labeled/display source/label]
+    )
+  """, @["Grace", "Grace"]
+
+  test_vm """
+    (do
+      (interface Ageable
+        (field birth_year Int ^readonly true)
+        (method age []))
+      (implement Ageable for Int
+        (field stored_birth_year Int)
+        (ctor [birth_year]
+          (/stored_birth_year = birth_year))
+        (field birth_year
+          (get [] /stored_birth_year))
+        (method age []
+          (/_wrapped - /stored_birth_year)))
+      (var ageable (Ageable 2026 1990))
+      [ageable/birth_year (ageable .age)]
+    )
+  """, @[1990, 36]
+
+  test_vm_error """
+    (do
+      (interface Ageable
+        (method age []))
+      (implement Ageable for Int
+        (field stored_birth_year Int)
+        (ctor [birth_year]
+          (/stored_birth_year = birth_year))
+        (method age []
+          (/_wrapped - /stored_birth_year)))
+      (var ageable (Ageable 2026 1990))
+      ageable/stored_birth_year
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface IdView (field id Int ^readonly true))
+      (class Source
+        (ctor []
+          (/raw_id = 1)))
+      (implement IdView for Source
+        (field id ^from raw_id))
+      (var view (IdView (new Source)))
+      (view/id = 2)
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Labeled (field display String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Labeled for Source
+        (field display
+          (get [] /_wrapped/label)))
+      (var labeled (Labeled (new Source "Ada")))
+      (labeled/display = "Grace")
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field display_name ^from label))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field name ^from label)
+        (field name ^from label))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Ageable (field birth_year Int))
+      (implement Ageable for Int
+        (field birth_year Int))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Ageable)
+      (implement Ageable for Int
+        (field stored_birth_year Int)
+        (field stored_birth_year Int))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Ageable)
+      (implement Ageable for Int
+        (ctor [birth_year]
+          (/stored_birth_year = birth_year)))
+      (Ageable 2026 1990)
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field name
+          (set [v] (/_wrapped/label = v))))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field name
+          (get [x] /_wrapped/label)))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field name
+          (fetch [] /_wrapped/label)))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [label]
+          (/label = label)))
+      (implement Named for Source
+        (field name ^from label
+          (get [] /_wrapped/label)))
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (class Source
+        (ctor [] nil))
+      (implement Named for Source)
+      (var named (Named (new Source)))
+      named/name
+    )
+  """
+
+  test_vm_error """
+    (do
+      (interface Named (field name String))
+      (implement Named for Int
+        (field name ^from label))
+      (var named (Named 1))
+      (named/name = "Grace")
+    )
+  """
 
   test_vm """
     (do

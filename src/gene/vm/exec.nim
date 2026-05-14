@@ -1258,7 +1258,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               self.strict_nil, self.runtime_type_error_location())
             instance_props(target)[name] = value
           of VkAdapter:
-            adapter_set_member(target.ref.adapter, name, value)
+            adapter_set_member(self, target, name, value)
           of VkAdapterInternal:
             adapter_internal_set_member(target, name, value)
           of VkArray:
@@ -1304,7 +1304,7 @@ proc exec*(self: ptr VirtualMachine): Value =
                 self.strict_nil, self.runtime_type_error_location())
               instance_props(target)[key] = value
             of VkAdapter:
-              adapter_set_member(target.ref.adapter, key, value)
+              adapter_set_member(self, target, key, value)
             of VkAdapterInternal:
               adapter_internal_set_member(target, key, value)
             else:
@@ -4665,6 +4665,9 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkImplementCtor:
         exec_implement_ctor(self)
+
+      of IkImplementField:
+        exec_implement_field(self, inst.arg0, inst.arg1)
 
       of IkAdapter:
         # Create an adapter wrapper

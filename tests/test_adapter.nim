@@ -69,6 +69,23 @@ suite "Implementation Tests":
     check impl.prop_mappings.has_key("password".to_key())
     check impl.prop_mappings["password".to_key()].kind == AmkHidden
 
+  test "Map property accessor":
+    let iface = new_interface("Status")
+    let impl = new_implementation(iface)
+    impl.map_prop_accessor("status", NIL, NIL)
+    check impl.prop_mappings.has_key("status".to_key())
+    check impl.prop_mappings["status".to_key()].kind == AmkAccessor
+    check impl.prop_mappings["status".to_key()].get_fn == NIL
+    check impl.prop_mappings["status".to_key()].set_fn == NIL
+
+  test "Declare adapter-owned field":
+    let iface = new_interface("Ageable")
+    let impl = new_implementation(iface)
+    impl.add_owned_field("stored_birth_year", "Int".to_symbol_value())
+    check impl.owned_fields.has_key("stored_birth_year".to_key())
+    check impl.owned_fields["stored_birth_year".to_key()].name == "stored_birth_year"
+    check impl.owned_fields["stored_birth_year".to_key()].type_expr == "Int".to_symbol_value()
+
 suite "Adapter Tests":
   test "Create adapter":
     let iface = new_interface("TestInterface")

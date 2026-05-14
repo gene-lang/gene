@@ -90,9 +90,10 @@ proc exec_interface_prop(vm: ptr VirtualMachine, name: Value, readonly: bool)
 proc exec_implement(vm: ptr VirtualMachine, interface_name: Value, is_external: bool, has_body: bool)
 proc exec_implement_method(vm: ptr VirtualMachine, method_name: Value)
 proc exec_implement_ctor(vm: ptr VirtualMachine)
+proc exec_implement_field(vm: ptr VirtualMachine, metadata: Value, flags: int32)
 proc exec_adapter(vm: ptr VirtualMachine, ctor_args: seq[Value] = @[], kw_pairs: seq[(Key, Value)] = @[])
 proc adapter_get_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key): Value
-proc adapter_set_member(adapter: Adapter, key: Key, value: Value)
+proc adapter_set_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key, value: Value)
 proc adapter_member_or_nil(vm: ptr VirtualMachine, adapter_val: Value, prop: Value): Value
 proc dispatch_adapter_method(vm: ptr VirtualMachine, obj: Value, method_name: string, args: seq[Value]): Value
 proc dispatch_adapter_method_kw(vm: ptr VirtualMachine, obj: Value, method_name: string, args: seq[Value], kw_pairs: seq[(Key, Value)]): Value

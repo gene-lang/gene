@@ -4,10 +4,10 @@
 # Expected: DataBuffer after close through adapter:
 # Expected: DataBuffer through adapter:
 # Expected: === Adapter Feature Test Complete ===
-# Expected: Testing _genevalue:
-# Expected:   Inner value via _genevalue: VkInstance
-# Expected: Testing _geneinternal:
-# Expected:   Stored in _geneinternal: test_value
+# Expected: Testing _wrapped:
+# Expected:   Inner value via _wrapped: VkInstance
+# Expected: Testing adapter-owned field:
+# Expected:   Stored in owned field: test_value
 # Test file for Interface and Adapter feature
 # This file demonstrates the adapter pattern in Gene
 
@@ -73,10 +73,10 @@
 
 (implement Readable for DataBuffer
   (method read []
-    (/_genevalue .get_data)
+    (/_wrapped .get_data)
   )
   (method close []
-    (/_genevalue .set_data "")
+    (/_wrapped .set_data "")
   )
 )
 
@@ -113,16 +113,29 @@
 (println "=== Adapter Feature Test Complete ===")
 
 # ============================================================================
-# 6) TEST _genevalue AND _geneinternal
+# 6) TEST _wrapped AND DECLARED ADAPTER-OWNED FIELDS
 # ============================================================================
 
-# Test _genevalue for accessing wrapped value
-(println "Testing _genevalue:")
-(var inner_val readable_buffer/_genevalue)
-(println "  Inner value via _genevalue:" inner_val)
+# Test _wrapped for accessing wrapped value from adapter bodies, and declared
+# adapter-owned fields for supplemental data.
+(interface BufferContext
+  (method inner_kind [])
+  (method remember [value])
+  (method remembered []))
 
-# Test _geneinternal for adapter's own data
-(println "Testing _geneinternal:")
-(var internal readable_buffer/_geneinternal)
-(internal/test_key = "test_value")
-(println "  Stored in _geneinternal:" internal/test_key)
+(implement BufferContext for DataBuffer
+  (field stored_value String)
+  (method inner_kind []
+    /_wrapped)
+  (method remember [value]
+    (/stored_value = value))
+  (method remembered []
+    /stored_value))
+
+(var context (BufferContext buffer))
+(println "Testing _wrapped:")
+(println "  Inner value via _wrapped:" (context .inner_kind))
+
+(println "Testing adapter-owned field:")
+(context .remember "test_value")
+(println "  Stored in owned field:" (context .remembered))

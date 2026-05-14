@@ -63,6 +63,7 @@ proc new_implementation*(gene_interface: GeneInterface, target_class: Class = ni
     is_inline: is_inline,
     method_mappings: initTable[Key, AdapterMapping](),
     prop_mappings: initTable[Key, AdapterMapping](),
+    owned_fields: initTable[Key, AdapterOwnedField](),
     ctor: NIL
   )
 
@@ -100,10 +101,25 @@ proc map_prop_computed*(self: Implementation, interface_prop: string, compute_fn
     compute_fn: compute_fn
   )
 
+proc map_prop_accessor*(self: Implementation, interface_prop: string, get_fn: Value, set_fn: Value = NIL) =
+  ## Map an interface property to accessor functions
+  self.prop_mappings[interface_prop.to_key()] = AdapterMapping(
+    kind: AmkAccessor,
+    get_fn: get_fn,
+    set_fn: set_fn
+  )
+
 proc map_prop_hidden*(self: Implementation, interface_prop: string) =
   ## Hide an interface property (not implemented)
   self.prop_mappings[interface_prop.to_key()] = AdapterMapping(
     kind: AmkHidden
+  )
+
+proc add_owned_field*(self: Implementation, name: string, type_expr: Value = NIL) =
+  ## Declare adapter-owned supplemental state
+  self.owned_fields[name.to_key()] = AdapterOwnedField(
+    name: name,
+    type_expr: type_expr
   )
 
 #################### Adapter #######################

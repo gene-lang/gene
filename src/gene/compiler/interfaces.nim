@@ -52,10 +52,13 @@ proc compile_interface_prop_decl(self: Compiler, gene: ptr Gene) =
   )
 
 proc compile_interface_field_decl(self: Compiler, gene: ptr Gene) =
-  if gene.children.len < 2:
-    not_allowed("field requires a name and type")
+  if gene.children.len == 0:
+    not_allowed("field requires a name")
   let field_name = interface_prop_name(gene.children[0])
-  self.emit(Instruction(kind: IkInterfaceProp, arg0: field_name.to_value(), arg1: 0))
+  let readonly =
+    gene.props.has_key("readonly".to_key()) and
+    gene.props["readonly".to_key()] notin [FALSE, NIL]
+  self.emit(Instruction(kind: IkInterfaceProp, arg0: field_name.to_value(), arg1: (if readonly: 1 else: 0).int32))
 
 proc external_implement_args_with_self(args: Value): Value =
   if args.kind != VkArray:
@@ -124,6 +127,105 @@ proc compile_external_implement_ctor(self: Compiler, gene: ptr Gene) =
 
   self.compile_fn(fn_value, define_binding = false)
   self.emit(Instruction(kind: IkImplementCtor))
+
+proc adapter_field_metadata(field_name: string, extra: Value = NIL): Value =
+  result = new_gene_value()
+  result.gene.type = "adapter_field".to_symbol_value()
+  result.gene.children.add(field_name.to_symbol_value())
+  if extra != NIL:
+    result.gene.children.add(extra)
+
+proc adapter_accessor_args(accessor: ptr Gene, field_name, accessor_name: string, expected_len: int): Value =
+  if accessor.children.len == 0 or accessor.children[0].kind != VkArray:
+    not_allowed("adapter field " & field_name & " " & accessor_name & " accessor requires an array argument list")
+  result = accessor.children[0]
+  let args = array_data(result)
+  if args.len != expected_len:
+    not_allowed("adapter field " & field_name & " " & accessor_name & " accessor has invalid arity")
+  for arg in args:
+    if arg.kind != VkSymbol:
+      not_allowed("adapter field " & field_name & " " & accessor_name & " accessor arguments must be symbols")
+
+proc compile_external_implement_field_accessor(self: Compiler, field_name: string, accessor: ptr Gene, accessor_name: string) =
+  let args = adapter_accessor_args(accessor, field_name, accessor_name, if accessor_name == "get": 0 else: 1)
+
+  var fn_value = new_gene_value()
+  fn_value.gene.type = "fn".to_symbol_value()
+  fn_value.gene.children.add(("__adapter_" & accessor_name & "_" & field_name).to_symbol_value())
+  fn_value.gene.children.add(external_implement_args_with_self(args))
+
+  if accessor.children.len == 1:
+    fn_value.gene.children.add(NIL)
+  else:
+    for i in 1..<accessor.children.len:
+      fn_value.gene.children.add(accessor.children[i])
+
+  self.compile_fn(fn_value, define_binding = false)
+
+proc compile_external_implement_field(self: Compiler, gene: ptr Gene) =
+  if gene.children.len == 0:
+    not_allowed("adapter field mapping requires a name")
+
+  let field_name = interface_prop_name(gene.children[0])
+  let from_key = "from".to_key()
+  let has_from = gene.props.has_key(from_key)
+
+  if has_from:
+    if gene.children.len != 1:
+      not_allowed("adapter field " & field_name & " cannot mix ^from with accessor or owned-field forms")
+    let from_value = gene.props[from_key]
+    if from_value.kind notin {VkSymbol, VkString}:
+      not_allowed("adapter field " & field_name & " ^from target must be a member name")
+    self.emit(Instruction(
+      kind: IkImplementField,
+      arg0: adapter_field_metadata(field_name, from_value.str.to_symbol_value()),
+      arg1: ord(AfiDirect).int32,
+    ))
+    return
+
+  if gene.children.len == 2 and gene.children[1].kind != VkGene:
+    self.emit(Instruction(
+      kind: IkImplementField,
+      arg0: adapter_field_metadata(field_name, gene.children[1]),
+      arg1: ord(AfiOwned).int32,
+    ))
+    return
+
+  var getter: ptr Gene = nil
+  var setter: ptr Gene = nil
+  if gene.children.len < 2:
+    not_allowed("adapter field " & field_name & " requires ^from, accessor blocks, or an owned field type")
+
+  for i in 1..<gene.children.len:
+    let child = gene.children[i]
+    if child.kind != VkGene or child.gene == nil or child.gene.type.kind != VkSymbol:
+      not_allowed("adapter field " & field_name & " has an invalid accessor form")
+    case child.gene.type.str
+    of "get":
+      if getter != nil:
+        not_allowed("adapter field " & field_name & " declares duplicate get accessors")
+      getter = child.gene
+    of "set":
+      if setter != nil:
+        not_allowed("adapter field " & field_name & " declares duplicate set accessors")
+      setter = child.gene
+    else:
+      not_allowed("adapter field " & field_name & " has unknown accessor form: " & child.gene.type.str)
+
+  if getter == nil:
+    not_allowed("adapter field " & field_name & " accessor mapping requires a get accessor")
+
+  self.compile_external_implement_field_accessor(field_name, getter, "get")
+  var flags = ord(AfiAccessor).int32
+  if setter != nil:
+    self.compile_external_implement_field_accessor(field_name, setter, "set")
+    flags = flags or 4'i32
+
+  self.emit(Instruction(
+    kind: IkImplementField,
+    arg0: adapter_field_metadata(field_name),
+    arg1: flags,
+  ))
 
 proc compile_interface*(self: Compiler, gene: ptr Gene) =
   ## Compile an interface definition
@@ -200,6 +302,8 @@ proc compile_implement*(self: Compiler, gene: ptr Gene) =
           self.compile_external_implement_method(child.gene)
         of "ctor":
           self.compile_external_implement_ctor(child.gene)
+        of "field":
+          self.compile_external_implement_field(child.gene)
         else:
           not_allowed("unsupported external implement member: " & child.gene.type.str)
       self.emit(Instruction(kind: IkPop))

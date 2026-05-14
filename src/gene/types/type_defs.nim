@@ -603,6 +603,7 @@ type
   AdapterMappingKind* = enum
     AmkRename
     AmkComputed
+    AmkAccessor
     AmkHidden
 
   ## Adapter mapping - how to map interface members to wrapped object
@@ -612,8 +613,20 @@ type
         inner_name*: Key
       of AmkComputed:      # Computed: call function on access
         compute_fn*: Value
+      of AmkAccessor:      # Accessor: call getter/setter functions for fields
+        get_fn*: Value
+        set_fn*: Value
       of AmkHidden:        # Hidden: property doesn't exist
         discard
+
+  AdapterOwnedField* = ref object
+    name*: string
+    type_expr*: Value
+
+  AdapterFieldInstructionMode* {.size: sizeof(int8).} = enum
+    AfiDirect = 1
+    AfiAccessor = 2
+    AfiOwned = 3
 
   ## Implementation - connects a class to an interface with mappings
   Implementation* = ref object
@@ -623,6 +636,7 @@ type
     is_inline*: bool       # True if class natively satisfies the interface
     method_mappings*: Table[Key, AdapterMapping]
     prop_mappings*: Table[Key, AdapterMapping]
+    owned_fields*: Table[Key, AdapterOwnedField]
     ctor*: Value           # Constructor for adapter (if it has own data)
 
   ImplementationTargetKind* = enum
@@ -1047,6 +1061,7 @@ type
     IkMatchEnumVariant # Identity-aware enum variant pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
     IkCreateTuple     # Nominal tuple declaration (stack: name, fields; arg0=TypeId array, arg1=payload shape)
     IkMatchTuple      # Identity-aware tuple pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
+    IkImplementField  # Define an external implementation field mapping or owned field
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object

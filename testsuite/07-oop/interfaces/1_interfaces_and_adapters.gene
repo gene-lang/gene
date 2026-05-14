@@ -33,9 +33,9 @@
 
 (implement Readable for DataBuffer
   (method read []
-    (/_genevalue .get_data))
+    (/_wrapped .get_data))
   (method close []
-    (/_genevalue .set_data "")))
+    (/_wrapped .set_data "")))
 
 (var buffer (new DataBuffer "payload"))
 (var readable (Readable buffer))
@@ -47,9 +47,10 @@
   (method age []))
 
 (implement Ageable for Int
+  (field birth_year Int)
   (ctor [birth_year]
-    (/_geneinternal/birth_year = birth_year))
+    (/birth_year = birth_year))
   (method age []
-    (/_genevalue - /_geneinternal/birth_year)))
+    (/_wrapped - /birth_year)))
 
 (println "adapter_age=" ((Ageable 2026 1990) .age))

@@ -99,8 +99,8 @@ The interface defines what's visible. The adapter maps inner properties/methods 
 
 | Mapping Value  | Behavior                            |
 |----------------|-------------------------------------|
-| Symbol/String  | Rename — redirects to inner prop    |
-| Function       | Computed — calls function on access |
+| `^from name`   | Direct field forwarding to wrapped member |
+| `get`/`set`    | Accessor blocks for computed fields |
 | `nil`/sentinel | Hidden — property doesn't exist     |
 
 Only what the interface declares is visible. This is inherently whitelist — the interface *is* the whitelist.
@@ -109,27 +109,29 @@ Only what the interface declares is visible. This is inherently whitelist — th
 
 When accessing a property on an adapted object:
 
-1. **Adapter's own data** — adapter-level supplementary context
-2. **Interface-mapped properties** — from the implements mapping
-3. **No passthrough** — if the interface doesn't expose it, it doesn't exist
+1. **Explicit interface mapping** — direct `^from` or accessor mapping
+2. **Same-name fallback** — only for interface fields without explicit mappings
+3. **No public owned-data passthrough** — declared adapter-owned fields are private to adapter bodies
 
 ## Adapter's Own Data
 
-Adapters generally should not store instance-specific data, but can when the adaptation requires context:
+Adapters generally should not store instance-specific data, but can declare typed
+owned fields when the adaptation requires context:
 
 ```
 (interface Ageable
   (method age [] -> Int)
 )
 
-# _genevalue refers to the wrapped value
-# _geneinternal stores supplementary context
+# /_wrapped refers to the wrapped value inside adapter bodies.
+# /birth_year is declared adapter-owned state.
 (implement Ageable for Int
+  (field birth_year Int)
   (ctor [birth_year]
-    (/_geneinternal/birth_year = birth_year)
+    (/birth_year = birth_year)
   )
 
-  (method age [] (/_genevalue - /_geneinternal/birth_year))
+  (method age [] (/_wrapped - /birth_year))
 )
 
 (var age (Ageable 2026 1990))
@@ -137,7 +139,23 @@ age/.age
 
 ```
 
-Here `birth_year` is supplementary context needed by the computed `age` property. The wrapped value (2026) is the current year. The adapter provides the relationship between them.
+Here `birth_year` is supplementary context needed by the computed `age` property.
+The wrapped value (2026) is the current year. The adapter provides the
+relationship between them without exposing `birth_year` through normal public
+slash access unless the interface explicitly maps or methods expose it.
+
+External adapters can also map interface fields directly or through accessors:
+
+```
+(implement Named for Source
+  (field name ^from label))
+
+(implement Named for Source
+  (field cached_name String)
+  (field name
+    (get [] /cached_name)
+    (set [value] (/cached_name = value))))
+```
 
 ## Stacking
 

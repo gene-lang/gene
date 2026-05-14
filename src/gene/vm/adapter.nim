@@ -14,6 +14,18 @@ proc new_adapter_value(adapter: Adapter): Value =
 proc adapter_key_name(key: Key): string =
   get_symbol(symbol_index(key))
 
+proc adapter_member_name(value: Value, context: string): string =
+  if value.kind notin {VkSymbol, VkString}:
+    raise new_exception(types.Exception, context & " must be a symbol or string")
+  value.str
+
+proc adapter_private_access_allowed(vm: ptr VirtualMachine, adapter_val: Value): bool =
+  if vm == nil or vm.frame == nil:
+    return false
+  if vm.frame.args.kind == VkGene and vm.frame.args.gene.children.len > 0:
+    return same_value_identity(vm.frame.args.gene.children[0], adapter_val)
+  false
+
 proc bind_adapter_callable(self_value: Value, method_name: string, callable: Value): Value =
   let r = new_ref(VkBoundMethod)
   r.bound_method = BoundMethod(
@@ -39,26 +51,37 @@ proc adapter_target_class(value: Value): Class =
   else:
     get_value_class(value)
 
-proc adapter_read_inner_property(vm: ptr VirtualMachine, value: Value, key: Key): Value =
+proc adapter_try_read_inner_property(vm: ptr VirtualMachine, value: Value, key: Key): tuple[found: bool, member: Value] =
   case value.kind
   of VkAdapter:
-    adapter_read_inner_property(vm, value.ref.adapter.inner, key)
+    adapter_try_read_inner_property(vm, value.ref.adapter.inner, key)
   of VkAdapterInternal:
-    adapter_internal_get_member(value, key)
+    (true, adapter_internal_get_member(value, key))
   of VkInstance:
     if key in instance_props(value):
-      instance_props(value)[key]
+      (true, instance_props(value)[key])
     else:
-      NIL
+      (false, NIL)
   of VkMap:
-    map_data(value).get_or_default(key, NIL)
+    if map_data(value).has_key(key):
+      (true, map_data(value)[key])
+    else:
+      (false, NIL)
   of VkNamespace:
-    value.ref.ns[key]
+    if value.ref.ns.members.has_key(key):
+      (true, value.ref.ns.members[key])
+    else:
+      (false, NIL)
   of VkClass:
     let member = value.ref.class.get_member(key)
-    if member != NIL: member else: value.ref.class.ns[key]
+    if member != NIL:
+      (true, member)
+    elif value.ref.class.ns.members.has_key(key):
+      (true, value.ref.class.ns.members[key])
+    else:
+      (false, NIL)
   else:
-    NIL
+    (false, NIL)
 
 proc adapter_write_inner_property(value: Value, mapped_key: Key, member_value: Value): bool =
   case value.kind
@@ -216,6 +239,67 @@ proc exec_implement_ctor(vm: ptr VirtualMachine) =
     raise new_exception(types.Exception, "implementation not found for external ctor")
   impl.ctor = fn_value
 
+proc exec_implement_field(vm: ptr VirtualMachine, metadata: Value, flags: int32) =
+  if metadata.kind != VkGene or metadata.gene.children.len == 0:
+    raise new_exception(types.Exception, "external implement field has invalid metadata")
+
+  let mode = AdapterFieldInstructionMode(flags and 3'i32)
+  let has_setter = (flags and 4'i32) != 0
+  var get_fn = NIL
+  var set_fn = NIL
+  if mode == AfiAccessor:
+    if has_setter:
+      set_fn = vm.frame.pop()
+    get_fn = vm.frame.pop()
+
+  let context = vm.frame.current()
+  if context.kind != VkGene or context.gene.children.len < 2:
+    raise new_exception(types.Exception, "external implement field requires an implementation context")
+
+  let class_val = context.gene.children[0]
+  let interface_val = context.gene.children[1]
+  if class_val.kind != VkClass or interface_val.kind != VkInterface:
+    raise new_exception(types.Exception, "invalid implementation context")
+
+  let gene_interface = interface_val.ref.gene_interface
+  let impl = class_val.ref.class.find_implementation(gene_interface)
+  if impl.is_nil:
+    raise new_exception(types.Exception, "implementation not found for external field")
+
+  let field_name = adapter_member_name(metadata.gene.children[0], "adapter field name")
+  let field_key = field_name.to_key()
+
+  case mode
+  of AfiOwned:
+    if gene_interface.has_prop(field_key):
+      raise new_exception(types.Exception,
+        "Adapter-owned field " & field_name & " conflicts with interface field " & field_name)
+    if impl.owned_fields.has_key(field_key):
+      raise new_exception(types.Exception, "Duplicate adapter-owned field: " & field_name)
+    let type_expr = if metadata.gene.children.len > 1: metadata.gene.children[1] else: NIL
+    impl.add_owned_field(field_name, type_expr)
+  of AfiDirect, AfiAccessor:
+    if not gene_interface.has_prop(field_key):
+      raise new_exception(types.Exception,
+        "Adapter field mapping " & field_name & " is not declared on interface " & gene_interface.name)
+    if impl.prop_mappings.has_key(field_key):
+      raise new_exception(types.Exception, "Duplicate adapter field mapping: " & field_name)
+    let prop = gene_interface.props[field_key]
+    if mode == AfiAccessor and has_setter and prop.readonly:
+      raise new_exception(types.Exception,
+        "Readonly interface field " & field_name & " cannot declare an adapter set accessor")
+
+    case mode
+    of AfiDirect:
+      if metadata.gene.children.len < 2:
+        raise new_exception(types.Exception, "Direct adapter field mapping " & field_name & " requires a ^from target")
+      let inner_name = adapter_member_name(metadata.gene.children[1], "adapter field ^from target")
+      impl.map_prop_rename(field_name, inner_name)
+    of AfiAccessor:
+      impl.map_prop_accessor(field_name, get_fn, set_fn)
+    else:
+      discard
+
 proc exec_adapter(vm: ptr VirtualMachine, ctor_args: seq[Value] = @[], kw_pairs: seq[(Key, Value)] = @[]) =
   ## Execute IkAdapter instruction - create an adapter wrapper
   let inner = vm.frame.pop()
@@ -260,29 +344,44 @@ proc adapter_get_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key): V
   let adapter = adapter_val.ref.adapter
   let gene_interface = adapter.gene_interface
   let impl = adapter.implementation
+  let private_access = adapter_private_access_allowed(vm, adapter_val)
 
-  if key == "_genevalue".to_key():
+  if key == "_wrapped".to_key():
+    if not private_access:
+      raise new_exception(types.Exception, "Adapter pseudo-member _wrapped is only available inside adapter implementation bodies")
     return adapter.inner
 
+  if key == "_genevalue".to_key():
+    raise new_exception(types.Exception, "Adapter pseudo-member _genevalue is retired; use _wrapped inside adapter implementation bodies")
+
   if key == "_geneinternal".to_key():
-    let r = new_ref(VkAdapterInternal)
-    r.adapter_internal = adapter
-    return r.to_ref_value()
+    raise new_exception(types.Exception, "Adapter pseudo-member _geneinternal is retired; declare adapter-owned fields instead")
+
+  if private_access and impl.owned_fields.has_key(key):
+    return adapter.own_data.get_or_default(key, NIL)
 
   if gene_interface.props.has_key(key):
     let mapping = impl.prop_mappings.get_or_default(key, nil)
     if not mapping.is_nil and mapping.kind == AmkHidden:
       raise new_exception(types.Exception, "Property " & $key & " is not accessible")
-    if adapter.own_data.has_key(key):
-      return adapter.own_data[key]
     if mapping.is_nil:
-      return adapter_read_inner_property(vm, adapter.inner, key)
+      let found = adapter_try_read_inner_property(vm, adapter.inner, key)
+      if found.found:
+        return found.member
+      raise new_exception(types.Exception,
+        "Adapter field " & adapter_key_name(key) & " has no explicit mapping and wrapped value has no same-name member")
 
     case mapping.kind
     of AmkRename:
-      return adapter_read_inner_property(vm, adapter.inner, mapping.inner_name)
+      let found = adapter_try_read_inner_property(vm, adapter.inner, mapping.inner_name)
+      if found.found:
+        return found.member
+      raise new_exception(types.Exception,
+        "Adapter field " & adapter_key_name(key) & " maps to missing wrapped member " & adapter_key_name(mapping.inner_name))
     of AmkComputed:
       return vm.call_bound_method(bind_adapter_callable(adapter_val, adapter_key_name(key), mapping.compute_fn), @[])
+    of AmkAccessor:
+      return vm.call_bound_method(bind_adapter_callable(adapter_val, adapter_key_name(key), mapping.get_fn), @[])
     of AmkHidden:
       discard
 
@@ -302,6 +401,8 @@ proc adapter_get_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key): V
       raise new_exception(types.Exception, "Method " & $mapping.inner_name & " not found on inner object")
     of AmkComputed:
       return bind_adapter_callable(adapter_val, adapter_key_name(key), mapping.compute_fn)
+    of AmkAccessor:
+      raise new_exception(types.Exception, "Method " & $key & " cannot use field accessors")
     of AmkHidden:
       raise new_exception(types.Exception, "Method " & $key & " is not accessible")
 
@@ -309,12 +410,29 @@ proc adapter_get_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key): V
   if runtime_method != NIL:
     return runtime_method
 
-  NIL
+  raise new_exception(types.Exception,
+    "Member " & adapter_key_name(key) & " is not declared on interface " & gene_interface.name)
 
-proc adapter_set_member(adapter: Adapter, key: Key, value: Value) =
+proc adapter_set_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key, value: Value) =
   ## Set a member on an adapter
+  if adapter_val.kind != VkAdapter:
+    raise new_exception(types.Exception, "Expected VkAdapter")
+
+  let adapter = adapter_val.ref.adapter
   let gene_interface = adapter.gene_interface
   let impl = adapter.implementation
+  let private_access = adapter_private_access_allowed(vm, adapter_val)
+
+  if key == "_wrapped".to_key():
+    raise new_exception(types.Exception, "Adapter pseudo-member _wrapped is readonly")
+  if key == "_genevalue".to_key():
+    raise new_exception(types.Exception, "Adapter pseudo-member _genevalue is retired; use _wrapped inside adapter implementation bodies")
+  if key == "_geneinternal".to_key():
+    raise new_exception(types.Exception, "Adapter pseudo-member _geneinternal is retired; declare adapter-owned fields instead")
+
+  if private_access and impl.owned_fields.has_key(key):
+    adapter.own_data[key] = value
+    return
 
   if gene_interface.props.has_key(key):
     let prop = gene_interface.props[key]
@@ -326,19 +444,28 @@ proc adapter_set_member(adapter: Adapter, key: Key, value: Value) =
     if mapping.is_nil:
       if adapter_write_inner_property(adapter.inner, key, value):
         return
-      adapter.own_data[key] = value
-      return
+      raise new_exception(types.Exception,
+        "Adapter field " & adapter_key_name(key) & " has no explicit mapping and wrapped value cannot assign same-name member")
 
     case mapping.kind
     of AmkRename:
       if adapter_write_inner_property(adapter.inner, mapping.inner_name, value):
         return
-      adapter.own_data[key] = value
-      return
+      raise new_exception(types.Exception,
+        "Adapter field " & adapter_key_name(key) & " maps to unwritable wrapped member " & adapter_key_name(mapping.inner_name))
     of AmkComputed:
       raise new_exception(types.Exception, "Computed property " & $key & " cannot be set")
+    of AmkAccessor:
+      if mapping.set_fn == NIL:
+        raise new_exception(types.Exception, "Adapter field " & adapter_key_name(key) & " does not declare a set accessor")
+      discard vm.call_bound_method(bind_adapter_callable(adapter_val, adapter_key_name(key), mapping.set_fn), @[value])
+      return
     of AmkHidden:
       raise new_exception(types.Exception, "Property " & $key & " is not accessible")
+
+  if private_access:
+    raise new_exception(types.Exception,
+      "Adapter-owned field " & adapter_key_name(key) & " is not declared")
 
   raise new_exception(types.Exception,
     "Property " & $key & " is not declared on interface " & gene_interface.name)
@@ -407,16 +534,10 @@ proc dispatch_adapter_method_kw(vm: ptr VirtualMachine, obj: Value, method_name:
     vm.exec_callable_with_self(member, obj, args)
 
 proc adapter_internal_get_member*(adapter_internal_val: Value, key: Key): Value =
-  if adapter_internal_val.kind != VkAdapterInternal:
-    raise new_exception(types.Exception, "Expected VkAdapterInternal")
-  let adapter = adapter_internal_val.ref.adapter_internal
-  adapter.own_data.get_or_default(key, NIL)
+  raise new_exception(types.Exception, "Adapter internal pseudo-member _geneinternal is retired; declare adapter-owned fields instead")
 
 proc adapter_internal_set_member*(adapter_internal_val: Value, key: Key, value: Value) =
-  if adapter_internal_val.kind != VkAdapterInternal:
-    raise new_exception(types.Exception, "Expected VkAdapterInternal")
-  let adapter = adapter_internal_val.ref.adapter_internal
-  adapter.own_data[key] = value
+  raise new_exception(types.Exception, "Adapter internal pseudo-member _geneinternal is retired; declare adapter-owned fields instead")
 
 proc adapter_internal_member_or_nil*(adapter_internal_val: Value, prop: Value): Value =
   let key = adapter_member_key(prop)
