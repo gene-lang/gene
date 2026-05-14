@@ -216,16 +216,6 @@ suite "filesystem serdes read refs":
       "VkString",
     ])
 
-    write_serialized_payload(parent_path, "(gene/serdes/read_file \"child.gene\" ^lazy true)")
-    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_file_lazy_true", [
-      "gene/serdes/read_file",
-      "containing file: " & parent_path,
-      "target: child.gene",
-      "unsupported option",
-      "^lazy true",
-      "S03",
-    ])
-
   test "text deserialize rejects read_file refs without filesystem context":
     init_all()
     let payload = "(gene/serialization (gene/serdes/read_file \"child.gene\"))"
@@ -482,8 +472,7 @@ suite "filesystem serdes read refs":
       "containing file: " & parent_path,
       "target: sessions",
       "unsupported option",
-      "^lazy true",
-      "S03",
+      "^lazy true is not supported",
     ])
 
     remove_tree(sessions)

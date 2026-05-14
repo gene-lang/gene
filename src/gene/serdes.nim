@@ -66,9 +66,17 @@ type
     materialized: Value
     materialized_loaded: bool
 
+  LazyFileRefValueData = ref object of CustomValue
+    target_path: string
+    filesystem_context: FilesystemReadContext
+    ref_kind: string
+    materialized: Value
+    materialized_loaded: bool
+
 var
   tree_read_stats {.threadvar.}: FilesystemTreeReadStats
   lazy_tree_value_class {.threadvar.}: Class
+  lazy_file_ref_value_class {.threadvar.}: Class
   # Cache serialization origins per thread by raw Value identity.
   #
   # Using value.raw is appropriate for Gene's NaN-boxed Value model: the same
@@ -124,7 +132,19 @@ proc is_lazy_tree_value*(value: Value): bool {.inline, gcsafe.} =
     return false
   custom_data of LazyTreeValueData
 
+proc is_lazy_file_ref_value*(value: Value): bool {.inline, gcsafe.} =
+  if value.kind != VkCustom:
+    return false
+  let ref_data = value.ref
+  if cast[pointer](ref_data) == nil:
+    return false
+  let custom_data = ref_data.custom_data
+  if cast[pointer](custom_data) == nil:
+    return false
+  custom_data of LazyFileRefValueData
+
 proc materialize_lazy_tree_value*(value: Value): Value {.gcsafe.}
+proc materialize_lazy_file_ref_value*(value: Value): Value {.gcsafe.}
 proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.}
 proc find_live_origin(target: Value): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.}
 proc class_to_value(self: Class): Value {.inline, gcsafe.}
@@ -1857,7 +1877,7 @@ proc parse_read_dir_option(options: var ReadDirOptions, key_name: string, prop_v
                             "^lazy must be boolean, got " & $prop_value.kind)
     if prop_value == TRUE:
       filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
-                            "^lazy true is deferred to S03 and is not supported for eager S02 reads")
+                            "^lazy true is not supported for gene/serdes/read_dir")
   else:
     filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
                           "unknown property ^" & key_name)
@@ -1881,6 +1901,39 @@ proc read_dir_options_from_keyword_args(args: ptr UncheckedArray[Value], has_key
 
   for key, prop_value in map_data(args[0]):
     parse_read_dir_option(result, key_to_string(key), prop_value, ref_kind, context, target_path)
+
+proc parse_read_file_option(lazy: var bool, key_name: string, prop_value: Value,
+                            ref_kind: string, context: FilesystemReadContext,
+                            target_path: string) {.gcsafe.} =
+  case key_name
+  of "lazy":
+    if prop_value.kind != VkBool:
+      filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                            "^lazy must be boolean, got " & $prop_value.kind)
+    lazy = prop_value == TRUE
+  else:
+    filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                          "unknown property ^" & key_name)
+
+proc read_file_lazy_from_props(props: Table[Key, Value], ref_kind: string,
+                               context: FilesystemReadContext, target_path: string): bool {.gcsafe.} =
+  result = false
+  for key, prop_value in props:
+    parse_read_file_option(result, key_to_string(key), prop_value, ref_kind, context, target_path)
+
+proc read_file_lazy_from_keyword_args(args: ptr UncheckedArray[Value], has_keyword_args: bool,
+                                      ref_kind: string, context: FilesystemReadContext,
+                                      target_path: string): bool {.gcsafe.} =
+  result = false
+  if not has_keyword_args:
+    return
+
+  if args == nil or args[0].kind != VkMap:
+    filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                          "keyword arguments must be provided as a map")
+
+  for key, prop_value in map_data(args[0]):
+    parse_read_file_option(result, key_to_string(key), prop_value, ref_kind, context, target_path)
 
 proc deserialize_with_filesystem_context(value: Value, context: FilesystemReadContext): Value {.gcsafe.} =
   var ser = Serialization(
@@ -1932,6 +1985,38 @@ proc read_file_value*(path: string, context: FilesystemReadContext = nil, ref_ki
       if is_filesystem_read_error(e.msg):
         raise
       filesystem_read_error(ref_kind, child_context, path, resolved_path, "invalid payload", e.msg)
+
+proc materialize_lazy_file_ref_data(data: CustomValue): Value {.gcsafe.} =
+  let lazy_data = LazyFileRefValueData(data)
+  if lazy_data.materialized_loaded:
+    return lazy_data.materialized
+
+  let materialized = read_file_value(lazy_data.target_path, lazy_data.filesystem_context, lazy_data.ref_kind)
+  lazy_data.materialized = materialized
+  lazy_data.materialized_loaded = true
+  materialized
+
+proc make_lazy_file_ref_value(target_path: string, context: FilesystemReadContext,
+                              ref_kind: string): Value {.gcsafe.} =
+  if lazy_file_ref_value_class.is_nil:
+    not_allowed("Lazy file-ref class is not initialized")
+  let data = LazyFileRefValueData(
+    target_path: target_path,
+    filesystem_context: context,
+    ref_kind: ref_kind,
+    materialized: NIL,
+    materialized_loaded: false,
+  )
+  data.materialize_hook = materialize_lazy_file_ref_data
+  new_custom_value(lazy_file_ref_value_class, data)
+
+proc materialize_lazy_file_ref_value*(value: Value): Value {.gcsafe.} =
+  if not is_lazy_file_ref_value(value):
+    return value
+  let data = LazyFileRefValueData(value.ref.custom_data)
+  if data.materialized_loaded:
+    return data.materialized
+  data.materialize_hook(data)
 
 proc list_read_dir_child_files(path, target_path, ref_kind: string,
                                context: FilesystemReadContext): seq[string] {.gcsafe.} =
@@ -1998,8 +2083,7 @@ proc read_dir_value(path: string, options: ReadDirOptions, context: FilesystemRe
         let key_name = splitFile(child_file).name
         map_data(result)[key_name.to_key()] = read_file_value(child_file, dir_context, ref_kind)
 
-proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene): Value {.gcsafe.} =
-  const ref_kind = "read_file"
+proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene, ref_kind = "read_file"): Value {.gcsafe.} =
   let target_hint =
     if gene.children.len > 0:
       if gene.children[0].kind == VkString: gene.children[0].str else: $gene.children[0].kind
@@ -2016,25 +2100,16 @@ proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene): Value {.gcs
     filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "non-string path",
                           "path argument must be a string, got " & $path_value.kind)
 
-  for key, prop_value in gene.props:
-    let key_name = key_to_string(key)
-    case key_name
-    of "lazy":
-      if prop_value.kind != VkBool:
-        filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "unsupported option",
-                              "^lazy must be boolean, got " & $prop_value.kind)
-      if prop_value == TRUE:
-        filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "unsupported option",
-                              "^lazy true is deferred to S03 and is not supported for eager S02 reads")
-    else:
-      filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "unsupported option",
-                            "unknown property ^" & key_name)
+  let lazy = read_file_lazy_from_props(gene.props, ref_kind, self.filesystem_context, target_path)
 
   if self.filesystem_context == nil:
     filesystem_read_error(ref_kind, nil, target_path, "", "no filesystem context",
-                          "serialized read_file refs require a containing file")
+                          "serialized " & ref_kind & " refs require a containing file")
 
-  read_file_value(target_path, self.filesystem_context, ref_kind)
+  if lazy:
+    make_lazy_file_ref_value(target_path, self.filesystem_context, ref_kind)
+  else:
+    read_file_value(target_path, self.filesystem_context, ref_kind)
 
 proc deserialize_read_dir_ref(self: Serialization, gene: ptr Gene): Value {.gcsafe.} =
   const ref_kind = "read_dir"
@@ -2174,7 +2249,9 @@ proc deserialize*(self: Serialization, value: Value): Value =
       else:
         return NIL
     of "gene/serdes/read_file":
-      return self.deserialize_read_file_ref(value.gene)
+      return self.deserialize_read_file_ref(value.gene, "read_file")
+    of "gene/serdes/read":
+      return self.deserialize_read_file_ref(value.gene, "read")
     of "gene/serdes/read_dir":
       return self.deserialize_read_dir_ref(value.gene)
     of "NamespaceRef", "ClassRef", "FunctionRef", "EnumRef", "InstanceRef":
@@ -2449,6 +2526,88 @@ proc init_lazy_tree_value_class() =
   def_lazy_delegate("genetype", lazy_tree_genetype)
   def_lazy_delegate("set_genetype", lazy_tree_set_genetype)
 
+proc delegate_lazy_file_ref_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool, method_name: string): Value {.gcsafe.} =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    not_allowed("Lazy file-ref method requires self")
+
+  let self_value = get_positional_arg(args, 0, has_keyword_args)
+  let actual = materialize_lazy_file_ref_value(self_value)
+  let actual_class = lazy_tree_class_ref(actual)
+  if actual_class == nil:
+    not_allowed("Lazy file-ref method dispatch requires a concrete class")
+
+  let meth = actual_class.get_method(method_name)
+  if meth == nil or meth.callable.kind notin {VkNativeFn, VkNativeMethod}:
+    not_allowed("Lazy file-ref method '" & method_name & "' is not available on " & $actual.kind)
+
+  var call_args = newSeq[Value](arg_count)
+  if has_keyword_args:
+    call_args[0] = args[0]
+    if arg_count > 1:
+      call_args[1] = actual
+    for i in 2..<arg_count:
+      call_args[i] = args[i]
+  else:
+    if arg_count > 0:
+      call_args[0] = actual
+    for i in 1..<arg_count:
+      call_args[i] = args[i]
+
+  case meth.callable.kind
+  of VkNativeFn:
+    return call_native_fn(meth.callable.ref.native_fn, vm, call_args, has_keyword_args)
+  of VkNativeMethod:
+    return call_native_fn(meth.callable.ref.native_method, vm, call_args, has_keyword_args)
+  else:
+    not_allowed("Lazy file-ref method '" & method_name & "' must be native")
+
+proc init_lazy_file_ref_value_class() =
+  if not lazy_file_ref_value_class.is_nil:
+    return
+
+  lazy_file_ref_value_class = new_class("LazyFileRefValue", App.app.object_class.ref.class)
+
+  template def_lazy_file_delegate(method_name: string, proc_name: untyped) =
+    proc proc_name(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      delegate_lazy_file_ref_method(vm, args, arg_count, has_keyword_args, method_name)
+    lazy_file_ref_value_class.def_native_method(method_name, proc_name)
+
+  def_lazy_file_delegate("to_s", lazy_file_to_s)
+  def_lazy_file_delegate("class", lazy_file_class)
+  def_lazy_file_delegate("is", lazy_file_is)
+  def_lazy_file_delegate("iter", lazy_file_iter)
+  def_lazy_file_delegate("get", lazy_file_get)
+  def_lazy_file_delegate("contains", lazy_file_contains)
+  def_lazy_file_delegate("has", lazy_file_has)
+  def_lazy_file_delegate("size", lazy_file_size)
+  def_lazy_file_delegate("length", lazy_file_length)
+  def_lazy_file_delegate("keys", lazy_file_keys)
+  def_lazy_file_delegate("values", lazy_file_values)
+  def_lazy_file_delegate("each", lazy_file_each)
+  def_lazy_file_delegate("map", lazy_file_map)
+  def_lazy_file_delegate("filter", lazy_file_filter)
+  def_lazy_file_delegate("reduce", lazy_file_reduce)
+  def_lazy_file_delegate("pairs", lazy_file_pairs)
+  def_lazy_file_delegate("empty", lazy_file_empty)
+  def_lazy_file_delegate("first", lazy_file_first)
+  def_lazy_file_delegate("last", lazy_file_last)
+  def_lazy_file_delegate("slice", lazy_file_slice)
+  def_lazy_file_delegate("index_of", lazy_file_index_of)
+  def_lazy_file_delegate("join", lazy_file_join)
+  def_lazy_file_delegate("take", lazy_file_take)
+  def_lazy_file_delegate("skip", lazy_file_skip)
+  def_lazy_file_delegate("find", lazy_file_find)
+  def_lazy_file_delegate("any", lazy_file_any)
+  def_lazy_file_delegate("all", lazy_file_all)
+  def_lazy_file_delegate("zip", lazy_file_zip)
+  def_lazy_file_delegate("reverse", lazy_file_reverse)
+  def_lazy_file_delegate("to_map", lazy_file_to_map)
+  def_lazy_file_delegate("to_json", lazy_file_to_json)
+  def_lazy_file_delegate("type", lazy_file_type)
+  def_lazy_file_delegate("props", lazy_file_props)
+  def_lazy_file_delegate("children", lazy_file_children)
+  def_lazy_file_delegate("genetype", lazy_file_genetype)
+
 proc vm_serialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if arg_count != 1:
@@ -2477,19 +2636,16 @@ proc vm_read_file_with_kind(vm: ptr VirtualMachine, args: ptr UncheckedArray[Val
     let path_arg = get_positional_arg(args, 0, has_keyword_args)
     let target_path = if path_arg.kind == VkString: path_arg.str else: $path_arg.kind
 
-    if has_keyword_args:
-      var options: seq[string] = @[]
-      if args != nil and args[0].kind == VkMap:
-        for key, _ in map_data(args[0]):
-          options.add("^" & key_to_string(key))
-      filesystem_read_error(ref_kind, nil, target_path, "", "unsupported option",
-                            if options.len > 0: options.join(", ") else: "keyword arguments are not supported")
-
     if path_arg.kind != VkString:
       filesystem_read_error(ref_kind, nil, target_path, "", "non-string path",
                             "path argument must be a string, got " & $path_arg.kind)
 
-    read_file_value(path_arg.str, nil, ref_kind)
+    let lazy = read_file_lazy_from_keyword_args(args, has_keyword_args, ref_kind, nil, target_path)
+    if lazy:
+      let stable_target = resolve_filesystem_read_target(nil, path_arg.str, ref_kind)
+      make_lazy_file_ref_value(stable_target, nil, ref_kind)
+    else:
+      read_file_value(path_arg.str, nil, ref_kind)
 
 proc vm_read_file(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                   has_keyword_args: bool): Value {.gcsafe, nimcall.} =
@@ -2554,6 +2710,7 @@ proc vm_read_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame:
 # Initialize the serdes namespace
 proc init_serdes*() =
   init_lazy_tree_value_class()
+  init_lazy_file_ref_value_class()
   tag_stdlib_serialization_origins()
   let serdes_ns = new_namespace("serdes")
   serdes_ns["serialize".to_key()] = NativeFn(vm_serialize).to_value()
