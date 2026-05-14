@@ -1766,6 +1766,17 @@ proc resolve_filesystem_read_target(context: FilesystemReadContext, target_path,
   if not filesystem_is_subpath(base_dir, result):
     filesystem_read_error(ref_kind, context, target_path, result, "path escape", "nested filesystem ref leaves containing directory")
 
+proc canonical_existing_filesystem_path(path: string): string {.gcsafe.} =
+  try:
+    {.cast(gcsafe).}:
+      result = normalizedPath(expandSymlink(expandFilename(path)))
+  except CatchableError:
+    result = normalizedPath(absolutePath(path))
+
+proc is_filesystem_read_error(message: string): bool {.inline, gcsafe.} =
+  message.startsWith("gene/serdes/read_file failed") or
+    message.startsWith("gene/serdes/read_dir failed")
+
 proc child_filesystem_context(parent_context: FilesystemReadContext, containing_file: string): FilesystemReadContext {.gcsafe.} =
   let normalized_file = normalizedPath(absolutePath(containing_file))
   var stack: seq[string] = @[]
@@ -1789,12 +1800,21 @@ proc read_file_value*(path: string, context: FilesystemReadContext = nil, ref_ki
   when defined(gene_wasm):
     filesystem_read_error(ref_kind, context, path, "", "unsupported option", "filesystem reads are not supported in gene_wasm")
   else:
-    let resolved_path = resolve_filesystem_read_target(context, path, ref_kind)
+    var resolved_path = resolve_filesystem_read_target(context, path, ref_kind)
     if context != nil and filesystem_stack_contains(context.read_stack, resolved_path):
       filesystem_read_error(ref_kind, context, path, resolved_path, "cycle", "target is already in the filesystem read stack")
 
     if not fileExists(resolved_path):
       filesystem_read_error(ref_kind, context, path, resolved_path, "missing", "exact file does not exist")
+
+    let canonical_path = canonical_existing_filesystem_path(resolved_path)
+    if context != nil:
+      let canonical_base = canonical_existing_filesystem_path(context.base_dir)
+      if not filesystem_is_subpath(canonical_base, canonical_path):
+        filesystem_read_error(ref_kind, context, path, canonical_path, "path escape", "nested filesystem ref leaves containing directory after canonicalization")
+      if filesystem_stack_contains(context.read_stack, canonical_path):
+        filesystem_read_error(ref_kind, context, path, canonical_path, "cycle", "target is already in the filesystem read stack")
+    resolved_path = canonical_path
 
     var text: string
     try:
@@ -1816,7 +1836,47 @@ proc read_file_value*(path: string, context: FilesystemReadContext = nil, ref_ki
     try:
       return deserialize_with_filesystem_context(forms[0], child_context)
     except CatchableError as e:
+      if is_filesystem_read_error(e.msg):
+        raise
       filesystem_read_error(ref_kind, child_context, path, resolved_path, "invalid payload", e.msg)
+
+proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene): Value {.gcsafe.} =
+  const ref_kind = "read_file"
+  let target_hint =
+    if gene.children.len > 0:
+      if gene.children[0].kind == VkString: gene.children[0].str else: $gene.children[0].kind
+    else:
+      ""
+
+  if gene.children.len != 1:
+    filesystem_read_error(ref_kind, self.filesystem_context, target_hint, "", "wrong arity",
+                          "expected 1 path argument, got " & $gene.children.len)
+
+  let path_value = gene.children[0]
+  let target_path = target_hint
+  if path_value.kind != VkString:
+    filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "non-string path",
+                          "path argument must be a string, got " & $path_value.kind)
+
+  for key, prop_value in gene.props:
+    let key_name = key_to_string(key)
+    case key_name
+    of "lazy":
+      if prop_value.kind != VkBool:
+        filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "unsupported option",
+                              "^lazy must be boolean, got " & $prop_value.kind)
+      if prop_value == TRUE:
+        filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "unsupported option",
+                              "^lazy true is deferred to S03 and is not supported for eager S02 reads")
+    else:
+      filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "unsupported option",
+                            "unknown property ^" & key_name)
+
+  if self.filesystem_context == nil:
+    filesystem_read_error(ref_kind, nil, target_path, "", "no filesystem context",
+                          "serialized read_file refs require a containing file")
+
+  read_file_value(target_path, self.filesystem_context, ref_kind)
 
 proc deref*(self: Serialization, s: string): Value =
   path_to_value(s)
@@ -1929,6 +1989,8 @@ proc deserialize*(self: Serialization, value: Value): Value =
         return self.deserialize(value.gene.children[0])
       else:
         return NIL
+    of "gene/serdes/read_file":
+      return self.deserialize_read_file_ref(value.gene)
     of "NamespaceRef", "ClassRef", "FunctionRef", "EnumRef", "InstanceRef":
       return resolve_typed_ref(value.gene)
     of "TupleRef":
