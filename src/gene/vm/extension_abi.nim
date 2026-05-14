@@ -1,4 +1,4 @@
-## Stable native extension ABI for gene-old.
+## Stable native extension ABI for gene.
 ##
 ## Extensions must export:
 ##   proc gene_init(host: ptr GeneHostAbi): int32 {.cdecl, exportc, dynlib.}

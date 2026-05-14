@@ -52,13 +52,18 @@ proc expect_vm_error_contains(source, name: string, expected_parts: openArray[st
     checkpoint("expecting error part: " & part)
     check message.contains(part)
 
-const TreeSerdesLeakFragments = ["_genetype", "_geneprops", "_genechildren", "_genearray", "^separate", "write_tree"]
+const TreeSerdesLeakFragments = ["_genetype", "_geneprops", "_genechildren", "_genearray", "^separate"]
+const RemovedFilesystemPrefixes = ["read", "write"]
 
 proc expect_no_tree_serdes_leak(label, text: string) =
   checkpoint(label & ": " & text)
   for fragment in TreeSerdesLeakFragments:
     checkpoint("forbidden tree-serdes fragment: " & fragment)
     check not text.contains(fragment)
+  for prefix in RemovedFilesystemPrefixes:
+    let api_name = prefix & "_" & "tree"
+    checkpoint("forbidden removed API fragment: " & api_name)
+    check not text.contains(api_name)
 
 proc expect_read_file_ref_payload(parent_payload, ref_path: string) =
   expect_no_tree_serdes_leak("write parent payload", parent_payload)
