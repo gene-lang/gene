@@ -208,6 +208,117 @@ suite "filesystem serdes lazy refs":
     check recovered.kind == VkMap
     check map_data(recovered)["status".to_key()] == "created-after-failure".to_value()
 
+  test "lazy invalid payload failures are not cached and can retry after repair":
+    init_all()
+    let root = fresh_dir("invalid-retry")
+    defer: remove_tree(root)
+    let child_path = joinPath(root, "child.gene")
+    writeFile(child_path, "")
+
+    let lazy_child = VM.exec("(gene/serdes/read_file " & gene_string_literal(child_path) & " ^lazy true)", "filesystem_serdes_lazy_invalid_retry_create")
+    check lazy_child.kind == VkCustom
+    expect_materialize_error_contains(lazy_child, [
+      "gene/serdes/read_file",
+      "containing file: " & child_path,
+      "target: " & child_path,
+      "resolved: " & child_path,
+      "invalid payload",
+    ])
+
+    write_serialized_payload(child_path, "{^status \"repaired\"}")
+    let recovered = materialize_custom(lazy_child)
+    check recovered.kind == VkMap
+    check map_data(recovered)["status".to_key()] == "repaired".to_value()
+
+  test "serialized lazy child refs use child file as nested relative base":
+    init_all()
+    let root = fresh_dir("lazy-child-base")
+    defer: remove_tree(root)
+    let bundle = joinPath(root, "bundle")
+    let child_dir = joinPath(bundle, "child")
+    let cwd_shadow = joinPath(root, "cwd-shadow")
+    createDir(bundle)
+    createDir(child_dir)
+    createDir(cwd_shadow)
+
+    let parent_path = joinPath(bundle, "parent.gene")
+    let child_path = joinPath(child_dir, "child.gene")
+    let grand_path = joinPath(child_dir, "grand.gene")
+    write_serialized_payload(parent_path, "{^child (gene/serdes/read_file \"child/child.gene\" ^lazy true)}")
+    write_serialized_payload(child_path, "{^grand (gene/serdes/read_file \"grand.gene\")}")
+    write_serialized_payload(grand_path, "{^source \"from-child-dir\"}")
+    write_serialized_payload(joinPath(bundle, "grand.gene"), "{^source \"from-parent-shadow\"}")
+    write_serialized_payload(joinPath(cwd_shadow, "grand.gene"), "{^source \"from-cwd-shadow\"}")
+
+    let old_cwd = getCurrentDir()
+    setCurrentDir(cwd_shadow)
+    defer: setCurrentDir(old_cwd)
+
+    let loaded = VM.exec("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_lazy_child_base_parent")
+    check loaded.kind == VkMap
+    let child_placeholder = map_data(loaded)["child".to_key()]
+    check child_placeholder.kind == VkCustom
+    check has_custom_materializer(child_placeholder)
+
+    let child = materialize_custom(child_placeholder)
+    check child.kind == VkMap
+    let grand = map_data(child)["grand".to_key()]
+    check grand.kind == VkMap
+    check map_data(grand)["source".to_key()] == "from-child-dir".to_value()
+
+  test "serialized lazy path escapes fail only on access with original context":
+    init_all()
+    let root = fresh_dir("lazy-path-escape")
+    defer: remove_tree(root)
+    let bundle = joinPath(root, "bundle")
+    createDir(bundle)
+    let parent_path = joinPath(bundle, "parent.gene")
+    let secret_path = joinPath(root, "secret.gene")
+    write_serialized_payload(secret_path, "{^secret true}")
+    write_serialized_payload(parent_path, "{^secret (gene/serdes/read_file \"../secret.gene\" ^lazy true)}")
+
+    let loaded = VM.exec("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_lazy_escape_parent")
+    check loaded.kind == VkMap
+    let secret_placeholder = map_data(loaded)["secret".to_key()]
+    check secret_placeholder.kind == VkCustom
+    check has_custom_materializer(secret_placeholder)
+
+    expect_materialize_error_contains(secret_placeholder, [
+      "gene/serdes/read_file",
+      "containing file: " & parent_path,
+      "target: ../secret.gene",
+      "resolved: " & secret_path,
+      "path escape",
+      "stack chain",
+      parent_path,
+    ])
+
+  test "serialized lazy cycles fail on access with read stack diagnostics":
+    init_all()
+    let root = fresh_dir("lazy-cycle")
+    defer: remove_tree(root)
+    let a_path = joinPath(root, "a.gene")
+    let b_path = joinPath(root, "b.gene")
+    write_serialized_payload(a_path, "{^b (gene/serdes/read_file \"b.gene\" ^lazy true)}")
+    write_serialized_payload(b_path, "{^a (gene/serdes/read_file \"a.gene\")}")
+
+    let loaded = VM.exec("(gene/serdes/read_file " & gene_string_literal(a_path) & ")", "filesystem_serdes_lazy_cycle_parent")
+    check loaded.kind == VkMap
+    let b_placeholder = map_data(loaded)["b".to_key()]
+    check b_placeholder.kind == VkCustom
+    check has_custom_materializer(b_placeholder)
+
+    expect_materialize_error_contains(b_placeholder, [
+      "gene/serdes/read_file",
+      "containing file: " & b_path,
+      "target: a.gene",
+      "resolved: " & a_path,
+      "cycle",
+      "stack chain",
+      a_path,
+      b_path,
+    ])
+
   test "malformed lazy read_file and read options fail during parent read or direct call":
     init_all()
     let root = fresh_dir("malformed")
@@ -284,7 +395,7 @@ suite "filesystem serdes lazy refs":
       "gene/serdes/read_dir",
       "target: " & sessions,
       "unsupported option",
-      "^lazy true is not supported",
+      "directory-lazy is unsupported in S03",
     ])
     expect_vm_error_not_contains("(gene/serdes/read_dir " & gene_string_literal(sessions) & " ^lazy true)", "filesystem_serdes_lazy_read_dir_no_s03", [
       "deferred to S03",

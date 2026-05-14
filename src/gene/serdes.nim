@@ -1761,8 +1761,26 @@ proc filesystem_stack_contains(stack: seq[string], path: string): bool {.inline,
       return true
   false
 
+proc copy_filesystem_read_stack(context: FilesystemReadContext): seq[string] {.gcsafe.} =
+  result = @[]
+  if context == nil:
+    return
+  for item in context.read_stack:
+    result.add(item)
+
+proc clone_filesystem_context(context: FilesystemReadContext): FilesystemReadContext {.gcsafe.} =
+  if context == nil:
+    return nil
+  FilesystemReadContext(
+    containing_file: context.containing_file,
+    base_dir: context.base_dir,
+    read_stack: copy_filesystem_read_stack(context),
+  )
+
 proc filesystem_stack_chain(stack: seq[string], next_path = ""): string {.gcsafe.} =
-  var parts = stack
+  var parts: seq[string] = @[]
+  for item in stack:
+    parts.add(item)
   if next_path.len > 0 and (parts.len == 0 or parts[^1] != next_path):
     parts.add(next_path)
   if parts.len == 0:
@@ -1820,9 +1838,7 @@ proc is_filesystem_read_error(message: string): bool {.inline, gcsafe.} =
 
 proc child_filesystem_context(parent_context: FilesystemReadContext, containing_file: string): FilesystemReadContext {.gcsafe.} =
   let normalized_file = normalizedPath(absolutePath(containing_file))
-  var stack: seq[string] = @[]
-  if parent_context != nil:
-    stack = parent_context.read_stack
+  var stack = copy_filesystem_read_stack(parent_context)
   stack.add(normalized_file)
   FilesystemReadContext(
     containing_file: normalized_file,
@@ -1832,9 +1848,7 @@ proc child_filesystem_context(parent_context: FilesystemReadContext, containing_
 
 proc child_filesystem_directory_context(parent_context: FilesystemReadContext, containing_dir: string): FilesystemReadContext {.gcsafe.} =
   let normalized_dir = normalizedPath(absolutePath(containing_dir))
-  var stack: seq[string] = @[]
-  if parent_context != nil:
-    stack = parent_context.read_stack
+  var stack = copy_filesystem_read_stack(parent_context)
   stack.add(normalized_dir)
   FilesystemReadContext(
     containing_file: normalized_dir,
@@ -1887,7 +1901,7 @@ proc parse_read_dir_option(options: var ReadDirOptions, key_name: string, prop_v
                             "^lazy must be boolean, got " & $prop_value.kind)
     if prop_value == TRUE:
       filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
-                            "^lazy true is not supported for gene/serdes/read_dir")
+                            "directory-lazy is unsupported in S03; gene/serdes/read_dir remains eager-only in this slice")
   else:
     filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
                           "unknown property ^" & key_name)
@@ -2012,7 +2026,7 @@ proc make_lazy_file_ref_value(target_path: string, context: FilesystemReadContex
     not_allowed("Lazy file-ref class is not initialized")
   let data = LazyFileRefValueData(
     target_path: target_path,
-    filesystem_context: context,
+    filesystem_context: clone_filesystem_context(context),
     ref_kind: ref_kind,
     materialized: NIL,
     materialized_loaded: false,

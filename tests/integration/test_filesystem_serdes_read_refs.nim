@@ -472,7 +472,7 @@ suite "filesystem serdes read refs":
       "containing file: " & parent_path,
       "target: sessions",
       "unsupported option",
-      "^lazy true is not supported",
+      "directory-lazy is unsupported in S03",
     ])
 
     remove_tree(sessions)
