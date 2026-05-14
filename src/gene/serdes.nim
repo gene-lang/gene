@@ -7,9 +7,15 @@ from ./types/runtime_types import validate_or_coerce_type, emit_type_warning
 import ./parser
 
 type
+  FilesystemReadContext* = ref object
+    containing_file*: string
+    base_dir*: string
+    read_stack*: seq[string]
+
   Serialization* = ref object
     references*: Table[string, Value]
     data*: Value
+    filesystem_context*: FilesystemReadContext
 
   SerializationRefKind* = enum
     SrkNamespace
@@ -1702,6 +1708,116 @@ proc value_to_gene_str*(self: Value): string =
 
 proc deserialize*(self: Serialization, value: Value): Value {.gcsafe.}
 
+proc filesystem_context_description(context: FilesystemReadContext): string {.inline, gcsafe.} =
+  if context == nil or context.containing_file.len == 0:
+    "<direct>"
+  else:
+    context.containing_file
+
+proc filesystem_stack_contains(stack: seq[string], path: string): bool {.inline, gcsafe.} =
+  for item in stack:
+    if item == path:
+      return true
+  false
+
+proc filesystem_stack_chain(stack: seq[string], next_path = ""): string {.gcsafe.} =
+  var parts = stack
+  if next_path.len > 0 and (parts.len == 0 or parts[^1] != next_path):
+    parts.add(next_path)
+  if parts.len == 0:
+    return "<empty>"
+  parts.join(" -> ")
+
+proc filesystem_read_error(ref_kind: string, context: FilesystemReadContext,
+                           target_path, resolved_path, reason, detail: string) {.noreturn, gcsafe.} =
+  var message = "gene/serdes/" & ref_kind & " failed"
+  message &= "; reason: " & reason
+  message &= "; containing file: " & filesystem_context_description(context)
+  message &= "; target: " & (if target_path.len > 0: target_path else: "<missing>")
+  if resolved_path.len > 0:
+    message &= "; resolved: " & resolved_path
+  if context != nil:
+    message &= "; stack chain: " & filesystem_stack_chain(context.read_stack, resolved_path)
+  if detail.len > 0:
+    message &= "; detail: " & detail
+  not_allowed(message)
+
+proc filesystem_is_subpath(base_path, candidate_path: string): bool {.inline, gcsafe.} =
+  when defined(windows):
+    let base_norm = normalizedPath(base_path).toLowerAscii()
+    let candidate_norm = normalizedPath(candidate_path).toLowerAscii()
+  else:
+    let base_norm = normalizedPath(base_path)
+    let candidate_norm = normalizedPath(candidate_path)
+
+  if candidate_norm == base_norm:
+    return true
+  candidate_norm.startsWith(base_norm & DirSep)
+
+proc resolve_filesystem_read_target(context: FilesystemReadContext, target_path, ref_kind: string): string {.gcsafe.} =
+  if context == nil:
+    return normalizedPath(absolutePath(target_path))
+
+  if target_path.isAbsolute:
+    filesystem_read_error(ref_kind, context, target_path, "", "absolute path", "nested filesystem refs must be relative")
+
+  let base_dir = normalizedPath(absolutePath(context.base_dir))
+  result = normalizedPath(absolutePath(target_path, base_dir))
+  if not filesystem_is_subpath(base_dir, result):
+    filesystem_read_error(ref_kind, context, target_path, result, "path escape", "nested filesystem ref leaves containing directory")
+
+proc child_filesystem_context(parent_context: FilesystemReadContext, containing_file: string): FilesystemReadContext {.gcsafe.} =
+  let normalized_file = normalizedPath(absolutePath(containing_file))
+  var stack: seq[string] = @[]
+  if parent_context != nil:
+    stack = parent_context.read_stack
+  stack.add(normalized_file)
+  FilesystemReadContext(
+    containing_file: normalized_file,
+    base_dir: parentDir(normalized_file),
+    read_stack: stack,
+  )
+
+proc deserialize_with_filesystem_context(value: Value, context: FilesystemReadContext): Value {.gcsafe.} =
+  var ser = Serialization(
+    references: initTable[string, Value](),
+    filesystem_context: context,
+  )
+  ser.deserialize(value)
+
+proc read_file_value*(path: string, context: FilesystemReadContext = nil, ref_kind = "read_file"): Value {.gcsafe.} =
+  when defined(gene_wasm):
+    filesystem_read_error(ref_kind, context, path, "", "unsupported option", "filesystem reads are not supported in gene_wasm")
+  else:
+    let resolved_path = resolve_filesystem_read_target(context, path, ref_kind)
+    if context != nil and filesystem_stack_contains(context.read_stack, resolved_path):
+      filesystem_read_error(ref_kind, context, path, resolved_path, "cycle", "target is already in the filesystem read stack")
+
+    if not fileExists(resolved_path):
+      filesystem_read_error(ref_kind, context, path, resolved_path, "missing", "exact file does not exist")
+
+    var text: string
+    try:
+      text = readFile(resolved_path)
+    except CatchableError as e:
+      filesystem_read_error(ref_kind, context, path, resolved_path, "unreadable", e.msg)
+
+    let child_context = child_filesystem_context(context, resolved_path)
+    var forms: seq[Value]
+    try:
+      forms = read_all(text)
+    except CatchableError as e:
+      filesystem_read_error(ref_kind, child_context, path, resolved_path, "invalid payload", e.msg)
+
+    if forms.len != 1:
+      filesystem_read_error(ref_kind, child_context, path, resolved_path, "invalid payload",
+                            "expected exactly one serialized form, got " & $forms.len)
+
+    try:
+      return deserialize_with_filesystem_context(forms[0], child_context)
+    except CatchableError as e:
+      filesystem_read_error(ref_kind, child_context, path, resolved_path, "invalid payload", e.msg)
+
 proc deref*(self: Serialization, s: string): Value =
   path_to_value(s)
 
@@ -2101,6 +2217,40 @@ proc vm_deserialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
     let s = get_positional_arg(args, 0, has_keyword_args).str
     return deserialize(s)
 
+proc vm_read_file_with_kind(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                            has_keyword_args: bool, ref_kind: string): Value {.gcsafe.} =
+  discard vm
+  {.cast(gcsafe).}:
+    let positional_count = get_positional_count(arg_count, has_keyword_args)
+    if positional_count != 1:
+      filesystem_read_error(ref_kind, nil, "", "", "wrong arity",
+                            "expected 1 path argument, got " & $positional_count)
+
+    let path_arg = get_positional_arg(args, 0, has_keyword_args)
+    let target_path = if path_arg.kind == VkString: path_arg.str else: $path_arg.kind
+
+    if has_keyword_args:
+      var options: seq[string] = @[]
+      if args != nil and args[0].kind == VkMap:
+        for key, _ in map_data(args[0]):
+          options.add("^" & key_to_string(key))
+      filesystem_read_error(ref_kind, nil, target_path, "", "unsupported option",
+                            if options.len > 0: options.join(", ") else: "keyword arguments are not supported")
+
+    if path_arg.kind != VkString:
+      filesystem_read_error(ref_kind, nil, target_path, "", "non-string path",
+                            "path argument must be a string, got " & $path_arg.kind)
+
+    read_file_value(path_arg.str, nil, ref_kind)
+
+proc vm_read_file(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                  has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  vm_read_file_with_kind(vm, args, arg_count, has_keyword_args, "read_file")
+
+proc vm_read(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+             has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  vm_read_file_with_kind(vm, args, arg_count, has_keyword_args, "read")
+
 proc vm_write_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     when defined(gene_wasm):
@@ -2142,6 +2292,8 @@ proc init_serdes*() =
   let serdes_ns = new_namespace("serdes")
   serdes_ns["serialize".to_key()] = NativeFn(vm_serialize).to_value()
   serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize).to_value()
+  serdes_ns["read_file".to_key()] = NativeFn(vm_read_file).to_value()
+  serdes_ns["read".to_key()] = NativeFn(vm_read).to_value()
   var write_tree_ref = new_ref(VkNativeMacro)
   write_tree_ref.native_macro = vm_write_tree_macro
   serdes_ns["write_tree".to_key()] = write_tree_ref.to_ref_value()
