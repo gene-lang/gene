@@ -304,3 +304,240 @@ suite "filesystem serdes read refs":
       a_path,
       b_path,
     ])
+
+  test "read_dir loads gene children as deterministic name-ordered array":
+    init_all()
+    let root = fresh_dir("dir-array")
+    defer: remove_tree(root)
+    let sessions = joinPath(root, "sessions")
+    createDir(sessions)
+    write_serialized(joinPath(sessions, "b.gene"), "{^id \"b\"}")
+    write_serialized(joinPath(sessions, "a.gene"), "{^id \"a\"}")
+
+    let value = VM.exec("(gene/serdes/read_dir " & gene_string_literal(sessions) & " ^shape \"array\" ^order \"name\")", "filesystem_serdes_read_dir_array")
+
+    check value.kind == VkArray
+    if value.kind == VkArray:
+      let items = array_data(value)
+      check items.len == 2
+      check map_data(items[0])["id".to_key()] == "a".to_value()
+      check map_data(items[1])["id".to_key()] == "b".to_value()
+
+  test "nested read_dir returns basename-keyed map and child refs use child directory":
+    init_all()
+    let root = fresh_dir("dir-map-child-base")
+    defer: remove_tree(root)
+    let bundle = joinPath(root, "bundle")
+    let sessions = joinPath(bundle, "sessions")
+    let cwd_shadow = joinPath(root, "cwd-shadow")
+    createDir(bundle)
+    createDir(sessions)
+    createDir(cwd_shadow)
+
+    let parent_path = joinPath(bundle, "parent.gene")
+    write_serialized_payload(parent_path, "{^sessions (gene/serdes/read_dir \"sessions\" ^shape map ^order name)}")
+    write_serialized_payload(joinPath(sessions, "a.gene"), "{^id \"a\" ^peer (gene/serdes/read_file \"b.gene\")}")
+    write_serialized_payload(joinPath(sessions, "b.gene"), "{^id \"b-from-sessions\"}")
+    write_serialized_payload(joinPath(cwd_shadow, "b.gene"), "{^id \"b-from-cwd\"}")
+
+    let old_cwd = getCurrentDir()
+    setCurrentDir(cwd_shadow)
+    defer: setCurrentDir(old_cwd)
+
+    let value = VM.exec("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_map_child_base")
+
+    check value.kind == VkMap
+    if value.kind == VkMap:
+      let sessions_value = map_data(value)["sessions".to_key()]
+      check sessions_value.kind == VkMap
+      if sessions_value.kind == VkMap:
+        let sessions_map = map_data(sessions_value)
+        check sessions_map.hasKey("a".to_key())
+        check sessions_map.hasKey("b".to_key())
+        let a_value = sessions_map["a".to_key()]
+        let b_value = sessions_map["b".to_key()]
+        check map_data(a_value)["id".to_key()] == "a".to_value()
+        check map_data(b_value)["id".to_key()] == "b-from-sessions".to_value()
+        let peer = map_data(a_value)["peer".to_key()]
+        check map_data(peer)["id".to_key()] == "b-from-sessions".to_value()
+
+  test "read_dir rejects wrong arity non-string paths and no filesystem context":
+    init_all()
+    expect_vm_error_contains("(gene/serdes/read_dir)", "filesystem_serdes_read_dir_arity_zero", [
+      "gene/serdes/read_dir",
+      "wrong arity",
+      "expected 1 path argument",
+    ])
+    expect_vm_error_contains("(gene/serdes/read_dir \"a\" \"b\")", "filesystem_serdes_read_dir_arity_two", [
+      "gene/serdes/read_dir",
+      "wrong arity",
+      "got 2",
+    ])
+    expect_vm_error_contains("(gene/serdes/read_dir 123)", "filesystem_serdes_read_dir_non_string", [
+      "gene/serdes/read_dir",
+      "non-string path",
+      "VkInt",
+    ])
+
+    let payload = "(gene/serialization (gene/serdes/read_dir \"sessions\" ^shape array ^order name))"
+    expect_vm_error_contains("(gene/serdes/deserialize " & gene_string_literal(payload) & ")", "filesystem_serdes_nested_read_dir_no_context", [
+      "gene/serdes/read_dir",
+      "containing file: <direct>",
+      "target: sessions",
+      "no filesystem context",
+    ])
+
+  test "nested read_dir rejects missing unsafe and file targets with context":
+    init_all()
+    let root = fresh_dir("dir-safety")
+    defer: remove_tree(root)
+    let bundle = joinPath(root, "bundle")
+    createDir(bundle)
+    let parent_path = joinPath(bundle, "parent.gene")
+
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"missing\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_missing", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: missing",
+      "resolved: " & joinPath(bundle, "missing"),
+      "missing",
+    ])
+
+    let file_target = joinPath(bundle, "not-dir.gene")
+    write_serialized_payload(file_target, "\"not a directory\"")
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"not-dir.gene\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_file_target", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: not-dir.gene",
+      "resolved: " & file_target,
+      "invalid payload",
+      "target is a file",
+    ])
+
+    let absolute_dir = joinPath(root, "absolute-dir")
+    createDir(absolute_dir)
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir " & gene_string_literal(absolute_dir) & ")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_absolute", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: " & absolute_dir,
+      "absolute path",
+    ])
+
+    let escaped_dir = joinPath(root, "outside")
+    createDir(escaped_dir)
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"../outside\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_escape", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: ../outside",
+      "resolved: " & escaped_dir,
+      "path escape",
+    ])
+
+  test "read_dir rejects unsupported options invalid entries child payloads and cycles":
+    init_all()
+    let root = fresh_dir("dir-invalid")
+    defer: remove_tree(root)
+    let bundle = joinPath(root, "bundle")
+    let sessions = joinPath(bundle, "sessions")
+    createDir(bundle)
+    createDir(sessions)
+    let parent_path = joinPath(bundle, "parent.gene")
+
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\" ^shape set ^order name)}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_bad_shape", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: sessions",
+      "unsupported option",
+      "^shape",
+      "set",
+    ])
+
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\" ^shape array ^order ctime)}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_bad_order", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: sessions",
+      "unsupported option",
+      "^order",
+      "ctime",
+    ])
+
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\" ^unknown true)}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_unknown_prop", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: sessions",
+      "unsupported option",
+      "^unknown",
+    ])
+
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\" ^lazy true)}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_lazy_true", [
+      "gene/serdes/read_dir",
+      "containing file: " & parent_path,
+      "target: sessions",
+      "unsupported option",
+      "^lazy true",
+      "S03",
+    ])
+
+    remove_tree(sessions)
+    createDir(sessions)
+    writeFile(joinPath(sessions, "notes.txt"), "not serialized")
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_unexpected_file", [
+      "gene/serdes/read_dir",
+      "containing file: " & sessions,
+      "target: sessions",
+      "resolved: " & sessions,
+      "invalid payload",
+      "notes.txt",
+    ])
+
+    remove_tree(sessions)
+    createDir(sessions)
+    createDir(joinPath(sessions, "nested"))
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_unexpected_subdir", [
+      "gene/serdes/read_dir",
+      "containing file: " & sessions,
+      "target: sessions",
+      "resolved: " & sessions,
+      "invalid payload",
+      "nested",
+    ])
+
+    remove_tree(sessions)
+    createDir(sessions)
+    let invalid_child = joinPath(sessions, "a.gene")
+    writeFile(invalid_child, "")
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_invalid_child", [
+      "gene/serdes/read_dir",
+      "containing file: " & invalid_child,
+      "target: a.gene",
+      "resolved: " & invalid_child,
+      "invalid payload",
+    ])
+
+    remove_tree(sessions)
+    createDir(sessions)
+    let cyclic_child = joinPath(sessions, "a.gene")
+    write_serialized_payload(cyclic_child, "{^again (gene/serdes/read_dir \".\" ^shape array ^order name)}")
+    write_serialized_payload(parent_path, "{^items (gene/serdes/read_dir \"sessions\")}")
+    expect_vm_error_contains("(gene/serdes/read_file " & gene_string_literal(parent_path) & ")", "filesystem_serdes_nested_read_dir_cycle", [
+      "gene/serdes/read_dir",
+      "containing file: " & cyclic_child,
+      "target: .",
+      "resolved: " & sessions,
+      "cycle",
+      "stack chain",
+      parent_path,
+      sessions,
+      cyclic_child,
+    ])

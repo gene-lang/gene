@@ -39,6 +39,17 @@ type
     enabled: bool
     lazy_nodes: HashSet[string]
 
+  ReadDirShape = enum
+    RdsArray
+    RdsMap
+
+  ReadDirOrder = enum
+    RdoName
+
+  ReadDirOptions = object
+    shape: ReadDirShape
+    order: ReadDirOrder
+
   FilesystemTreeReadStats* = object
     serialized_file_reads*: int
     dir_listings*: int
@@ -1789,6 +1800,88 @@ proc child_filesystem_context(parent_context: FilesystemReadContext, containing_
     read_stack: stack,
   )
 
+proc child_filesystem_directory_context(parent_context: FilesystemReadContext, containing_dir: string): FilesystemReadContext {.gcsafe.} =
+  let normalized_dir = normalizedPath(absolutePath(containing_dir))
+  var stack: seq[string] = @[]
+  if parent_context != nil:
+    stack = parent_context.read_stack
+  stack.add(normalized_dir)
+  FilesystemReadContext(
+    containing_file: normalized_dir,
+    base_dir: normalized_dir,
+    read_stack: stack,
+  )
+
+proc default_read_dir_options(): ReadDirOptions {.inline, gcsafe.} =
+  ReadDirOptions(shape: RdsArray, order: RdoName)
+
+proc read_dir_option_atom(value: Value, option_name, ref_kind: string,
+                          context: FilesystemReadContext, target_path: string): string {.gcsafe.} =
+  case value.kind
+  of VkString, VkSymbol:
+    result = value.str
+  of VkComplexSymbol:
+    if value.ref.csymbol.len == 1:
+      result = value.ref.csymbol[0]
+    else:
+      result = value.ref.csymbol.join("/")
+  else:
+    filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                          "^" & option_name & " must be string or symbol, got " & $value.kind)
+
+proc parse_read_dir_option(options: var ReadDirOptions, key_name: string, prop_value: Value,
+                           ref_kind: string, context: FilesystemReadContext,
+                           target_path: string) {.gcsafe.} =
+  case key_name
+  of "shape":
+    let shape_name = read_dir_option_atom(prop_value, key_name, ref_kind, context, target_path)
+    case shape_name
+    of "array":
+      options.shape = RdsArray
+    of "map":
+      options.shape = RdsMap
+    else:
+      filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                            "^shape unsupported value: " & shape_name & " (supported: array, map)")
+  of "order":
+    let order_name = read_dir_option_atom(prop_value, key_name, ref_kind, context, target_path)
+    case order_name
+    of "name":
+      options.order = RdoName
+    else:
+      filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                            "^order unsupported value: " & order_name & " (supported: name)")
+  of "lazy":
+    if prop_value.kind != VkBool:
+      filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                            "^lazy must be boolean, got " & $prop_value.kind)
+    if prop_value == TRUE:
+      filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                            "^lazy true is deferred to S03 and is not supported for eager S02 reads")
+  else:
+    filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                          "unknown property ^" & key_name)
+
+proc read_dir_options_from_props(props: Table[Key, Value], ref_kind: string,
+                                 context: FilesystemReadContext, target_path: string): ReadDirOptions {.gcsafe.} =
+  result = default_read_dir_options()
+  for key, prop_value in props:
+    parse_read_dir_option(result, key_to_string(key), prop_value, ref_kind, context, target_path)
+
+proc read_dir_options_from_keyword_args(args: ptr UncheckedArray[Value], has_keyword_args: bool,
+                                        ref_kind: string, context: FilesystemReadContext,
+                                        target_path: string): ReadDirOptions {.gcsafe.} =
+  result = default_read_dir_options()
+  if not has_keyword_args:
+    return
+
+  if args == nil or args[0].kind != VkMap:
+    filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                          "keyword arguments must be provided as a map")
+
+  for key, prop_value in map_data(args[0]):
+    parse_read_dir_option(result, key_to_string(key), prop_value, ref_kind, context, target_path)
+
 proc deserialize_with_filesystem_context(value: Value, context: FilesystemReadContext): Value {.gcsafe.} =
   var ser = Serialization(
     references: initTable[string, Value](),
@@ -1840,6 +1933,71 @@ proc read_file_value*(path: string, context: FilesystemReadContext = nil, ref_ki
         raise
       filesystem_read_error(ref_kind, child_context, path, resolved_path, "invalid payload", e.msg)
 
+proc list_read_dir_child_files(path, target_path, ref_kind: string,
+                               context: FilesystemReadContext): seq[string] {.gcsafe.} =
+  try:
+    for kind, entry in walkDir(path, relative = true):
+      case kind
+      of pcFile:
+        if not entry.endsWith(".gene"):
+          filesystem_read_error(ref_kind, context, target_path, path, "invalid payload",
+                                "unexpected non-.gene entry: " & entry)
+        result.add(entry)
+      of pcDir:
+        filesystem_read_error(ref_kind, context, target_path, path, "invalid payload",
+                              "unexpected subdirectory entry: " & entry)
+      of pcLinkToFile, pcLinkToDir:
+        filesystem_read_error(ref_kind, context, target_path, path, "invalid payload",
+                              "unexpected symlink entry: " & entry)
+  except CatchableError as e:
+    if is_filesystem_read_error(e.msg):
+      raise
+    filesystem_read_error(ref_kind, context, target_path, path, "invalid payload", e.msg)
+
+  result.sort()
+
+proc read_dir_value(path: string, options: ReadDirOptions, context: FilesystemReadContext = nil,
+                    ref_kind = "read_dir"): Value {.gcsafe.} =
+  when defined(gene_wasm):
+    filesystem_read_error(ref_kind, context, path, "", "unsupported option", "filesystem reads are not supported in gene_wasm")
+  else:
+    var resolved_path = resolve_filesystem_read_target(context, path, ref_kind)
+    if context != nil and filesystem_stack_contains(context.read_stack, resolved_path):
+      filesystem_read_error(ref_kind, context, path, resolved_path, "cycle", "target is already in the filesystem read stack")
+
+    if fileExists(resolved_path):
+      filesystem_read_error(ref_kind, context, path, resolved_path, "invalid payload", "target is a file, expected a directory")
+    if not dirExists(resolved_path):
+      filesystem_read_error(ref_kind, context, path, resolved_path, "missing", "directory does not exist")
+
+    let canonical_path = canonical_existing_filesystem_path(resolved_path)
+    if context != nil:
+      let canonical_base = canonical_existing_filesystem_path(context.base_dir)
+      if not filesystem_is_subpath(canonical_base, canonical_path):
+        filesystem_read_error(ref_kind, context, path, canonical_path, "path escape", "nested filesystem ref leaves containing directory after canonicalization")
+      if filesystem_stack_contains(context.read_stack, canonical_path):
+        filesystem_read_error(ref_kind, context, path, canonical_path, "cycle", "target is already in the filesystem read stack")
+    resolved_path = canonical_path
+
+    let dir_context = child_filesystem_directory_context(context, resolved_path)
+    let child_files = list_read_dir_child_files(resolved_path, path, ref_kind, dir_context)
+
+    case options.order
+    of RdoName:
+      discard
+
+    case options.shape
+    of RdsArray:
+      result = new_array_value()
+      for child_file in child_files:
+        array_data(result).add(read_file_value(child_file, dir_context, ref_kind))
+    of RdsMap:
+      result = new_map_value()
+      map_data(result) = initTable[Key, Value]()
+      for child_file in child_files:
+        let key_name = splitFile(child_file).name
+        map_data(result)[key_name.to_key()] = read_file_value(child_file, dir_context, ref_kind)
+
 proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene): Value {.gcsafe.} =
   const ref_kind = "read_file"
   let target_hint =
@@ -1877,6 +2035,32 @@ proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene): Value {.gcs
                           "serialized read_file refs require a containing file")
 
   read_file_value(target_path, self.filesystem_context, ref_kind)
+
+proc deserialize_read_dir_ref(self: Serialization, gene: ptr Gene): Value {.gcsafe.} =
+  const ref_kind = "read_dir"
+  let target_hint =
+    if gene.children.len > 0:
+      if gene.children[0].kind == VkString: gene.children[0].str else: $gene.children[0].kind
+    else:
+      ""
+
+  if gene.children.len != 1:
+    filesystem_read_error(ref_kind, self.filesystem_context, target_hint, "", "wrong arity",
+                          "expected 1 path argument, got " & $gene.children.len)
+
+  let path_value = gene.children[0]
+  let target_path = target_hint
+  if path_value.kind != VkString:
+    filesystem_read_error(ref_kind, self.filesystem_context, target_path, "", "non-string path",
+                          "path argument must be a string, got " & $path_value.kind)
+
+  let options = read_dir_options_from_props(gene.props, ref_kind, self.filesystem_context, target_path)
+
+  if self.filesystem_context == nil:
+    filesystem_read_error(ref_kind, nil, target_path, "", "no filesystem context",
+                          "serialized read_dir refs require a containing file")
+
+  read_dir_value(target_path, options, self.filesystem_context, ref_kind)
 
 proc deref*(self: Serialization, s: string): Value =
   path_to_value(s)
@@ -1991,6 +2175,8 @@ proc deserialize*(self: Serialization, value: Value): Value =
         return NIL
     of "gene/serdes/read_file":
       return self.deserialize_read_file_ref(value.gene)
+    of "gene/serdes/read_dir":
+      return self.deserialize_read_dir_ref(value.gene)
     of "NamespaceRef", "ClassRef", "FunctionRef", "EnumRef", "InstanceRef":
       return resolve_typed_ref(value.gene)
     of "TupleRef":
@@ -2313,6 +2499,24 @@ proc vm_read(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count:
              has_keyword_args: bool): Value {.gcsafe, nimcall.} =
   vm_read_file_with_kind(vm, args, arg_count, has_keyword_args, "read")
 
+proc vm_read_dir(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
+                 has_keyword_args: bool): Value {.gcsafe, nimcall.} =
+  discard vm
+  {.cast(gcsafe).}:
+    let positional_count = get_positional_count(arg_count, has_keyword_args)
+    if positional_count != 1:
+      filesystem_read_error("read_dir", nil, "", "", "wrong arity",
+                            "expected 1 path argument, got " & $positional_count)
+
+    let path_arg = get_positional_arg(args, 0, has_keyword_args)
+    let target_path = if path_arg.kind == VkString: path_arg.str else: $path_arg.kind
+    if path_arg.kind != VkString:
+      filesystem_read_error("read_dir", nil, target_path, "", "non-string path",
+                            "path argument must be a string, got " & $path_arg.kind)
+
+    let options = read_dir_options_from_keyword_args(args, has_keyword_args, "read_dir", nil, target_path)
+    read_dir_value(path_arg.str, options, nil, "read_dir")
+
 proc vm_write_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     when defined(gene_wasm):
@@ -2356,6 +2560,7 @@ proc init_serdes*() =
   serdes_ns["deserialize".to_key()] = NativeFn(vm_deserialize).to_value()
   serdes_ns["read_file".to_key()] = NativeFn(vm_read_file).to_value()
   serdes_ns["read".to_key()] = NativeFn(vm_read).to_value()
+  serdes_ns["read_dir".to_key()] = NativeFn(vm_read_dir).to_value()
   var write_tree_ref = new_ref(VkNativeMacro)
   write_tree_ref.native_macro = vm_write_tree_macro
   serdes_ns["write_tree".to_key()] = write_tree_ref.to_ref_value()
