@@ -35,6 +35,30 @@ type
   TreeWriteOptions = object
     directory_nodes: HashSet[string]
 
+  WriteSelector = object
+    segments: seq[string]
+    display: string
+
+  PendingWriteChild = object
+    selector_display: string
+    relative_path: string
+    absolute_path: string
+    serialized_text: string
+
+  WriteOptions = object
+    externalize_selectors: seq[WriteSelector]
+    selectors_by_key: Table[string, WriteSelector]
+    external_dir_rel: string
+    external_dir_abs: string
+    parent_dir_abs: string
+    target_path: string
+
+  WritePayloadState = object
+    serializer: Serialization
+    children: seq[PendingWriteChild]
+    child_paths: Table[string, string]
+    found_selectors: HashSet[string]
+
   LazyTreeReadOptions = object
     enabled: bool
     lazy_nodes: HashSet[string]
@@ -100,6 +124,7 @@ proc tag_stdlib_serialization_origins*() {.gcsafe.}
 proc set_serdes_module_loader_hook*(hook: SerdesModuleLoaderHook) {.inline.}
 
 proc key_to_string(k: Key): string {.inline, gcsafe.}
+proc filesystem_is_subpath(base_path, candidate_path: string): bool {.inline, gcsafe.}
 
 proc read_tree_dir(path: string, node_segments: seq[string], options: LazyTreeReadOptions, shallow: bool): Value {.gcsafe.}
 
@@ -1348,17 +1373,373 @@ proc write_serialized_file(path: string, value: Value) =
   write_serialized_text_file(path, value_to_serialized_text(value))
 
 proc filesystem_write_error(target_path, reason, detail: string,
-                            option = "", child_path = "") {.noreturn, gcsafe.} =
+                            option = "", child_path = "", selector = "") {.noreturn, gcsafe.} =
   var message = "gene/serdes/write failed"
   message &= "; reason: " & reason
   message &= "; target: " & (if target_path.len > 0: target_path else: "<missing>")
   if option.len > 0:
     message &= "; option: ^" & option
+  if selector.len > 0:
+    message &= "; selector: " & selector
   if child_path.len > 0:
     message &= "; child: " & child_path
   if detail.len > 0:
     message &= "; detail: " & detail
   not_allowed(message)
+
+proc is_filesystem_write_error(message: string): bool {.inline, gcsafe.} =
+  message.startsWith("gene/serdes/write failed")
+
+proc write_selector_display(segments: openArray[string]): string =
+  if segments.len == 0:
+    return "/"
+  "/" & @segments.join("/")
+
+proc raw_write_selector_label(selector: Value): string =
+  case selector.kind
+  of VkString, VkSymbol:
+    selector.str
+  of VkComplexSymbol:
+    selector.ref.csymbol.join("/")
+  of VkSelector:
+    "@(" & selector.ref.selector_pattern & ")"
+  else:
+    $selector.kind
+
+proc parse_write_selector(selector: Value, target_path: string): WriteSelector {.gcsafe.} =
+  var parts: seq[string]
+  case selector.kind
+  of VkComplexSymbol:
+    parts = selector.ref.csymbol
+  of VkSelector:
+    parts = @[""]
+    for segment in selector.ref.selector_path:
+      case segment.kind
+      of VkString, VkSymbol:
+        parts.add(segment.str)
+      of VkInt:
+        parts.add($segment.to_int())
+      else:
+        filesystem_write_error(target_path, "malformed selector",
+                               "^externalize selector segments must be strings, symbols, or integers; got " & $segment.kind,
+                               "externalize", "", raw_write_selector_label(selector))
+  of VkString, VkSymbol:
+    parts = split_tree_selector_path(selector.str)
+  else:
+    filesystem_write_error(target_path, "malformed selector",
+                           "^externalize entries must be selectors, strings, or symbols; got " & $selector.kind,
+                           "externalize", "", raw_write_selector_label(selector))
+
+  if parts.len > 0 and parts[0] == "self":
+    parts[0] = ""
+
+  if parts.len == 0 or parts[0] != "":
+    filesystem_write_error(target_path, "malformed selector",
+                           "^externalize selectors must be absolute child selectors such as /profile",
+                           "externalize", "", raw_write_selector_label(selector))
+  if parts.len < 2:
+    filesystem_write_error(target_path, "malformed selector",
+                           "^externalize selectors must target a child value, got root selector",
+                           "externalize", "", raw_write_selector_label(selector))
+
+  result.segments = @[]
+  for part in parts[1 .. ^1]:
+    if part.len == 0:
+      filesystem_write_error(target_path, "malformed selector",
+                             "^externalize selectors cannot contain empty path segments",
+                             "externalize", "", raw_write_selector_label(selector))
+    if part in ["*", "**", "@", "@@", "!"]:
+      filesystem_write_error(target_path, "malformed selector",
+                             "wildcard/old selector forms are unsupported for ^externalize; use exact child selectors",
+                             "externalize", "", write_selector_display(result.segments & @[part]))
+    result.segments.add(part)
+  result.display = write_selector_display(result.segments)
+
+proc write_selector_key(selector: WriteSelector): string {.inline, gcsafe.} =
+  tree_path_key(selector.segments)
+
+proc selector_is_strict_prefix(prefix, value: openArray[string]): bool {.gcsafe.} =
+  if prefix.len >= value.len:
+    return false
+  for i in 0..<prefix.len:
+    if prefix[i] != value[i]:
+      return false
+  true
+
+proc add_write_selector(options: var WriteOptions, selector: WriteSelector) {.gcsafe.} =
+  let key = write_selector_key(selector)
+  if options.selectors_by_key.hasKey(key):
+    filesystem_write_error(options.target_path, "duplicate selector",
+                           "duplicate ^externalize selector " & selector.display,
+                           "externalize", "", selector.display)
+
+  for existing in options.externalize_selectors:
+    if selector_is_strict_prefix(existing.segments, selector.segments) or
+       selector_is_strict_prefix(selector.segments, existing.segments):
+      filesystem_write_error(options.target_path, "conflicting selector",
+                             "^externalize selectors cannot select both an ancestor and descendant: " &
+                               existing.display & " conflicts with " & selector.display,
+                             "externalize", "", selector.display)
+
+  options.externalize_selectors.add(selector)
+  options.selectors_by_key[key] = selector
+
+proc target_parent_dir_abs(target_path: string): string {.gcsafe.} =
+  let parent = parentDir(target_path)
+  let effective_parent = if parent.len == 0 or parent == ".": "." else: parent
+  normalizedPath(absolutePath(effective_parent))
+
+proc default_external_dir_rel(target_path: string): string =
+  let split = splitFile(target_path)
+  let stem = if split.name.len > 0: split.name else: "externalized"
+  stem & ".files"
+
+proc resolve_default_external_dir(target_path, parent_dir_abs: string): tuple[relPath: string, absPath: string] {.gcsafe.} =
+  result.relPath = default_external_dir_rel(target_path)
+  result.absPath = normalizedPath(absolutePath(result.relPath, parent_dir_abs))
+
+proc resolve_external_dir_option(value: Value, target_path, parent_dir_abs: string): tuple[relPath: string, absPath: string] {.gcsafe.} =
+  if value.kind != VkString:
+    filesystem_write_error(target_path, "unsafe external dir",
+                           "^external_dir must be a non-empty relative string, got " & $value.kind,
+                           "external_dir")
+  let raw = value.str
+  if raw.len == 0:
+    filesystem_write_error(target_path, "unsafe external dir",
+                           "^external_dir must not be empty",
+                           "external_dir")
+  if raw.isAbsolute:
+    filesystem_write_error(target_path, "unsafe external dir",
+                           "^external_dir must be relative, got absolute path",
+                           "external_dir")
+
+  let parts = raw.split({'/', '\\'})
+  for part in parts:
+    if part.len == 0 or part == "." or part == "..":
+      filesystem_write_error(target_path, "unsafe external dir",
+                             "^external_dir must contain only non-traversing relative path segments",
+                             "external_dir")
+
+  result.relPath = parts.join($DirSep)
+  result.absPath = normalizedPath(absolutePath(result.relPath, parent_dir_abs))
+  if result.absPath == parent_dir_abs or not filesystem_is_subpath(parent_dir_abs, result.absPath):
+    filesystem_write_error(target_path, "unsafe external dir",
+                           "^external_dir resolves outside the parent file directory",
+                           "external_dir", result.relPath)
+
+  let target_abs = normalizedPath(absolutePath(target_path))
+  if result.absPath == target_abs:
+    filesystem_write_error(target_path, "unsafe external dir",
+                           "^external_dir collides with the target file path",
+                           "external_dir", result.relPath)
+
+proc build_write_options(props: Table[Key, Value], target_path: string): WriteOptions {.gcsafe.} =
+  result.selectors_by_key = initTable[string, WriteSelector]()
+  result.externalize_selectors = @[]
+  result.parent_dir_abs = target_parent_dir_abs(target_path)
+  result.target_path = target_path
+  let default_dir = resolve_default_external_dir(target_path, result.parent_dir_abs)
+  result.external_dir_rel = default_dir.relPath
+  result.external_dir_abs = default_dir.absPath
+  var saw_external_dir = false
+
+  for key, prop_value in props:
+    let option_name = key_to_string(key)
+    case option_name
+    of "externalize":
+      if prop_value.kind != VkArray:
+        filesystem_write_error(target_path, "malformed selector",
+                               "^externalize expects an array of absolute selectors",
+                               "externalize")
+      for selector_value in array_data(prop_value):
+        result.add_write_selector(parse_write_selector(selector_value, target_path))
+    of "external_dir":
+      saw_external_dir = true
+      let resolved = resolve_external_dir_option(prop_value, target_path, result.parent_dir_abs)
+      result.external_dir_rel = resolved.relPath
+      result.external_dir_abs = resolved.absPath
+    of "separate":
+      filesystem_write_error(target_path, "unsupported option",
+                             "old ^separate tree-serdes input is not supported; use ^externalize",
+                             option_name)
+    else:
+      filesystem_write_error(target_path, "unsupported option",
+                             "unknown property ^" & option_name, option_name)
+
+  if saw_external_dir and result.externalize_selectors.len == 0:
+    filesystem_write_error(target_path, "unsupported option",
+                           "^external_dir requires at least one ^externalize selector",
+                           "external_dir", result.external_dir_rel)
+
+proc selected_write_selector(options: WriteOptions, segments: openArray[string]): tuple[found: bool, selector: WriteSelector] {.gcsafe.} =
+  let key = tree_path_key(segments)
+  if options.selectors_by_key.hasKey(key):
+    return (true, options.selectors_by_key[key])
+  (false, WriteSelector())
+
+proc safe_encoded_child_segment(segment: string, options: WriteOptions, selector: WriteSelector): string {.gcsafe.} =
+  if segment.len == 0:
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "generated child path contains an empty selector segment",
+                           "externalize", "", selector.display)
+  result = encode_path_segment(segment)
+  if result.len == 0 or result == "." or result == ".." or '/' in result or '\\' in result:
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "generated child path segment is unsafe: " & result,
+                           "externalize", "", selector.display)
+
+proc externalized_child_file(options: WriteOptions, selector: WriteSelector): tuple[relativePath: string, absolutePath: string] {.gcsafe.} =
+  result.relativePath = options.external_dir_rel
+  for index, segment in selector.segments:
+    var encoded = safe_encoded_child_segment(segment, options, selector)
+    if index == selector.segments.len - 1:
+      encoded &= ".gene"
+    result.relativePath = joinPath(result.relativePath, encoded)
+
+  result.absolutePath = normalizedPath(absolutePath(result.relativePath, options.parent_dir_abs))
+  if result.absolutePath == options.external_dir_abs or not filesystem_is_subpath(options.external_dir_abs, result.absolutePath):
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "generated child path escapes the external directory",
+                           "externalize", result.relativePath, selector.display)
+  if dirExists(result.absolutePath):
+    filesystem_write_error(options.target_path, "child path collision",
+                           "generated child file path is already a directory",
+                           "externalize", result.relativePath, selector.display)
+
+  var parent = parentDir(result.absolutePath)
+  while parent.len > 0 and parent != options.external_dir_abs and filesystem_is_subpath(options.external_dir_abs, parent):
+    if fileExists(parent):
+      filesystem_write_error(options.target_path, "child path collision",
+                             "generated child parent path is already a file",
+                             "externalize", result.relativePath, selector.display)
+    let next_parent = parentDir(parent)
+    if next_parent == parent:
+      break
+    parent = next_parent
+
+proc new_read_file_ref(relative_path: string): Value =
+  let gene = new_gene(@["gene", "serdes", "read_file"].to_complex_symbol())
+  gene.children.add(relative_path.to_value())
+  gene.to_gene_value()
+
+proc externalize_selected_value(value: Value, options: WriteOptions, selector: WriteSelector,
+                                state: var WritePayloadState): Value =
+  if value.kind in {VkArray, VkMap}:
+    filesystem_write_error(options.target_path, "unsupported shape",
+                           "selected arrays/maps require read_dir externalization, which is not part of this file-ref task",
+                           "externalize", "", selector.display)
+
+  let child = externalized_child_file(options, selector)
+  if state.child_paths.hasKey(child.absolutePath):
+    filesystem_write_error(options.target_path, "child path collision",
+                           "generated child path collides with selector " & state.child_paths[child.absolutePath],
+                           "externalize", child.relativePath, selector.display)
+
+  var child_text: string
+  try:
+    child_text = value_to_serialized_text(value)
+  except CatchableError as e:
+    if is_filesystem_write_error(e.msg):
+      raise
+    filesystem_write_error(options.target_path, "serialization failed", e.msg,
+                           "externalize", child.relativePath, selector.display)
+
+  state.child_paths[child.absolutePath] = selector.display
+  state.children.add(PendingWriteChild(
+    selector_display: selector.display,
+    relative_path: child.relativePath,
+    absolute_path: child.absolutePath,
+    serialized_text: child_text,
+  ))
+  new_read_file_ref(child.relativePath)
+
+proc build_write_payload(value: Value, segments: seq[string], options: WriteOptions,
+                         state: var WritePayloadState): Value =
+  let current = materialize_custom_value(value)
+  let selected = selected_write_selector(options, segments)
+  if selected.found:
+    let key = tree_path_key(segments)
+    state.found_selectors.incl(key)
+    return externalize_selected_value(current, options, selected.selector, state)
+
+  case current.kind
+  of VkArray:
+    result = new_array_value(@[], frozen = array_is_frozen(current))
+    for index, item in array_data(current):
+      array_data(result).add(build_write_payload(item, segments & @[$index], options, state))
+  of VkMap:
+    result = new_map_value(map_is_frozen(current))
+    map_data(result) = initTable[Key, Value]()
+    for k, v in map_data(current):
+      let key_name = key_to_string(k)
+      map_data(result)[k] = build_write_payload(v, segments & @[key_name], options, state)
+  of VkGene:
+    let gene = new_gene(state.serializer.serialize(current.gene.type), frozen = gene_is_frozen(current))
+    for k, v in current.gene.props:
+      let key_name = key_to_string(k)
+      gene.props[k] = build_write_payload(v, segments & @[key_name], options, state)
+    for index, child in current.gene.children:
+      gene.children.add(build_write_payload(child, segments & @[$index], options, state))
+    result = gene.to_gene_value()
+  else:
+    result = state.serializer.serialize(current)
+
+proc build_externalized_write(path: string, value: Value, options: WriteOptions): tuple[parentText: string, children: seq[PendingWriteChild]] =
+  var state = WritePayloadState(
+    serializer: Serialization(references: initTable[string, Value]()),
+    children: @[],
+    child_paths: initTable[string, string](),
+    found_selectors: initHashSet[string](),
+  )
+
+  var parent_payload: Value
+  try:
+    parent_payload = build_write_payload(value, @[], options, state)
+    for selector in options.externalize_selectors:
+      let key = write_selector_key(selector)
+      if not state.found_selectors.contains(key):
+        filesystem_write_error(path, "missing selector target",
+                               "^externalize selector did not match any value",
+                               "externalize", "", selector.display)
+    result.parentText = payload_to_serialized_text(parent_payload)
+  except CatchableError as e:
+    if is_filesystem_write_error(e.msg):
+      raise
+    filesystem_write_error(path, "serialization failed", e.msg)
+
+  state.children.sort(proc(a, b: PendingWriteChild): int = cmp(a.relative_path, b.relative_path))
+  result.children = state.children
+
+proc write_externalized_value_file*(path: string, value: Value, options: WriteOptions) =
+  when defined(gene_wasm):
+    filesystem_write_error(path, "unsupported option", "filesystem writes are not supported in gene_wasm")
+  else:
+    let materialized = materialize_custom_deep(value)
+    let built = build_externalized_write(path, materialized, options)
+
+    try:
+      ensure_parent_dir(path)
+    except CatchableError as e:
+      filesystem_write_error(path, "filesystem write failed", e.msg)
+
+    if dirExists(path):
+      filesystem_write_error(path, "filesystem write failed", "target path is a directory")
+    if fileExists(options.external_dir_abs):
+      filesystem_write_error(path, "child path collision",
+                             "external directory path is already a file",
+                             "externalize", options.external_dir_rel)
+
+    for child in built.children:
+      try:
+        write_serialized_text_file(child.absolute_path, child.serialized_text)
+      except CatchableError as e:
+        filesystem_write_error(path, "filesystem write failed", e.msg,
+                               "externalize", child.relative_path, child.selector_display)
+
+    try:
+      write_serialized_text_file(path, built.parentText)
+    except CatchableError as e:
+      filesystem_write_error(path, "filesystem write failed", e.msg)
 
 proc write_value_file*(path: string, value: Value) =
   when defined(gene_wasm):
@@ -2729,12 +3110,6 @@ proc vm_read_dir(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_co
     let options = read_dir_options_from_keyword_args(args, has_keyword_args, "read_dir", nil, target_path)
     read_dir_value(path_arg.str, options, nil, "read_dir")
 
-proc reject_write_keyword_options(props: Table[Key, Value], target_path: string) {.gcsafe.} =
-  for key, _ in props:
-    let option_name = key_to_string(key)
-    filesystem_write_error(target_path, "unsupported option",
-                           "unknown property ^" & option_name, option_name)
-
 proc vm_write_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if gene_value.kind != VkGene:
@@ -2750,10 +3125,12 @@ proc vm_write_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Fra
       filesystem_write_error(target_path, "non-string path",
                              "path argument must be a string, got " & $path_arg.kind)
 
-    reject_write_keyword_options(gene_value.gene.props, target_path)
-
+    let options = build_write_options(gene_value.gene.props, target_path)
     let value = eval_in_caller_context(vm, gene_value.gene.children[1], caller_frame)
-    write_value_file(path_arg.str, value)
+    if options.externalize_selectors.len > 0:
+      write_externalized_value_file(path_arg.str, value, options)
+    else:
+      write_value_file(path_arg.str, value)
     NIL
 
 proc vm_write_tree_macro(vm: ptr VirtualMachine, gene_value: Value, caller_frame: Frame): Value {.gcsafe.} =
