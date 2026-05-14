@@ -351,12 +351,6 @@ proc adapter_get_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key): V
       raise new_exception(types.Exception, "Adapter pseudo-member _wrapped is only available inside adapter implementation bodies")
     return adapter.inner
 
-  if key == "_genevalue".to_key():
-    raise new_exception(types.Exception, "Adapter pseudo-member _genevalue is retired; use _wrapped inside adapter implementation bodies")
-
-  if key == "_geneinternal".to_key():
-    raise new_exception(types.Exception, "Adapter pseudo-member _geneinternal is retired; declare adapter-owned fields instead")
-
   if private_access and impl.owned_fields.has_key(key):
     return adapter.own_data.get_or_default(key, NIL)
 
@@ -425,10 +419,6 @@ proc adapter_set_member(vm: ptr VirtualMachine, adapter_val: Value, key: Key, va
 
   if key == "_wrapped".to_key():
     raise new_exception(types.Exception, "Adapter pseudo-member _wrapped is readonly")
-  if key == "_genevalue".to_key():
-    raise new_exception(types.Exception, "Adapter pseudo-member _genevalue is retired; use _wrapped inside adapter implementation bodies")
-  if key == "_geneinternal".to_key():
-    raise new_exception(types.Exception, "Adapter pseudo-member _geneinternal is retired; declare adapter-owned fields instead")
 
   if private_access and impl.owned_fields.has_key(key):
     adapter.own_data[key] = value

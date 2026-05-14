@@ -24,9 +24,9 @@
 
 (implement Readable for DataBuffer
   (method read []
-    (/_genevalue .get_data))
+    (/_wrapped .get_data))
   (method close []
-    (/_genevalue .set_data "")))
+    (/_wrapped .set_data "")))
 
 (class TourShape
   (method area []
