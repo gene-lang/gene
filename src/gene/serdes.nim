@@ -145,6 +145,8 @@ proc is_lazy_file_ref_value*(value: Value): bool {.inline, gcsafe.} =
 
 proc materialize_lazy_tree_value*(value: Value): Value {.gcsafe.}
 proc materialize_lazy_file_ref_value*(value: Value): Value {.gcsafe.}
+proc materialize_custom_value(value: Value): Value {.inline, gcsafe.}
+proc materialize_custom_deep*(value: Value): Value {.gcsafe.}
 proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.}
 proc find_live_origin(target: Value): tuple[found: bool, origin: SerializationOrigin] {.gcsafe.}
 proc class_to_value(self: Class): Value {.inline, gcsafe.}
@@ -877,7 +879,7 @@ proc serialize*(value: Value): Serialization =
   result.data = result.serialize(value)
 
 proc serialize*(self: Serialization, value: Value): Value =
-  let value = materialize_lazy_tree_value(value)
+  let value = materialize_custom_value(value)
   case value.kind:
   of VkNil, VkVoid, VkBool, VkInt, VkFloat, VkChar:
     return value
@@ -1160,26 +1162,34 @@ proc materialize_lazy_tree_value*(value: Value): Value {.gcsafe.} =
     data.materialized_loaded = true
   data.materialized
 
-proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.} =
-  let current = materialize_lazy_tree_value(value)
+proc materialize_custom_value(value: Value): Value {.inline, gcsafe.} =
+  if has_custom_materializer(value):
+    return materialize_custom(value)
+  value
+
+proc materialize_custom_deep*(value: Value): Value {.gcsafe.} =
+  let current = materialize_custom_value(value)
   case current.kind
   of VkArray:
     result = new_array_value(@[], frozen = array_is_frozen(current))
     for item in array_data(current):
-      array_data(result).add(materialize_lazy_tree_deep(item))
+      array_data(result).add(materialize_custom_deep(item))
   of VkMap:
     result = new_map_value(map_is_frozen(current))
     for k, v in map_data(current):
-      map_data(result)[k] = materialize_lazy_tree_deep(v)
+      map_data(result)[k] = materialize_custom_deep(v)
   of VkGene:
-    let gene = new_gene(materialize_lazy_tree_deep(current.gene.type), frozen = gene_is_frozen(current))
+    let gene = new_gene(materialize_custom_deep(current.gene.type), frozen = gene_is_frozen(current))
     for k, v in current.gene.props:
-      gene.props[k] = materialize_lazy_tree_deep(v)
+      gene.props[k] = materialize_custom_deep(v)
     for child in current.gene.children:
-      gene.children.add(materialize_lazy_tree_deep(child))
+      gene.children.add(materialize_custom_deep(child))
     result = gene.to_gene_value()
   else:
     result = current
+
+proc materialize_lazy_tree_deep*(value: Value): Value {.gcsafe.} =
+  materialize_custom_deep(value)
 
 proc payload_to_serialized_text(payload: Value): string =
   "(gene/serialization " & value_to_gene_str(payload) & ")"
@@ -1193,7 +1203,7 @@ proc mix_tree_hash(result: var Hash, marker: string) {.inline.} =
   result = result !& hash(marker)
 
 proc tree_serialized_hash(value: Value): Hash =
-  let value = materialize_lazy_tree_value(value)
+  let value = materialize_custom_value(value)
   var result_hash: Hash = 0
   case value.kind:
   of VkNil:
@@ -1434,7 +1444,7 @@ proc write_gene_dir(path: string, gene_value: Value, node_segments: seq[string],
     write_array_dir(children_path, children_value, children_segments, options)
 
 proc write_tree_node(path: string, value: Value, node_segments: seq[string], options: TreeWriteOptions, known_map = false) =
-  let value = materialize_lazy_tree_deep(value)
+  let value = materialize_custom_deep(value)
   remove_tree_base(path)
 
   if should_write_dir(options, node_segments):
@@ -1678,7 +1688,7 @@ proc to_s*(self: Serialization): string =
   result = payload_to_serialized_text(self.data)
 
 proc value_to_gene_str*(self: Value): string =
-  let self = materialize_lazy_tree_value(self)
+  let self = materialize_custom_value(self)
   case self.kind:
   of VkNil:
     result = "nil"
@@ -2365,7 +2375,7 @@ proc eval_in_caller_context(vm: ptr VirtualMachine, expr: Value, caller_frame: F
     not_allowed("write_tree macro arguments must be literals or symbols")
 
 proc write_tree_root(path: string, value: Value, options: TreeWriteOptions) =
-  let value = materialize_lazy_tree_deep(value)
+  let value = materialize_custom_deep(value)
   if path.endsWith(".gene"):
     if options.directory_nodes.len > 0:
       not_allowed("write_tree cannot use a .gene path when ^separate requires directories")
@@ -2613,7 +2623,7 @@ proc vm_serialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     if arg_count != 1:
       not_allowed("serialize expects 1 argument")
 
-    let value = materialize_lazy_tree_deep(get_positional_arg(args, 0, has_keyword_args))
+    let value = materialize_custom_deep(get_positional_arg(args, 0, has_keyword_args))
     return value_to_serialized_text(value).to_value()
 
 proc vm_deserialize(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =

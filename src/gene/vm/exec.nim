@@ -1927,6 +1927,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         let i = inst.arg0.int64
         var value: Value
         self.frame.pop2(value)
+        if has_custom_materializer(value):
+          value = materialize_custom(value)
         case value.kind:
           of VkArray:
             let arr_len = array_data(value).len.int64
@@ -1954,6 +1956,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         self.frame.pop2(index)
         var collection: Value
         self.frame.pop2(collection)
+        if has_custom_materializer(collection):
+          collection = materialize_custom(collection)
         let i = index.int64.int
         when not defined(release):
           if self.trace:
@@ -3464,7 +3468,7 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkVarLeValue, IkVarGtValue, IkVarGeValue, IkVarEqValue:
         {.push checks: off}
         let cmp_kind = inst.kind
-        let var_value = if inst.arg1 == 0:
+        var var_value = if inst.arg1 == 0:
           self.frame.scope.members[inst.arg0.int64]
         else:
           var scope = self.frame.scope
@@ -3474,7 +3478,13 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         self.pc.inc()
         let data_inst = self.cu.instructions[self.pc].addr
-        let literal_value = data_inst.arg0
+        var literal_value = data_inst.arg0
+        let materialized_for_eq = has_custom_materializer(var_value) or has_custom_materializer(literal_value)
+        if materialized_for_eq:
+          if has_custom_materializer(var_value):
+            var_value = materialize_custom(var_value)
+          if has_custom_materializer(literal_value):
+            literal_value = materialize_custom(literal_value)
 
         template compare(opInt, opFloat, desc: untyped) =
           case var_value.kind:
@@ -3508,8 +3518,22 @@ proc exec*(self: ptr VirtualMachine): Value =
           of IkVarGeValue:
             compare(gte_int_fast, gte_float_fast, ">=")
           of IkVarEqValue:
-            # Special handling for == to support custom == methods on instances
-            if var_value.kind == VkInstance:
+            # Special handling for == to support custom == methods on instances.
+            # If either side was a generic lazy custom value, compare the materialized
+            # logical values instead of routing through the numeric-only shortcut.
+            if materialized_for_eq:
+              if var_value.kind == VkInstance:
+                let cls = var_value.instance_class
+                let meth = cls.get_method("==")
+                if meth != nil:
+                  if self.invoke_method_value(var_value, meth, [literal_value]):
+                    inst = self.cu.instructions[self.pc].addr
+                    continue
+                else:
+                  self.frame.push((var_value == literal_value).to_value())
+              else:
+                self.frame.push((var_value == literal_value).to_value())
+            elif var_value.kind == VkInstance:
               let cls = var_value.instance_class
               let meth = cls.get_method("==")
               if meth != nil:
@@ -3658,8 +3682,12 @@ proc exec*(self: ptr VirtualMachine): Value =
             not_allowed("Cannot compare " & $first.kind & " >= " & $second.kind)
 
       of IkEq:
-        let second = self.frame.pop()
-        let first = self.frame.pop()
+        var second = self.frame.pop()
+        var first = self.frame.pop()
+        if has_custom_materializer(first):
+          first = materialize_custom(first)
+        if has_custom_materializer(second):
+          second = materialize_custom(second)
         # Use fast path for numeric types
         if first.kind == VkInt and second.kind == VkInt:
           self.frame.push(eq_int_fast(first.int64, second.int64))
@@ -3680,8 +3708,12 @@ proc exec*(self: ptr VirtualMachine): Value =
           self.frame.push((first == second).to_value())
 
       of IkNe:
-        let second = self.frame.pop()
-        let first = self.frame.pop()
+        var second = self.frame.pop()
+        var first = self.frame.pop()
+        if has_custom_materializer(first):
+          first = materialize_custom(first)
+        if has_custom_materializer(second):
+          second = materialize_custom(second)
         if first.kind == VkInt and second.kind == VkInt:
           self.frame.push(neq_int_fast(first.int64, second.int64))
         elif first.kind == VkFloat and second.kind == VkFloat:

@@ -289,3 +289,83 @@ suite "filesystem serdes lazy refs":
     expect_vm_error_not_contains("(gene/serdes/read_dir " & gene_string_literal(sessions) & " ^lazy true)", "filesystem_serdes_lazy_read_dir_no_s03", [
       "deferred to S03",
     ])
+
+  test "lazy refs are transparent for index access equality and serialization":
+    init_all()
+    let root = fresh_dir("transparent-access")
+    defer: remove_tree(root)
+    let array_path = joinPath(root, "array.gene")
+    let gene_path = joinPath(root, "gene.gene")
+    write_serialized_payload(array_path, "[\"first\" {^name \"nested-array\"}]")
+    write_serialized_payload(gene_path, "(record {^name \"nested-gene\"})")
+
+    let array_index = VM.exec("""
+      (var lazy (gene/serdes/read_file """ & gene_string_literal(array_path) & """ ^lazy true))
+      lazy/0
+    """, "filesystem_serdes_lazy_array_index")
+    check array_index == "first".to_value()
+
+    let nested_array_selector = VM.exec("""
+      (var lazy (gene/serdes/read_file """ & gene_string_literal(array_path) & """ ^lazy true))
+      lazy/1/name
+    """, "filesystem_serdes_lazy_array_nested_selector")
+    check nested_array_selector == "nested-array".to_value()
+
+    let nested_gene_selector = VM.exec("""
+      (var lazy (gene/serdes/read_file """ & gene_string_literal(gene_path) & """ ^lazy true))
+      lazy/0/name
+    """, "filesystem_serdes_lazy_gene_nested_selector")
+    check nested_gene_selector == "nested-gene".to_value()
+
+    let equality = VM.exec("""
+      (var lazy (gene/serdes/read_file """ & gene_string_literal(array_path) & """ ^lazy true))
+      (var eager (gene/serdes/read_file """ & gene_string_literal(array_path) & """))
+      (lazy == eager)
+    """, "filesystem_serdes_lazy_equality")
+    check equality == TRUE
+
+    let lazy_array = VM.exec("(gene/serdes/read_file " & gene_string_literal(array_path) & " ^lazy true)", "filesystem_serdes_lazy_value_to_gene_str_lazy")
+    let eager_array = VM.exec("(gene/serdes/read_file " & gene_string_literal(array_path) & ")", "filesystem_serdes_lazy_value_to_gene_str_eager")
+    check value_to_gene_str(lazy_array) == value_to_gene_str(eager_array)
+
+    let serialized = VM.exec("(gene/serdes/serialize (gene/serdes/read_file " & gene_string_literal(array_path) & " ^lazy true))", "filesystem_serdes_lazy_serialize")
+    check serialized.kind == VkString
+    check serialized.str.contains("gene/serialization")
+    check serialized.str.contains("first")
+    check serialized.str.contains("nested-array")
+    check not serialized.str.contains("LazyFileRefValue")
+
+  test "lazy ref failures from index equality and serialization preserve materialization diagnostics":
+    init_all()
+    let root = fresh_dir("transparent-failures")
+    defer: remove_tree(root)
+    let scalar_path = joinPath(root, "scalar.gene")
+    let missing_path = joinPath(root, "missing.gene")
+    write_serialized_payload(scalar_path, "7")
+
+    let eager_index_error = expect_vm_error("""
+      (var eager (gene/serdes/read_file """ & gene_string_literal(scalar_path) & """))
+      eager/0/!
+    """, "filesystem_serdes_lazy_scalar_eager_index_error")
+    let lazy_index_error = expect_vm_error("""
+      (var lazy (gene/serdes/read_file """ & gene_string_literal(scalar_path) & """ ^lazy true))
+      lazy/0/!
+    """, "filesystem_serdes_lazy_scalar_lazy_index_error")
+    check lazy_index_error == eager_index_error
+
+    expect_vm_error_contains("""
+      (var lazy (gene/serdes/read_file """ & gene_string_literal(missing_path) & """ ^lazy true))
+      (lazy == 1)
+    """, "filesystem_serdes_lazy_missing_equality", [
+      "gene/serdes/read_file",
+      "target: " & missing_path,
+      "missing",
+    ])
+
+    expect_vm_error_contains("""
+      (gene/serdes/serialize (gene/serdes/read_file """ & gene_string_literal(missing_path) & """ ^lazy true))
+    """, "filesystem_serdes_lazy_missing_serialize", [
+      "gene/serdes/read_file",
+      "target: " & missing_path,
+      "missing",
+    ])
