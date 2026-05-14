@@ -353,31 +353,211 @@ suite "filesystem serdes write refs":
     ])
     check readFile(file_path) == "original parent"
 
-  test "write rejects externalizing array and map values until read_dir support lands":
+  test "write externalizes selected arrays with deterministic read_dir refs":
     init_all()
-    let root = fresh_dir("unsupported-shapes")
+    let root = fresh_dir("externalize-array-dir")
     defer: remove_tree(root)
     let file_path = joinPath(root, "state.gene")
-    writeFile(file_path, "original parent")
+    let external_dir = joinPath(root, "state.files")
+    let items_dir = joinPath(external_dir, "items")
+    let items_ref = joinPath("state.files", "items")
 
-    expect_vm_error_contains("(gene/serdes/write " & gene_string_literal(file_path) & " {^items [1 2]} ^externalize [/items])", "filesystem_serdes_write_externalize_array_unsupported", [
-      "gene/serdes/write",
-      "unsupported shape",
-      "option: ^externalize",
-      "selector: /items",
-      "read_dir externalization",
-    ])
-    check readFile(file_path) == "original parent"
-    check not dirExists(joinPath(root, "state.files"))
+    discard VM.exec("(gene/serdes/write " & gene_string_literal(file_path) & " {^items [0 1 2 3 4 5 6 7 8 9 10 11]} ^externalize [/items])", "filesystem_serdes_write_externalize_array_dir")
 
-    expect_vm_error_contains("(gene/serdes/write " & gene_string_literal(file_path) & " {^profile {^name \"Ada\"}} ^externalize [/profile])", "filesystem_serdes_write_externalize_map_unsupported", [
+    check fileExists(file_path)
+    check dirExists(items_dir)
+    check sorted_entries(root) == @[
+      $pcDir & ":state.files",
+      $pcFile & ":state.gene",
+    ]
+    check sorted_entries(external_dir) == @[$pcDir & ":items"]
+    check sorted_entries(items_dir) == @[
+      $pcFile & ":000000.gene",
+      $pcFile & ":000001.gene",
+      $pcFile & ":000002.gene",
+      $pcFile & ":000003.gene",
+      $pcFile & ":000004.gene",
+      $pcFile & ":000005.gene",
+      $pcFile & ":000006.gene",
+      $pcFile & ":000007.gene",
+      $pcFile & ":000008.gene",
+      $pcFile & ":000009.gene",
+      $pcFile & ":000010.gene",
+      $pcFile & ":000011.gene",
+    ]
+    check not fileExists(joinPath(items_dir, "_genearray.gene"))
+    check not fileExists(joinPath(items_dir, "_genetype.gene"))
+    check not dirExists(joinPath(items_dir, "_geneprops"))
+    check not dirExists(joinPath(items_dir, "_genechildren"))
+
+    let parent_serialized = readFile(file_path)
+    checkpoint("externalized array parent payload: " & parent_serialized)
+    check parent_serialized.contains("(gene/serdes/read_dir")
+    check parent_serialized.contains(gene_string_literal(items_ref))
+    check parent_serialized.contains("^shape array")
+    check parent_serialized.contains("^order name")
+    check readFile(joinPath(items_dir, "000000.gene")) == "(gene/serialization 0)"
+    check readFile(joinPath(items_dir, "000011.gene")) == "(gene/serialization 11)"
+
+    let read_back = VM.exec("(gene/serdes/read " & gene_string_literal(file_path) & ")", "filesystem_serdes_write_externalize_array_dir_read")
+    check read_back.kind == VkMap
+    let items = map_data(read_back)["items".to_key()]
+    check items.kind == VkArray
+    var expected: seq[Value] = @[]
+    for i in 0..11:
+      expected.add(i.to_value())
+    check array_data(items) == expected
+
+  test "write externalizes selected maps with encoded keys and stable cleanup":
+    init_all()
+    let root = fresh_dir("externalize-map-dir")
+    defer: remove_tree(root)
+    let file_path = joinPath(root, "state.gene")
+    let external_dir = joinPath(root, "state.files")
+    let profile_dir = joinPath(external_dir, "profile")
+    let profile_ref = joinPath("state.files", "profile")
+    createDir(profile_dir)
+    writeFile(joinPath(profile_dir, "stale.gene"), "(gene/serialization \"stale\")")
+
+    var profile = new_map_value()
+    map_data(profile) = initTable[Key, Value]()
+    map_data(profile)["plain".to_key()] = "plain-value".to_value()
+    map_data(profile)["a/b".to_key()] = "slash-value".to_value()
+    map_data(profile)["a b".to_key()] = "space-value".to_value()
+    var payload = new_map_value()
+    map_data(payload) = initTable[Key, Value]()
+    map_data(payload)["profile".to_key()] = profile
+    App.app.global_ns.ref.ns["writer_map_payload".to_key()] = payload
+
+    let source = "(gene/serdes/write " & gene_string_literal(file_path) & " writer_map_payload ^externalize [/profile])"
+    discard VM.exec(source, "filesystem_serdes_write_externalize_map_dir")
+    let first_parent = readFile(file_path)
+    let first_entries = sorted_entries(profile_dir)
+    let first_plain = readFile(joinPath(profile_dir, "plain.gene"))
+    let first_slash = readFile(joinPath(profile_dir, "a%2Fb.gene"))
+    let first_space = readFile(joinPath(profile_dir, "a%20b.gene"))
+
+    check sorted_entries(external_dir) == @[$pcDir & ":profile"]
+    check first_entries == @[
+      $pcFile & ":a%20b.gene",
+      $pcFile & ":a%2Fb.gene",
+      $pcFile & ":plain.gene",
+    ]
+    checkpoint("externalized map parent payload: " & first_parent)
+    check first_parent.contains("(gene/serdes/read_dir")
+    check first_parent.contains(gene_string_literal(profile_ref))
+    check first_parent.contains("^shape map")
+    check first_parent.contains("^order name")
+    check first_plain == "(gene/serialization \"plain-value\")"
+    check first_slash == "(gene/serialization \"slash-value\")"
+    check first_space == "(gene/serialization \"space-value\")"
+
+    writeFile(joinPath(profile_dir, "zz-stale.gene"), "(gene/serialization \"stale\")")
+    discard VM.exec(source, "filesystem_serdes_write_externalize_map_dir_repeat")
+    check readFile(file_path) == first_parent
+    check sorted_entries(profile_dir) == first_entries
+    check readFile(joinPath(profile_dir, "plain.gene")) == first_plain
+    check readFile(joinPath(profile_dir, "a%2Fb.gene")) == first_slash
+    check readFile(joinPath(profile_dir, "a%20b.gene")) == first_space
+
+    let read_back = VM.exec("(gene/serdes/read " & gene_string_literal(file_path) & ")", "filesystem_serdes_write_externalize_map_dir_read")
+    check read_back.kind == VkMap
+    let profile_back = map_data(read_back)["profile".to_key()]
+    check profile_back.kind == VkMap
+    check map_data(profile_back)["plain".to_key()] == "plain-value".to_value()
+    check map_data(profile_back)["a/b".to_key()] == "slash-value".to_value()
+    check map_data(profile_back)["a b".to_key()] == "space-value".to_value()
+
+  test "write externalizes empty arrays and maps as empty read_dir directories":
+    init_all()
+    let root = fresh_dir("externalize-empty-dirs")
+    defer: remove_tree(root)
+    let file_path = joinPath(root, "state.gene")
+    let items_dir = joinPath(root, "state.files", "items")
+    let profile_dir = joinPath(root, "state.files", "profile")
+
+    var payload = new_map_value()
+    map_data(payload) = initTable[Key, Value]()
+    map_data(payload)["items".to_key()] = new_array_value()
+    var profile = new_map_value()
+    map_data(profile) = initTable[Key, Value]()
+    map_data(payload)["profile".to_key()] = profile
+    App.app.global_ns.ref.ns["writer_empty_payload".to_key()] = payload
+
+    discard VM.exec("(gene/serdes/write " & gene_string_literal(file_path) & " writer_empty_payload ^externalize [/items /profile])", "filesystem_serdes_write_externalize_empty_dirs")
+
+    check dirExists(items_dir)
+    check dirExists(profile_dir)
+    check sorted_entries(items_dir) == newSeq[string]()
+    check sorted_entries(profile_dir) == newSeq[string]()
+    let parent_serialized = readFile(file_path)
+    checkpoint("externalized empty collections parent payload: " & parent_serialized)
+    check parent_serialized.contains(gene_string_literal(joinPath("state.files", "items")))
+    check parent_serialized.contains(gene_string_literal(joinPath("state.files", "profile")))
+    check parent_serialized.contains("^shape array")
+    check parent_serialized.contains("^shape map")
+
+    let read_back = VM.exec("(gene/serdes/read " & gene_string_literal(file_path) & ")", "filesystem_serdes_write_externalize_empty_dirs_read")
+    check array_data(map_data(read_back)["items".to_key()]).len == 0
+    check map_data(map_data(read_back)["profile".to_key()]).len == 0
+
+  test "write rejects unsafe map child keys before replacing parent":
+    init_all()
+    let root = fresh_dir("externalize-map-unsafe-keys")
+    defer: remove_tree(root)
+    let file_path = joinPath(root, "state.gene")
+    let profile_dir = joinPath(root, "state.files", "profile")
+
+    proc reset_parent() =
+      writeFile(file_path, "original parent")
+      remove_tree(profile_dir)
+      if dirExists(joinPath(root, "state.files")) and sorted_entries(joinPath(root, "state.files")) == newSeq[string]():
+        removeDir(joinPath(root, "state.files"))
+
+    proc install_payload(key_name: string) =
+      var profile = new_map_value()
+      map_data(profile) = initTable[Key, Value]()
+      map_data(profile)[key_name.to_key()] = "value".to_value()
+      var payload = new_map_value()
+      map_data(payload) = initTable[Key, Value]()
+      map_data(payload)["profile".to_key()] = profile
+      App.app.global_ns.ref.ns["writer_unsafe_map_payload".to_key()] = payload
+
+    reset_parent()
+    install_payload("")
+    expect_vm_error_contains("(gene/serdes/write " & gene_string_literal(file_path) & " writer_unsafe_map_payload ^externalize [/profile])", "filesystem_serdes_write_externalize_empty_map_key", [
       "gene/serdes/write",
-      "unsupported shape",
-      "option: ^externalize",
+      "unsafe child name",
+      "phase: pre-validation",
       "selector: /profile",
-      "read_dir externalization",
+      "map key is empty",
     ])
     check readFile(file_path) == "original parent"
+    check not dirExists(profile_dir)
+
+    reset_parent()
+    install_payload(".")
+    expect_vm_error_contains("(gene/serdes/write " & gene_string_literal(file_path) & " writer_unsafe_map_payload ^externalize [/profile])", "filesystem_serdes_write_externalize_dot_map_key", [
+      "gene/serdes/write",
+      "unsafe child name",
+      "phase: pre-validation",
+      "selector: /profile",
+      "key: .",
+    ])
+    check readFile(file_path) == "original parent"
+    check not dirExists(profile_dir)
+
+    reset_parent()
+    install_payload("..")
+    expect_vm_error_contains("(gene/serdes/write " & gene_string_literal(file_path) & " writer_unsafe_map_payload ^externalize [/profile])", "filesystem_serdes_write_externalize_dotdot_map_key", [
+      "gene/serdes/write",
+      "unsafe child name",
+      "phase: pre-validation",
+      "selector: /profile",
+      "key: ..",
+    ])
+    check readFile(file_path) == "original parent"
+    check not dirExists(profile_dir)
 
   test "write reports parent path and serialization failures without fallback files":
     init_all()

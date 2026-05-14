@@ -44,6 +44,12 @@ type
     relative_path: string
     absolute_path: string
     serialized_text: string
+    child_label: string
+
+  PendingWriteDirectory = object
+    selector_display: string
+    relative_path: string
+    absolute_path: string
 
   WriteOptions = object
     externalize_selectors: seq[WriteSelector]
@@ -55,6 +61,7 @@ type
 
   WritePayloadState = object
     serializer: Serialization
+    directories: seq[PendingWriteDirectory]
     children: seq[PendingWriteChild]
     child_paths: Table[string, string]
     found_selectors: HashSet[string]
@@ -1617,39 +1624,201 @@ proc externalized_child_file(options: WriteOptions, selector: WriteSelector): tu
       break
     parent = next_parent
 
+proc externalized_child_directory(options: WriteOptions, selector: WriteSelector): tuple[relativePath: string, absolutePath: string] {.gcsafe.} =
+  result.relativePath = options.external_dir_rel
+  for segment in selector.segments:
+    let encoded = safe_encoded_child_segment(segment, options, selector)
+    result.relativePath = joinPath(result.relativePath, encoded)
+
+  result.absolutePath = normalizedPath(absolutePath(result.relativePath, options.parent_dir_abs))
+  if result.absolutePath == options.external_dir_abs or not filesystem_is_subpath(options.external_dir_abs, result.absolutePath):
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "phase: pre-validation; generated child directory escapes the external directory",
+                           "externalize", result.relativePath, selector.display)
+  if fileExists(result.absolutePath):
+    filesystem_write_error(options.target_path, "child path collision",
+                           "phase: pre-validation; generated child directory path is already a file",
+                           "externalize", result.relativePath, selector.display)
+
+  var parent = parentDir(result.absolutePath)
+  while parent.len > 0 and parent != options.external_dir_abs and filesystem_is_subpath(options.external_dir_abs, parent):
+    if fileExists(parent):
+      filesystem_write_error(options.target_path, "child path collision",
+                             "phase: pre-validation; generated child directory parent path is already a file",
+                             "externalize", result.relativePath, selector.display)
+    let next_parent = parentDir(parent)
+    if next_parent == parent:
+      break
+    parent = next_parent
+
+proc safe_collection_child_stem(stem: string, options: WriteOptions, selector: WriteSelector,
+                                child_label: string): string {.gcsafe.} =
+  if stem.len == 0:
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "phase: pre-validation; " & child_label & " produced an empty child file name",
+                           "externalize", "", selector.display)
+  if stem == "." or stem == ".." or stem.isAbsolute() or stem.contains('/') or stem.contains('\\'):
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "phase: pre-validation; " & child_label & " produced unsafe child file name: " & stem,
+                           "externalize", "", selector.display)
+  stem
+
+proc externalized_collection_child_file(options: WriteOptions, selector: WriteSelector,
+                                        directory: PendingWriteDirectory, stem: string,
+                                        child_label: string): tuple[relativePath: string, absolutePath: string] {.gcsafe.} =
+  let safe_stem = safe_collection_child_stem(stem, options, selector, child_label)
+  result.relativePath = joinPath(directory.relative_path, safe_stem & ".gene")
+  result.absolutePath = normalizedPath(absolutePath(result.relativePath, options.parent_dir_abs))
+  if result.absolutePath == directory.absolute_path or not filesystem_is_subpath(directory.absolute_path, result.absolutePath):
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "phase: pre-validation; " & child_label & " child file escapes directory",
+                           "externalize", result.relativePath, selector.display)
+  if dirExists(result.absolutePath):
+    filesystem_write_error(options.target_path, "child path collision",
+                           "phase: pre-validation; " & child_label & " child file path is already a directory",
+                           "externalize", result.relativePath, selector.display)
+
+proc zero_padded_array_child_stem(index, count: int): string {.inline.} =
+  let max_index = if count <= 0: 0 else: count - 1
+  let width = max(6, ($max_index).len)
+  let raw = $index
+  repeat("0", width - raw.len) & raw
+
+proc new_read_dir_ref(relative_path: string, shape: ReadDirShape): Value =
+  let gene = new_gene(@["gene", "serdes", "read_dir"].to_complex_symbol())
+  gene.children.add(relative_path.to_value())
+  case shape
+  of RdsArray:
+    gene.props["shape".to_key()] = "array".to_symbol_value()
+  of RdsMap:
+    gene.props["shape".to_key()] = "map".to_symbol_value()
+  gene.props["order".to_key()] = "name".to_symbol_value()
+  gene.to_gene_value()
+
 proc new_read_file_ref(relative_path: string): Value =
   let gene = new_gene(@["gene", "serdes", "read_file"].to_complex_symbol())
   gene.children.add(relative_path.to_value())
   gene.to_gene_value()
 
-proc externalize_selected_value(value: Value, options: WriteOptions, selector: WriteSelector,
-                                state: var WritePayloadState): Value =
-  if value.kind in {VkArray, VkMap}:
-    filesystem_write_error(options.target_path, "unsupported shape",
-                           "selected arrays/maps require read_dir externalization, which is not part of this file-ref task",
-                           "externalize", "", selector.display)
-
-  let child = externalized_child_file(options, selector)
-  if state.child_paths.hasKey(child.absolutePath):
-    filesystem_write_error(options.target_path, "child path collision",
-                           "generated child path collides with selector " & state.child_paths[child.absolutePath],
-                           "externalize", child.relativePath, selector.display)
-
-  var child_text: string
+proc pending_child_text(value: Value, options: WriteOptions, selector: WriteSelector,
+                        child_path, child_label: string): string =
   try:
-    child_text = value_to_serialized_text(value)
+    result = value_to_serialized_text(value)
   except CatchableError as e:
     if is_filesystem_write_error(e.msg):
       raise
-    filesystem_write_error(options.target_path, "serialization failed", e.msg,
-                           "externalize", child.relativePath, selector.display)
+    var detail = "phase: pre-validation"
+    if child_label.len > 0:
+      detail &= "; " & child_label
+    detail &= "; " & e.msg
+    filesystem_write_error(options.target_path, "serialization failed", detail,
+                           "externalize", child_path, selector.display)
 
-  state.child_paths[child.absolutePath] = selector.display
+proc register_pending_path(state: var WritePayloadState, options: WriteOptions,
+                           selector: WriteSelector, relative_path, absolute_path,
+                           child_label: string) {.gcsafe.} =
+  if state.child_paths.hasKey(absolute_path):
+    var detail = "phase: pre-validation; generated child path collides with selector " & state.child_paths[absolute_path]
+    if child_label.len > 0:
+      detail &= "; " & child_label
+    filesystem_write_error(options.target_path, "child path collision", detail,
+                           "externalize", relative_path, selector.display)
+  state.child_paths[absolute_path] = selector.display & (if child_label.len > 0: " " & child_label else: "")
+
+proc externalize_array_value(value: Value, options: WriteOptions, selector: WriteSelector,
+                             state: var WritePayloadState): Value =
+  let directory_path = externalized_child_directory(options, selector)
+  register_pending_path(state, options, selector, directory_path.relativePath,
+                        directory_path.absolutePath, "directory")
+  let directory = PendingWriteDirectory(
+    selector_display: selector.display,
+    relative_path: directory_path.relativePath,
+    absolute_path: directory_path.absolutePath,
+  )
+  state.directories.add(directory)
+
+  let values = array_data(value)
+  for index, item in values:
+    let child_label = "index: " & $index
+    let stem = zero_padded_array_child_stem(index, values.len)
+    let child = externalized_collection_child_file(options, selector, directory, stem, child_label)
+    register_pending_path(state, options, selector, child.relativePath, child.absolutePath, child_label)
+    state.children.add(PendingWriteChild(
+      selector_display: selector.display,
+      relative_path: child.relativePath,
+      absolute_path: child.absolutePath,
+      serialized_text: pending_child_text(item, options, selector, child.relativePath, child_label),
+      child_label: child_label,
+    ))
+
+  new_read_dir_ref(directory.relative_path, RdsArray)
+
+proc safe_encoded_map_child_stem(key_name: string, options: WriteOptions,
+                                 selector: WriteSelector): string {.gcsafe.} =
+  let child_label = "key: " & key_name
+  if key_name.len == 0:
+    filesystem_write_error(options.target_path, "unsafe child name",
+                           "phase: pre-validation; map key is empty",
+                           "externalize", "", selector.display)
+  result = encode_path_segment(key_name)
+  discard safe_collection_child_stem(result, options, selector, child_label)
+
+proc externalize_map_value(value: Value, options: WriteOptions, selector: WriteSelector,
+                           state: var WritePayloadState): Value =
+  let directory_path = externalized_child_directory(options, selector)
+  register_pending_path(state, options, selector, directory_path.relativePath,
+                        directory_path.absolutePath, "directory")
+  let directory = PendingWriteDirectory(
+    selector_display: selector.display,
+    relative_path: directory_path.relativePath,
+    absolute_path: directory_path.absolutePath,
+  )
+  state.directories.add(directory)
+
+  var entries: seq[tuple[keyName: string, stem: string, item: Value]] = @[]
+  var stems = initTable[string, string]()
+  for k, item in map_data(value):
+    let key_name = key_to_string(k)
+    let stem = safe_encoded_map_child_stem(key_name, options, selector)
+    if stems.hasKey(stem):
+      filesystem_write_error(options.target_path, "child path collision",
+                             "phase: pre-validation; key: " & key_name &
+                               " encodes to duplicate child name used by key: " & stems[stem],
+                             "externalize", joinPath(directory.relative_path, stem & ".gene"), selector.display)
+    stems[stem] = key_name
+    entries.add((keyName: key_name, stem: stem, item: item))
+
+  entries.sort(proc(a, b: tuple[keyName: string, stem: string, item: Value]): int = cmp(a.keyName, b.keyName))
+  for entry in entries:
+    let child_label = "key: " & entry.keyName
+    let child = externalized_collection_child_file(options, selector, directory, entry.stem, child_label)
+    register_pending_path(state, options, selector, child.relativePath, child.absolutePath, child_label)
+    state.children.add(PendingWriteChild(
+      selector_display: selector.display,
+      relative_path: child.relativePath,
+      absolute_path: child.absolutePath,
+      serialized_text: pending_child_text(entry.item, options, selector, child.relativePath, child_label),
+      child_label: child_label,
+    ))
+
+  new_read_dir_ref(directory.relative_path, RdsMap)
+
+proc externalize_selected_value(value: Value, options: WriteOptions, selector: WriteSelector,
+                                state: var WritePayloadState): Value =
+  if value.kind == VkArray:
+    return externalize_array_value(value, options, selector, state)
+  if value.kind == VkMap:
+    return externalize_map_value(value, options, selector, state)
+
+  let child = externalized_child_file(options, selector)
+  register_pending_path(state, options, selector, child.relativePath, child.absolutePath, "file")
+
   state.children.add(PendingWriteChild(
     selector_display: selector.display,
     relative_path: child.relativePath,
     absolute_path: child.absolutePath,
-    serialized_text: child_text,
+    serialized_text: pending_child_text(value, options, selector, child.relativePath, "file"),
+    child_label: "file",
   ))
   new_read_file_ref(child.relativePath)
 
@@ -1684,9 +1853,10 @@ proc build_write_payload(value: Value, segments: seq[string], options: WriteOpti
   else:
     result = state.serializer.serialize(current)
 
-proc build_externalized_write(path: string, value: Value, options: WriteOptions): tuple[parentText: string, children: seq[PendingWriteChild]] =
+proc build_externalized_write(path: string, value: Value, options: WriteOptions): tuple[parentText: string, directories: seq[PendingWriteDirectory], children: seq[PendingWriteChild]] =
   var state = WritePayloadState(
     serializer: Serialization(references: initTable[string, Value]()),
+    directories: @[],
     children: @[],
     child_paths: initTable[string, string](),
     found_selectors: initHashSet[string](),
@@ -1707,8 +1877,26 @@ proc build_externalized_write(path: string, value: Value, options: WriteOptions)
       raise
     filesystem_write_error(path, "serialization failed", e.msg)
 
+  state.directories.sort(proc(a, b: PendingWriteDirectory): int = cmp(a.relative_path, b.relative_path))
   state.children.sort(proc(a, b: PendingWriteChild): int = cmp(a.relative_path, b.relative_path))
+  result.directories = state.directories
   result.children = state.children
+
+proc reset_externalized_directory(path: string) =
+  if dirExists(path):
+    for kind, child in walkDir(path):
+      case kind
+      of pcFile, pcLinkToFile:
+        removeFile(child)
+      of pcDir:
+        reset_externalized_directory(child)
+      of pcLinkToDir:
+        removeDir(child)
+      else:
+        discard
+    removeDir(path)
+  ensure_parent_dir(path)
+  createDir(path)
 
 proc write_externalized_value_file*(path: string, value: Value, options: WriteOptions) =
   when defined(gene_wasm):
@@ -1729,17 +1917,28 @@ proc write_externalized_value_file*(path: string, value: Value, options: WriteOp
                              "external directory path is already a file",
                              "externalize", options.external_dir_rel)
 
+    for directory in built.directories:
+      try:
+        reset_externalized_directory(directory.absolute_path)
+      except CatchableError as e:
+        filesystem_write_error(path, "filesystem write failed", "phase: cleanup; " & e.msg,
+                               "externalize", directory.relative_path, directory.selector_display)
+
     for child in built.children:
       try:
         write_serialized_text_file(child.absolute_path, child.serialized_text)
       except CatchableError as e:
-        filesystem_write_error(path, "filesystem write failed", e.msg,
+        var detail = "phase: child write"
+        if child.child_label.len > 0:
+          detail &= "; " & child.child_label
+        detail &= "; " & e.msg
+        filesystem_write_error(path, "filesystem write failed", detail,
                                "externalize", child.relative_path, child.selector_display)
 
     try:
       write_serialized_text_file(path, built.parentText)
     except CatchableError as e:
-      filesystem_write_error(path, "filesystem write failed", e.msg)
+      filesystem_write_error(path, "filesystem write failed", "phase: parent write; " & e.msg)
 
 proc write_value_file*(path: string, value: Value) =
   when defined(gene_wasm):
@@ -2517,8 +2716,18 @@ proc read_dir_value(path: string, options: ReadDirOptions, context: FilesystemRe
       result = new_map_value()
       map_data(result) = initTable[Key, Value]()
       for child_file in child_files:
-        let key_name = splitFile(child_file).name
-        map_data(result)[key_name.to_key()] = read_file_value(child_file, dir_context, ref_kind)
+        let encoded_name = splitFile(child_file).name
+        var key_name: string
+        try:
+          key_name = decode_path_segment(encoded_name)
+        except CatchableError as e:
+          filesystem_read_error(ref_kind, dir_context, path, resolved_path, "invalid payload",
+                                "could not decode map child name " & encoded_name & ": " & e.msg)
+        let key = key_name.to_key()
+        if map_data(result).hasKey(key):
+          filesystem_read_error(ref_kind, dir_context, path, resolved_path, "invalid payload",
+                                "duplicate decoded map child key: " & key_name)
+        map_data(result)[key] = read_file_value(child_file, dir_context, ref_kind)
 
 proc deserialize_read_file_ref(self: Serialization, gene: ptr Gene, ref_kind = "read_file"): Value {.gcsafe.} =
   let target_hint =
