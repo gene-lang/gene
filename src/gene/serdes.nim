@@ -1587,12 +1587,12 @@ proc selected_write_selector(options: WriteOptions, segments: openArray[string])
 proc safe_encoded_child_segment(segment: string, options: WriteOptions, selector: WriteSelector): string {.gcsafe.} =
   if segment.len == 0:
     filesystem_write_error(options.target_path, "unsafe child name",
-                           "generated child path contains an empty selector segment",
+                           "phase: child path generation; generated child path contains an empty selector segment",
                            "externalize", "", selector.display)
   result = encode_path_segment(segment)
   if result.len == 0 or result == "." or result == ".." or '/' in result or '\\' in result:
     filesystem_write_error(options.target_path, "unsafe child name",
-                           "generated child path segment is unsafe: " & result,
+                           "phase: child path generation; generated child path segment is unsafe: " & result,
                            "externalize", "", selector.display)
 
 proc externalized_child_file(options: WriteOptions, selector: WriteSelector): tuple[relativePath: string, absolutePath: string] {.gcsafe.} =
@@ -1606,18 +1606,18 @@ proc externalized_child_file(options: WriteOptions, selector: WriteSelector): tu
   result.absolutePath = normalizedPath(absolutePath(result.relativePath, options.parent_dir_abs))
   if result.absolutePath == options.external_dir_abs or not filesystem_is_subpath(options.external_dir_abs, result.absolutePath):
     filesystem_write_error(options.target_path, "unsafe child name",
-                           "generated child path escapes the external directory",
+                           "phase: child path generation; generated child path escapes the external directory",
                            "externalize", result.relativePath, selector.display)
   if dirExists(result.absolutePath):
     filesystem_write_error(options.target_path, "child path collision",
-                           "generated child file path is already a directory",
+                           "phase: child path generation; generated child file path is already a directory",
                            "externalize", result.relativePath, selector.display)
 
   var parent = parentDir(result.absolutePath)
   while parent.len > 0 and parent != options.external_dir_abs and filesystem_is_subpath(options.external_dir_abs, parent):
     if fileExists(parent):
       filesystem_write_error(options.target_path, "child path collision",
-                             "generated child parent path is already a file",
+                             "phase: child path generation; generated child parent path is already a file",
                              "externalize", result.relativePath, selector.display)
     let next_parent = parentDir(parent)
     if next_parent == parent:
@@ -1914,7 +1914,7 @@ proc write_externalized_value_file*(path: string, value: Value, options: WriteOp
       filesystem_write_error(path, "filesystem write failed", "target path is a directory")
     if fileExists(options.external_dir_abs):
       filesystem_write_error(path, "child path collision",
-                             "external directory path is already a file",
+                             "phase: child path generation; external directory path is already a file",
                              "externalize", options.external_dir_rel)
 
     for directory in built.directories:

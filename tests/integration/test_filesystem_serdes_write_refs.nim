@@ -52,6 +52,25 @@ proc expect_vm_error_contains(source, name: string, expected_parts: openArray[st
     checkpoint("expecting error part: " & part)
     check message.contains(part)
 
+const TreeSerdesLeakFragments = ["_genetype", "_geneprops", "_genechildren", "_genearray", "^separate", "write_tree"]
+
+proc expect_no_tree_serdes_leak(label, text: string) =
+  checkpoint(label & ": " & text)
+  for fragment in TreeSerdesLeakFragments:
+    checkpoint("forbidden tree-serdes fragment: " & fragment)
+    check not text.contains(fragment)
+
+proc expect_read_file_ref_payload(parent_payload, ref_path: string) =
+  expect_no_tree_serdes_leak("write parent payload", parent_payload)
+  check parent_payload.contains("(gene/serdes/read_file " & gene_string_literal(ref_path) & ")")
+
+proc expect_read_dir_ref_payload(parent_payload, ref_path, shape: string) =
+  expect_no_tree_serdes_leak("write parent payload", parent_payload)
+  check parent_payload.contains("(gene/serdes/read_dir")
+  check parent_payload.contains(gene_string_literal(ref_path))
+  check parent_payload.contains("^shape " & shape)
+  check parent_payload.contains("^order name")
+
 suite "filesystem serdes write refs":
   test "write stores one exact serialized file that read and read_file roundtrip":
     init_all()
@@ -350,6 +369,7 @@ suite "filesystem serdes write refs":
       "option: ^externalize",
       "selector: /profile",
       "child: " & joinPath("state.files", "profile.gene"),
+      "phase: child path generation",
     ])
     check readFile(file_path) == "original parent"
 
@@ -392,10 +412,7 @@ suite "filesystem serdes write refs":
 
     let parent_serialized = readFile(file_path)
     checkpoint("externalized array parent payload: " & parent_serialized)
-    check parent_serialized.contains("(gene/serdes/read_dir")
-    check parent_serialized.contains(gene_string_literal(items_ref))
-    check parent_serialized.contains("^shape array")
-    check parent_serialized.contains("^order name")
+    expect_read_dir_ref_payload(parent_serialized, items_ref, "array")
     check readFile(joinPath(items_dir, "000000.gene")) == "(gene/serialization 0)"
     check readFile(joinPath(items_dir, "000011.gene")) == "(gene/serialization 11)"
 
@@ -558,6 +575,115 @@ suite "filesystem serdes write refs":
     ])
     check readFile(file_path) == "original parent"
     check not dirExists(profile_dir)
+
+  test "write preserves parent and existing children when externalized child serialization fails":
+    init_all()
+    let root = fresh_dir("externalize-child-serialization-failure")
+    defer: remove_tree(root)
+    let file_path = joinPath(root, "state.gene")
+    let external_dir = joinPath(root, "state.files")
+    let child_ref = joinPath("state.files", "profile.gene")
+    let child_path = joinPath(root, child_ref)
+
+    writeFile(file_path, "original parent")
+    createDir(external_dir)
+    writeFile(child_path, "(gene/serialization \"original child\")")
+
+    expect_vm_error_contains("(var pending (async 1))\n(gene/serdes/write " & gene_string_literal(file_path) & " {^profile pending} ^externalize [/profile])", "filesystem_serdes_write_externalized_child_serialization_failure", [
+      "gene/serdes/write",
+      "serialization failed",
+      "target: " & file_path,
+      "option: ^externalize",
+      "selector: /profile",
+      "child: " & child_ref,
+      "phase: pre-validation",
+      "not serializable",
+    ])
+    check readFile(file_path) == "original parent"
+    check readFile(child_path) == "(gene/serialization \"original child\")"
+    check sorted_entries(external_dir) == @[$pcFile & ":profile.gene"]
+    check not fileExists(file_path & ".tmp")
+    check not fileExists(child_path & ".tmp")
+
+  test "write materializes lazy read_file refs before writing exact roots and external children":
+    init_all()
+    let root = fresh_dir("materialize-lazy-read-file")
+    defer: remove_tree(root)
+    let source_map_path = joinPath(root, "source-map.gene")
+    let source_scalar_path = joinPath(root, "source-scalar.gene")
+    let exact_path = joinPath(root, "exact.gene")
+    let file_path = joinPath(root, "state.gene")
+    let child_ref = joinPath("state.files", "child.gene")
+    let child_path = joinPath(root, child_ref)
+
+    writeFile(source_map_path, "(gene/serialization {^name \"lazy-child\" ^count 2})")
+    writeFile(source_scalar_path, "(gene/serialization \"lazy-scalar\")")
+
+    discard VM.exec("(var lazy_map (gene/serdes/read_file " & gene_string_literal(source_map_path) & " ^lazy true))\n" &
+      "(var lazy_child (gene/serdes/read_file " & gene_string_literal(source_scalar_path) & " ^lazy true))\n" &
+      "(gene/serdes/write " & gene_string_literal(exact_path) & " lazy_map)\n" &
+      "(gene/serdes/write " & gene_string_literal(file_path) & " {^child lazy_child ^label \"wrapper\"} ^externalize [/child])",
+      "filesystem_serdes_write_materializes_lazy_ref")
+
+    let exact_serialized = readFile(exact_path)
+    let parent_serialized = readFile(file_path)
+    let child_serialized = readFile(child_path)
+    expect_no_tree_serdes_leak("exact lazy write payload", exact_serialized)
+    expect_read_file_ref_payload(parent_serialized, child_ref)
+    expect_no_tree_serdes_leak("externalized lazy child payload", child_serialized)
+    check exact_serialized.contains("^name \"lazy-child\"")
+    check exact_serialized.contains("^count 2")
+    check child_serialized == "(gene/serialization \"lazy-scalar\")"
+    check not exact_serialized.contains("LazyFileRefValue")
+    check not child_serialized.contains("LazyFileRefValue")
+
+    let read_back = VM.exec("(gene/serdes/read " & gene_string_literal(file_path) & ")", "filesystem_serdes_write_materializes_lazy_ref_read")
+    check read_back.kind == VkMap
+    check map_data(read_back)["child".to_key()] == "lazy-scalar".to_value()
+
+  test "write repeats mixed externalization with stable refs files and no tree marker leakage":
+    init_all()
+    let root = fresh_dir("mixed-stability")
+    defer: remove_tree(root)
+    let file_path = joinPath(root, "state.gene")
+    let external_dir = joinPath(root, "state.files")
+    let count_ref = joinPath("state.files", "count.gene")
+    let items_ref = joinPath("state.files", "items")
+    let profile_ref = joinPath("state.files", "profile")
+    let count_path = joinPath(root, count_ref)
+    let items_dir = joinPath(root, items_ref)
+    let profile_dir = joinPath(root, profile_ref)
+    let source = "(gene/serdes/write " & gene_string_literal(file_path) &
+      " {^count 7 ^items [\"a\" \"b\"] ^profile {^name \"Ada\" ^team \"core\"}} ^externalize [/count /items /profile])"
+
+    discard VM.exec(source, "filesystem_serdes_write_mixed_stability_first")
+    let first_parent = readFile(file_path)
+    let first_count = readFile(count_path)
+    let first_external_entries = sorted_entries(external_dir)
+    let first_items_entries = sorted_entries(items_dir)
+    let first_profile_entries = sorted_entries(profile_dir)
+
+    expect_read_file_ref_payload(first_parent, count_ref)
+    expect_read_dir_ref_payload(first_parent, items_ref, "array")
+    expect_read_dir_ref_payload(first_parent, profile_ref, "map")
+    check first_count == "(gene/serialization 7)"
+    check first_items_entries == @[
+      $pcFile & ":000000.gene",
+      $pcFile & ":000001.gene",
+    ]
+    check first_profile_entries == @[
+      $pcFile & ":name.gene",
+      $pcFile & ":team.gene",
+    ]
+
+    writeFile(joinPath(items_dir, "999999.gene"), "(gene/serialization \"stale\")")
+    writeFile(joinPath(profile_dir, "stale.gene"), "(gene/serialization \"stale\")")
+    discard VM.exec(source, "filesystem_serdes_write_mixed_stability_repeat")
+    check readFile(file_path) == first_parent
+    check readFile(count_path) == first_count
+    check sorted_entries(external_dir) == first_external_entries
+    check sorted_entries(items_dir) == first_items_entries
+    check sorted_entries(profile_dir) == first_profile_entries
 
   test "write reports parent path and serialization failures without fallback files":
     init_all()
