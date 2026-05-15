@@ -37,16 +37,16 @@ Handles runtime objects by converting them to reference forms:
 2. Global namespace
 3. Namespace chains for paths like `"ns/ClassName"`
 
-### Filesystem Tree Serialization
+### Filesystem persistence prior art
 
-`write_tree` / `read_tree` explode nested structures into directory trees:
+The historical tree-serdes prototype exposed `write_tree` / `read_tree` and exploded nested structures into directory trees:
 
 - Maps → directories (keys become filenames)
 - Arrays → directories with `_genearray.gene` manifest for ordering
 - Gene nodes → directories with `_genetype`, `_geneprops`, `_genechildren`
 - Leaf values → `.gene` files containing serialized text
 
-Supports lazy loading via `^lazy` option — only accessed subtrees are read from disk.
+Those names and marker-directory semantics are prior art, not the current public model. Current filesystem persistence is documented through the unified `gene/serdes/write`, `gene/serdes/read`, `gene/serdes/read_file`, and `gene/serdes/read_dir` API; `read_dir` is eager and supports `^shape array|map` with `^order name`.
 
 ### Current Limitations
 

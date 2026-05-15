@@ -91,14 +91,14 @@ Rationale: Durable storage bugs should be visible and actionable, especially for
 - Breaking old public APIs simplifies the long-term model but requires public docs and tests to remove old examples rather than preserve compatibility snippets.
 - Explicit refs make files inspectable and portable, but the deserializer must distinguish serializer-owned refs from normal data safely and predictably.
 - Container-relative path resolution improves portability and safety, but implementations must carry containing-file context through nested deserialization.
-- Lazy refs improve large-state performance, but transparent lazy values can leak complexity into runtime access paths; S03 must verify caching, error timing, and normal-access behavior.
+- Lazy file refs improve large-state performance, but transparent lazy values can leak complexity into runtime access paths; S03 must verify caching, error timing, and normal-access behavior for file refs. Directory refs remain eager in the delivered contract unless a future change implements and tests directory-lazy behavior.
 - Deterministic child naming improves diffs and keyed storage, but generated names must treat selector/key-derived IDs as untrusted and reject separator, absolute, traversal, and empty child IDs before joining paths.
 
 ## Migration Plan
 
 1. S01: approve this OpenSpec contract and public spec/gate artifacts.
 2. S02: implement `read_file` refs, `read` alias behavior, containing-file context, and fail-closed path/target validation.
-3. S03: implement `read_dir`, shape/order options, eager defaults, and `^lazy true` transparent lazy refs.
+3. S03: implement `read_dir`, `^shape array|map`, `^order name`, eager directory defaults, and `^lazy true` transparent lazy refs for `read_file` / `read`.
 4. S04: implement `write` externalization with deterministic child naming and explicit refs in parent files.
 5. S05: remove `read_tree` / `write_tree` public API and old tree-serdes implementation paths while preserving canonical text serdes behavior.
 6. S06: migrate GeneClaw storage helpers, public docs, examples, and full verification gates.
@@ -107,4 +107,4 @@ Rationale: Durable storage bugs should be visible and actionable, especially for
 
 - Exact diagnostic names/messages may be refined during implementation, but they must include path and containing-file/ref context.
 - Exact deterministic child-name algorithms may be refined during implementation, but they must be stable, safe before path joining, and covered by focused tests.
-- Exact `read_dir` ordering fallback on platforms without creation-time metadata may be refined during implementation, but it must be deterministic or fail explicitly rather than silently changing order.
+- `read_dir` currently guarantees deterministic name ordering only. Creation-time ordering and directory-lazy materialization need a separate future proposal plus focused implementation tests before they can become public contract.

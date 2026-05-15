@@ -10,13 +10,13 @@
 - [ ] 1.3 Reject unsafe paths, missing files, invalid serialized text, malformed `read_file` options, and `read_file` cycles with path/context diagnostics.
 - [ ] 1.4 Add focused happy-path and negative tests for explicit file refs, alias behavior, path safety, missing/invalid files, malformed options, and cycles.
 
-## 2. S03 — Directory Refs, Shape Options, and Lazy Loading
+## 2. S03 — Directory Refs, Shape Options, and File Lazy Loading
 
-- [ ] 2.1 Add `gene/serdes/read_dir` for directory-backed collections.
+- [ ] 2.1 Add `gene/serdes/read_dir` for eager directory-backed collections.
 - [ ] 2.2 Support explicit `(gene/serdes/read_dir ...)` serialized ref forms with containing-file context.
-- [ ] 2.3 Implement `read_dir` shape and ordering options for ordered arrays and keyed maps.
-- [ ] 2.4 Implement eager-by-default behavior and `^lazy true` transparent lazy refs for file and directory refs.
-- [ ] 2.5 Add focused positive and negative tests for invalid directory targets, malformed options, eager failures, lazy materialization/caching, and path cycles.
+- [ ] 2.3 Implement `read_dir` shape options for ordered arrays and keyed maps with deterministic `^order name` ordering.
+- [ ] 2.4 Implement eager-by-default behavior, `^lazy true` transparent lazy refs for `read_file` / `read`, and fail-closed rejection for `read_dir ^lazy true` until directory lazy loading is separately specified and tested.
+- [ ] 2.5 Add focused positive and negative tests for invalid directory targets, malformed options, eager failures, file lazy materialization/caching, unsupported directory-lazy requests, and path cycles.
 
 ## 3. S04 — Writer Externalization
 

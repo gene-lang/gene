@@ -103,7 +103,7 @@ Filesystem persistence uses the `gene/serdes` file API:
 (gene/serdes/write "state/root.gene" {^name "Alice" ^age 30})
 (gene/serdes/read "state/root.gene")
 (gene/serdes/read_file "state/root.gene")
-(gene/serdes/read_dir "state/sessions" ^shape "array" ^order "name")
+(gene/serdes/read_dir "state/sessions" ^shape array ^order name)
 ```
 
 `read` is the convenience form for reading one serialized file and has the same public behavior as `read_file`. Directory-backed collections use `read_dir` so the caller can choose shape and ordering explicitly.
@@ -120,41 +120,40 @@ A serialized parent file may contain explicit references to child files or direc
 ```gene
 (gene/serialization
   {^profile (gene/serdes/read_file "child.gene")
-   ^sessions (gene/serdes/read_dir "sessions" ^shape "array" ^order "name")})
+   ^sessions (gene/serdes/read_dir "sessions" ^shape array ^order name)})
 ```
 
 These forms are serializer-owned data forms. During deserialization, `read_file` and `read_dir` references are resolved by the deserializer using the containing serialized file as path context. They are not arbitrary Gene runtime evaluation, and resolving them must not invoke user functions, macros, methods, or module loading.
 
 ### Relative references and path safety
 
-Nested file and directory references are container-relative. If a serialized file is read from `state/root.gene`, then `(gene/serdes/read_file "child.gene")` resolves to the child next to `root.gene`, and `(gene/serdes/read_dir "sessions" ^shape "array" ^order "name")` resolves to the sibling `sessions` directory.
+Nested file and directory references are container-relative. If a serialized file is read from `state/root.gene`, then `(gene/serdes/read_file "child.gene")` resolves to the child next to `root.gene`, and `(gene/serdes/read_dir "sessions" ^shape array ^order name)` resolves to the sibling `sessions` directory.
 
 Filesystem serializer reads fail closed. Unsafe absolute paths, traversal escapes, malformed reference options, missing targets, unreadable targets, invalid serialized payloads, and file or directory reference cycles must raise diagnostics that include the target path and containing-file context. They must not silently return `nil`, an empty collection, or a partially loaded value.
 
-### Eager and lazy references
+### Eager reads and lazy file references
 
 File and directory references load eagerly by default. A missing or invalid target therefore fails before the parent value is returned.
 
-Use `^lazy true` when a reference should defer I/O until the value is accessed:
+Use `^lazy true` only with `read_file` or its `read` alias when a file reference should defer I/O until the value is accessed:
 
 ```gene
 (gene/serialization
   {^large_profile (gene/serdes/read_file "profiles/large.gene" ^lazy true)
-   ^sessions (gene/serdes/read_dir "sessions" ^shape "array" ^order "name" ^lazy true)})
+   ^sessions (gene/serdes/read_dir "sessions" ^shape array ^order name)})
 ```
 
-A lazy reference behaves like the loaded value during normal access and caches the materialized value after the first successful load. Lazy failures are reported when the value is materialized, with the target path and original containing-file context preserved in the diagnostic.
+A lazy file reference behaves like the loaded value during normal access and caches the materialized value after the first successful load. Lazy failures are reported when the value is materialized, with the target path and original containing-file context preserved in the diagnostic. Directory references are eager in the current public contract; `read_dir ^lazy true` is rejected instead of silently promising deferred directory reads.
 
 ### Directory shape and ordering
 
 `read_dir` turns a directory of serialized child files into a collection. The public options are explicit so directory reads remain deterministic:
 
-- `^shape "array"` returns an ordered array of child values.
-- `^shape "map"` returns a keyed map using deterministic child identifiers derived from file names.
-- `^order "name"` reads children in deterministic filename order.
-- `^order "ctime"` reads by creation time when the platform can provide stable creation-time metadata. If that cannot be provided, the read must fail explicitly or use a documented deterministic fallback.
+- `^shape array` returns an ordered array of child values.
+- `^shape map` returns a keyed map using deterministic child identifiers derived from file names.
+- `^order name` reads children in deterministic filename order.
 
-Invalid directory targets, unsupported shapes or order modes, duplicate options, and malformed option values are errors.
+Invalid directory targets, unsupported shapes or order modes, duplicate options, `^lazy true`, and malformed option values are errors.
 
 ### Writer externalization
 

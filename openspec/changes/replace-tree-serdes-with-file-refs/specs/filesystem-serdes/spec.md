@@ -80,30 +80,23 @@ Serialized payloads SHALL represent external file and directory boundaries with 
 - **THEN** the access SHALL fail with a diagnostic that includes the target path and the original containing-file context
 - **AND** the failure SHALL NOT be converted to `nil`
 
-### Requirement: Directory References Support Shape, Ordering, And Lazy Loading
+### Requirement: Directory References Support Shape And Name Ordering
 
-`read_dir` and serialized `read_dir` refs SHALL load a directory-backed collection using explicit options for result shape and ordering. The minimum supported shapes SHALL include `^array` and `^map`. The minimum supported order modes SHALL include deterministic name order and creation-time order where creation-time metadata is available.
+`read_dir` and serialized `read_dir` refs SHALL eagerly load a directory-backed collection using explicit options for result shape and ordering. The supported shapes SHALL include `array` and `map`. The supported order mode SHALL be deterministic name order.
 
 #### Scenario: read_dir returns an ordered array
 
 - **GIVEN** a directory contains serialized child files
-- **WHEN** code reads it with `(gene/serdes/read_dir "events" ^shape ^array ^order ^name)`
+- **WHEN** code reads it with `(gene/serdes/read_dir "events" ^shape array ^order name)`
 - **THEN** the result SHALL be an array
 - **AND** child files SHALL be read in deterministic filename order
 
 #### Scenario: read_dir returns a keyed map
 
 - **GIVEN** a directory contains serialized child files named `a.gene` and `b.gene`
-- **WHEN** code reads it with `(gene/serdes/read_dir "sessions" ^shape ^map ^order ^name)`
+- **WHEN** code reads it with `(gene/serdes/read_dir "sessions" ^shape map ^order name)`
 - **THEN** the result SHALL be a map keyed by deterministic child identifiers derived from the file names
 - **AND** each map value SHALL be deserialized from the matching child file
-
-#### Scenario: creation-time ordering is explicit
-
-- **GIVEN** a platform and filesystem expose creation-time metadata for directory children
-- **WHEN** code reads a directory with `^shape ^array ^order ^ctime`
-- **THEN** the array result SHALL follow creation-time order with a deterministic tie-breaker
-- **AND** if creation-time ordering cannot be provided, the read SHALL fail explicitly or use a documented deterministic fallback rather than silently returning unstable order
 
 #### Scenario: invalid directory targets fail closed
 
@@ -111,13 +104,11 @@ Serialized payloads SHALL represent external file and directory boundaries with 
 - **THEN** the read SHALL fail with a diagnostic that identifies the directory target and containing-file context when present
 - **AND** it SHALL NOT silently return an empty collection or `nil`
 
-#### Scenario: lazy read_dir defers child payload materialization
+#### Scenario: unsupported directory options fail closed
 
-- **GIVEN** a serialized payload contains `(gene/serdes/read_dir "sessions" ^shape ^map ^lazy true)`
-- **WHEN** the containing file is read
-- **THEN** the result MAY contain a transparent directory-backed lazy value
-- **AND** key listing or direct child lookup MAY use directory metadata without loading unrelated child payloads
-- **AND** accessing a child SHALL materialize that child consistently with eager `read_dir`
+- **WHEN** a `read_dir` call or serialized `read_dir` ref requests an unsupported shape, unsupported order such as creation-time ordering, or `^lazy true`
+- **THEN** the read SHALL fail with a diagnostic that identifies the unsupported option
+- **AND** it SHALL NOT return a partially loaded, lazily backed, or unstably ordered collection
 
 ### Requirement: Path Safety And Cycle Detection Are Fail-Closed
 

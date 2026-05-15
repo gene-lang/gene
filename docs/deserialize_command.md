@@ -6,6 +6,8 @@ Deserialize Gene serialization text back into runtime objects and print the resu
 
 The command runs in a full VM environment (like `gene eval`) so it can resolve class references, namespace paths, and other runtime dependencies from the current project.
 
+`gene deser` is a text deserialization tool. A file argument is read as serialized text and then passed through the text deserializer; it is not the same contract as the filesystem persistence APIs. When a payload contains serializer-owned filesystem references such as `(gene/serdes/read_file "child.gene")` or `(gene/serdes/read_dir "children" ^shape array ^order name)`, use `gene/serdes/read` or `gene/serdes/read_file` from Gene code so the deserializer has containing-file context for safe relative reference resolution.
+
 ## Usage
 
 ```bash
