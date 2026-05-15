@@ -1619,8 +1619,6 @@ proc reset_externalized_directory(path: string) =
         reset_externalized_directory(child)
       of pcLinkToDir:
         removeDir(child)
-      else:
-        discard
     removeDir(path)
   ensure_parent_dir(path)
   createDir(path)
