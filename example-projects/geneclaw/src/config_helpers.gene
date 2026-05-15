@@ -273,12 +273,18 @@
   (schema .each (fn [key node]
     (if (leaf_descriptor? node)
       (if node/public
-        (var value (current_group/<key> || node/default))
-        (if (node/kind == "secret")
-          (result .set key (redact_secret value))
-          (result .set #"#{key}_configured" (secret_configured value))
+        (var raw_public_value current_group/<key>)
+        (var resolved_public_value nil)
+        (if (raw_public_value == nil)
+          (resolved_public_value = node/default)
         else
-          (result .set key value)
+          (resolved_public_value = raw_public_value)
+        )
+        (if (node/kind == "secret")
+          (result .set key (redact_secret resolved_public_value))
+          (result .set #"#{key}_configured" (secret_configured resolved_public_value))
+        else
+          (result .set key resolved_public_value)
         )
       )
     else

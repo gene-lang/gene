@@ -413,10 +413,11 @@
 )
 
 (fn embedding_credentials_available? []
-  (if_not genex/ai
-    (return false)
+  (if genex/ai
+    ((CONFIG/llm/openai/embedding_api_key || "") .not_empty?)
+  else
+    false
   )
-  ((CONFIG/llm/openai/embedding_api_key || "") .not_empty?)
 )
 
 (fn embedding_api_key []

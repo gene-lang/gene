@@ -1,6 +1,7 @@
 #!/usr/bin/env gene run
 
 (import GENECLAW_HOME HOME_STATE_PATH MEMORY_ROOT SESSIONS_PATH JOBS_PATH RUNS_PATH LOGS_PATH ARCHIVE_PATH TMP_PATH DOCUMENT_ROOT ARTIFACT_ROOT LLM_PROVIDER OPENAI_MODEL ANTHROPIC_AUTH_TOKEN MAX_STEPS DOCUMENT_MAX_INLINE_CHARS get_public_config get_public_config_at_path from "config")
+(import HOME_CONFIG_PATH STATE_SYSTEM_PROMPT_PATH file_exists? from "home_store")
 (import get_system_prompt from "workspace_state")
 
 (var expected_home ($env .get "GENECLAW_HOME" ""))
@@ -50,6 +51,10 @@
 (assert (uploaded_root_result/found == true))
 (assert (uploaded_root_result/value == #"#{expected_home}/assets/uploaded"))
 (assert (db_path_result/found == false))
+(assert (file_exists? #"#{HOME_CONFIG_PATH}/llm/provider.gene"))
+(assert (file_exists? #"#{HOME_CONFIG_PATH}/llm/openai.gene"))
+(assert (file_exists? #"#{HOME_CONFIG_PATH}/documents.gene"))
+(assert (file_exists? #"#{STATE_SYSTEM_PROMPT_PATH}.gene"))
 (assert (get_system_prompt/.call == "Prompt anthropic / gpt-5.1-mini / anthropic"))
 
 (println "ok")

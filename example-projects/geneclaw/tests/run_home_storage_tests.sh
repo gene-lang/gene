@@ -7,6 +7,14 @@ GENE_BIN="$ROOT/bin/gene"
 TMP_DIR="$(mktemp -d)"
 HOME_DIR="$TMP_DIR/home"
 
+removed_tree_pattern='gene/serdes/(read_'"tree"'|write_'"tree"')|'"\^sepa"'rate|read_'"tree"'_or_default|write_record_'"tree"'|tree_exists[?]'
+if rg -n "$removed_tree_pattern" \
+  "$APP_DIR/src" "$APP_DIR/tests" \
+  -g '*.gene' -g '*.nim'; then
+  echo "Found removed tree-serdes helper references in GeneClaw source or smoke tests" >&2
+  exit 1
+fi
+
 cleanup() {
   rm -rf "$TMP_DIR"
 }

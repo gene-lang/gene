@@ -1,11 +1,14 @@
 #!/usr/bin/env gene run
 
-(import SESSIONS_PATH JOBS_PATH RUNS_PATH tree_exists? document_record_path from "home_store")
+(import file_exists? session_path job_path run_path document_record_path from "home_store")
 (import build_session_id from "agent")
 (import load_session save_session session_append_memory session_document_refs memory_append memory_recent from "workspace_state")
 (import run_create run_complete audit_log job_create job_get job_list_all job_list_due job_mark_running job_mark_failed job_update_state job_update_next_run job_mark_completed document_save document_list_for_session from "db")
 
 (var runtime_session_id (build_session_id "ws-home" "C-runtime" "thread-runtime"))
+(var runtime_session_path (session_path runtime_session_id))
+(var run_home_path (run_path "run-home-1"))
+(var job_home_path (job_path "job-home-1"))
 
 (run_create "run-home-1" "ws-home" "u-home")
 (run_complete "run-home-1" "completed" nil)
@@ -45,11 +48,13 @@
 (var doc_chunks [{^chunk_index 0 ^text "hello" ^meta {}}])
 (var saved_doc (document_save doc_record doc_chunks "inbound"))
 
+(var doc_home_1_path (document_record_path runtime_session_id "doc-home-1" "inbound"))
 (assert (saved_doc/document_id == "doc-home-1"))
-(assert (tree_exists? #"#{SESSIONS_PATH}/ws-home%3AC-runtime%3Athread-runtime"))
-(assert (tree_exists? #"#{RUNS_PATH}/run-home-1"))
-(assert (tree_exists? #"#{JOBS_PATH}/job-home-1"))
-(assert (tree_exists? (document_record_path runtime_session_id "doc-home-1" "inbound")))
+(assert (file_exists? #"#{runtime_session_path}.gene"))
+(assert (file_exists? #"#{run_home_path}.gene"))
+(assert (file_exists? #"#{job_home_path}.gene"))
+(assert (file_exists? #"#{doc_home_1_path}.gene"))
+(assert (file_exists? #"#{doc_home_1_path}.files/chunks/000000.gene"))
 
 (var listed_docs (document_list_for_session runtime_session_id))
 (var session_refs (session_document_refs runtime_session_id))
@@ -78,8 +83,10 @@
 })
 (var second_doc_chunks [{^chunk_index 0 ^text "world" ^meta {}}])
 (var second_saved_doc (document_save second_doc_record second_doc_chunks "inbound"))
+(var doc_home_2_path (document_record_path runtime_session_id "doc-home-2" "inbound"))
 (assert (second_saved_doc/document_id == "doc-home-2"))
-(assert (tree_exists? (document_record_path runtime_session_id "doc-home-2" "inbound")))
+(assert (file_exists? #"#{doc_home_2_path}.gene"))
+(assert (file_exists? #"#{doc_home_2_path}.files/chunks/000000.gene"))
 
 (session_append_memory "ws-home" stale_session "assistant" "stored follow-up" {^source "runtime-write"})
 (save_session runtime_session_id stale_session)
@@ -99,5 +106,12 @@
 (assert (merged_memory/.size == 4))
 (assert (merged_memory/2/content == "fresh-memory"))
 (assert (merged_memory/3/content == "stale-memory"))
+(var session_record_text (gene/io/read #"#{runtime_session_path}.gene"))
+(var session_memory_child_text (gene/io/read #"#{runtime_session_path}.files/memory/000003.gene"))
+(assert (file_exists? #"#{runtime_session_path}.files/memory/000000.gene"))
+(assert (file_exists? #"#{runtime_session_path}.files/memory/000003.gene"))
+(assert (session_record_text .contain "gene/serdes/read_dir"))
+(assert ((session_record_text .contain "fresh-memory") == false))
+(assert (session_memory_child_text .contain "stale-memory"))
 
 (println "ok")

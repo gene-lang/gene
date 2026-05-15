@@ -1,9 +1,18 @@
 #!/usr/bin/env gene run
 
 (import build_session_id from "agent")
-(import memory_append memory_recent from "workspace_state")
+(import file_exists? session_path from "home_store")
+(import load_session memory_append memory_recent from "workspace_state")
 
 (var session_id (build_session_id "ws-home" "C-home" "1741553030.123456"))
+(var session_record_path (session_path session_id))
+(var missing_session_id (build_session_id "ws-home" "C-missing" "missing-thread"))
+(var missing_session_path (session_path missing_session_id))
+(var missing_session (load_session missing_session_id))
+
+(assert (missing_session/session_id == missing_session_id))
+(assert (missing_session/memory/.size == 0))
+(assert ((file_exists? #"#{missing_session_path}.gene") == false))
 
 (memory_append "ws-home" session_id "user" "first" {^index 1})
 (memory_append "ws-home" session_id "assistant" "second" {^index 2})
@@ -14,5 +23,11 @@
 (assert (recent/.size == 2))
 (assert (recent/0/content == "second"))
 (assert (recent/1/content == "third"))
+(assert (file_exists? #"#{session_record_path}.gene"))
+(assert (file_exists? #"#{session_record_path}.files/memory/000000.gene"))
+(assert (file_exists? #"#{session_record_path}.files/memory/000002.gene"))
+(var session_record_text (gene/io/read #"#{session_record_path}.gene"))
+(assert (session_record_text .contain "gene/serdes/read_dir"))
+(assert ((session_record_text .contain "first") == false))
 
 (println "ok")
