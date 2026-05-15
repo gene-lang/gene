@@ -73,6 +73,7 @@ type
   ReadDirOptions = object
     shape: ReadDirShape
     order: ReadDirOrder
+    frozen: bool
 
   LazyFileRefValueData = ref object of CustomValue
     target_path: string
@@ -1408,7 +1409,7 @@ proc zero_padded_array_child_stem(index, count: int): string {.inline.} =
   let raw = $index
   repeat("0", width - raw.len) & raw
 
-proc new_read_dir_ref(relative_path: string, shape: ReadDirShape): Value =
+proc new_read_dir_ref(relative_path: string, shape: ReadDirShape, frozen = false): Value =
   let gene = new_gene(@["gene", "serdes", "read_dir"].to_complex_symbol())
   gene.children.add(relative_path.to_value())
   case shape
@@ -1417,6 +1418,8 @@ proc new_read_dir_ref(relative_path: string, shape: ReadDirShape): Value =
   of RdsMap:
     gene.props["shape".to_key()] = "map".to_symbol_value()
   gene.props["order".to_key()] = "name".to_symbol_value()
+  if frozen:
+    gene.props["frozen".to_key()] = TRUE
   gene.to_gene_value()
 
 proc new_read_file_ref(relative_path: string): Value =
@@ -1475,7 +1478,7 @@ proc externalize_array_value(value: Value, options: WriteOptions, selector: Writ
       child_label: child_label,
     ))
 
-  new_read_dir_ref(directory.relative_path, RdsArray)
+  new_read_dir_ref(directory.relative_path, RdsArray, array_is_frozen(value))
 
 proc safe_encoded_map_child_stem(key_name: string, options: WriteOptions,
                                  selector: WriteSelector): string {.gcsafe.} =
@@ -1525,7 +1528,7 @@ proc externalize_map_value(value: Value, options: WriteOptions, selector: WriteS
       child_label: child_label,
     ))
 
-  new_read_dir_ref(directory.relative_path, RdsMap)
+  new_read_dir_ref(directory.relative_path, RdsMap, map_is_frozen(value))
 
 proc externalize_selected_value(value: Value, options: WriteOptions, selector: WriteSelector,
                                 state: var WritePayloadState): Value =
@@ -1856,7 +1859,7 @@ proc child_filesystem_directory_context(parent_context: FilesystemReadContext, c
   )
 
 proc default_read_dir_options(): ReadDirOptions {.inline, gcsafe.} =
-  ReadDirOptions(shape: RdsArray, order: RdoName)
+  ReadDirOptions(shape: RdsArray, order: RdoName, frozen: false)
 
 proc read_dir_option_atom(value: Value, option_name, ref_kind: string,
                           context: FilesystemReadContext, target_path: string): string {.gcsafe.} =
@@ -1901,6 +1904,11 @@ proc parse_read_dir_option(options: var ReadDirOptions, key_name: string, prop_v
     if prop_value == TRUE:
       filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
                             "directory-lazy is unsupported in S03; gene/serdes/read_dir remains eager-only in this slice")
+  of "frozen":
+    if prop_value.kind != VkBool:
+      filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
+                            "^frozen must be boolean, got " & $prop_value.kind)
+    options.frozen = prop_value == TRUE
   else:
     filesystem_read_error(ref_kind, context, target_path, "", "unsupported option",
                           "unknown property ^" & key_name)
@@ -2096,11 +2104,11 @@ proc read_dir_value(path: string, options: ReadDirOptions, context: FilesystemRe
 
     case options.shape
     of RdsArray:
-      result = new_array_value()
+      result = new_array_value(@[], frozen = options.frozen)
       for child_file in child_files:
         array_data(result).add(read_file_value(child_file, dir_context, ref_kind))
     of RdsMap:
-      result = new_map_value()
+      result = new_map_value(options.frozen)
       map_data(result) = initTable[Key, Value]()
       for child_file in child_files:
         let encoded_name = splitFile(child_file).name

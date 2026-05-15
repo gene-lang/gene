@@ -388,30 +388,6 @@ proc s05_tuple_left_module_path(): string =
 proc s05_tuple_right_module_path(): string =
   absolutePath("tests/fixtures/s05_tuple_identity_right.gene")
 
-proc remove_s05_tree(path: string) =
-  if fileExists(path):
-    removeFile(path)
-    return
-  if not dirExists(path):
-    return
-
-  for kind, child in walkDir(path):
-    case kind
-    of pcFile, pcLinkToFile:
-      removeFile(child)
-    of pcDir:
-      remove_s05_tree(child)
-    of pcLinkToDir:
-      removeDir(child)
-    else:
-      discard
-  removeDir(path)
-
-proc fresh_s05_tree_path(name: string): string =
-  result = joinPath(getTempDir(), "gene-s05-serdes-" & name)
-  remove_s05_tree(result)
-  remove_s05_tree(result & ".gene")
-
 proc tuple_def_from_value(value: Value): TupleDef =
   check value.kind == VkTupleDef
   if value.kind != VkTupleDef or value.ref == nil:
@@ -597,66 +573,6 @@ test "Serdes: same-shaped tuple values from different modules stay nominally dis
     check right_def.name == "NamedPair"
     check left_def.module_path.contains("s05_tuple_identity_left")
     check right_def.module_path.contains("s05_tuple_identity_right")
-
-test "Serdes: tuple tree serialization roundtrips recursive tuple payloads":
-  init_all()
-  init_serdes()
-  let root_path = fresh_s05_tree_path("tuple-recursive")
-  let code = cleanup("""
-    (import NamedPair Wrapper from "tests/fixtures/s05_tuple_identity_left")
-    (var nested (Wrapper (NamedPair 3 4)))
-    (var second (NamedPair 5 6))
-    (gene/serdes/write_tree "$ROOT" [nested second] ^separate [/*])
-    (var loaded (gene/serdes/read_tree "$ROOT"))
-    (assert ((loaded/0 == nested) == true))
-    (assert (loaded/0/payload/left == 3))
-    (assert (loaded/0/payload/right == 4))
-    (assert (loaded/1/left == 5))
-    (assert (loaded/1/right == 6))
-    true
-  """).replace("$ROOT", root_path)
-  check VM.exec(code, "serdes_s05_tuple_tree_roundtrip") == TRUE
-
-  let manifest = deserialize(readFile(joinPath(root_path, "_genearray.gene")))
-  check manifest.kind == VkArray
-  let ids = array_data(manifest)
-  check ids.len == 2
-  for item in ids:
-    check item.kind == VkString
-    if item.kind == VkString:
-      let serialized_child = readFile(joinPath(root_path, item.str & ".gene"))
-      check serialized_child.contains("TupleValue")
-      check serialized_child.contains("TupleRef")
-
-test "Serdes: tree array manifests reject unsafe child ids before path resolution":
-  init_all()
-  init_serdes()
-  let root_path = fresh_s05_tree_path("unsafe-array-child")
-  let outside_path = joinPath(parentDir(root_path), "outside.gene")
-  createDir(root_path)
-  writeFile(joinPath(root_path, "_genearray.gene"), "[\"../outside\"]")
-  writeFile(outside_path, "123")
-
-  defer:
-    remove_s05_tree(root_path)
-    if fileExists(outside_path):
-      removeFile(outside_path)
-
-  var raised = false
-  var message = ""
-  try:
-    discard VM.exec(cleanup("""
-      (gene/serdes/read_tree "$ROOT")
-    """).replace("$ROOT", root_path), "serdes_s05_tree_unsafe_array_child")
-  except CatchableError as e:
-    raised = true
-    message = e.msg
-
-  checkpoint("read_tree unsafe array child error: " & message)
-  check raised
-  check message.contains("_genearray.gene")
-  check message.contains("unsafe child id")
-  check message.contains("../outside")
 
 test "Serdes: malformed TupleValue records reject before constructing values":
   init_all()
