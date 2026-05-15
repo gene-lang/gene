@@ -1,7 +1,7 @@
 # GeneClaw durable runtime storage
 # Filesystem-backed records for runs, audit events, schedules, and documents.
 
-(import GENECLAW_HOME JOBS_PATH RUNS_PATH ensure_home_bootstrap job_path run_path append_log_entry list_dir_paths path_key read_record write_record_tree read_document_record write_document_record document_record_relative_path from "home_store")
+(import GENECLAW_HOME JOBS_PATH RUNS_PATH ensure_home_bootstrap job_path run_path append_log_entry list_dir_paths path_key read_record write_record read_document_record write_document_record document_record_relative_path from "home_store")
 (import ensure_array ensure_map from "config_helpers")
 (import session_add_document_ref session_document_refs from "workspace_state")
 
@@ -116,7 +116,7 @@
 
 (fn save_run_record [run_id record]
   (var normalized (normalize_run_record run_id record))
-  (write_record_tree (run_path run_id) normalized)
+  (write_record (run_path run_id) normalized)
 )
 
 (fn load_run_record [run_id]
@@ -155,7 +155,7 @@
 (fn save_job_record [job_id job]
   (var normalized (normalize_job job))
   (normalized/job_id = job_id)
-  (write_record_tree (job_path job_id) normalized)
+  (write_record (job_path job_id) normalized)
 )
 
 (fn load_job_record [job_id]

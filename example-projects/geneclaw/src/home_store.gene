@@ -1,7 +1,7 @@
 # GeneClaw home bootstrap and storage helpers
 
 (import ensure_map build_bootstrap_config_tree from "config_helpers")
-(import CONFIG_SCHEMA CONFIG_BOOTSTRAP_SEPARATE from "config_schema")
+(import CONFIG_SCHEMA from "config_schema")
 
 ($ns/DEFAULT_GENECLAW_HOME = "/Users/gcao/gene-workspace/gene-old/example-projects/geneclaw/home")
 ($ns/GENECLAW_HOME = ($env .get "GENECLAW_HOME" DEFAULT_GENECLAW_HOME))
@@ -23,6 +23,7 @@
 ($ns/TMP_PATH = #"#{GENECLAW_HOME}/tmp")
 ($ns/BOOTSTRAPPED = false)
 ($ns/DEFAULT_SYSTEM_PROMPT = "You are GeneClaw, a capable AI agent. You can use tools to complete tasks. After receiving a tool result, provide a natural response. For general conversation, respond normally without tool calls. When durable facts, decisions, or preferences matter, use memory_search before answering. When something should be remembered across sessions, use memory_write. Do not ask the user to edit MEMORY.md directly.")
+(var CONFIG_DIRECTORY_KEYS {^llm true})
 
 (fn $ns/default_system_prompt []
   DEFAULT_SYSTEM_PROMPT
@@ -42,7 +43,16 @@
   )
 )
 
-(fn $ns/tree_exists? [path]
+(fn serialized_file_path [path]
+  (var target ((path || "") .to_s))
+  (if (target .ends_with ".gene")
+    target
+  else
+    #"#{target}.gene"
+  )
+)
+
+(fn $ns/serialized_exists? [path]
   (var base ((path || "") .to_s))
   (if base/.empty?
     false
@@ -51,7 +61,7 @@
   elif (file_exists? base)
     true
   else
-    (file_exists? #"#{base}.gene")
+    (file_exists? (serialized_file_path base))
   )
 )
 
@@ -65,16 +75,104 @@
   (if result/.empty? fallback else result)
 )
 
-(fn write_default_home_config []
-  (gene/serdes/write_tree HOME_CONFIG_PATH (build_bootstrap_config_tree CONFIG_SCHEMA)
-    ^separate CONFIG_BOOTSTRAP_SEPARATE
+(fn $ns/path_key [path]
+  (var text ((path || "") .to_s))
+  (var parts (text .split "/"))
+  (var base text)
+  (if (parts/.size > 0)
+    (var last_index (parts/.size - 1))
+    (base = (parts .get last_index))
   )
+  (if (base .ends_with ".gene")
+    (var base_len base/.length)
+    (base .substr 0 (base_len - 6))
+  else
+    base
+  )
+)
+
+(fn ensure_parent_dir [path]
+  (var text ((path || "") .to_s))
+  (var parts (text .split "/"))
+  (var parent (if (parts/.size > 1)
+    ((parts .slice 0 (parts/.size - 1)) .join "/")
+  else
+    ""
+  ))
+  (if parent/.not_empty?
+    (system/shell #"mkdir -p '#{parent}'")
+  )
+)
+
+(fn write_serialized_file [path value]
+  (var target ((path || "") .to_s))
+  (ensure_parent_dir target)
+  (gene/serdes/write target value)
+  value
+)
+
+(fn config_directory_key? [key]
+  (CONFIG_DIRECTORY_KEYS .get (((key || "") .to_s)) false)
+)
+
+(fn write_config_group [path value]
+  (system/shell #"mkdir -p '#{path}'")
+  (var group (ensure_map value))
+  (group .each (fn [key child]
+    (var key_text (((key || "") .to_s) .trim))
+    (if key_text/.not_empty?
+      (var child_path #"#{path}/#{key_text}")
+      (if ((child is Map) && (config_directory_key? key_text))
+        (write_config_group child_path child)
+      else
+        (write_serialized_file (serialized_file_path child_path) child)
+      )
+    )
+  ))
+  value
+)
+
+(fn read_config_directory [path]
+  (var result {})
+  (if_not (Dir/exists path)
+    (return result)
+  )
+  (for entry in (Dir/list path)
+    (var key (path_key entry))
+    (if key/.not_empty?
+      (if (Dir/exists entry)
+        (result .set key (read_config_directory entry))
+      elif (entry .ends_with ".gene")
+        (result .set key (gene/serdes/read entry))
+      else
+        nil
+      )
+    )
+  )
+  result
+)
+
+(fn read_serialized_file_or_default [path fallback]
+  (var target ((path || "") .to_s))
+  (if target/.empty?
+    (return fallback)
+  )
+  (var candidate (if (file_exists? target) target else (serialized_file_path target)))
+  (if (file_exists? candidate)
+    (gene/serdes/read candidate)
+  else
+    fallback
+  )
+)
+
+(fn write_default_home_config []
+  (write_config_group HOME_CONFIG_PATH (build_bootstrap_config_tree CONFIG_SCHEMA))
 )
 
 (fn ensure_state_root []
   (system/shell #"mkdir -p '#{HOME_STATE_PATH}'")
-  (if_not (tree_exists? STATE_SYSTEM_PROMPT_PATH)
-    (gene/serdes/write_tree STATE_SYSTEM_PROMPT_PATH DEFAULT_SYSTEM_PROMPT)
+  (if_not (serialized_exists? STATE_SYSTEM_PROMPT_PATH)
+    (write_serialized_file (serialized_file_path STATE_SYSTEM_PROMPT_PATH) DEFAULT_SYSTEM_PROMPT)
   )
 )
 
@@ -88,7 +186,7 @@
   )
 
   (ensure_home_dirs)
-  (if_not (tree_exists? HOME_CONFIG_PATH)
+  (if_not (serialized_exists? HOME_CONFIG_PATH)
     (write_default_home_config)
   )
   (ensure_state_root)
@@ -97,25 +195,28 @@
   true
 )
 
-(fn $ns/read_tree_or_default [path fallback]
+(fn $ns/read_serialized_or_default [path fallback]
   (ensure_home_bootstrap)
-  (if (tree_exists? path)
-    (gene/serdes/read_tree path)
-  else
+  (var target ((path || "") .to_s))
+  (if target/.empty?
     fallback
+  elif (Dir/exists target)
+    (read_config_directory target)
+  else
+    (read_serialized_file_or_default target fallback)
   )
 )
 
 (fn $ns/load_home_config_raw []
-  (ensure_map (read_tree_or_default HOME_CONFIG_PATH (build_bootstrap_config_tree CONFIG_SCHEMA)))
+  (ensure_map (read_serialized_or_default HOME_CONFIG_PATH (build_bootstrap_config_tree CONFIG_SCHEMA)))
 )
 
 (fn $ns/load_system_prompt_value []
-  (var prompt (read_tree_or_default STATE_SYSTEM_PROMPT_PATH DEFAULT_SYSTEM_PROMPT))
+  (var prompt (read_serialized_or_default STATE_SYSTEM_PROMPT_PATH DEFAULT_SYSTEM_PROMPT))
   (if (prompt is String)
     prompt
   else
-    (gene/serdes/write_tree STATE_SYSTEM_PROMPT_PATH DEFAULT_SYSTEM_PROMPT)
+    (write_serialized_file (serialized_file_path STATE_SYSTEM_PROMPT_PATH) DEFAULT_SYSTEM_PROMPT)
     DEFAULT_SYSTEM_PROMPT
   )
 )
@@ -177,71 +278,42 @@
   )
 )
 
-(fn $ns/path_key [path]
-  (var text ((path || "") .to_s))
-  (var parts (text .split "/"))
-  (var base text)
-  (if (parts/.size > 0)
-    (var last_index (parts/.size - 1))
-    (base = (parts .get last_index))
-  )
-  (if (base .ends_with ".gene")
-    (var base_len base/.length)
-    (base .substr 0 (base_len - 6))
-  else
-    base
-  )
-)
-
-(fn ensure_parent_dir [path]
-  (var text ((path || "") .to_s))
-  (var parts (text .split "/"))
-  (var parent (if (parts/.size > 1)
-    ((parts .slice 0 (parts/.size - 1)) .join "/")
-  else
-    ""
-  ))
-  (if parent/.not_empty?
-    (system/shell #"mkdir -p '#{parent}'")
-  )
-)
-
-(fn $ns/write_record_tree [path value]
+(fn $ns/write_record [path value]
   (ensure_home_bootstrap)
-  (ensure_parent_dir path)
-  (gene/serdes/write_tree path value)
+  (write_serialized_file (serialized_file_path path) value)
   value
 )
 
 (fn $ns/write_session_record [session_id value]
   (ensure_home_bootstrap)
-  (var path (session_path session_id))
+  (var path (serialized_file_path (session_path session_id)))
   (ensure_parent_dir path)
-  (gene/serdes/write_tree path value ^separate [/* /memory/*])
+  (gene/serdes/write path value ^externalize [/memory])
   value
 )
 
 (fn $ns/write_document_record [session_id document_id role value]
   (ensure_home_bootstrap)
-  (var path (document_record_path session_id document_id role))
+  (var path (serialized_file_path (document_record_path session_id document_id role)))
   (ensure_parent_dir path)
-  (gene/serdes/write_tree path value ^separate [/* /chunks/*])
+  (gene/serdes/write path value ^externalize [/chunks])
   value
 )
 
 (fn $ns/read_session_record [session_id]
   (ensure_home_bootstrap)
-  (var path (session_path session_id))
-  (if_not (tree_exists? path)
+  (var path (serialized_file_path (session_path session_id)))
+  (if_not (file_exists? path)
     (return nil)
   )
-  (gene/serdes/read_tree path ^lazy [/memory])
+  (gene/serdes/read path)
 )
 
 (fn $ns/read_record [path]
   (ensure_home_bootstrap)
-  (if (tree_exists? path)
-    (gene/serdes/read_tree path)
+  (var target (serialized_file_path path))
+  (if (file_exists? target)
+    (gene/serdes/read target)
   else
     nil
   )
@@ -250,10 +322,11 @@
 (fn $ns/read_document_record [relative_path]
   (ensure_home_bootstrap)
   (var full_path #"#{GENECLAW_HOME}/#{((relative_path || "") .to_s)}")
-  (if_not (tree_exists? full_path)
+  (var path (serialized_file_path full_path))
+  (if_not (file_exists? path)
     (return nil)
   )
-  (gene/serdes/read_tree full_path ^lazy [/chunks])
+  (gene/serdes/read path)
 )
 
 (fn $ns/append_log_entry [name value]
