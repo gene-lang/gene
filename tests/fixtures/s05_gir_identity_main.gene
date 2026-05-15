@@ -41,11 +41,11 @@
 (assert ((right_roundtrip == right) == true))
 (assert ((left_roundtrip == right_roundtrip) == false))
 
-(var tree_root "/tmp/gene_s05_gir_identity_tree")
-(gene/serdes/write_tree tree_root [left right] ^separate [/*])
-(var loaded (gene/serdes/read_tree tree_root))
-(assert ((loaded/0 == left) == true))
-(assert ((loaded/1 == right) == true))
-(assert ((loaded/0 == loaded/1) == false))
+(var filesystem_path "/tmp/gene_s05_gir_identity_filesystem/state.gene")
+(gene/serdes/write filesystem_path {^left left ^right right} ^externalize [/left /right])
+(var loaded (gene/serdes/read filesystem_path))
+(assert ((loaded/left == left) == true))
+(assert ((loaded/right == right) == true))
+(assert ((loaded/left == loaded/right) == false))
 
 (println "s05 gir identity ok")

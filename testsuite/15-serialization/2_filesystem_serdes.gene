@@ -1,0 +1,20 @@
+# Expected: filesystem serdes ok
+
+(var root "/tmp/gene_spec_filesystem_serdes")
+(var state_path #"#{root}/state.gene")
+(var value {^name "alpha" ^items [1 2 3] ^nested {^ok true}})
+(gene/serdes/write state_path value ^externalize [/items])
+(var loaded (gene/serdes/read state_path))
+(assert (loaded/name == "alpha"))
+(assert (loaded/items/0 == 1))
+(assert (loaded/items/2 == 3))
+(assert (loaded/nested/ok == true))
+(assert (((gene/io/read state_path) .contains "gene/serdes/read_dir") == true))
+
+(var items (gene/serdes/read_dir #"#{root}/state.files/items" ^shape "array" ^order "name"))
+(assert (items/1 == 2))
+
+(var lazy_state (gene/serdes/read_file state_path ^lazy true))
+(assert (lazy_state/nested/ok == true))
+
+(println "filesystem serdes ok")

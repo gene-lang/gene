@@ -1,0 +1,45 @@
+# Filesystem serializer stdlib smoke tests
+# Expected: filesystem serdes testsuite ok
+
+(var root "/tmp/gene_filesystem_serdes_testsuite_stdlib")
+
+(var exact_path #"#{root}/inline.gene")
+(var inline_value {^name "alpha" ^items [1 2 3] ^nested {^ok true}})
+(gene/serdes/write exact_path inline_value)
+(var loaded_inline (gene/serdes/read exact_path))
+(assert (loaded_inline/name == "alpha"))
+(assert (loaded_inline/items/0 == 1))
+(assert (loaded_inline/items/2 == 3))
+(assert (loaded_inline/nested/ok == true))
+(assert (((gene/io/read exact_path) .contains "gene/serialization") == true))
+
+(var external_path #"#{root}/external.gene")
+(var external_value {
+  ^status "active"
+  ^profile {^name "Ada" ^team "core"}
+  ^events [{^id "a" ^count 1} {^id "b" ^count 2}]
+})
+(gene/serdes/write external_path external_value ^externalize [/status /profile /events])
+(var loaded_external (gene/serdes/read external_path))
+(assert (loaded_external/status == "active"))
+(assert (loaded_external/profile/name == "Ada"))
+(assert (loaded_external/events/0/id == "a"))
+(assert (loaded_external/events/1/count == 2))
+
+(var status_path #"#{root}/external.files/status.gene")
+(var status (gene/serdes/read_file status_path))
+(assert (status == "active"))
+
+(var profile_dir #"#{root}/external.files/profile")
+(var profile (gene/serdes/read_dir profile_dir ^shape "map" ^order "name"))
+(assert (profile/team == "core"))
+
+(var events_dir #"#{root}/external.files/events")
+(var events (gene/serdes/read_dir events_dir ^shape "array" ^order "name"))
+(assert (events/0/id == "a"))
+(assert (events/1/id == "b"))
+
+(var lazy_status (gene/serdes/read_file status_path ^lazy true))
+(assert (lazy_status == "active"))
+
+(println "filesystem serdes testsuite ok")

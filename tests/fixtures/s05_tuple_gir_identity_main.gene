@@ -109,24 +109,37 @@
 (assert ((lazy_tuple_score local_roundtrip/1) == 19))
 (assert ((lazy_tuple_score local_roundtrip/2) == 40))
 
-(var tree_root "/tmp/gene_s05_tuple_gir_identity_tree")
-(gene/serdes/write_tree tree_root [left_named right_named left_positional right_positional left_unit right_unit left_wrapped right_wrapped local_named local_positional local_unit] ^separate [/*])
-(var loaded (gene/serdes/read_tree tree_root))
-(assert ((loaded/0 == left_named) == true))
-(assert ((loaded/1 == right_named) == true))
-(assert ((loaded/0 == loaded/1) == false))
-(assert ((loaded/2 == left_positional) == true))
-(assert ((loaded/3 == right_positional) == true))
-(assert ((loaded/4 == left_unit) == true))
-(assert ((loaded/5 == right_unit) == true))
-(assert ((loaded/4 == loaded/5) == false))
-(assert (loaded/6/payload/left == 7))
-(assert (loaded/7/payload/right == 8))
-(assert ((loaded/8 == local_named) == true))
-(assert ((loaded/9 == local_positional) == true))
-(assert ((loaded/10 == local_unit) == true))
-(assert ((lazy_tuple_score loaded/8) == 15))
-(assert ((lazy_tuple_score loaded/9) == 19))
-(assert ((lazy_tuple_score loaded/10) == 40))
+(var filesystem_path "/tmp/gene_s05_tuple_gir_identity_filesystem/state.gene")
+(var filesystem_payload {
+  ^left_named left_named
+  ^right_named right_named
+  ^left_positional left_positional
+  ^right_positional right_positional
+  ^left_unit left_unit
+  ^right_unit right_unit
+  ^left_wrapped left_wrapped
+  ^right_wrapped right_wrapped
+  ^local_named local_named
+  ^local_positional local_positional
+  ^local_unit local_unit
+})
+(gene/serdes/write filesystem_path filesystem_payload ^externalize [/left_named /right_named /left_positional /right_positional /left_unit /right_unit /left_wrapped /right_wrapped /local_named /local_positional /local_unit])
+(var loaded (gene/serdes/read filesystem_path))
+(assert ((loaded/left_named == left_named) == true))
+(assert ((loaded/right_named == right_named) == true))
+(assert ((loaded/left_named == loaded/right_named) == false))
+(assert ((loaded/left_positional == left_positional) == true))
+(assert ((loaded/right_positional == right_positional) == true))
+(assert ((loaded/left_unit == left_unit) == true))
+(assert ((loaded/right_unit == right_unit) == true))
+(assert ((loaded/left_unit == loaded/right_unit) == false))
+(assert (loaded/left_wrapped/payload/left == 7))
+(assert (loaded/right_wrapped/payload/right == 8))
+(assert ((loaded/local_named == local_named) == true))
+(assert ((loaded/local_positional == local_positional) == true))
+(assert ((loaded/local_unit == local_unit) == true))
+(assert ((lazy_tuple_score loaded/local_named) == 15))
+(assert ((lazy_tuple_score loaded/local_positional) == 19))
+(assert ((lazy_tuple_score loaded/local_unit) == 40))
 
 (println "s05 tuple gir identity ok")
