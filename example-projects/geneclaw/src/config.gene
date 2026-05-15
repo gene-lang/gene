@@ -39,6 +39,7 @@
 ($ns/OPENAI_MODEL = EFFECTIVE_CONFIG/llm/openai/model)
 ($ns/OPENAI_BASE_URL = EFFECTIVE_CONFIG/llm/openai/base_url)
 ($ns/OPENAI_TIMEOUT_MS = EFFECTIVE_CONFIG/llm/openai/timeout_ms)
+($ns/OPENAI_ACCOUNT_ID = EFFECTIVE_CONFIG/llm/openai/account_id)
 
 ($ns/ANTHROPIC_API_KEY = EFFECTIVE_CONFIG/llm/anthropic/api_key)
 ($ns/ANTHROPIC_AUTH_TOKEN = EFFECTIVE_CONFIG/llm/anthropic/auth_token)

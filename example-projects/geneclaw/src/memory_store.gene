@@ -1,6 +1,6 @@
 # GeneClaw long-term memory store
 
-(import CONFIG TMP_PATH from "config")
+(import TMP_PATH OPENAI_EMBEDDING_API_KEY OPENAI_TIMEOUT_MS OPENAI_ACCOUNT_ID OPENAI_BASE_URL from "config")
 (import MEMORY_ROOT MEMORY_MARKDOWN_PATH MEMORY_INDEX_PATH ensure_home_bootstrap file_exists? read_record write_record from "home_store")
 (import ensure_array ensure_map from "config_helpers")
 
@@ -170,7 +170,7 @@
   (try
     (var result (system/shell command))
     (if (result/exit_code == 0)
-      ((result/output || "") .to_s .trim)
+      (((result/output || "") .to_s) .trim)
     else
       ""
     )
@@ -414,27 +414,27 @@
 
 (fn embedding_credentials_available? []
   (if genex/ai
-    ((CONFIG/llm/openai/embedding_api_key || "") .not_empty?)
+    ((OPENAI_EMBEDDING_API_KEY || "") .not_empty?)
   else
     false
   )
 )
 
 (fn embedding_api_key []
-  ((CONFIG/llm/openai/embedding_api_key || "") .to_s)
+  ((OPENAI_EMBEDDING_API_KEY || "") .to_s)
 )
 
 (fn build_embedding_client []
-  (var client_opts {^model EMBEDDING_MODEL ^timeout_ms CONFIG/llm/openai/timeout_ms})
+  (var client_opts {^model EMBEDDING_MODEL ^timeout_ms OPENAI_TIMEOUT_MS})
   (var resolved_api_key (embedding_api_key))
   (if resolved_api_key/.not_empty?
     (client_opts .set "api_key" resolved_api_key)
   )
-  (if CONFIG/llm/openai/account_id/.not_empty?
-    (client_opts .set "account_id" CONFIG/llm/openai/account_id)
+  (if OPENAI_ACCOUNT_ID/.not_empty?
+    (client_opts .set "account_id" OPENAI_ACCOUNT_ID)
   )
-  (if CONFIG/llm/openai/base_url/.not_empty?
-    (client_opts .set "base_url" CONFIG/llm/openai/base_url)
+  (if OPENAI_BASE_URL/.not_empty?
+    (client_opts .set "base_url" OPENAI_BASE_URL)
   )
   (new OpenAIClient client_opts)
 )
