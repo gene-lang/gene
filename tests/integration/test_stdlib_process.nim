@@ -1,4 +1,6 @@
 import ../helpers
+import std/unittest
+import gene/types except Exception
 
 test_vm """
   (var p (system/Process/start "echo" "hello"))
@@ -91,3 +93,39 @@ test_vm """
   (assert (code == 0))
   second
 """, "worldX"
+
+test_vm """
+  (var r (system/run "sh" "-c" "printf out; printf err >&2; exit 7"))
+  [
+    r/output
+    r/stderr
+    r/exit_code
+    r/timed_out
+    ((system/which "sh") .not_empty?)
+  ]
+""", proc(result: Value) =
+  check result.kind == VkArray
+  let values = array_data(result)
+  check values[0].str == "out"
+  check values[1].str == "err"
+  check values[2].to_int == 7
+  check values[3].to_bool == false
+  check values[4].to_bool == true
+
+test_vm """
+  (var r (system/run "sh" "-c" "printf \"$FOO:\"; cat" ^env {^FOO "bar"} ^input "baz"))
+  [r/output r/exit_code]
+""", proc(result: Value) =
+  check result.kind == VkArray
+  let values = array_data(result)
+  check values[0].str == "bar:baz"
+  check values[1].to_int == 0
+
+test_vm """
+  (var r (system/run "sh" "-c" "sleep 2" ^timeout 0.05))
+  [r/timed_out r/exit_code]
+""", proc(result: Value) =
+  check result.kind == VkArray
+  let values = array_data(result)
+  check values[0].to_bool == true
+  check values[1].kind == VkInt

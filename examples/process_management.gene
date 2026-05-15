@@ -23,6 +23,12 @@
 (println "chunk 2:" (shell_proc .read_until "|" ^timeout 5))
 (println "exit:" (shell_proc .wait ^timeout 5))
 
+(println "\n== one-shot run ==")
+(var run_result (system/run "sh" "-c" "printf \"$FOO:\"; cat" ^env {^FOO "bar"} ^input "payload"))
+(println "output:" run_result/output)
+(println "exit:" run_result/exit_code)
+(println "sh path:" (system/which "sh"))
+
 (println "\n== shutdown ==")
 (var sleep_proc (system/Process/start "sh" "-c" "exec sleep 5"))
 (println "alive?:" (sleep_proc .alive?))

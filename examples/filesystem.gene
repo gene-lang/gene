@@ -1,0 +1,33 @@
+#!/usr/bin/env gene run
+
+# Demonstrates File, Dir, and Path helpers.
+
+(var root "/tmp/gene-example-filesystem")
+
+(if (Dir/exists root)
+  (Dir/delete_tree root))
+
+(Dir/create_all (Path/join root "notes"))
+
+(var source (Path/join root "notes" "todo.txt"))
+(File/write source "ship useful libraries\n")
+
+(var copy (Path/join root "copy.txt"))
+(File/copy source copy)
+
+(var moved (Path/join root "moved.txt"))
+(File/move copy moved)
+
+(var info (File/info moved))
+(var split (Path/split moved))
+
+(println "root:" root)
+(println "read:" (File/read moved))
+(println "size:" info/size "bytes")
+(println "kind:" info/kind "modified:" info/modified)
+(println "base:" (Path/base moved) "name:" split/name "ext:" split/ext)
+(println "relative:" (Path/relative moved root))
+(println "entries:" ((Dir/entries root) .size))
+(println "walk:" ((Dir/walk root) .size))
+
+(Dir/delete_tree root)

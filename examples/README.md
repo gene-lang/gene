@@ -20,8 +20,11 @@ The goal is to keep examples small, current, and runnable against the codebase a
 - `json.gene` - JSON parsing and manipulation
 - `datetime.gene` - Date and DateTime values
 - `io.gene` - File I/O operations
+- `filesystem.gene` - File, directory, and path helpers
 - `process_management.gene` - `system/Process` spawning and control
 - `sqlite.gene` - SQLite queries using `genex/sqlite`
+- `crypto.gene` - Hashing, HMAC, random bytes, and secure comparison using `genex/crypto`
+- `udp.gene` - UDP loopback datagram example using `genex/udp`
 
 ## Concurrency
 
@@ -65,6 +68,6 @@ Some examples depend on extension modules:
 nimble buildext
 ```
 
-That is required for `html.gene`, `http_server.gene`, `http_actor_server.gene`, `http_ab_demo.gene`, `http_ab_actor_demo.gene`, `sqlite.gene`, and `openai_chat.gene`.
+That is required for `html.gene`, `http_server.gene`, `http_actor_server.gene`, `http_ab_demo.gene`, `http_ab_actor_demo.gene`, `sqlite.gene`, `crypto.gene`, `udp.gene`, and `openai_chat.gene`.
 
 `http_server.gene`, `http_actor_server.gene`, `http_ab_demo.gene`, and `http_ab_actor_demo.gene` are long-running by design. `openai_chat.gene` also requires `OPENAI_API_KEY`.

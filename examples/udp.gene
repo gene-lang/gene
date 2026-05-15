@@ -1,0 +1,14 @@
+#!/usr/bin/env gene run
+
+# Requires:
+#   nimble buildext
+
+(import genex/udp)
+
+(var port 19091)
+(var sock (genex/udp/open port "127.0.0.1"))
+
+(sock .send_to "127.0.0.1" port "ping")
+(println (sock .recv_from 1024))
+
+(sock .close)

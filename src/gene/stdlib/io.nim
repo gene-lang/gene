@@ -1,4 +1,4 @@
-import tables, os
+import tables, os, times
 import ../types
 import ../wasm_host_abi
 
@@ -8,6 +8,63 @@ import ../wasm_host_abi
 type
   FileInstance* = ref object
     path*: string
+
+proc string_arg(args: ptr UncheckedArray[Value], idx: int, has_keyword_args: bool,
+                context: string): string =
+  let value = get_positional_arg(args, idx, has_keyword_args)
+  if value.kind != VkString:
+    raise new_exception(types.Exception, context & " requires a string path")
+  value.str
+
+proc path_kind_name(kind: PathComponent): string =
+  case kind
+  of pcFile:
+    "file"
+  of pcDir:
+    "dir"
+  of pcLinkToFile:
+    "file_link"
+  of pcLinkToDir:
+    "dir_link"
+
+proc path_exists(path: string): bool =
+  fileExists(path) or dirExists(path)
+
+proc path_info_value(path: string): Value =
+  var info = initTable[Key, Value]()
+  info["path".to_key()] = path.to_value()
+  info["exists".to_key()] = path_exists(path).to_value()
+  info["file".to_key()] = fileExists(path).to_value()
+  info["dir".to_key()] = dirExists(path).to_value()
+
+  when defined(gene_wasm):
+    info["kind".to_key()] = (if host_file_exists(path): "file" else: "missing").to_value()
+    info["size".to_key()] = NIL
+    info["modified".to_key()] = NIL
+  else:
+    if path_exists(path):
+      try:
+        let file_info = getFileInfo(path)
+        info["kind".to_key()] = path_kind_name(file_info.kind).to_value()
+        info["size".to_key()] = file_info.size.int64.to_value()
+        info["modified".to_key()] = file_info.lastWriteTime.toUnix().to_value()
+      except OSError:
+        info["kind".to_key()] = "unknown".to_value()
+        info["size".to_key()] = NIL
+        info["modified".to_key()] = NIL
+    else:
+      info["kind".to_key()] = "missing".to_value()
+      info["size".to_key()] = NIL
+      info["modified".to_key()] = NIL
+
+  new_map_value(info)
+
+proc dir_entry_value(path: string, kind: PathComponent): Value =
+  var entry = initTable[Key, Value]()
+  entry["path".to_key()] = path.to_value()
+  entry["name".to_key()] = extractFilename(path).to_value()
+  entry["kind".to_key()] = path_kind_name(kind).to_value()
+  new_map_value(entry)
 
 # File constructor
 proc io_file_constructor*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -241,6 +298,63 @@ proc io_file_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], ar
     except OSError as e:
       raise new_exception(types.Exception, "Failed to delete file '" & path & "': " & e.msg)
 
+proc io_file_copy*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 2:
+    raise new_exception(types.Exception, "File/copy requires source and destination")
+  let source = string_arg(args, 0, has_keyword_args, "File/copy source")
+  let destination = string_arg(args, 1, has_keyword_args, "File/copy destination")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("file_copy")
+  else:
+    try:
+      copyFile(source, destination)
+      NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to copy file '" & source & "' to '" & destination & "': " & e.msg)
+
+proc io_file_move*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 2:
+    raise new_exception(types.Exception, "File/move requires source and destination")
+  let source = string_arg(args, 0, has_keyword_args, "File/move source")
+  let destination = string_arg(args, 1, has_keyword_args, "File/move destination")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("file_move")
+  else:
+    try:
+      moveFile(source, destination)
+      NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to move file '" & source & "' to '" & destination & "': " & e.msg)
+
+proc io_file_size*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "File/size requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "File/size")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("file_size")
+  else:
+    try:
+      getFileSize(path).int64.to_value()
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to get file size for '" & path & "': " & e.msg)
+
+proc io_file_modified*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "File/modified requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "File/modified")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("file_modified")
+  else:
+    try:
+      getLastModificationTime(path).toUnix().to_value()
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to get file modification time for '" & path & "': " & e.msg)
+
+proc io_file_info*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "File/info requires a path")
+  path_info_value(string_arg(args, 0, has_keyword_args, "File/info"))
+
 # Dir class methods
 proc io_dir_exists*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -274,6 +388,19 @@ proc io_dir_create*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
     except OSError as e:
       raise new_exception(types.Exception, "Failed to create directory '" & path & "': " & e.msg)
 
+proc io_dir_create_all*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Dir/create_all requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "Dir/create_all")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      createDir(path)
+      NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to create directory tree '" & path & "': " & e.msg)
+
 proc io_dir_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
     raise new_exception(types.Exception, "Dir/delete requires 1 argument (path)")
@@ -291,6 +418,19 @@ proc io_dir_delete*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
       return NIL
     except OSError as e:
       raise new_exception(types.Exception, "Failed to delete directory '" & path & "': " & e.msg)
+
+proc io_dir_delete_tree*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Dir/delete_tree requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "Dir/delete_tree")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      removeDir(path)
+      NIL
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to delete directory tree '" & path & "': " & e.msg)
 
 proc io_dir_list*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   if arg_count < 1:
@@ -311,6 +451,40 @@ proc io_dir_list*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
       return new_array_value(files)
     except OSError as e:
       raise new_exception(types.Exception, "Failed to list directory '" & path & "': " & e.msg)
+
+proc io_dir_entries*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Dir/entries requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "Dir/entries")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      var entries: seq[Value] = @[]
+      for kind, file_path in walkDir(path):
+        entries.add(dir_entry_value(file_path, kind))
+      new_array_value(entries)
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to list directory entries for '" & path & "': " & e.msg)
+
+proc io_dir_walk*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Dir/walk requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "Dir/walk")
+  when defined(gene_wasm):
+    raise_wasm_unsupported("directory_ops")
+  else:
+    try:
+      var entries: seq[Value] = @[]
+      proc visit(dir: string) =
+        for kind, file_path in walkDir(dir):
+          entries.add(dir_entry_value(file_path, kind))
+          if kind == pcDir or kind == pcLinkToDir:
+            visit(file_path)
+      visit(path)
+      new_array_value(entries)
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to walk directory '" & path & "': " & e.msg)
 
 # Path operations
 proc io_path_join*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -370,6 +544,44 @@ proc io_path_ext*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
   let path = path_arg.str
   return splitFile(path).ext.to_value()
 
+proc io_path_split*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Path/split requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "Path/split")
+  let parts = splitFile(path)
+  var result_map = initTable[Key, Value]()
+  result_map["dir".to_key()] = parts.dir.to_value()
+  result_map["name".to_key()] = parts.name.to_value()
+  result_map["ext".to_key()] = parts.ext.to_value()
+  new_map_value(result_map)
+
+proc io_path_normalize*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Path/normalize requires a path")
+  normalizedPath(string_arg(args, 0, has_keyword_args, "Path/normalize")).to_value()
+
+proc io_path_relative*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional < 1:
+    raise new_exception(types.Exception, "Path/relative requires a path")
+  let path = string_arg(args, 0, has_keyword_args, "Path/relative")
+  let base =
+    if positional > 1:
+      string_arg(args, 1, has_keyword_args, "Path/relative base")
+    else:
+      getCurrentDir()
+  relativePath(path, base).to_value()
+
+proc io_path_is_abs*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Path/is_abs requires a path")
+  isAbsolute(string_arg(args, 0, has_keyword_args, "Path/is_abs")).to_value()
+
+proc io_path_expand_user*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  if get_positional_count(arg_count, has_keyword_args) < 1:
+    raise new_exception(types.Exception, "Path/expand_user requires a path")
+  expandTilde(string_arg(args, 0, has_keyword_args, "Path/expand_user")).to_value()
+
 # Register all I/O functions in a namespace
 proc init_io_namespace*(global_ns: Namespace) =
   let io_ns = new_namespace("io")
@@ -391,6 +603,13 @@ proc init_io_namespace*(global_ns: Namespace) =
   file_class.def_static_method("append", io_file_append)
   file_class.def_static_method("exists", io_file_exists)
   file_class.def_static_method("delete", io_file_delete)
+  file_class.def_static_method("remove", io_file_delete)
+  file_class.def_static_method("copy", io_file_copy)
+  file_class.def_static_method("move", io_file_move)
+  file_class.def_static_method("rename", io_file_move)
+  file_class.def_static_method("size", io_file_size)
+  file_class.def_static_method("modified", io_file_modified)
+  file_class.def_static_method("info", io_file_info)
 
   let file_class_ref = new_ref(VkClass)
   file_class_ref.class = file_class
@@ -402,19 +621,48 @@ proc init_io_namespace*(global_ns: Namespace) =
   let dir_ns = new_namespace("Dir")
   dir_ns["exists".to_key()] = io_dir_exists.to_value()
   dir_ns["create".to_key()] = io_dir_create.to_value()
+  dir_ns["create_all".to_key()] = io_dir_create_all.to_value()
+  dir_ns["mkdir_p".to_key()] = io_dir_create_all.to_value()
   dir_ns["delete".to_key()] = io_dir_delete.to_value()
+  dir_ns["delete_tree".to_key()] = io_dir_delete_tree.to_value()
+  dir_ns["remove_tree".to_key()] = io_dir_delete_tree.to_value()
   dir_ns["list".to_key()] = io_dir_list.to_value()
+  dir_ns["entries".to_key()] = io_dir_entries.to_value()
+  dir_ns["walk".to_key()] = io_dir_walk.to_value()
   io_ns["Dir".to_key()] = dir_ns.to_value()
 
   # Path functions
+  let path_ns = new_namespace("Path")
+  path_ns["join".to_key()] = io_path_join.to_value()
+  path_ns["abs".to_key()] = io_path_abs.to_value()
+  path_ns["absolute".to_key()] = io_path_abs.to_value()
+  path_ns["base".to_key()] = io_path_basename.to_value()
+  path_ns["basename".to_key()] = io_path_basename.to_value()
+  path_ns["dir".to_key()] = io_path_dirname.to_value()
+  path_ns["dirname".to_key()] = io_path_dirname.to_value()
+  path_ns["ext".to_key()] = io_path_ext.to_value()
+  path_ns["split".to_key()] = io_path_split.to_value()
+  path_ns["normalize".to_key()] = io_path_normalize.to_value()
+  path_ns["relative".to_key()] = io_path_relative.to_value()
+  path_ns["is_abs".to_key()] = io_path_is_abs.to_value()
+  path_ns["is_absolute".to_key()] = io_path_is_abs.to_value()
+  path_ns["expand_user".to_key()] = io_path_expand_user.to_value()
+  io_ns["Path".to_key()] = path_ns.to_value()
+
   io_ns["path_join".to_key()] = io_path_join.to_value()
   io_ns["path_abs".to_key()] = io_path_abs.to_value()
   io_ns["path_basename".to_key()] = io_path_basename.to_value()
   io_ns["path_dirname".to_key()] = io_path_dirname.to_value()
   io_ns["path_ext".to_key()] = io_path_ext.to_value()
+  io_ns["path_split".to_key()] = io_path_split.to_value()
+  io_ns["path_normalize".to_key()] = io_path_normalize.to_value()
+  io_ns["path_relative".to_key()] = io_path_relative.to_value()
+  io_ns["path_is_abs".to_key()] = io_path_is_abs.to_value()
+  io_ns["path_expand_user".to_key()] = io_path_expand_user.to_value()
 
   global_ns["io".to_key()] = io_ns.to_value()
 
   # Also add to global namespace for convenience
   global_ns["File".to_key()] = file_class_value
   global_ns["Dir".to_key()] = dir_ns.to_value()
+  global_ns["Path".to_key()] = path_ns.to_value()

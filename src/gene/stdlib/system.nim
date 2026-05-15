@@ -45,7 +45,7 @@ template ensure_process_support(op_name: string) =
 
 when not defined(gene_wasm):
   proc key_to_string(key: types.Key): string =
-    get_symbol(cast[int](key))
+    get_symbol(symbol_index(key))
 
   proc parse_timeout_ms(value: Value, context: string): int =
     let timeout_seconds =
@@ -66,6 +66,11 @@ when not defined(gene_wasm):
       raise new_exception(types.Exception, context & " requires ^timeout")
     parse_timeout_ms(get_keyword_arg(args, "timeout"), context)
 
+  proc optional_timeout_ms(args: ptr UncheckedArray[Value], has_keyword_args: bool, context: string): int =
+    if has_keyword_args and has_keyword_arg(args, "timeout"):
+      return parse_timeout_ms(get_keyword_arg(args, "timeout"), context)
+    -1
+
   proc get_process_wrapper(self: Value): ManagedProcess =
     if self.kind != VkInstance:
       raise new_exception(types.Exception, "Process method must be called on a Process instance")
@@ -82,6 +87,8 @@ when not defined(gene_wasm):
         result = process_table[process_id]
 
   proc set_process_exit_code(self: Value, wrapper: ManagedProcess) =
+    if self.kind != VkInstance:
+      return
     if wrapper.exit_code_known:
       instance_props(self)[PROCESS_EXIT_CODE_KEY.to_key()] = wrapper.exit_code.to_value()
     else:
@@ -343,6 +350,127 @@ proc system_shell*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_
       return new_map_value(result_map)
     except OSError as e:
       raise new_exception(types.Exception, "Failed to execute shell command: " & e.msg)
+
+proc system_run*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  ensure_process_support("process_run")
+
+  when not defined(gene_wasm) and not defined(windows):
+    let positional = get_positional_count(arg_count, has_keyword_args)
+    if positional < 1:
+      raise new_exception(types.Exception, "run requires at least 1 argument (command)")
+
+    let command_arg = get_positional_arg(args, 0, has_keyword_args)
+    if command_arg.kind != VkString:
+      raise new_exception(types.Exception, "run requires a string command")
+
+    var process_args: seq[string] = @[]
+    for i in 1..<positional:
+      process_args.add(get_positional_arg(args, i, has_keyword_args).str_no_quotes())
+
+    let cwd_val = if has_keyword_args: get_keyword_arg(args, "cwd") else: NIL
+    let cwd =
+      if cwd_val == NIL:
+        ""
+      elif cwd_val.kind == VkString:
+        cwd_val.str
+      else:
+        raise new_exception(types.Exception, "^cwd must be a string")
+
+    let input_val = if has_keyword_args: get_keyword_arg(args, "input") else: NIL
+    let env_val = if has_keyword_args: get_keyword_arg(args, "env") else: NIL
+    let timeout_ms = optional_timeout_ms(args, has_keyword_args, "run")
+    let stderr_to_stdout = if has_keyword_args: get_keyword_arg(args, "stderr_to_stdout").to_bool() else: false
+
+    var options = {poUsePath}
+    if stderr_to_stdout:
+      options.incl(poStdErrToStdOut)
+
+    var wrapper: ManagedProcess
+    try:
+      let process_handle = startProcess(
+        command = command_arg.str,
+        workingDir = cwd,
+        args = process_args,
+        env = build_env_table(env_val),
+        options = options
+      )
+      wrapper = ManagedProcess(
+        process: process_handle,
+        pid: processID(process_handle),
+        stderr_to_stdout: stderr_to_stdout,
+        stdin_closed: false,
+        stdout_eof: false,
+        stderr_eof: stderr_to_stdout,
+        exit_code_known: false,
+        exit_code: 0,
+        stdout_buffer: "",
+        stderr_buffer: ""
+      )
+    except OSError as e:
+      raise new_exception(types.Exception, "Failed to run process: " & e.msg)
+    except IOError as e:
+      raise new_exception(types.Exception, "Failed to run process: " & e.msg)
+
+    var timed_out = false
+    try:
+      if input_val != NIL:
+        write_all(wrapper, input_val.str_no_quotes())
+      close_stdin_handle(wrapper)
+
+      let deadline = if timeout_ms >= 0: epochTime() + timeout_ms.float / 1000.0 else: 0.0
+      while true:
+        if not wrapper.process.is_nil and not wrapper.stdout_eof:
+          drain_available_bytes(outputHandle(wrapper.process), wrapper.stdout_buffer, wrapper.stdout_eof)
+        if not stderr_to_stdout and not wrapper.process.is_nil and not wrapper.stderr_eof:
+          drain_available_bytes(errorHandle(wrapper.process), wrapper.stderr_buffer, wrapper.stderr_eof)
+
+        if sync_process_exit(NIL, wrapper):
+          if not wrapper.process.is_nil and not wrapper.stdout_eof:
+            drain_available_bytes(outputHandle(wrapper.process), wrapper.stdout_buffer, wrapper.stdout_eof)
+          if not stderr_to_stdout and not wrapper.process.is_nil and not wrapper.stderr_eof:
+            drain_available_bytes(errorHandle(wrapper.process), wrapper.stderr_buffer, wrapper.stderr_eof)
+          close_process_resources(wrapper)
+          break
+
+        if timeout_ms >= 0 and epochTime() >= deadline:
+          timed_out = true
+          send_signal(wrapper, "KILL")
+          discard wait_for_exit(NIL, wrapper, 1000)
+          close_process_resources(wrapper)
+          break
+
+        sleep(10)
+
+      var result_map = initTable[types.Key, Value]()
+      result_map["output".to_key()] = wrapper.stdout_buffer.to_value()
+      result_map["stdout".to_key()] = wrapper.stdout_buffer.to_value()
+      result_map["stderr".to_key()] = wrapper.stderr_buffer.to_value()
+      result_map["error".to_key()] = wrapper.stderr_buffer.to_value()
+      result_map["pid".to_key()] = wrapper.pid.to_value()
+      result_map["timed_out".to_key()] = timed_out.to_value()
+      if wrapper.exit_code_known:
+        result_map["exit_code".to_key()] = wrapper.exit_code.to_value()
+      else:
+        result_map["exit_code".to_key()] = NIL
+      new_map_value(result_map)
+    except OSError as e:
+      close_process_resources(wrapper)
+      raise new_exception(types.Exception, "Failed while running process: " & e.msg)
+
+proc system_which*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
+  when defined(gene_wasm):
+    raise_wasm_unsupported("process_which")
+  else:
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      raise new_exception(types.Exception, "which requires a command name")
+    let command_arg = get_positional_arg(args, 0, has_keyword_args)
+    if command_arg.kind != VkString:
+      raise new_exception(types.Exception, "which requires a string command name")
+    let path = findExe(command_arg.str)
+    if path.len == 0:
+      NIL
+    else:
+      path.to_value()
 
 # Current working directory
 proc system_cwd*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
@@ -758,6 +886,8 @@ proc init_system_namespace*(global_ns: Namespace) =
   # Process execution
   system_ns["exec".to_key()] = system_exec.to_value()
   system_ns["shell".to_key()] = system_shell.to_value()
+  system_ns["run".to_key()] = system_run.to_value()
+  system_ns["which".to_key()] = system_which.to_value()
 
   # Directory operations
   system_ns["cwd".to_key()] = system_cwd.to_value()

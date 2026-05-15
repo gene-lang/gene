@@ -1,0 +1,11 @@
+#!/usr/bin/env gene run
+
+# Requires:
+#   nimble buildext
+
+(import genex/crypto)
+
+(println "sha256:" (genex/crypto/sha256 "abc"))
+(println "hmac:" (genex/crypto/hmac_sha256 "secret" "payload"))
+(println "random:" (genex/crypto/random_hex 16))
+(println "equal:" (genex/crypto/secure_eq "same" "same"))

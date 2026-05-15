@@ -20,6 +20,28 @@
 (await (gene/io/write_async "out.txt" "content"))
 ```
 
+### Filesystem and Paths
+```gene
+(Dir/create_all (Path/join "/tmp" "gene-demo"))
+
+(var path (Path/join "/tmp" "gene-demo" "note.txt"))
+(File/write path "hello")
+(File/copy path (Path/join "/tmp" "gene-demo" "copy.txt"))
+
+(File/exists path)       # => true
+(File/size path)         # => 5
+(File/info path)         # => {^path path ^exists true ^kind "file" ^size 5 ...}
+
+(Dir/entries "/tmp/gene-demo") # immediate entries with ^path, ^name, and ^kind
+(Dir/walk "/tmp/gene-demo")    # recursive entries
+
+(Path/base path)              # => "note.txt"
+(Path/split path)             # => {^dir "/tmp/gene-demo" ^name "note" ^ext ".txt"}
+(Path/relative path "/tmp")   # => "gene-demo/note.txt"
+```
+
+Aliases are provided for common spellings: `File/remove`, `File/rename`, `Dir/mkdir_p`, `Dir/remove_tree`, `Path/absolute`, `Path/basename`, `Path/dirname`, and `Path/is_absolute`.
+
 ## 14.2 String Methods
 
 | Method           | Description                        | Example                                |
@@ -247,6 +269,18 @@ Request properties: `method`, `path`, `url`, `params`, `headers`, `body`
 (pg .close)
 ```
 
+### MySQL
+```gene
+(var my (genex/mysql/open "127.0.0.1" "user" "password" "mydb" ^port 3306))
+(my .query "SELECT * FROM users WHERE id = ?" 42)
+(my .exec "INSERT INTO users (name) VALUES (?)" "Alice")
+(my .begin)
+(my .commit)    # or (my .rollback)
+(my .close)
+```
+
+`genex/mysql` requires the platform MySQL/MariaDB client library at runtime.
+
 Results: arrays of arrays `[[col1 col2] [col1 col2] ...]`
 
 ## 14.15 System & Processes
@@ -257,9 +291,47 @@ Results: arrays of arrays `[[col1 col2] [col1 col2] ...]`
 (var p (system/Process/start "echo" "hello"))
 (var line (p .read_line ^timeout 5))
 (var code (p .wait ^timeout 5))
+
+(var result (system/run "sh" "-c" "printf \"$FOO:\"; cat" ^env {^FOO "bar"} ^input "baz"))
+result/output    # => "bar:baz"
+result/stderr    # => ""
+result/exit_code # => 0
+
+(system/which "sh")
 ```
 
-`system/Process` is currently supported on Unix/macOS. The `system/` namespace also exposes helpers such as `exec`, `shell`, `cwd`, `cd`, `args`, `os`, and `arch`.
+`system/Process` and `system/run` are currently supported on Unix/macOS. `system/run` returns a map with `output`, `stdout`, `stderr`, `error`, `pid`, `timed_out`, and `exit_code`. It accepts `^cwd`, `^env`, `^input`, `^timeout`, and `^stderr_to_stdout`. The `system/` namespace also exposes helpers such as `exec`, `shell`, `which`, `cwd`, `cd`, `args`, `os`, and `arch`.
+
+## 14.16 Networking Extensions
+
+```gene
+(var sock (genex/tcp/connect "127.0.0.1" 9000 ^timeout_ms 2000))
+(sock .send "ping\n")
+(var line (sock .recv_line ^timeout_ms 2000))
+(sock .close)
+
+(var server (genex/tcp/listen 9000 "127.0.0.1" ^backlog 128))
+(var client (server .accept))
+(client .close)
+(server .close)
+```
+
+```gene
+(var udp (genex/udp/open 9001 "127.0.0.1"))
+(udp .send_to "127.0.0.1" 9001 "ping")
+(var packet (udp .recv_from 1024))  # {^body "ping" ^address "..." ^port ...}
+(udp .close)
+```
+
+## 14.17 Crypto Extension
+
+```gene
+(genex/crypto/sha256 "abc")
+(genex/crypto/digest "sha512" "payload")
+(genex/crypto/hmac_sha256 "secret" "payload")
+(genex/crypto/random_hex 32)
+(genex/crypto/secure_eq expected actual)
+```
 
 ---
 
@@ -273,7 +345,7 @@ Results: arrays of arrays `[[col1 col2] [col1 col2] ...]`
 - **Math library**: Core helpers include `min`, `max`, `floor`, `ceil`, `round`, and `random`, but trig/log functions are still absent.
 - **Date/time**: Core constructors and accessors exist, but there is still no direct Date/DateTime literal construction, parsing API, arithmetic API, or timezone control.
 - **Bytes**: `VkBytes` exists and string byte helpers work, but raw Bytes values remain mostly opaque and there is no complete standalone bytes API yet.
-- **File system**: No directory listing, file existence check, path manipulation, or file metadata.
-- **Process/system**: `system/Process`, `system/exec`, and `system/shell` exist, but process support is still Unix/macOS-focused and there is no richer filesystem/process management layer yet.
-- **Networking**: HTTP exists but no raw TCP/UDP sockets exposed to Gene code.
+- **File system**: Core file, directory, metadata, and path helpers exist; remaining gaps include globbing, permissions, symlink mutation, temp file helpers, and file watching.
+- **Process/system**: `system/Process`, `system/run`, `system/exec`, and `system/shell` exist, but process support is still Unix/macOS-focused and lacks Windows parity.
+- **Networking**: HTTP plus raw TCP/UDP sockets exist, but TLS sockets and higher-level protocol helpers are still absent.
 - **Logging**: Structured logging exists via `genex/logging`, but it is not part of the core prelude documented in this section.

@@ -18,6 +18,7 @@ matrix and stable-core boundary.
 - [generator_functions.md](generator_functions.md) — shipped generator semantics
 - [regex.md](regex.md) — current regex syntax and helper behavior
 - [package_support.md](package_support.md) — current package/import behavior
+- [stdlib-status.md](stdlib-status.md) — current library coverage, known gaps, and recommended next library additions
 - [type-system-mvp.md](type-system-mvp.md) — current gradual typing status
 - [enum-adt-unification.md](enum-adt-unification.md) — current enum ADT model, construction, slash payload reads, matching, identity, and migration guidance
 - [tuple-support.md](tuple-support.md) — current nominal tuple product-data model, direct construction, slash reads, equality/display, case patterns, persistence notes, and non-goals

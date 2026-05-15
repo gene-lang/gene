@@ -12,6 +12,7 @@ examples=(
   examples/fib.gene
   examples/async.gene
   examples/io.gene
+  examples/filesystem.gene
   examples/oop.gene
   examples/interception.gene
   examples/sample_typed.gene

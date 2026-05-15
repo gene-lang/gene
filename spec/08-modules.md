@@ -65,6 +65,10 @@ Module paths are relative to the importing file:
 | `genex/http`    | HTTP client/server                         |
 | `genex/sqlite`  | SQLite database client                     |
 | `genex/postgres`| PostgreSQL database client                 |
+| `genex/mysql`   | MySQL/MariaDB database client              |
+| `genex/tcp`     | TCP sockets                                |
+| `genex/udp`     | UDP sockets                                |
+| `genex/crypto`  | Hashing, HMAC, random bytes, safe compare  |
 
 The `gene/` root namespace also exposes helpers such as `gene/now`, `gene/today`, `gene/yesterday`, `gene/tomorrow`, `gene/base64_encode`, `gene/base64_decode`, and `gene/sleep_async`.
 
