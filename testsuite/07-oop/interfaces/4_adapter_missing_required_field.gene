@@ -1,0 +1,12 @@
+# ExitCode: 1
+
+(interface TsContractReadable
+  (field name String)
+  (method read [] -> String))
+
+(class TsContractData
+  (ctor [] nil)
+  (method read [] -> String
+    "r"))
+
+(implement TsContractReadable for TsContractData)

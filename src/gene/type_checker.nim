@@ -60,8 +60,10 @@ type
 
   InterfaceInfo* = ref object
     name*: string
+    parents*: seq[string]
     fields*: Table[string, TypeExpr]
     methods*: Table[string, TypeExpr]
+    method_defaults*: Table[string, bool]
 
   AdtVariant = object
     name*: string
@@ -737,9 +739,28 @@ proc check_interface_conformance(self: TypeChecker, cls: ClassInfo, interface_na
   for method_name, method_type in iface.methods:
     let actual = self.find_method(cls, method_name)
     if actual == nil:
+      if iface.method_defaults.getOrDefault(method_name, false):
+        continue
       raise new_exception(types.Exception, "Type error: class " & cls.name & " does not implement method " & method_name & " required by interface " & interface_name)
     if not self.signature_compatible(actual, method_type):
       raise new_exception(types.Exception, "Type error: method " & method_name & " on " & cls.name & " is incompatible with interface " & interface_name)
+
+proc check_duplicate_interface_defaults(self: TypeChecker, cls: ClassInfo) =
+  var defaults = initTable[string, string]()
+  for interface_name in cls.interfaces:
+    let iface = self.get_interface_info(interface_name)
+    if iface == nil:
+      continue
+    for method_name, has_default in iface.method_defaults:
+      if not has_default:
+        continue
+      if self.find_method(cls, method_name) != nil:
+        continue
+      if defaults.hasKey(method_name):
+        raise new_exception(types.Exception,
+          "Type error: class " & cls.name & " inherits duplicate default method " &
+          method_name & " from interfaces " & defaults[method_name] & " and " & interface_name)
+      defaults[method_name] = interface_name
 
 proc register_imported_type(self: TypeChecker, name: string, force: bool = false) =
   if name.len == 0:
@@ -3547,22 +3568,65 @@ proc check_interface(self: TypeChecker, gene: ptr Gene): TypeExpr =
   ensure_user_type_name(interface_name, "interface")
   var iface = InterfaceInfo(
     name: interface_name,
+    parents: @[],
     fields: initTable[string, TypeExpr](),
-    methods: initTable[string, TypeExpr]()
+    methods: initTable[string, TypeExpr](),
+    method_defaults: initTable[string, bool]()
   )
+
+  var body_start = 1
+  if gene.children.len >= 3 and gene.children[1].kind == VkSymbol and gene.children[1].str == "extends":
+    var method_overrides = initTable[string, bool]()
+    for i in 3..<gene.children.len:
+      let child = gene.children[i]
+      if child.kind == VkGene and child.gene != nil and child.gene.type.kind == VkSymbol and
+         child.gene.type.str == "method" and child.gene.children.len > 0 and
+         child.gene.children[0].kind == VkSymbol:
+        method_overrides[split_generic_definition_name(child.gene.children[0].str).base_name] = true
+    for parent_name in self.parse_interface_list(gene.children[2]):
+      if parent_name == interface_name:
+        raise new_exception(types.Exception, "Interface " & interface_name & " cannot extend itself")
+      let parent = self.get_interface_info(parent_name)
+      if parent == nil:
+        raise new_exception(types.Exception, "Unknown interface: " & parent_name)
+      iface.parents.add(parent_name)
+      for field_name, field_type in parent.fields:
+        if iface.fields.hasKey(field_name) and not self.signature_compatible(iface.fields[field_name], field_type):
+          raise new_exception(types.Exception, "Interface " & interface_name & " inherits incompatible field " & field_name)
+        iface.fields[field_name] = field_type
+      for method_name, method_type in parent.methods:
+        if iface.methods.hasKey(method_name):
+          if not self.signature_compatible(iface.methods[method_name], method_type):
+            raise new_exception(types.Exception, "Interface " & interface_name & " inherits incompatible method " & method_name)
+          if iface.method_defaults.getOrDefault(method_name, false) and
+             parent.method_defaults.getOrDefault(method_name, false) and
+             not method_overrides.getOrDefault(method_name, false):
+            raise new_exception(types.Exception, "Interface " & interface_name & " inherits duplicate default method " & method_name)
+          if parent.method_defaults.getOrDefault(method_name, false):
+            iface.method_defaults[method_name] = true
+        else:
+          iface.methods[method_name] = method_type
+          iface.method_defaults[method_name] = parent.method_defaults.getOrDefault(method_name, false)
+    body_start = 3
+
   self.interfaces[interface_name] = iface
 
   let saved_class = self.current_class
   self.current_class = interface_name
   defer: self.current_class = saved_class
 
-  for i in 1..<gene.children.len:
+  for i in body_start..<gene.children.len:
     let child = gene.children[i]
     if child.kind != VkGene or child.gene == nil or child.gene.`type`.kind != VkSymbol:
       raise new_exception(types.Exception, "interface body only supports field and method declarations")
     case child.gene.`type`.str
     of "field":
-      self.check_field_decl(child.gene, iface.fields)
+      var local_fields = initTable[string, TypeExpr]()
+      self.check_field_decl(child.gene, local_fields)
+      for field_name, field_type in local_fields:
+        if iface.fields.hasKey(field_name) and not self.signature_compatible(iface.fields[field_name], field_type):
+          raise new_exception(types.Exception, "Interface " & interface_name & " overrides field " & field_name & " with an incompatible signature")
+        iface.fields[field_name] = field_type
     of "method":
       if child.gene.children.len < 2:
         raise new_exception(types.Exception, "interface method requires a name and parameter list")
@@ -3570,20 +3634,27 @@ proc check_interface(self: TypeChecker, gene: ptr Gene): TypeExpr =
       if method_name_val.kind != VkSymbol:
         raise new_exception(types.Exception, "interface method name must be a symbol")
       let method_name = split_generic_definition_name(method_name_val.str).base_name
+      let inherited_method = iface.methods.getOrDefault(method_name, nil)
       let temp_class = ClassInfo(name: interface_name, parent: "", fields: iface.fields, methods: iface.methods, ctor_type: nil, interfaces: @[])
       let method_type = self.check_method(child.gene, interface_name, temp_class)
-      if child.gene.children.len > 0:
-        var idx = 2
-        if idx < child.gene.children.len and child.gene.children[idx].kind == VkSymbol and child.gene.children[idx].str == "->":
-          idx += 2
-        if idx < child.gene.children.len and child.gene.children[idx].kind == VkSymbol and child.gene.children[idx].str == "!":
-          idx += 2
-        if idx < child.gene.children.len:
-          raise new_exception(types.Exception, "interface methods cannot have a body")
+      var idx = 2
+      if idx < child.gene.children.len and child.gene.children[idx].kind == VkSymbol and child.gene.children[idx].str == "->":
+        idx += 2
+      if idx < child.gene.children.len and child.gene.children[idx].kind == VkSymbol and child.gene.children[idx].str == "!":
+        idx += 2
+      let has_default = idx < child.gene.children.len
+      if inherited_method != nil and not self.signature_compatible(inherited_method, method_type):
+        raise new_exception(types.Exception, "Interface " & interface_name & " overrides method " & method_name & " with an incompatible signature")
       iface.methods[method_name] = method_type
+      iface.method_defaults[method_name] = has_default
     of "prop":
       self.warn("Warning: interface prop is deprecated; use field")
-      self.check_prop_decl(child.gene, iface.fields)
+      var local_fields = initTable[string, TypeExpr]()
+      self.check_prop_decl(child.gene, local_fields)
+      for field_name, field_type in local_fields:
+        if iface.fields.hasKey(field_name) and not self.signature_compatible(iface.fields[field_name], field_type):
+          raise new_exception(types.Exception, "Interface " & interface_name & " overrides field " & field_name & " with an incompatible signature")
+        iface.fields[field_name] = field_type
     else:
       raise new_exception(types.Exception, "unsupported interface member: " & child.gene.`type`.str)
 
@@ -3667,6 +3738,7 @@ proc check_class(self: TypeChecker, gene: ptr Gene): TypeExpr =
 
   for interface_name in cls.interfaces:
     self.check_interface_conformance(cls, interface_name)
+  self.check_duplicate_interface_defaults(cls)
 
   return TypeExpr(kind: TkNamed, name: class_name)
 

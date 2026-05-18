@@ -585,6 +585,7 @@ type
     name*: string
     module_path*: string
     internal_path*: string
+    parents*: seq[GeneInterface]
     methods*: Table[Key, InterfaceMethod]  # Method signatures
     props*: Table[Key, InterfaceProp]      # Property signatures
     ns*: Namespace  # Interface can act like a namespace for static access
@@ -593,10 +594,13 @@ type
     name*: string
     callable*: Value      # Default implementation (can be NIL for abstract)
     type_id*: TypeId      # Return type (NO_TYPE_ID if unspecified)
+    param_descs*: seq[CallableParamDesc]
+    type_descs*: seq[TypeDesc]
 
   InterfaceProp* = ref object
     name*: string
     type_id*: TypeId      # Property type (NO_TYPE_ID if unspecified)
+    type_descs*: seq[TypeDesc]
     readonly*: bool       # If true, property cannot be set
 
   ## Adapter mapping kind - how to map interface members to wrapped object
@@ -1062,6 +1066,7 @@ type
     IkCreateTuple     # Nominal tuple declaration (stack: name, fields; arg0=TypeId array, arg1=payload shape)
     IkMatchTuple      # Identity-aware tuple pattern match (stack: target, pattern; pushes target, bool; arg1=binder count)
     IkImplementField  # Define an external implementation field mapping or owned field
+    IkImplementCheck  # Validate external implementation completeness
 
   # Keep the size of Instruction to 2*8 = 16 bytes
   Instruction* = object

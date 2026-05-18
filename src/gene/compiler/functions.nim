@@ -473,15 +473,15 @@ proc compile_class_with_container(self: Compiler, class_name: Value, parent_clas
       parent_scope_tracker = copy_scope_tracker(parent_scope_tracker)
       parent_scope_tracker.mappings.del("self".to_key())
     let body = new_stream_value()
-    for iface in implemented_interfaces:
-      var implement_gene = new_gene("implement".to_symbol_value())
-      implement_gene.children.add(iface)
-      body.ref.stream.add(implement_gene.to_gene_value())
     for i in body_start..<gene.children.len:
       let child = gene.children[i]
       if child.kind == VkGene and child.gene != nil and child.gene.`type`.kind == VkSymbol and child.gene.`type`.str == "implement":
         not_allowed("Classes must declare interfaces in the header with implements")
       body.ref.stream.add(gene.children[i])
+    for iface in implemented_interfaces:
+      var implement_gene = new_gene("implement".to_symbol_value())
+      implement_gene.children.add(iface)
+      body.ref.stream.add(implement_gene.to_gene_value())
     let compiled = compile_init(body,
       local_defs = true,
       module_path = self.output.module_path,

@@ -482,11 +482,140 @@ suite "Static type checking":
     (class View < Base implements Renderable)
   """
 
+  test_strict_type_ok """
+    (interface Readable
+      (method read [] -> String)
+    )
+    (interface Writable
+      (method write [value: String] -> String)
+    )
+    (class Buffer implements [Readable Writable]
+      (method read [] -> String
+        "r"
+      )
+      (method write [value: String] -> String
+        value
+      )
+    )
+  """
+
+  test_strict_type_ok """
+    (interface HasDisplayName
+      (field name String)
+      (method display [] -> String
+        name
+      )
+    )
+    (class PersonWithDefault implements HasDisplayName
+      (field name String)
+      (ctor [name: String]
+        (/name = name)
+      )
+    )
+  """
+
+  test_strict_type_ok """
+    (interface ParentReadable
+      (method read [] -> String)
+    )
+    (interface ParentWritable
+      (method write [value: String] -> String)
+    )
+    (interface ParentReadWrite extends [ParentReadable ParentWritable])
+    (class ParentBuffer implements ParentReadWrite
+      (method read [] -> String
+        "r"
+      )
+      (method write [value: String] -> String
+        value
+      )
+    )
+  """
+
   test_strict_type_error """
     (interface Renderable
       (method render [ctx: Any] -> String)
     )
     (class Broken implements Renderable)
+  """
+
+  test_strict_type_error """
+    (interface Readable
+      (method read [] -> String)
+    )
+    (interface Writable
+      (method write [value: String] -> String)
+    )
+    (class Broken implements [Readable Writable]
+      (method read [] -> String
+        "r"
+      )
+    )
+  """
+
+  test_strict_type_error """
+    (interface DefaultA
+      (method label [] -> String
+        "a"
+      )
+    )
+    (interface DefaultB
+      (method label [] -> String
+        "b"
+      )
+    )
+    (interface DefaultConflict extends [DefaultA DefaultB])
+  """
+
+  test_strict_type_ok """
+    (interface OverrideDefaultA
+      (method label [] -> String
+        "a"
+      )
+    )
+    (interface OverrideDefaultB
+      (method label [] -> String
+        "b"
+      )
+    )
+    (interface OverrideDefaultC extends [OverrideDefaultA OverrideDefaultB]
+      (method label [] -> String
+        "c"
+      )
+    )
+    (class OverrideDefaultClass implements OverrideDefaultC)
+  """
+
+  test_strict_type_error """
+    (interface ClassDefaultA
+      (method label [] -> String
+        "a"
+      )
+    )
+    (interface ClassDefaultB
+      (method label [] -> String
+        "b"
+      )
+    )
+    (class DefaultConflictClass implements [ClassDefaultA ClassDefaultB])
+  """
+
+  test_strict_type_ok """
+    (interface ClassOverrideDefaultA
+      (method label [] -> String
+        "a"
+      )
+    )
+    (interface ClassOverrideDefaultB
+      (method label [] -> String
+        "b"
+      )
+    )
+    (class ClassOverrideDefault implements [ClassOverrideDefaultA ClassOverrideDefaultB]
+      (method label [] -> String
+        "c"
+      )
+    )
   """
 
   test_strict_type_error """
@@ -831,4 +960,3 @@ suite "Static type checking":
     (accept_enum_result (Ok 8))
     (accept_enum_option (Some 9))
   """
-

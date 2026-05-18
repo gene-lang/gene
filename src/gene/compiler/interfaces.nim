@@ -9,6 +9,111 @@ proc interface_prop_name(input: Value): string =
   if result.ends_with(":"):
     result = result[0..^2]
 
+proc interface_type_id_array(items: seq[CallableParamDesc]): Value =
+  var values: seq[Value] = @[]
+  for item in items:
+    var param_values: seq[Value] = @[]
+    param_values.add(ord(item.kind).to_value())
+    param_values.add(item.keyword_name.to_value())
+    param_values.add(item.type_id.int.to_value())
+    values.add(new_array_value(param_values))
+  new_array_value(values)
+
+proc interface_method_metadata(name: Value, params: seq[CallableParamDesc],
+                               return_type_id: TypeId): Value =
+  result = new_gene_value()
+  result.gene.type = "interface_method".to_symbol_value()
+  result.gene.children.add(name)
+  result.gene.children.add(interface_type_id_array(params))
+  result.gene.children.add(return_type_id.int.to_value())
+
+proc interface_prop_metadata(name: string, type_id: TypeId): Value =
+  result = new_gene_value()
+  result.gene.type = "interface_prop".to_symbol_value()
+  result.gene.children.add(name.to_value())
+  result.gene.children.add(type_id.int.to_value())
+
+proc interface_header_metadata(name: Value, parents: seq[Value], overrides: seq[Value]): Value =
+  if parents.len == 0 and overrides.len == 0:
+    return name
+  result = new_gene_value()
+  result.gene.type = "interface".to_symbol_value()
+  result.gene.children.add(name)
+  result.gene.children.add(new_array_value(parents))
+  result.gene.children.add(new_array_value(overrides))
+
+proc callable_args_with_self(args: Value, context: string): Value =
+  if args.kind != VkArray:
+    not_allowed(context & " requires an array argument list; use [] for no arguments")
+  var method_args = new_array_value()
+  let src = array_data(args)
+  if src.len == 0:
+    array_data(method_args).add("self".to_symbol_value())
+  elif src[0].kind == VkSymbol and src[0].str == "self":
+    for arg in src:
+      array_data(method_args).add(arg)
+  else:
+    array_data(method_args).add("self".to_symbol_value())
+    for arg in src:
+      array_data(method_args).add(arg)
+  method_args
+
+proc interface_param_descs(self: Compiler, args: Value): seq[CallableParamDesc] =
+  if args.kind != VkArray:
+    return
+  var type_desc_index = initTable[string, TypeId]()
+  ensure_type_desc_index(self.output.type_descriptors, type_desc_index)
+  let items = array_data(args)
+  var i = 0
+  while i < items.len:
+    let item = items[i]
+    if item.kind == VkSymbol and item.str == "=":
+      i += 2
+      continue
+    if item.kind == VkSymbol:
+      if item.str == "...":
+        not_allowed("Positional rest must follow a named parameter")
+      var raw = item.str
+      var keyword_name = ""
+      var kind = CpkPositional
+      var has_type = false
+      if raw.endsWith(":"):
+        has_type = true
+        raw = raw[0..^2]
+      if raw.endsWith("..."):
+        kind = CpkPositionalRest
+        raw = raw[0..^4]
+      if i + 1 < items.len and items[i + 1].kind == VkSymbol and items[i + 1].str == "...":
+        if kind == CpkPositionalRest:
+          not_allowed("Duplicate rest marker for parameter " & raw)
+        kind = CpkPositionalRest
+        i += 1
+      if raw.startsWith("^"):
+        if raw.len >= 2 and (raw[1] == '^' or raw[1] == '!'):
+          keyword_name = raw[2..^1]
+        else:
+          keyword_name = raw[1..^1]
+        kind = if kind == CpkPositionalRest: CpkKeywordRest else: CpkKeyword
+      var type_id = BUILTIN_TYPE_ANY_ID
+      if has_type:
+        if i + 1 >= items.len:
+          not_allowed("Missing type for parameter " & raw)
+        type_id = resolve_type_value_to_id_with_index(
+          items[i + 1],
+          self.output.type_descriptors,
+          type_desc_index,
+          self.output.type_aliases,
+          initTable[string, TypeId](),
+          self.output.module_path)
+        i += 1
+      result.add(CallableParamDesc(kind: kind, keyword_name: keyword_name, type_id: type_id))
+      i += 1
+    elif item.kind == VkArray:
+      result.add(CallableParamDesc(kind: CpkPositional, keyword_name: "", type_id: BUILTIN_TYPE_ANY_ID))
+      i += 1
+    else:
+      i += 1
+
 proc compile_interface_method_decl(self: Compiler, gene: ptr Gene) =
   if gene.children.len < 2:
     not_allowed("interface method requires a name and argument list")
@@ -29,10 +134,36 @@ proc compile_interface_method_decl(self: Compiler, gene: ptr Gene) =
     if body_start + 1 >= gene.children.len:
       not_allowed("Missing effects list after !")
     body_start += 2
-  if body_start < gene.children.len:
-    not_allowed("interface methods cannot have a body")
 
-  self.emit(Instruction(kind: IkInterfaceMethod, arg0: name))
+  var return_type_id = NO_TYPE_ID
+  var scan = 2
+  if scan < gene.children.len and gene.children[scan].kind == VkSymbol and gene.children[scan].str == "->":
+    return_type_id = resolve_type_value_to_id(
+      gene.children[scan + 1],
+      self.output.type_descriptors,
+      self.output.type_aliases,
+      self.output.module_path)
+  let params = self.interface_param_descs(gene.children[1])
+
+  let has_default = body_start < gene.children.len
+  if has_default:
+    var fn_value = new_gene_value()
+    fn_value.gene.type = "fn".to_symbol_value()
+    for k, v in gene.props:
+      fn_value.gene.props[k] = v
+    fn_value.gene.children.add(name)
+    fn_value.gene.children.add(callable_args_with_self(gene.children[1], "interface method"))
+    for i in 2..<body_start:
+      fn_value.gene.children.add(gene.children[i])
+    for i in body_start..<gene.children.len:
+      fn_value.gene.children.add(gene.children[i])
+    self.compile_fn(fn_value, define_binding = false)
+
+  self.emit(Instruction(
+    kind: IkInterfaceMethod,
+    arg0: interface_method_metadata(name, params, return_type_id),
+    arg1: (if has_default: 1 else: 0).int32,
+  ))
 
 proc compile_interface_prop_decl(self: Compiler, gene: ptr Gene) =
   if gene.children.len == 0:
@@ -43,10 +174,18 @@ proc compile_interface_prop_decl(self: Compiler, gene: ptr Gene) =
     gene.props.has_key("readonly".to_key()) and
     gene.props["readonly".to_key()] notin [FALSE, NIL]
 
+  var type_id = NO_TYPE_ID
+  if gene.children.len > 1:
+    type_id = resolve_type_value_to_id(
+      gene.children[1],
+      self.output.type_descriptors,
+      self.output.type_aliases,
+      self.output.module_path)
+
   self.emit(
     Instruction(
       kind: IkInterfaceProp,
-      arg0: prop_name.to_value(),
+      arg0: interface_prop_metadata(prop_name, type_id),
       arg1: (if readonly: 1 else: 0).int32,
     )
   )
@@ -58,23 +197,17 @@ proc compile_interface_field_decl(self: Compiler, gene: ptr Gene) =
   let readonly =
     gene.props.has_key("readonly".to_key()) and
     gene.props["readonly".to_key()] notin [FALSE, NIL]
-  self.emit(Instruction(kind: IkInterfaceProp, arg0: field_name.to_value(), arg1: (if readonly: 1 else: 0).int32))
+  var type_id = NO_TYPE_ID
+  if gene.children.len > 1:
+    type_id = resolve_type_value_to_id(
+      gene.children[1],
+      self.output.type_descriptors,
+      self.output.type_aliases,
+      self.output.module_path)
+  self.emit(Instruction(kind: IkInterfaceProp, arg0: interface_prop_metadata(field_name, type_id), arg1: (if readonly: 1 else: 0).int32))
 
 proc external_implement_args_with_self(args: Value): Value =
-  if args.kind != VkArray:
-    not_allowed("external implement methods and ctors require an array argument list; use [] for no arguments")
-  var method_args = new_array_value()
-  let src = array_data(args)
-  if src.len == 0:
-    array_data(method_args).add("self".to_symbol_value())
-  elif src[0].kind == VkSymbol and src[0].str == "self":
-    for arg in src:
-      array_data(method_args).add(arg)
-  else:
-    array_data(method_args).add("self".to_symbol_value())
-    for arg in src:
-      array_data(method_args).add(arg)
-  method_args
+  callable_args_with_self(args, "external implement methods and ctors")
 
 proc compile_external_implement_method(self: Compiler, gene: ptr Gene) =
   if gene.children.len < 2:
@@ -237,11 +370,35 @@ proc compile_interface*(self: Compiler, gene: ptr Gene) =
   let name = gene.children[0]
   if name.kind != VkSymbol:
     not_allowed("interface name must be a symbol")
-  
-  # Emit the interface instruction
-  self.emit(Instruction(kind: IkInterface, arg0: name))
 
-  for i in 1..<gene.children.len:
+  var parent_interfaces: seq[Value] = @[]
+  var body_start = 1
+  if gene.children.len >= 3 and gene.children[1].kind == VkSymbol and gene.children[1].str == "extends":
+    case gene.children[2].kind
+    of VkSymbol:
+      parent_interfaces.add(gene.children[2])
+    of VkArray:
+      for item in array_data(gene.children[2]):
+        if item.kind != VkSymbol:
+          not_allowed("interface extends expects interface symbols")
+        parent_interfaces.add(item)
+    else:
+      not_allowed("interface extends expects an interface symbol or array of interface symbols")
+    body_start = 3
+
+  var method_overrides: seq[Value] = @[]
+  for i in body_start..<gene.children.len:
+    let child = gene.children[i]
+    if child.kind == VkGene and child.gene != nil and child.gene.type.kind == VkSymbol and
+       child.gene.type.str == "method" and child.gene.children.len > 0 and
+       child.gene.children[0].kind == VkSymbol:
+      let parsed = split_generic_definition_name(child.gene.children[0].str)
+      method_overrides.add(parsed.base_name.to_symbol_value())
+
+  # Emit the interface instruction
+  self.emit(Instruction(kind: IkInterface, arg0: interface_header_metadata(name, parent_interfaces, method_overrides)))
+
+  for i in body_start..<gene.children.len:
     let child = gene.children[i]
     if child.kind != VkGene or child.gene == nil or child.gene.type.kind != VkSymbol:
       not_allowed("interface body only supports method and field declarations")
@@ -306,6 +463,7 @@ proc compile_implement*(self: Compiler, gene: ptr Gene) =
           self.compile_external_implement_field(child.gene)
         else:
           not_allowed("unsupported external implement member: " & child.gene.type.str)
+      self.emit(Instruction(kind: IkImplementCheck))
       self.emit(Instruction(kind: IkPop))
       self.emit(Instruction(kind: IkPushNil))
     else:

@@ -218,6 +218,29 @@ proc object_is_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
     current = current.parent
   return FALSE
 
+proc core_satisfies(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+  let positional = get_positional_count(arg_count, has_keyword_args)
+  if positional < 2:
+    not_allowed("satisfies? expects a value and an interface")
+
+  let value_arg = get_positional_arg(args, 0, has_keyword_args)
+  let interface_arg = get_positional_arg(args, 1, has_keyword_args)
+  if interface_arg.kind != VkInterface:
+    not_allowed("satisfies? expects an interface as the second argument")
+
+  let gene_interface = interface_arg.ref.gene_interface
+  if value_arg.kind == VkAdapter and value_arg.ref.adapter.gene_interface.extends_interface(gene_interface):
+    return TRUE
+
+  let target = unwrap_adapter(value_arg)
+  let class_val = value_class_value(target)
+  if class_val.kind != VkClass:
+    return FALSE
+
+  if class_val.ref.class.find_implementation(gene_interface) != nil:
+    return TRUE
+  FALSE
+
 proc object_to_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   let positional = get_positional_count(arg_count, has_keyword_args)
   if positional < 2:
@@ -3696,6 +3719,7 @@ proc init_gene_core_functions() =
   App.app.gene_ns.ns["repl".to_key()] = NativeFn(core_repl).to_value()  # $repl resolves via global repl
   App.app.gene_ns.ns["types_equivalent".to_key()] = core_types_equivalent.to_value()
   App.app.gene_ns.ns["types_equiv".to_key()] = core_types_equivalent.to_value()
+  App.app.gene_ns.ns["satisfies?".to_key()] = core_satisfies.to_value()
 
   var sleep_ref = new_ref(VkNativeFn)
   sleep_ref.native_fn = gene_sleep
@@ -3924,6 +3948,7 @@ proc init_stdlib*() =
   global_ns["freeze".to_key()] = NativeFn(stdlib_freeze.core_freeze).to_value()
   global_ns["types_equivalent".to_key()] = core_types_equivalent.to_value()
   global_ns["types_equiv".to_key()] = core_types_equivalent.to_value()
+  global_ns["satisfies?".to_key()] = core_satisfies.to_value()
 
   # Assertions and debugging
   global_ns["assert".to_key()] = core_assert.to_value()

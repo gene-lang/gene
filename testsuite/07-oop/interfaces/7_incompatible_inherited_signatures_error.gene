@@ -1,0 +1,9 @@
+# ExitCode: 1
+
+(interface TsSignatureA
+  (method value [] -> String))
+
+(interface TsSignatureB
+  (method value [input: String] -> String))
+
+(interface TsSignatureConflict extends [TsSignatureA TsSignatureB])

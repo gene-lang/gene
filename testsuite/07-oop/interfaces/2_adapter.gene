@@ -72,6 +72,12 @@
 )
 
 (implement Readable for DataBuffer
+  (field name
+    (get [] "buffer")
+  )
+  (field closed
+    (get [] false)
+  )
   (method read []
     (/_wrapped .get_data)
   )
@@ -84,7 +90,9 @@
   (field data String)
 )
 
-(implement DataView for DataBuffer)
+(implement DataView for DataBuffer
+  (field data ^from data)
+)
 
 # ============================================================================
 # 4) USING INTERFACES

@@ -1,0 +1,11 @@
+# ExitCode: 1
+
+(interface TsInheritedConflictA
+  (method label [] -> String
+    "a"))
+
+(interface TsInheritedConflictB
+  (method label [] -> String
+    "b"))
+
+(interface TsInheritedDefaultConflict extends [TsInheritedConflictA TsInheritedConflictB])

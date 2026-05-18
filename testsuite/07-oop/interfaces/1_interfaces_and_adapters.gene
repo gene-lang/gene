@@ -32,6 +32,8 @@
     (/data = new_data)))
 
 (implement Readable for DataBuffer
+  (field name
+    (get [] "buffer"))
   (method read []
     (/_wrapped .get_data))
   (method close []

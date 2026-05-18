@@ -17,24 +17,32 @@ proc new_interface*(name: string, module_path: string = ""): GeneInterface =
   GeneInterface(
     name: name,
     module_path: module_path,
+    parents: @[],
     methods: initTable[Key, InterfaceMethod](),
     props: initTable[Key, InterfaceProp](),
     ns: new_namespace(nil, name)
   )
 
-proc add_method*(self: GeneInterface, name: string, callable: Value = NIL, type_id: TypeId = NO_TYPE_ID) =
+proc add_method*(self: GeneInterface, name: string, callable: Value = NIL,
+                 type_id: TypeId = NO_TYPE_ID,
+                 param_descs: seq[CallableParamDesc] = @[],
+                 type_descs: seq[TypeDesc] = @[]) =
   ## Add a method signature to the interface
   self.methods[name.to_key()] = InterfaceMethod(
     name: name,
     callable: callable,
-    type_id: type_id
+    type_id: type_id,
+    param_descs: param_descs,
+    type_descs: type_descs
   )
 
-proc add_prop*(self: GeneInterface, name: string, type_id: TypeId = NO_TYPE_ID, readonly: bool = false) =
+proc add_prop*(self: GeneInterface, name: string, type_id: TypeId = NO_TYPE_ID,
+               readonly: bool = false, type_descs: seq[TypeDesc] = @[]) =
   ## Add a property signature to the interface
   self.props[name.to_key()] = InterfaceProp(
     name: name,
     type_id: type_id,
+    type_descs: type_descs,
     readonly: readonly
   )
 
@@ -49,6 +57,16 @@ proc get_method*(self: GeneInterface, name: Key): InterfaceMethod {.inline.} =
 
 proc get_prop*(self: GeneInterface, name: Key): InterfaceProp {.inline.} =
   self.props.get_or_default(name, nil)
+
+proc extends_interface*(self: GeneInterface, parent: GeneInterface): bool =
+  if self.is_nil or parent.is_nil:
+    return false
+  if self == parent:
+    return true
+  for iface in self.parents:
+    if iface.extends_interface(parent):
+      return true
+  false
 
 #################### Implementation #######################
 
@@ -156,6 +174,8 @@ proc unwrap_adapter*(value: Value): Value =
 proc register_implementation*(self: Class, gene_interface: GeneInterface, impl: Implementation) =
   ## Register an implementation for an interface on this class
   self.implementations[gene_interface] = impl
+  for parent in gene_interface.parents:
+    self.register_implementation(parent, impl)
 
 proc find_implementation*(self: Class, gene_interface: GeneInterface): Implementation =
   ## Find an implementation for an interface on this class

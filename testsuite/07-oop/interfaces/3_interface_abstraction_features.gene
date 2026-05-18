@@ -1,0 +1,139 @@
+# Expected: multi_inline=rw
+# Expected: satisfies_readable=true
+# Expected: satisfies_plain=false
+# Expected: identical_signatures=same
+# Expected: parent_satisfies=true/true
+# Expected: parent_cast=ir
+# Expected: child_dispatch=closed
+# Expected: inline_default=name:Ada
+# Expected: external_default=label:payload
+# Expected: child_default_override=child
+# Expected: class_default_override=class/class
+# Expected: adapter_default_override=adapter:item
+
+(fn bool_str [value]
+  (if value
+    "true"
+  else
+    "false"))
+
+(interface TsReadable
+  (method read [] -> String))
+
+(interface TsWritable
+  (method write [value: String] -> String))
+
+(class TsBuffer implements [TsReadable TsWritable]
+  (ctor [] nil)
+  (method read [] -> String
+    "r")
+  (method write [value: String] -> String
+    value))
+
+(var buffer (new TsBuffer))
+(println ("multi_inline=" ++ ((TsReadable buffer) .read) ++ ((TsWritable buffer) .write "w")))
+(println ("satisfies_readable=" ++ (bool_str (satisfies? buffer TsReadable))))
+
+(class TsPlain
+  (ctor [] nil))
+
+(println ("satisfies_plain=" ++ (bool_str (satisfies? (new TsPlain) TsReadable))))
+
+(interface TsIdentA
+  (method identify [] -> String))
+
+(interface TsIdentB
+  (method identify [] -> String))
+
+(class TsIdent implements [TsIdentA TsIdentB]
+  (ctor [] nil)
+  (method identify [] -> String
+    "same"))
+
+(println ("identical_signatures=" ++ ((TsIdentA (new TsIdent)) .identify)))
+
+(interface TsCloseable
+  (method close [] -> String))
+
+(interface TsReadWriteClose extends [TsReadable TsWritable TsCloseable])
+
+(class TsInheritedBuffer implements TsReadWriteClose
+  (ctor [] nil)
+  (method read [] -> String
+    "i")
+  (method write [value: String] -> String
+    value)
+  (method close [] -> String
+    "closed"))
+
+(var inherited (new TsInheritedBuffer))
+(println ("parent_satisfies=" ++ (bool_str (satisfies? inherited TsReadable)) ++ "/" ++ (bool_str (satisfies? inherited TsCloseable))))
+(println ("parent_cast=" ++ ((TsReadable inherited) .read) ++ ((TsWritable inherited) .write "r")))
+(println ("child_dispatch=" ++ ((TsReadWriteClose inherited) .close)))
+
+(interface TsNamedDefault
+  (field name String)
+  (method display [] -> String
+    ("name:" ++ /name)))
+
+(class TsPerson implements TsNamedDefault
+  (field name String)
+  (ctor [name]
+    (/name = name)))
+
+(println ("inline_default=" ++ ((TsNamedDefault (new TsPerson "Ada")) .display)))
+
+(interface TsLabeledDefault
+  (field label String)
+  (method label_text [] -> String
+    ("label:" ++ /label)))
+
+(class TsSource
+  (ctor [value]
+    (/raw = value)))
+
+(implement TsLabeledDefault for TsSource
+  (field label ^from raw))
+
+(println ("external_default=" ++ ((TsLabeledDefault (new TsSource "payload")) .label_text)))
+
+(interface TsDefaultA
+  (method label [] -> String
+    "a"))
+
+(interface TsDefaultB
+  (method label [] -> String
+    "b"))
+
+(interface TsDefaultChild extends [TsDefaultA TsDefaultB]
+  (method label [] -> String
+    "child"))
+
+(class TsDefaultImpl implements TsDefaultChild
+  (ctor [] nil))
+
+(println ("child_default_override=" ++ ((TsDefaultChild (new TsDefaultImpl)) .label)))
+
+(class TsClassOverride implements [TsDefaultA TsDefaultB]
+  (ctor [] nil)
+  (method label [] -> String
+    "class"))
+
+(var override_obj (new TsClassOverride))
+(println ("class_default_override=" ++ ((TsDefaultA override_obj) .label) ++ "/" ++ ((TsDefaultB override_obj) .label)))
+
+(interface TsDescribed
+  (field text String)
+  (method describe [] -> String
+    ("default:" ++ /text)))
+
+(class TsItem
+  (ctor [text]
+    (/text = text)))
+
+(implement TsDescribed for TsItem
+  (field text ^from text)
+  (method describe []
+    ("adapter:" ++ /text)))
+
+(println ("adapter_default_override=" ++ ((TsDescribed (new TsItem "item")) .describe)))

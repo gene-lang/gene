@@ -72,6 +72,135 @@ suite "adapter runtime":
 
   test_vm """
     (do
+      (interface SizedForFalse (method length []))
+      (class UnsizedForSatisfies (ctor [] nil))
+      (satisfies? (new UnsizedForSatisfies) SizedForFalse)
+    )
+  """, FALSE
+
+  test_vm """
+    (do
+      (interface SizedForSatisfies (method length []))
+      (implement SizedForSatisfies for String)
+      (satisfies? "abc" SizedForSatisfies)
+    )
+  """, TRUE
+
+  test_vm """
+    (do
+      (interface Readable (method read []))
+      (interface Writable (method write [value]))
+      (class Buffer implements [Readable Writable]
+        (ctor [] nil)
+        (method read [] "r")
+        (method write [value] value))
+      (var b (new Buffer))
+      (if (satisfies? b Readable)
+        (if (satisfies? b Writable)
+          (((Readable b) .read) ++ ((Writable b) .write "w"))
+        else
+          "bad")
+      else
+        "bad")
+    )
+  """, "rw"
+
+  test_vm """
+    (do
+      (interface NamedDefault
+        (field name String)
+        (method display [] -> String
+          /name))
+      (class Person implements NamedDefault
+        (field name String)
+        (ctor [name]
+          (/name = name)))
+      ((NamedDefault (new Person "Ada")) .display)
+    )
+  """, "Ada"
+
+  test_vm """
+    (do
+      (interface ExternalNamedDefault
+        (field name String)
+        (method display [] -> String
+          /name))
+      (class NamedSource
+        (field name String)
+        (ctor [name]
+          (/name = name)))
+      (implement ExternalNamedDefault for NamedSource)
+      ((ExternalNamedDefault (new NamedSource "Ada")) .display)
+    )
+  """, "Ada"
+
+  test_vm """
+    (do
+      (interface ParentReadable (method read []))
+      (interface ParentWritable (method write [value]))
+      (interface ParentReadWrite extends [ParentReadable ParentWritable])
+      (class ParentBuffer implements ParentReadWrite
+        (ctor [] nil)
+        (method read [] "r")
+        (method write [value] value))
+      (var b (new ParentBuffer))
+      (if (satisfies? b ParentReadable)
+        (((ParentReadable b) .read) ++ ((ParentWritable b) .write "w"))
+      else
+        "bad")
+    )
+  """, "rw"
+
+  test_vm_error """
+    (do
+      (interface DefaultA
+        (method label [] "a"))
+      (interface DefaultB
+        (method label [] "b"))
+      (interface DefaultConflict extends [DefaultA DefaultB])
+    )
+  """
+
+  test_vm """
+    (do
+      (interface OverrideDefaultA
+        (method label [] "a"))
+      (interface OverrideDefaultB
+        (method label [] "b"))
+      (interface OverrideDefaultC extends [OverrideDefaultA OverrideDefaultB]
+        (method label [] "c"))
+      (class OverrideDefaultClass implements OverrideDefaultC
+        (ctor [] nil))
+      ((OverrideDefaultC (new OverrideDefaultClass)) .label)
+    )
+  """, "c"
+
+  test_vm_error """
+    (do
+      (interface ClassDefaultA
+        (method label [] "a"))
+      (interface ClassDefaultB
+        (method label [] "b"))
+      (class DefaultConflictClass implements [ClassDefaultA ClassDefaultB]
+        (ctor [] nil))
+    )
+  """
+
+  test_vm """
+    (do
+      (interface ClassOverrideDefaultA
+        (method label [] "a"))
+      (interface ClassOverrideDefaultB
+        (method label [] "b"))
+      (class ClassOverrideDefault implements [ClassOverrideDefaultA ClassOverrideDefaultB]
+        (ctor [] nil)
+        (method label [] "c"))
+      ((ClassOverrideDefaultA (new ClassOverrideDefault)) .label)
+    )
+  """, "c"
+
+  test_vm """
+    (do
       (interface Sum3 (method sum3 [a b c]))
       (class C
         (ctor [] nil)
@@ -81,6 +210,16 @@ suite "adapter runtime":
       ((Sum3 (new C)) .sum3 1 2 3)
     )
   """, 6
+
+  test_vm_error """
+    (do
+      (interface Sum3 (method sum3 [a b c]))
+      (class ShortSum
+        (ctor [] nil)
+        (method sum3 [a b] (a + b)))
+      (implement Sum3 for ShortSum)
+    )
+  """
 
   test_vm """
     (do
@@ -110,6 +249,15 @@ suite "adapter runtime":
     )
   """, 1
 
+  test_vm_error """
+    (do
+      (interface Readable (method read []))
+      (class MissingReadable
+        (ctor [] nil))
+      (implement Readable for MissingReadable)
+    )
+  """
+
   test_vm """
     (do
       (interface Named (field name String))
@@ -124,6 +272,17 @@ suite "adapter runtime":
       [named/name source/label]
     )
   """, @["Grace", "Grace"]
+
+  test_vm_error """
+    (do
+      (interface NamedString (field name String))
+      (class WrongNamed
+        (field name Int)
+        (ctor []
+          (/name = 1)))
+      (implement NamedString for WrongNamed)
+    )
+  """
 
   test_vm """
     (do

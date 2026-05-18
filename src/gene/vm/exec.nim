@@ -4681,7 +4681,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         exec_interface(self, inst.arg0)
 
       of IkInterfaceMethod:
-        exec_interface_method(self, inst.arg0)
+        exec_interface_method(self, inst.arg0, inst.arg1)
 
       of IkInterfaceProp:
         exec_interface_prop(self, inst.arg0, inst.arg1 != 0)
@@ -4700,6 +4700,9 @@ proc exec*(self: ptr VirtualMachine): Value =
 
       of IkImplementField:
         exec_implement_field(self, inst.arg0, inst.arg1)
+
+      of IkImplementCheck:
+        exec_implement_check(self)
 
       of IkAdapter:
         # Create an adapter wrapper

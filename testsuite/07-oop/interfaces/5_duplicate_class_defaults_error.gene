@@ -1,0 +1,12 @@
+# ExitCode: 1
+
+(interface TsClassConflictA
+  (method label [] -> String
+    "a"))
+
+(interface TsClassConflictB
+  (method label [] -> String
+    "b"))
+
+(class TsClassDefaultConflict implements [TsClassConflictA TsClassConflictB]
+  (ctor [] nil))
