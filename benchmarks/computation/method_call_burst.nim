@@ -18,12 +18,12 @@ when isMainModule:
 
   var callLines: seq[string] = @[]
   for _ in 0..<callsPerRepeat:
-    callLines.add("    (obj .ping)")
+    callLines.add("    (obj .ping 1 2)")
   let callBlock = callLines.join("\n")
 
   let code = fmt"""
     (class Pinger
-      (method ping [])
+      (method ping [a b] nil)
     )
 
     (var obj (new Pinger))

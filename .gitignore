@@ -121,3 +121,4 @@ target/
 vendor/
 *.log
 coverage/
+outputs/
