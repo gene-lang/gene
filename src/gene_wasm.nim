@@ -5,6 +5,8 @@ import ./gene/vm
 import ./gene/vm/thread
 import ./gene/parser
 import ./gene/compiler
+when defined(gene_wasm):
+  import ./gene/wasm_host_abi
 
 var g_eval_output = ""
 var g_eval_result = ""
@@ -52,6 +54,21 @@ proc append_eval_result(result: Value) =
     g_eval_output.add("\n")
   g_eval_output.add(result.str_no_quotes())
 
+when defined(gene_wasm):
+  proc is_file_backed_import(node: Value): bool =
+    if node.kind != VkGene or node.gene == nil:
+      return false
+    if node.gene.type.kind != VkSymbol or node.gene.type.str != "import":
+      return false
+
+    var i = 0
+    while i + 1 < node.gene.children.len:
+      let child = node.gene.children[i]
+      if child.kind == VkSymbol and child.str == "from":
+        return node.gene.children[i + 1].kind == VkString
+      i.inc()
+    false
+
 proc eval_gene_source(source: string): string =
   g_eval_output = ""
 
@@ -67,6 +84,11 @@ proc eval_gene_source(source: string): string =
     let nodes = read_all(source)
     if nodes.len == 0:
       return ""
+
+    when defined(gene_wasm):
+      for node in nodes:
+        if is_file_backed_import(node):
+          raise_wasm_unsupported("module_file_loading")
 
     let input =
       if nodes.len == 1:

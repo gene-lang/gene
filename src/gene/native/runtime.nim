@@ -24,7 +24,7 @@ type
     returnValue*: bool  # True if native function returns boxed Value bits
     descriptors*: seq[CallDescriptor]
 
-when defined(posix):
+when nativeArch != "none" and defined(posix):
   import std/posix
   when defined(macosx):
     proc sys_icache_invalidate(start: pointer, size: csize_t) {.importc, header: "<libkern/OSCacheControl.h>".}
@@ -65,32 +65,33 @@ proc validate_hir(fn: HirFunction): bool =
   true
 
 proc make_executable(code: seq[byte]): pointer =
-  when not defined(posix):
+  when nativeArch == "none" or not defined(posix):
+    discard code
     return nil
+  else:
+    if code.len == 0:
+      return nil
 
-  if code.len == 0:
-    return nil
+    let size = code.len
+    let prot = PROT_READ or PROT_WRITE or PROT_EXEC
+    const MAP_ANON_FLAG = when defined(macosx): 0x1000.cint else: 0x20.cint
+    const MAP_JIT_FLAG = when defined(macosx): 0x800.cint else: 0.cint
+    let flags = MAP_PRIVATE or MAP_ANON_FLAG or MAP_JIT_FLAG
 
-  let size = code.len
-  let prot = PROT_READ or PROT_WRITE or PROT_EXEC
-  const MAP_ANON_FLAG = when defined(macosx): 0x1000.cint else: 0x20.cint
-  const MAP_JIT_FLAG = when defined(macosx): 0x800.cint else: 0.cint
-  let flags = MAP_PRIVATE or MAP_ANON_FLAG or MAP_JIT_FLAG
+    let mem = mmap(nil, size.cint, prot, flags, -1.cint, 0.Off)
+    if mem == MAP_FAILED:
+      return nil
 
-  let mem = mmap(nil, size.cint, prot, flags, -1.cint, 0.Off)
-  if mem == MAP_FAILED:
-    return nil
+    when defined(macosx):
+      pthread_jit_write_protect_np(0)
 
-  when defined(macosx):
-    pthread_jit_write_protect_np(0)
+    copyMem(mem, code[0].unsafeAddr, size)
 
-  copyMem(mem, code[0].unsafeAddr, size)
+    when defined(macosx):
+      pthread_jit_write_protect_np(1)
 
-  when defined(macosx):
-    pthread_jit_write_protect_np(1)
-
-  clear_cache(cast[ptr char](mem), cast[ptr char](cast[uint64](mem) + uint64(size)))
-  return mem
+    clear_cache(cast[ptr char](mem), cast[ptr char](cast[uint64](mem) + uint64(size)))
+    return mem
 
 proc compile_to_native*(f: Function): NativeCompileResult =
   result.ok = false

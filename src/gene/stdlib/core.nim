@@ -447,6 +447,114 @@ when not defined(gene_wasm):
     let handle = new_instance_value(io_handle_class_global)
     instance_props(handle)[IO_HANDLE_NAME_KEY.to_key()] = handle_name.to_value()
     handle
+else:
+  var io_handle_class_global: Class
+
+  proc get_io_handle_name(self: Value, context: string): string =
+    if self.kind != VkInstance:
+      raise new_exception(types.Exception, context & " must be called on an IOHandle instance")
+
+    let handle_name_val = instance_props(self).getOrDefault(IO_HANDLE_NAME_KEY.to_key(), NIL)
+    if handle_name_val.kind != VkString:
+      raise new_exception(types.Exception, "Invalid IOHandle instance")
+
+    result = handle_name_val.str
+
+  proc write_console_handle(handle_name: string, content: string, newline: bool) =
+    case handle_name
+    of "stdout":
+      if newline:
+        stdout.writeLine(content)
+      else:
+        stdout.write(content)
+    of "stderr":
+      if newline:
+        stderr.writeLine(content)
+      else:
+        stderr.write(content)
+    else:
+      raise new_exception(types.Exception, handle_name & " is not writable")
+
+  proc flush_console_handle(handle_name: string) =
+    case handle_name
+    of "stdin", "stdout", "stderr":
+      discard
+    else:
+      raise new_exception(types.Exception, "Unknown IO handle: " & handle_name)
+
+  proc console_handle_isatty(handle_name: string): bool =
+    discard handle_name
+    false
+
+  proc read_console_line(vm: ptr VirtualMachine): Value =
+    discard vm
+    raise_wasm_unsupported("stdio_read")
+
+  proc init_io_handle_class(object_class: Class) =
+    if io_handle_class_global != nil:
+      return
+
+    io_handle_class_global = new_class("IOHandle")
+    io_handle_class_global.parent = object_class
+
+    io_handle_class_global.def_native_method("read", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      discard vm
+      discard args
+      discard arg_count
+      discard has_keyword_args
+      raise_wasm_unsupported("stdio_read")
+    )
+
+    io_handle_class_global.def_native_method("read_line", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      discard args
+      discard arg_count
+      discard has_keyword_args
+      read_console_line(vm)
+    )
+
+    io_handle_class_global.def_native_method("write", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      discard vm
+      if get_method_arg_count(arg_count, has_keyword_args) < 1:
+        raise new_exception(types.Exception, "IOHandle.write requires content")
+      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.write")
+      write_console_handle(handle_name, get_method_arg(args, 0, has_keyword_args).str_no_quotes(), false)
+      NIL
+    )
+
+    io_handle_class_global.def_native_method("write_line", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      discard vm
+      if get_method_arg_count(arg_count, has_keyword_args) < 1:
+        raise new_exception(types.Exception, "IOHandle.write_line requires content")
+      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.write_line")
+      write_console_handle(handle_name, get_method_arg(args, 0, has_keyword_args).str_no_quotes(), true)
+      NIL
+    )
+
+    io_handle_class_global.def_native_method("flush", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      discard vm
+      discard arg_count
+      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.flush")
+      flush_console_handle(handle_name)
+      NIL
+    )
+
+    io_handle_class_global.def_native_method("isatty?", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      discard vm
+      discard arg_count
+      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.isatty?")
+      console_handle_isatty(handle_name).to_value()
+    )
+
+    let io_handle_class_ref = new_ref(VkClass)
+    io_handle_class_ref.class = io_handle_class_global
+    App.app.global_ns.ns["IOHandle".to_key()] = io_handle_class_ref.to_ref_value()
+
+  proc new_io_handle_value(handle_name: string): Value =
+    if io_handle_class_global == nil:
+      raise new_exception(types.Exception, "IOHandle class is not initialized")
+    let handle = new_instance_value(io_handle_class_global)
+    instance_props(handle)[IO_HANDLE_NAME_KEY.to_key()] = handle_name.to_value()
+    handle
 
 proc init_basic_classes(): Class =
   # Initialize Object, Nil, Bool, Int, Float classes
@@ -2294,12 +2402,16 @@ proc core_on_signal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
   if signal_name != "INT":
     raise new_exception(types.Exception, "on_signal currently supports only INT")
 
-  if not console_sigint_hook_installed:
-    setControlCHook(console_set_sigint_pending)
-    console_sigint_hook_installed = true
+  when defined(gene_wasm):
+    discard vm
+    raise_wasm_unsupported("signals")
+  else:
+    if not console_sigint_hook_installed:
+      setControlCHook(console_set_sigint_pending)
+      console_sigint_hook_installed = true
 
-  console_sigint_handler = handler
-  NIL
+    console_sigint_handler = handler
+    NIL
 
 proc core_concat*(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
   let positional = get_positional_count(arg_count, has_keyword_args)
