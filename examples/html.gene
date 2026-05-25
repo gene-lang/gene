@@ -16,4 +16,4 @@
   )
 )
 
-(println doc/.to_s)
+(println doc)

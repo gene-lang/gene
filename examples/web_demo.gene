@@ -1,0 +1,140 @@
+#!/usr/bin/env gene run
+
+# =============================================================================
+#  Gene web demo  —  "HTML is just Gene data"
+# =============================================================================
+#
+#  The point of this whole file fits on one line:
+#
+#       (DIV ^class "card"  (H1 "Hi")  (P "world"))
+#        ───  ───────────   ───────────────────────
+#        type   property            children
+#
+#  That is THE Gene structure:   (Type  ^prop value  child child ...)
+#
+#  The exact same shape describes data ...
+#       (Person ^name "Ada" ^age 37)
+#  ... and code ...
+#       (fn greet [name] (print name))
+#  ... and, here, HTML.
+#
+#  There is no template engine underneath. `DIV`, `UL`, `A`, `TABLE` are
+#  ordinary functions: give them properties + children, get a string back.
+#  Building a page is just composing Gene values — which is the same act as
+#  writing this program.
+# =============================================================================
+
+(import genex/http)
+(import genex/html/tags/*)
+
+# --- styling: a triple-quoted string is pure data ----------------------------
+(var css """
+  body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f4f4f5;color:#18181b}
+  body.dark{background:#18181b;color:#e4e4e7}
+  .wrap{max-width:640px;margin:40px auto;padding:0 20px}
+  .card{padding:20px 24px;border-radius:14px;margin:16px 0;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+  .card.formal{background:#1e3a8a;color:#fff}
+  .card.casual{background:#fde68a;color:#3f2d00}
+  .card.excited{background:#ec4899;color:#fff}
+  .nav a{margin-right:16px}
+  .muted{opacity:.65;font-size:.85em}
+  table{border-collapse:collapse;width:100%}
+  td,th{border:1px solid #d4d4d8;padding:8px 12px;text-align:left}
+  .badge{padding:2px 10px;border-radius:999px;background:#e4e4e7;color:#3f3f46;font-size:.8em}
+""")
+
+# --- a menu, defined as ordinary Gene data (a list of maps) -------------------
+(var menu [
+  {^name "Espresso"     ^price 3 ^tag "classic"}
+  {^name "Cortado"      ^price 4 ^tag "milk"}
+  {^name "Cold Brew"    ^price 5 ^tag "iced"}
+  {^name "Matcha Latte" ^price 6 ^tag "green"}
+])
+
+# --- shared layout: composing tags is composing data --------------------------
+(var nav
+  (DIV ^class "nav"
+    (A ^href "/" "home")
+    (A ^href "/greet?name=Ada&style=formal&theme=dark" "formal")
+    (A ^href "/greet?name=Sam&style=excited" "excited")
+    (A ^href "/menu?limit=3" "menu")))
+
+(fn page [title theme body]
+  ("<!DOCTYPE html>\n" .append
+    (HTML
+      (HEAD (TITLE title) (STYLE css))
+      (BODY ^class theme
+        (DIV ^class "wrap"
+          (HEADER (H1 "Gene web demo") nav)
+          body
+          (FOOTER (P ^class "muted"
+            "Every element above is a Gene value: type · properties · children.")))))))
+
+# --- route handlers -----------------------------------------------------------
+
+(fn home_page [theme]
+  (page "Gene web demo" theme
+    (DIV ^class "card casual"
+      (H2 "Try it")
+      (P "Submit the form (it GETs /greet), or just edit the query string yourself.")
+      (FORM ^method "get" ^action "/greet"
+        (P (LABEL "Name: ") (INPUT ^name "name" ^value "Ada"))
+        (P (LABEL "Style (formal / casual / excited): ") (INPUT ^name "style" ^value "casual"))
+        (P (LABEL "Theme (light / dark): ") (INPUT ^name "theme" ^value "light"))
+        (BUTTON ^type "submit" "Greet me")))))
+
+(fn greet_page [name style theme]
+  (var greeting (case style
+    when "formal"  #"Good day, #{name}. A pleasure to make your acquaintance."
+    when "excited" #"HEY #{name}!!! so glad you're here 🎉"
+    else           #"hey #{name} 👋 what's up?"))
+  (page #"Greeting · #{name}" theme
+    (DIV ^class (++ "card " style)
+      (H2 greeting)
+      (P ^class "muted" #"name=#{name} · style=#{style} · theme=#{theme}"))))
+
+(fn menu_page [limit theme]
+  (var n (if (limit > menu/.size) menu/.size else limit))
+  # data → HTML: map each record to a <tr>, then join the strings into one
+  (var rows
+    (((menu .slice 0 n) .map (fn [item]
+        (TR (TD item/name)
+            (TD #"$#{item/price}")
+            (TD (SPAN ^class "badge" item/tag)))))
+     .join ""))
+  (page "Menu" theme
+    (DIV ^class "card"
+      (H2 #"Menu — showing #{n} of #{menu/.size}")
+      (TABLE
+        (TR (TH "Item") (TH "Price") (TH "Tag"))
+        rows))))
+
+(fn not_found_error [path theme]
+  (page "Not found" theme
+    (DIV ^class "card excited"
+      (H2 "404")
+      (P #"No route for #{path}. Try / , /greet , or /menu."))))
+
+# --- the app: branch on the path, read query params --------------------------
+(fn app [req]
+  (var theme (req/params/theme || "light"))
+  (var html
+    (if (req/path == "/")
+      (home_page theme)
+    elif (req/path == "/greet")
+      (greet_page (req/params/name  || "stranger")
+                  (req/params/style || "casual")
+                  theme)
+    elif (req/path == "/menu")
+      (menu_page ((req/params/limit || "10") .to_i) theme)
+    else
+      (not_found_error req/path theme)))
+  (respond 200 html {^Content-Type "text/html; charset=utf-8"}))
+
+(println "Gene web demo → http://127.0.0.1:8088")
+(println "Routes:
+  /
+  /greet?name=Ada&style=formal&theme=dark
+  /menu?limit=3")
+(start_server 8088 app)
+(run_forever)
