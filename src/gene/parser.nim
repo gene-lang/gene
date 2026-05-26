@@ -722,8 +722,8 @@ proc interpret_token(token: string): Value =
     return TRUE
   of "false":
     return FALSE
-  of "not_found":
-    return NOT_FOUND
+  # of "not_found": # Change to let compiler compiles $not_found to NOT_FOUND
+  #   return NOT_FOUND
   else:
     return match_symbol(token)
 

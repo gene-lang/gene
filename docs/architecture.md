@@ -4,9 +4,7 @@ This document describes the VM-based implementation that lives under `src/gene/`
 The execution pipeline looks like this:
 
 ```
-source.gene ──► Parser ──► AST ──► Compiler ──► CompilationUnit ──► VM ──► result
-                           │                         │
-                           └──────► GIR writer ◄─────┘
+source.gene ──► Parser ──► AST ──► Compiler ──► CompilationUnit/GIR ──► VM ──► result
 ```
 
 ## Components

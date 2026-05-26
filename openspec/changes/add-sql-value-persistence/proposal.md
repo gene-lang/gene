@@ -1,0 +1,29 @@
+## Why
+
+Gene currently has three SQL extensions (`src/genex/sqlite.nim`, `postgres.nim`, `mysql.nim`) but they only bind scalar `Vk*` kinds; non-scalar values fall back to `$value` string interpolation (`src/genex/sqlite.nim:31-44`, `postgres.nim:33-44`, `mysql.nim:24-37`), which is lossy and not round-trippable. No generic, backend-portable "store any Gene value" layer exists. Prior persistence work (`add-geneclaw-data-storage-tiers`) chose filesystem text `.gene` files; SQL was reserved for app-specific operational tables (`add-llm-chat-storage`). Users who want durable, queryable, transactional storage of arbitrary Gene values across SQLite, MySQL, and PostgreSQL have no portable answer today.
+
+## What Changes
+
+- Add a new capability `sql-value-persistence` with a single canonical, backend-portable logical schema for storing multiple unrelated Gene values, each keyed by a unique string id.
+- Define per-backend DDL templates for SQLite, MySQL, and PostgreSQL that materialize the same logical schema.
+- Define a **tiered storage rule**: small payloads (≤ 8 KiB default) inline in the primary row; medium payloads (≤ 1 MiB default) detached into a content-addressed `gene_blobs` table; large payloads (> 1 MiB default) optionally externalized to a URI with hash retained. Thresholds are configurable per store.
+- Use **SHA-256 content addressing** for detached payloads to enable free deduplication across unrelated values with identical content.
+- Reuse the existing text serdes wire format (`src/gene/serdes.nim:850+`) as the v1 payload format; reserve `inline_format` byte for a future binary format without schema migration.
+- **Fast-path `put`**: a single, prepared UPSERT statement per call for inline payloads (≤ `inline_threshold`) — no read-before-write, no per-update ref-count bookkeeping, no triggers, no optimistic-concurrency read. Detached-blob writes use at most three statements in one transaction (idempotent blob upsert + value upsert + conditional cleanup of the previously-referenced blob when the payload changes). Hashing only occurs when the payload exceeds `inline_threshold`. Blob dedup is achieved by the engine's idempotent insert (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` / `INSERT IGNORE`), not by application-side existence checks.
+- **Seamless blob lifecycle**: orphan cleanup runs automatically inside `delete` and `put` (same transaction, orphan-check via `NOT EXISTS`). No user-callable `gc_blobs` API in v1; no external DB job required.
+- **Lazy materialization on read**: `get` of a detached value (one stored in `gene_blobs`) returns an internal `VkLazyDbValue` wrapper that fetches and decodes the blob only on first content access; inline values are returned fully materialized. The wrapper is invisible to Gene-level introspection — `(gene/kind v)` reports the original kind.
+- **Developer-declared field-level externalization**: `put` accepts an optional `^externalize [/path …]` array (mirroring the filesystem-serdes selector syntax in `src/gene/serdes.nim:1141-1217`). Each listed sub-tree of the value is encoded into its own `gene_blobs` row regardless of size, the parent payload stores placeholder refs, and a new mapping table `gene_value_blobs(value_id, child_path, blob_sha256)` records which child path of which root owns which blob. On read, each externalized child is returned as a `VkLazyDbValue` at its declared path so individually-large fields are not fetched until accessed.
+- Add a Gene API `(import genex/db_store)` exposing `open`, `put`, `get`, `has?`, `delete`, `scan`, `close` on top of any existing SQL connection.
+- Wire `src/genex/mysql.nim` into `nimble buildext` so MySQL becomes a first-class build target alongside SQLite and Postgres (`gene.nimble:40-43`).
+- Document which `Vk*` kinds are persistable (all serdes-supported kinds plus `VkCustom` class hooks) and which are explicitly non-persistable (`VkFunction`, `VkScope`, `VkFrame`, `VkThread`, `VkFuture`, `VkNativeFn`, …) so callers get a deterministic error rather than silent loss.
+
+## Impact
+
+- **Affected specs**: new capability `sql-value-persistence`. No modifications to existing capabilities; orthogonal to filesystem-tier work (`add-geneclaw-data-storage-tiers`) which remains the answer for human-authored config and append-only logs.
+- **Affected code**:
+  - New: `src/genex/db_store.nim` (Gene-facing layer), shared with existing connection types from `src/genex/{sqlite,postgres,mysql}.nim`.
+  - New: `src/genex/db_store/schema.nim` (DDL templates), `src/genex/db_store/codec.nim` (payload encode/decode + sha256 + threshold routing).
+  - Modified: `gene.nimble` — add `build/libmysql.dylib` target to `buildext`.
+  - Modified: `src/genex/db.nim` — extend `DatabaseConnection` with a small dialect descriptor (placeholder syntax, upsert clause, blob type) so the store layer can emit portable SQL.
+  - New tests: `tests/test_db_store.nim` (SQLite-backed) and an integration suite under `testsuite/15-serialization/` exercising round-trip of every persistable `Vk*` kind.
+- **Non-goals (deferred)**: secondary indexes on Gene properties, multi-row transactions across `put` calls, distributed/sharded layouts, compact binary wire format, and migration tooling from filesystem-tier stores.
