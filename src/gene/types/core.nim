@@ -57,6 +57,7 @@ proc kind*(v: Value): ValueKind {.inline.}
 proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.}
 converter to_bool*(v: Value): bool {.inline.}
 proc `$`*(self: Value): string {.gcsafe.}
+proc str_no_quotes*(self: Value): string {.gcsafe.}
 proc `$`*(self: ptr Reference): string
 proc `$`*(self: ptr Gene): string
 template gene*(v: Value): ptr Gene =

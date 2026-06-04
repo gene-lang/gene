@@ -23,6 +23,9 @@ proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope
   vm.cu = compiled
   return vm.exec()
 
+proc render_repl_result*(value: Value): string =
+  "=> " & $value
+
 proc is_throw_form(input: string, filename: string): bool =
   var parser = new_parser()
   var stream = new_string_stream(input)
@@ -113,9 +116,7 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
       let value = exec_repl_compiled(vm, compiled, scope, ns, caller_frame, return_cu, caller_pc, repl_frame)
       last_value = value
       if print_results:
-        if not value.is_nil() and value.kind != VkVoid and
-           not trimmed.starts_with("(print") and not trimmed.starts_with("(println"):
-          echo $value
+        echo render_repl_result(value)
     except CatchableError as e:
       if propagate_this and vm.current_exception != NIL:
         raise

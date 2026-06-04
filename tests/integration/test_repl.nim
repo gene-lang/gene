@@ -69,6 +69,12 @@ suite "REPL":
     let result = run_repl_script(VM, @["(var x 1)", "(+ x 2)"], scope_tracker, scope, ns)
     check result == 3.to_value()
 
+  test "renders return values with prompt marker":
+    check render_repl_result(NIL) == "=> nil"
+    check render_repl_result(VOID) == "=> void"
+    check render_repl_result(1.to_value()) == "=> 1"
+    check render_repl_result("haha".to_value()) == "=> \"haha\""
+
   test "history suppresses immediate duplicates and blanks":
     check should_record_repl_history_entry("", "") == false
     check should_record_repl_history_entry("x", "") == true

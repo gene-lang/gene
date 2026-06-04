@@ -786,6 +786,59 @@ proc format_time(r: ptr Reference): string =
   elif r.time_tz_offset != 0:
     result &= format_tz_offset(r.time_tz_offset)
 
+proc insert_sorted(items: var seq[string], item: string) =
+  var i = 0
+  while i < items.len and items[i] < item:
+    inc(i)
+  items.insert(item, i)
+
+proc key_name(key: Key): string {.inline.} =
+  get_symbol(symbol_index(key))
+
+proc format_interface_list(cls: Class): string =
+  var names: seq[string] = @[]
+  if cls != nil:
+    for gene_interface, _ in cls.implementations:
+      if gene_interface != nil and gene_interface.name.len > 0:
+        names.insert_sorted(gene_interface.name)
+  if names.len == 0:
+    return ""
+  result = " implements ["
+  for i, name in names:
+    if i > 0:
+      result &= " "
+    result &= name
+  result &= "]"
+
+proc format_class(cls: Class): string =
+  if cls == nil:
+    return "(class <unknown>)"
+  result = "(class " & cls.name
+  if cls.parent != nil and cls.parent.name != "Object":
+    result &= " < " & cls.parent.name
+  result &= format_interface_list(cls)
+  result &= ")"
+
+proc format_instance(value: Value, quoted: bool): string =
+  let cls = value.instance_class
+  result = "(" & (if cls != nil and cls.name.len > 0: cls.name else: "<unknown>")
+
+  var props: seq[(string, Value)] = @[]
+  for key, prop_value in instance_props(value):
+    let name = key_name(key)
+    var i = 0
+    while i < props.len and props[i][0] < name:
+      inc(i)
+    props.insert((name, prop_value), i)
+
+  for prop in props:
+    result &= " ^" & prop[0] & " "
+    if quoted:
+      result &= $prop[1]
+    else:
+      result &= prop[1].str_no_quotes()
+  result &= ")"
+
 proc bytes_len*(v: Value): int {.inline.} =
   let tag = v.raw and 0xFFFF_0000_0000_0000u64
   if tag == BYTES6_TAG: return 6
@@ -925,6 +978,10 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
           result &= ")"
         else:
           result = "<TupleValue>"
+      of VkClass:
+        result = format_class(self.ref.class)
+      of VkInstance:
+        result = format_instance(self, quoted = false)
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = self.ref.custom_data.materialize_hook(self.ref.custom_data).str_no_quotes()
@@ -1046,6 +1103,10 @@ proc `$`*(self: Value): string {.gcsafe.} =
           result &= ")"
         else:
           result = "<TupleValue>"
+      of VkClass:
+        result = format_class(self.ref.class)
+      of VkInstance:
+        result = format_instance(self, quoted = true)
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = $self.ref.custom_data.materialize_hook(self.ref.custom_data)

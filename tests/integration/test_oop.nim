@@ -37,6 +37,28 @@ test_vm """
   check r.ref.class.name == "B"
   check r.ref.class.parent.name == "A"
 
+test_vm """
+  (class A)
+  A
+""", proc(r: Value) =
+  check $r == "(class A)"
+
+test_vm """
+  (interface C)
+  (interface D)
+  (class B)
+  (class A < B implements [C D])
+  A
+""", proc(r: Value) =
+  check $r == "(class A < B implements [C D])"
+
+test_vm """
+  (class A
+    (ctor [/prop1 /prop2] nil))
+  (new A 1 2)
+""", proc(r: Value) =
+  check $r == "(A ^prop1 1 ^prop2 2)"
+
 # Namespace class definition
 # test_vm """
 #   (ns n
