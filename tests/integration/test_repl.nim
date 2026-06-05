@@ -1,4 +1,4 @@
-import unittest, tables
+import unittest, strutils, tables
 
 import ../helpers
 
@@ -74,6 +74,76 @@ suite "REPL":
     check render_repl_result(VOID) == "=> void"
     check render_repl_result(1.to_value()) == "=> 1"
     check render_repl_result("haha".to_value()) == "=> \"haha\""
+
+  test "renders functions by name and argument presence":
+    let ns = new_namespace(App.app.global_ns.ref.ns, "repl")
+    let scope_tracker = new_scope_tracker()
+    let scope = new_scope(scope_tracker)
+    var rendered: seq[string] = @[]
+
+    proc collect(value: Value) =
+      rendered.add(render_repl_result(value))
+
+    discard run_repl_script(VM, @[
+      "(fn f [] 1) (fn g [x] x) (fn [] 1) (fn [x] x)"
+    ], scope_tracker, scope, ns, on_result = collect)
+
+    check rendered == @[
+      "=> (fn f [])",
+      "=> (fn g [...])",
+      "=> (fn [])",
+      "=> (fn [...])",
+    ]
+
+  test "reports every top-level form from one submitted input":
+    let ns = new_namespace(App.app.global_ns.ref.ns, "repl")
+    let scope_tracker = new_scope_tracker()
+    let scope = new_scope(scope_tracker)
+    var rendered: seq[string] = @[]
+
+    proc collect(value: Value) =
+      rendered.add(render_repl_result(value))
+
+    let result = run_repl_script(VM, @["1 2 (+ 1 2)"], scope_tracker, scope, ns,
+                                 on_result = collect)
+
+    check result == 3.to_value()
+    check rendered == @["=> 1", "=> 2", "=> 3"]
+
+  test "stops after parse failure and reports full input line":
+    let ns = new_namespace(App.app.global_ns.ref.ns, "repl")
+    let scope_tracker = new_scope_tracker()
+    let scope = new_scope(scope_tracker)
+    var rendered: seq[string] = @[]
+    var failed = false
+
+    proc collect(value: Value) =
+      rendered.add(render_repl_result(value))
+
+    try:
+      discard run_repl_script(VM, @["1\n2\n] 3"], scope_tracker, scope, ns,
+                              "multi_repl.gene", on_result = collect)
+    except CatchableError as e:
+      failed = true
+      check e.msg.contains("multi_repl.gene:3:")
+
+    check failed
+    check rendered == @["=> 1", "=> 2"]
+
+  test "stops after execution failure before later forms":
+    let ns = new_namespace(App.app.global_ns.ref.ns, "repl")
+    let scope_tracker = new_scope_tracker()
+    let scope = new_scope(scope_tracker)
+    var failed = false
+
+    try:
+      discard run_repl_script(VM, @["(var x 1) (+ 1 \"x\") (x = 3)"], scope_tracker, scope, ns)
+    except CatchableError:
+      failed = true
+      VM.current_exception = NIL
+
+    check failed
+    check run_repl_script(VM, @["x"], scope_tracker, scope, ns) == 1.to_value()
 
   test "history suppresses immediate duplicates and blanks":
     check should_record_repl_history_entry("", "") == false

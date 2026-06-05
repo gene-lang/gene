@@ -696,6 +696,79 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
   self.finalize_type_metadata("repl compile", filename)
   return self.output
 
+proc compile_repl_value*(node: Value, filename = "<repl>", scope_tracker: ScopeTracker,
+                         trace_root: SourceTrace = nil, eager_functions = false,
+                         type_check = true): CompilationUnit =
+  ## Compile one already-parsed REPL form while preserving its source trace.
+  ## The caller owns parsing and can therefore interleave parse -> execute per form.
+  var root_tracker = scope_tracker
+  if root_tracker.isNil:
+    root_tracker = new_scope_tracker()
+  root_tracker.scope_started = true
+
+  let self = Compiler(
+    output: new_compilation_unit(),
+    tail_position: false,
+    eager_functions: eager_functions,
+    trace_stack: @[],
+    method_access_mode: MamAutoCall,
+    scope_trackers: @[root_tracker],
+    declared_names: @[initTable[Key, bool]()],
+    skip_root_scope_start: true
+  )
+  self.preserve_root_scope = true
+  self.output.module_path = module_path_from_source(filename)
+  self.output.type_check = type_check
+  self.emit(Instruction(kind: IkStart))
+
+  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
+
+  if node != PARSER_IGNORE:
+    self.last_error_trace = nil
+    if checker != nil:
+      try:
+        checker.type_check_node(node)
+      except CatchableError as e:
+        var trace: SourceTrace = nil
+        if node.kind == VkGene and node.gene != nil:
+          trace = node.gene.trace
+        let location = trace_location(trace)
+        let message = if location.len > 0: location & ": " & e.msg else: e.msg
+        raise new_exception(types.Exception, message)
+      let warnings = checker.flush_warnings()
+      for w in warnings:
+        var trace: SourceTrace = nil
+        if node.kind == VkGene and node.gene != nil:
+          trace = node.gene.trace
+        let location = trace_location(trace)
+        log_compile_warning(if location.len > 0: location & ": " & w else: w)
+
+    try:
+      if is_vmstmt_form(node):
+        self.compile_vmstmt(node.gene)
+      else:
+        self.compile(node)
+    except CatchableError as e:
+      var trace = self.last_error_trace
+      if trace.is_nil and node.kind == VkGene:
+        trace = node.gene.trace
+      let location = trace_location(trace)
+      let message = if location.len > 0: location & ": " & e.msg else: e.msg
+      raise new_exception(types.Exception, message)
+
+  self.emit(Instruction(kind: IkEnd))
+  self.output.optimize_noops()
+  self.output.peephole_optimize()
+  self.output.update_jumps()
+  self.output.inline_caches.setLen(self.output.instructions.len)
+  self.output.ensure_trace_capacity()
+  self.output.trace_root = trace_root
+  if checker != nil:
+    merge_checker_type_descriptors(self.output.type_descriptors, checker.type_descriptors())
+
+  self.finalize_type_metadata("repl value compile", filename)
+  return self.output
+
 proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false): CompilationUnit =
   ## Parse and compile Gene code from a stream with streaming compilation
   ## This is more memory-efficient for large files as it doesn't load everything into memory

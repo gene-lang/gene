@@ -839,6 +839,16 @@ proc format_instance(value: Value, quoted: bool): string =
       result &= prop[1].str_no_quotes()
   result &= ")"
 
+proc format_function(fn: Function): string =
+  result = "(fn"
+  if fn != nil and fn.name.len > 0 and fn.name != "<unnamed>":
+    result &= " " & fn.name
+  if fn != nil and fn.matcher != nil and fn.matcher.children.len > 0:
+    result &= " [...]"
+  else:
+    result &= " []"
+  result &= ")"
+
 proc bytes_len*(v: Value): int {.inline.} =
   let tag = v.raw and 0xFFFF_0000_0000_0000u64
   if tag == BYTES6_TAG: return 6
@@ -982,6 +992,8 @@ proc str_no_quotes*(self: Value): string {.gcsafe.} =
         result = format_class(self.ref.class)
       of VkInstance:
         result = format_instance(self, quoted = false)
+      of VkFunction:
+        result = format_function(self.ref.fn)
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = self.ref.custom_data.materialize_hook(self.ref.custom_data).str_no_quotes()
@@ -1107,6 +1119,8 @@ proc `$`*(self: Value): string {.gcsafe.} =
         result = format_class(self.ref.class)
       of VkInstance:
         result = format_instance(self, quoted = true)
+      of VkFunction:
+        result = format_function(self.ref.fn)
       of VkCustom:
         if self.ref != nil and self.ref.custom_data != nil and self.ref.custom_data.materialize_hook != nil:
           result = $self.ref.custom_data.materialize_hook(self.ref.custom_data)

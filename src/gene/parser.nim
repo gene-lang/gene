@@ -241,7 +241,7 @@ proc err_info(self: Parser): ParseInfo =
   # get_col_number returns 0-indexed, convert to 1-indexed for display
   result = (self.line_number, self.get_col_number(self.bufpos) + 1)
 
-proc format_position(self: Parser): string =
+proc format_position*(self: Parser): string =
   let info = err_info(self)
   if self.filename.len > 0:
     return self.filename & ":" & $info.line & ":" & $info.col

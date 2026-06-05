@@ -45,7 +45,7 @@ The Gene data structure is **unique and central** to the language. Unlike JSON o
 
 | Component | Description | Example |
 |-----------|-------------|---------|
-| **Type** | The first element, identifying what kind of data this is. <br>Type can be any Gene data. | `if`, `fn`, <br>`(fn f [a b] (+ a b))` |
+| **Type** | The first element, identifying what kind of data this is. <br>Type can be any Gene data. | `if`, `fn`, <br>`(fn f [a b] (a + b))` |
 | **Properties** | Key-value pairs (prefixed with `^`). <br>Keys are strings. Values can be any Gene data. | `^name "Alice"`, `^age 30` |
 | **Children** | Positional elements after the type. <br>Children can be any Gene data. | `child1 child2 child3` |
 
@@ -69,7 +69,7 @@ This unified structure enables:
     (/age = age))
 
   (method greet []
-    (print "Hello, my name is " /name)))
+    (println "Hello, my name is " /name)))
 ```
 
 ### Other Key Features
@@ -157,19 +157,20 @@ Run `bin/gene help` for the complete command list and examples.
 
 ```gene
 # Hello World
-(print "Hello, World!")
+(println "Hello, World!")
 
 # Define a function
 (fn add [a b]
-  (+ a b))
+  (a + b))
 
 # Fibonacci
 (fn fib [n]
-  (if (< n 2)
+  (if (n < 2)
     n
-    (+ (fib (- n 1)) (fib (- n 2)))))
+  else
+    ((fib (n - 1)) + (fib (n - 2)))))
 
-(print "fib(10) =" (fib 10))
+(println "(fib 10) =" (fib 10))
 ```
 
 See `examples/` for additional programs and CLI demonstrations.

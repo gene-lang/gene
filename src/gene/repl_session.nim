@@ -7,6 +7,9 @@ import ./parser
 import ./repl_input
 import ./error_display
 
+type
+  ReplResultHandler* = proc(value: Value) {.closure.}
+
 proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope: Scope, ns: Namespace,
                         caller_frame: Frame, caller_cu: CompilationUnit, caller_pc: int,
                         repl_frame: var Frame): Value =
@@ -25,6 +28,41 @@ proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope
 
 proc render_repl_result*(value: Value): string =
   "=> " & $value
+
+proc repl_parse_error_message(parser: Parser, message: string): string =
+  let location = parser.format_position()
+  if location.len == 0 or message.startsWith(location & ":"):
+    return message
+  location & ": " & message
+
+proc eval_repl_input*(vm: ptr VirtualMachine, input: string, scope_tracker: ScopeTracker,
+                      scope: Scope, ns: Namespace, repl_frame: var Frame,
+                      filename = "<repl>", caller_frame: Frame = nil,
+                      caller_cu: CompilationUnit = nil, caller_pc: int = 0,
+                      on_result: ReplResultHandler = nil): Value =
+  var parser = new_parser()
+  var stream = new_string_stream(input)
+  parser.open(stream, filename)
+  defer: parser.close()
+
+  result = NIL
+  while true:
+    var node: Value
+    try:
+      node = parser.read()
+    except ParseEofError:
+      break
+    except ParseError as e:
+      raise new_exception(types.Exception, repl_parse_error_message(parser, e.msg))
+
+    if node == PARSER_IGNORE:
+      continue
+
+    let compiled = compile_repl_value(node, filename, scope_tracker, parser.trace_root)
+    let value = exec_repl_compiled(vm, compiled, scope, ns, caller_frame, caller_cu, caller_pc, repl_frame)
+    result = value
+    if on_result != nil:
+      on_result(value)
 
 proc is_throw_form(input: string, filename: string): bool =
   var parser = new_parser()
@@ -111,12 +149,15 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
 
     let propagate_this = propagate_exceptions and is_throw_form(trimmed, filename)
 
-    try:
-      let compiled = parse_and_compile_repl(trimmed, filename, scope_tracker)
-      let value = exec_repl_compiled(vm, compiled, scope, ns, caller_frame, return_cu, caller_pc, repl_frame)
+    proc handle_result(value: Value) =
       last_value = value
       if print_results:
         echo render_repl_result(value)
+
+    try:
+      last_value = eval_repl_input(vm, trimmed, scope_tracker, scope, ns, repl_frame,
+                                   filename, caller_frame, return_cu, caller_pc,
+                                   handle_result)
     except CatchableError as e:
       if propagate_this and vm.current_exception != NIL:
         raise
@@ -127,7 +168,8 @@ proc run_repl_session*(vm: ptr VirtualMachine, scope_tracker: ScopeTracker, scop
 
 proc run_repl_script*(vm: ptr VirtualMachine, inputs: seq[string], scope_tracker: ScopeTracker, scope: Scope,
                       ns: Namespace, filename = "<repl>", caller_frame: Frame = nil,
-                      caller_cu: CompilationUnit = nil, caller_pc: int = 0): Value =
+                      caller_cu: CompilationUnit = nil, caller_pc: int = 0,
+                      on_result: ReplResultHandler = nil): Value =
   ## Scripted REPL execution for tests or non-interactive sessions.
   if vm.isNil:
     return NIL
@@ -150,8 +192,14 @@ proc run_repl_script*(vm: ptr VirtualMachine, inputs: seq[string], scope_tracker
     if trimmed == "help":
       continue
 
-    let compiled = parse_and_compile_repl(trimmed, filename, scope_tracker)
-    last_value = exec_repl_compiled(vm, compiled, scope, ns, caller_frame, return_cu, caller_pc, repl_frame)
+    proc handle_result(value: Value) =
+      last_value = value
+      if on_result != nil:
+        on_result(value)
+
+    last_value = eval_repl_input(vm, trimmed, scope_tracker, scope, ns, repl_frame,
+                                 filename, caller_frame, return_cu, caller_pc,
+                                 handle_result)
 
   return last_value
 

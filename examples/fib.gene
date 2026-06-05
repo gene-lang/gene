@@ -8,4 +8,4 @@
   )
 )
 
-(println "fib(10) =" (fib 10))
+(println "(fib 10) =" (fib 10))
