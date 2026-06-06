@@ -270,6 +270,23 @@ proc to_function*(node: Value, cu_type_descs: var seq[TypeDesc],
         matcher.return_type_id = resolve_local_type_value_to_id(
           ret_type, type_descs, type_desc_index, aliases, generic_type_ids, module_path)
       body_start += 2
+
+  # Parse optional effect metadata: (fn f [] -> Int ! [Io] ...)
+  if body_start < node.gene.children.len:
+    let maybe_bang = node.gene.children[body_start]
+    if maybe_bang.kind == VkSymbol and maybe_bang.str == "!":
+      if body_start + 1 >= node.gene.children.len:
+        raise new_exception(type_defs.Exception, "Invalid function definition: missing effects list after !")
+      let effect_list = node.gene.children[body_start + 1]
+      if effect_list.kind != VkArray:
+        raise new_exception(type_defs.Exception, "Invalid function definition: effects after ! must be an array")
+      for effect in array_data(effect_list):
+        if effect.kind notin {VkSymbol, VkString}:
+          raise new_exception(type_defs.Exception, "Invalid function definition: effects must be symbols or strings")
+        if effect.str.len > 0:
+          matcher.effects.add(effect.str)
+      body_start += 2
+
   anchor_module_paths(type_descs, module_path)
   register_type_descs(type_registry, type_descs, module_path)
   # Attach the type_descs to the matcher for runtime validation

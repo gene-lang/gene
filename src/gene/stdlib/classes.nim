@@ -1,4 +1,4 @@
-import strutils, tables
+import algorithm, strutils, tables
 
 import ../types
 from ../types/runtime_types import coerce_value_to_type, emit_type_warning, runtime_type_name,
@@ -561,6 +561,120 @@ proc init_interface_adapter_classes*(object_class: Class) =
 
   let interface_class = new_class("Interface")
   interface_class.parent = object_class
+
+  proc interface_key_name(key: Key): string {.gcsafe.} =
+    get_symbol_gcsafe(symbol_index(key))
+
+  proc require_interface_arg(args: ptr UncheckedArray[Value], arg_count: int,
+                             has_keyword_args: bool, method_name: string): GeneInterface {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Interface." & method_name & " requires self")
+    let self_arg = get_positional_arg(args, 0, has_keyword_args)
+    if self_arg.kind != VkInterface:
+      not_allowed("Interface." & method_name & " must be called on an interface")
+    self_arg.ref.gene_interface
+
+  proc string_seq_value(items: seq[string]): Value {.gcsafe.} =
+    var result_ref = new_array_value()
+    for item in items:
+      array_data(result_ref).add(item.to_value())
+    result_ref
+
+  proc type_name_value(type_id: TypeId, type_descs: seq[TypeDesc]): Value {.gcsafe.} =
+    type_desc_to_string(type_id, type_descs).to_value()
+
+  proc callable_param_kind_name(kind: CallableParamKind): string {.gcsafe.} =
+    case kind
+    of CpkPositional:
+      "positional"
+    of CpkPositionalRest:
+      "positional-rest"
+    of CpkKeyword:
+      "keyword"
+    of CpkKeywordRest:
+      "keyword-rest"
+
+  proc callable_param_metadata(param: CallableParamDesc, type_descs: seq[TypeDesc]): Value {.gcsafe.} =
+    var data = initTable[Key, Value]()
+    data["kind".to_key()] = callable_param_kind_name(param.kind).to_value()
+    data["keyword".to_key()] = param.keyword_name.to_value()
+    data["type".to_key()] = type_name_value(param.type_id, type_descs)
+    data["type_id".to_key()] = param.type_id.int.to_value()
+    new_map_value(data)
+
+  proc callable_params_metadata(params: seq[CallableParamDesc], type_descs: seq[TypeDesc]): Value {.gcsafe.} =
+    var result_ref = new_array_value()
+    for param in params:
+      array_data(result_ref).add(callable_param_metadata(param, type_descs))
+    result_ref
+
+  proc interface_method_metadata_value(method_info: InterfaceMethod): Value {.gcsafe.} =
+    var data = initTable[Key, Value]()
+    data["name".to_key()] = method_info.name.to_value()
+    data["params".to_key()] = callable_params_metadata(method_info.param_descs, method_info.type_descs)
+    data["return".to_key()] = type_name_value(method_info.type_id, method_info.type_descs)
+    data["return_type_id".to_key()] = method_info.type_id.int.to_value()
+    data["effects".to_key()] = string_seq_value(method_info.effects)
+    data["default?".to_key()] = (method_info.callable != NIL).to_value()
+    new_map_value(data)
+
+  proc interface_field_metadata_value(prop: InterfaceProp): Value {.gcsafe.} =
+    var data = initTable[Key, Value]()
+    data["name".to_key()] = prop.name.to_value()
+    data["type".to_key()] = type_name_value(prop.type_id, prop.type_descs)
+    data["type_id".to_key()] = prop.type_id.int.to_value()
+    data["readonly?".to_key()] = prop.readonly.to_value()
+    new_map_value(data)
+
+  interface_class.def_native_method "name", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    require_interface_arg(args, arg_count, has_keyword_args, "name").name.to_value()
+
+  interface_class.def_native_method "parents", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let iface = require_interface_arg(args, arg_count, has_keyword_args, "parents")
+    var names: seq[string] = @[]
+    for parent in iface.parents:
+      names.add(parent.name)
+    names.sort(system.cmp[string])
+    string_seq_value(names)
+
+  interface_class.def_native_method "methods", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let iface = require_interface_arg(args, arg_count, has_keyword_args, "methods")
+    var result_ref = new_map_value()
+    for key, method_info in iface.methods:
+      map_data(result_ref)[interface_key_name(key).to_key()] = interface_method_metadata_value(method_info)
+    result_ref
+
+  interface_class.def_native_method "fields", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let iface = require_interface_arg(args, arg_count, has_keyword_args, "fields")
+    var result_ref = new_map_value()
+    for key, prop in iface.props:
+      map_data(result_ref)[interface_key_name(key).to_key()] = interface_field_metadata_value(prop)
+    result_ref
+
+  interface_class.def_native_method "method", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let iface = require_interface_arg(args, arg_count, has_keyword_args, "method")
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Interface.method requires a method name")
+    let name_arg = get_positional_arg(args, 1, has_keyword_args)
+    if name_arg.kind notin {VkSymbol, VkString}:
+      not_allowed("Interface.method name must be a symbol or string")
+    let method_info = iface.methods.getOrDefault(name_arg.str.to_key(), nil)
+    if method_info == nil:
+      return NIL
+    interface_method_metadata_value(method_info)
+
+  interface_class.def_native_method "field", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    let iface = require_interface_arg(args, arg_count, has_keyword_args, "field")
+    if get_positional_count(arg_count, has_keyword_args) < 2:
+      not_allowed("Interface.field requires a field name")
+    let name_arg = get_positional_arg(args, 1, has_keyword_args)
+    if name_arg.kind notin {VkSymbol, VkString}:
+      not_allowed("Interface.field name must be a symbol or string")
+    let prop = iface.props.getOrDefault(name_arg.str.to_key(), nil)
+    if prop == nil:
+      return NIL
+    interface_field_metadata_value(prop)
+
   r = new_ref(VkClass)
   r.class = interface_class
   App.app.interface_class = r.to_ref_value()

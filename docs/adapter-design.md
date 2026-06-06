@@ -210,22 +210,28 @@ This registers an adapter mapping from `ClassX` to `InterfaceA` without modifyin
 - **Inline:** `(class C (implement InterfaceA …) …)` — adapter defined with the class
 - **Standalone:** `(implement InterfaceA for ClassX …)` — adapter defined externally
 
-## Partial Implementations
+## Complete Implementations
 
-Adapters can partially implement an interface — not every method/property needs to be mapped:
+External adapters are complete nominal implementations. Every required
+interface member must be satisfied by an explicit mapping, same-name fallback,
+or an interface default:
 
 ```
 (implement Serializable for MyClass
-  # only implements .to_json, not .to_xml
   (method to_json [] …)
+  (method to_xml [] …)
 )
 ```
 
-- **Calling an implemented method** — works normally
-- **Calling an unimplemented method** — fails at runtime with a clear error
-- Partial adapters are useful for incremental adoption or when only a subset of the interface is relevant
+- **Complete mappings** — the implementation is accepted and values can be
+  adapted to the interface.
+- **Missing required members** — the implementation is rejected when the
+  `implement` block is defined.
+- **Smaller surfaces** — define a smaller interface instead of treating a large
+  interface as a bag of optional methods.
 
-This is a deliberate design choice: fail late (at call site) rather than fail early (at adapter creation). It allows partial conformance without forcing stub implementations.
+This is a deliberate fail-early design choice. The interface remains a precise
+contract, while adapter declarations stay explicit about the view they expose.
 
 ## Open Questions
 

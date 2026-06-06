@@ -78,7 +78,7 @@ This unified structure enables:
 |---------|-------------|
 | **Lisp-like Syntax** | S-expression based, but with Gene's unique type/props/children structure |
 | **Homoiconic** | Code is data, data is code — enabling powerful metaprogramming |
-| **Macro System** | Transform code at compile-time with full access to the AST |
+| **Macro System** | Pass code like data, evaluate later |
 | **Class System** | OOP with classes, inheritance, constructors, and methods |
 | **Async/Await** | Real async I/O with event loop for concurrent programming |
 | **NaN-boxed Values** | Efficient 8-byte value representation for performance |

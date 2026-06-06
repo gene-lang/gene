@@ -136,6 +136,70 @@ suite "adapter runtime":
 
   test_vm """
     (do
+      (interface EffectfulDefault
+        (method label [] -> String ! [Io]
+          "ok"))
+      (class EffectfulDefaultClass implements EffectfulDefault
+        (ctor [] nil))
+      ((EffectfulDefault (new EffectfulDefaultClass)) .label)
+    )
+  """, "ok"
+
+  test_vm """
+    (do
+      (interface ReflectParent
+        (field id Int ^readonly true))
+      (interface Reflectable extends ReflectParent
+        (method render [value: String] -> String ! [Io Log]
+          value))
+      (var method_meta (Reflectable .method "render"))
+      (var field_meta (Reflectable .field "id"))
+      (var parent_names (Reflectable .parents))
+      [
+        (Reflectable .name)
+        parent_names/0
+        field_meta/type
+        field_meta/readonly?
+        method_meta/return
+        method_meta/effects/0
+        method_meta/effects/1
+        method_meta/params/0/type
+        method_meta/default?
+      ]
+    )
+  """, new_array_value(
+    "Reflectable".to_value(),
+    "ReflectParent".to_value(),
+    "Int".to_value(),
+    TRUE,
+    "String".to_value(),
+    "Io".to_value(),
+    "Log".to_value(),
+    "String".to_value(),
+    TRUE
+  )
+
+  test "Effectful method cannot satisfy pure interface at runtime":
+    init_all()
+    try:
+      discard VM.exec("""
+        (do
+          (interface PureView
+            (method touch [] -> String))
+          (class EffectfulSource
+            (ctor [] nil)
+            (method touch [] -> String ! [Io]
+              "touch"))
+          (implement PureView for EffectfulSource)
+        )
+      """, "test_code")
+      fail()
+    except CatchableError as ex:
+      check ex.msg.contains("PureView")
+      check ex.msg.contains("touch")
+
+  test_vm """
+    (do
       (interface ParentReadable (method read []))
       (interface ParentWritable (method write [value]))
       (interface ParentReadWrite extends [ParentReadable ParentWritable])

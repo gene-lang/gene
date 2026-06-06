@@ -10,6 +10,8 @@ proposal work, subsystem design context, or historical reference.
 
 - `future/` contains design docs for features that are still proposed, partial,
   or explicitly exploratory.
+- A document inside `future/` may also be an implementation record for work that
+  originated there; use each document's `Status:` line as the authority.
 - This includes language-surface proposals such as selectors, packaging, OOP
   redesign, serialization redesign, AI-first/static-language direction, and
   SIMD/sandbox/actor ideas.

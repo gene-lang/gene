@@ -538,7 +538,9 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
       type_desc_to_rt(matcher.type_descriptors, matcher.return_type_id)
     else:
       RtType(kind: RtAny)
-  return type_expr_compatible(actual_return, expected.ret)
+  if not type_expr_compatible(actual_return, expected.ret):
+    return false
+  effects_compatible(expected.effects, matcher.effects)
 
 proc is_compatible_rt(value: Value, expected: RtType): bool =
   case expected.kind

@@ -19,13 +19,21 @@ proc interface_type_id_array(items: seq[CallableParamDesc]): Value =
     values.add(new_array_value(param_values))
   new_array_value(values)
 
+proc interface_effect_array(effects: seq[string]): Value =
+  var values: seq[Value] = @[]
+  for effect in effects:
+    values.add(effect.to_symbol_value())
+  new_array_value(values)
+
 proc interface_method_metadata(name: Value, params: seq[CallableParamDesc],
-                               return_type_id: TypeId): Value =
+                               return_type_id: TypeId,
+                               effects: seq[string]): Value =
   result = new_gene_value()
   result.gene.type = "interface_method".to_symbol_value()
   result.gene.children.add(name)
   result.gene.children.add(interface_type_id_array(params))
   result.gene.children.add(return_type_id.int.to_value())
+  result.gene.children.add(interface_effect_array(effects))
 
 proc interface_prop_metadata(name: string, type_id: TypeId): Value =
   result = new_gene_value()
@@ -114,6 +122,15 @@ proc interface_param_descs(self: Compiler, args: Value): seq[CallableParamDesc] 
     else:
       i += 1
 
+proc interface_effects(value: Value): seq[string] =
+  if value.kind != VkArray:
+    not_allowed("interface method effects must be an array")
+  for item in array_data(value):
+    if item.kind notin {VkSymbol, VkString}:
+      not_allowed("interface method effects must be symbols or strings")
+    if item.str.len > 0:
+      result.add(item.str)
+
 proc compile_interface_method_decl(self: Compiler, gene: ptr Gene) =
   if gene.children.len < 2:
     not_allowed("interface method requires a name and argument list")
@@ -126,23 +143,23 @@ proc compile_interface_method_decl(self: Compiler, gene: ptr Gene) =
     not_allowed("interface method requires an array argument list; use [] for no arguments")
 
   var body_start = 2
+  var return_type_id = NO_TYPE_ID
+  var effects: seq[string] = @[]
   if body_start < gene.children.len and gene.children[body_start].kind == VkSymbol and gene.children[body_start].str == "->":
     if body_start + 1 >= gene.children.len:
       not_allowed("Missing return type after ->")
+    return_type_id = resolve_type_value_to_id(
+      gene.children[body_start + 1],
+      self.output.type_descriptors,
+      self.output.type_aliases,
+      self.output.module_path)
     body_start += 2
   if body_start < gene.children.len and gene.children[body_start].kind == VkSymbol and gene.children[body_start].str == "!":
     if body_start + 1 >= gene.children.len:
       not_allowed("Missing effects list after !")
+    effects = interface_effects(gene.children[body_start + 1])
     body_start += 2
 
-  var return_type_id = NO_TYPE_ID
-  var scan = 2
-  if scan < gene.children.len and gene.children[scan].kind == VkSymbol and gene.children[scan].str == "->":
-    return_type_id = resolve_type_value_to_id(
-      gene.children[scan + 1],
-      self.output.type_descriptors,
-      self.output.type_aliases,
-      self.output.module_path)
   let params = self.interface_param_descs(gene.children[1])
 
   let has_default = body_start < gene.children.len
@@ -161,7 +178,7 @@ proc compile_interface_method_decl(self: Compiler, gene: ptr Gene) =
 
   self.emit(Instruction(
     kind: IkInterfaceMethod,
-    arg0: interface_method_metadata(name, params, return_type_id),
+    arg0: interface_method_metadata(name, params, return_type_id, effects),
     arg1: (if has_default: 1 else: 0).int32,
   ))
 

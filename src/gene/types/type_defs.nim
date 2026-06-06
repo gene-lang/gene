@@ -595,6 +595,7 @@ type
     callable*: Value      # Default implementation (can be NIL for abstract)
     type_id*: TypeId      # Return type (NO_TYPE_ID if unspecified)
     param_descs*: seq[CallableParamDesc]
+    effects*: seq[string]
     type_descs*: seq[TypeDesc]
 
   InterfaceProp* = ref object
@@ -735,6 +736,7 @@ type
     has_type_annotations*: bool  # True if any child has a type annotation
     type_check*: bool  # Whether runtime type validation is enabled
     return_type_id*: TypeId
+    effects*: seq[string]
     type_descriptors*: seq[TypeDesc]
     type_aliases*: Table[string, TypeId]
     tuple_pattern_metadata_initialized*: bool

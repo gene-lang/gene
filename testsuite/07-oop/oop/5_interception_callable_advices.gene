@@ -1,8 +1,8 @@
 # Expected: before_fn 1
-# Expected: VkInstance 1
+# Expected: (C) 1
 # Expected: m1 1
 # Expected: after_fn 2
-# Expected: VkInstance 1 2
+# Expected: (C) 1 2
 # Expected: result1 2
 
 (fn before_fn [_self x]

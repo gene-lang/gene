@@ -5,7 +5,7 @@
 # Expected: DataBuffer through adapter:
 # Expected: === Adapter Feature Test Complete ===
 # Expected: Testing _wrapped:
-# Expected:   Inner value via _wrapped: VkInstance
+# Expected:   Inner value via _wrapped: (DataBuffer ^data  ^position 0)
 # Expected: Testing adapter-owned field:
 # Expected:   Stored in owned field: test_value
 # Test file for Interface and Adapter feature

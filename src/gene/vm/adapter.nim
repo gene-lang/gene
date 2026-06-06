@@ -12,6 +12,7 @@ type
     name: string
     param_descs: seq[CallableParamDesc]
     return_type_id: TypeId
+    effects: seq[string]
 
   InterfacePropMetadata = object
     name: string
@@ -66,6 +67,17 @@ proc parse_interface_param_descs(value: Value): seq[CallableParamDesc] =
       type_id: type_id
     ))
 
+proc parse_interface_effects(value: Value): seq[string] =
+  if value == NIL:
+    return @[]
+  if value.kind != VkArray:
+    raise new_exception(types.Exception, "interface method effects metadata must be an array")
+  for item in array_data(value):
+    if item.kind notin {VkSymbol, VkString}:
+      raise new_exception(types.Exception, "interface method effects must be symbols or strings")
+    if item.str.len > 0:
+      result.add(item.str)
+
 proc parse_interface_method_metadata(metadata: Value): InterfaceMethodMetadata =
   result.return_type_id = NO_TYPE_ID
   if metadata.kind == VkGene:
@@ -76,6 +88,8 @@ proc parse_interface_method_metadata(metadata: Value): InterfaceMethodMetadata =
       result.param_descs = parse_interface_param_descs(metadata.gene.children[1])
     if metadata.gene.children.len > 2:
       result.return_type_id = adapter_metadata_int(metadata.gene.children[2], "interface method return type").TypeId
+    if metadata.gene.children.len > 3:
+      result.effects = parse_interface_effects(metadata.gene.children[3])
   else:
     result.name = adapter_member_name(metadata, "interface method name")
 
@@ -142,7 +156,73 @@ proc interface_type_id_equivalent(left_id: TypeId, left_descs: seq[TypeDesc],
     return types_equivalent(left_id, left_descs, right_id, right_descs)
   false
 
-proc interface_methods_compatible(left, right: InterfaceMethod): bool =
+proc interface_effects_same(left, right: seq[string]): bool =
+  if left.len != right.len:
+    return false
+  for effect in left:
+    var found = false
+    for other in right:
+      if effect == other:
+        found = true
+        break
+    if not found:
+      return false
+  true
+
+proc interface_effects_compatible(expected, actual: seq[string]): bool =
+  if expected.len == 0:
+    return actual.len == 0
+  if actual.len == 0:
+    return true
+  for effect in actual:
+    var found = false
+    for allowed in expected:
+      if allowed == effect:
+        found = true
+        break
+    if not found:
+      return false
+  true
+
+proc adapter_type_name(type_id: TypeId, type_descs: seq[TypeDesc]): string =
+  type_desc_to_string(type_id, type_descs)
+
+proc adapter_param_signature(param: CallableParamDesc, type_descs: seq[TypeDesc]): string =
+  let typ = adapter_type_name(param.type_id, type_descs)
+  case param.kind
+  of CpkPositional:
+    typ
+  of CpkPositionalRest:
+    typ & " ..."
+  of CpkKeyword:
+    "^" & param.keyword_name & " " & typ
+  of CpkKeywordRest:
+    "^... " & typ
+
+proc adapter_effect_suffix(effects: seq[string]): string =
+  if effects.len == 0:
+    return ""
+  " ! [" & effects.join(" ") & "]"
+
+proc adapter_method_signature(method_name: string, param_descs: seq[CallableParamDesc],
+                              return_type_id: TypeId, type_descs: seq[TypeDesc],
+                              effects: seq[string]): string =
+  var params: seq[string] = @[]
+  for param in param_descs:
+    params.add(adapter_param_signature(param, type_descs))
+  method_name & " [" & params.join(" ") & "] -> " &
+    adapter_type_name(return_type_id, type_descs) & adapter_effect_suffix(effects)
+
+proc adapter_method_signature(method_info: InterfaceMethod): string =
+  adapter_method_signature(method_info.name, method_info.param_descs, method_info.type_id,
+    method_info.type_descs, method_info.effects)
+
+proc adapter_prop_signature(prop: InterfaceProp): string =
+  prop.name & " " & adapter_type_name(prop.type_id, prop.type_descs) &
+    (if prop.readonly: " readonly" else: "")
+
+proc interface_methods_compatible(left, right: InterfaceMethod,
+                                  allow_effect_refinement = false): bool =
   if left.param_descs.len != right.param_descs.len:
     return false
   for i, left_param in left.param_descs:
@@ -154,7 +234,12 @@ proc interface_methods_compatible(left, right: InterfaceMethod): bool =
     if not interface_type_id_equivalent(left_param.type_id, left.type_descs,
                                         right_param.type_id, right.type_descs):
       return false
-  interface_type_id_equivalent(left.type_id, left.type_descs, right.type_id, right.type_descs)
+  if not interface_type_id_equivalent(left.type_id, left.type_descs, right.type_id, right.type_descs):
+    return false
+  if allow_effect_refinement:
+    interface_effects_compatible(left.effects, right.effects)
+  else:
+    interface_effects_same(left.effects, right.effects)
 
 proc interface_props_compatible(left, right: InterfaceProp): bool =
   left.readonly == right.readonly and
@@ -168,7 +253,9 @@ proc inherit_interface_member(target: GeneInterface, key: Key, iface_method: Int
   let existing = target.methods[key]
   if not interface_methods_compatible(existing, iface_method):
     raise new_exception(types.Exception,
-      "Interface " & target.name & " inherits incompatible method " & iface_method.name)
+      "Interface " & target.name & " inherits incompatible method " & iface_method.name &
+      " (existing " & adapter_method_signature(existing) &
+      ", inherited " & adapter_method_signature(iface_method) & ")")
   if existing.callable != NIL and iface_method.callable != NIL and not allow_duplicate_default:
     raise new_exception(types.Exception,
       "Interface " & target.name & " inherits duplicate default method " & iface_method.name)
@@ -181,7 +268,9 @@ proc inherit_interface_member(target: GeneInterface, key: Key, prop: InterfacePr
     return
   if not interface_props_compatible(target.props[key], prop):
     raise new_exception(types.Exception,
-      "Interface " & target.name & " inherits incompatible field " & prop.name)
+      "Interface " & target.name & " inherits incompatible field " & prop.name &
+      " (existing " & adapter_prop_signature(target.props[key]) &
+      ", inherited " & adapter_prop_signature(prop) & ")")
 
 proc adapter_private_access_allowed(vm: ptr VirtualMachine, adapter_val: Value): bool =
   if vm == nil or vm.frame == nil:
@@ -330,17 +419,22 @@ proc exec_interface_method(vm: ptr VirtualMachine, name: Value, flags: int32) =
       callable: default_callable,
       type_id: metadata.return_type_id,
       param_descs: metadata.param_descs,
+      effects: metadata.effects,
       type_descs: type_descs
     )
-    if not interface_methods_compatible(existing, candidate):
+    if not interface_methods_compatible(existing, candidate, allow_effect_refinement = true):
       raise new_exception(types.Exception,
         "Interface " & interface_val.ref.gene_interface.name & " overrides method " &
-        metadata.name & " with an incompatible signature")
+        metadata.name & " with an incompatible signature (inherited " &
+        adapter_method_signature(existing) & ", override " &
+        adapter_method_signature(metadata.name, metadata.param_descs, metadata.return_type_id,
+          type_descs, metadata.effects) & ")")
   interface_val.ref.gene_interface.add_method(
     metadata.name,
     callable = default_callable,
     type_id = metadata.return_type_id,
     param_descs = metadata.param_descs,
+    effects = metadata.effects,
     type_descs = type_descs
   )
 
@@ -401,7 +495,8 @@ proc callable_signature_compatible(callable: Value, iface_method: InterfaceMetho
       return false
 
   adapter_type_id_compatible(iface_method.type_id, iface_method.type_descs,
-                             fn.matcher.return_type_id, fn.matcher.type_descriptors)
+                             fn.matcher.return_type_id, fn.matcher.type_descriptors) and
+    interface_effects_compatible(iface_method.effects, fn.matcher.effects)
 
 proc method_signature_compatible(meth: Method, iface_method: InterfaceMethod): bool =
   if meth.is_nil:
@@ -431,7 +526,8 @@ proc validate_implementation_complete(gene_interface: GeneInterface, target_clas
         if not callable_signature_compatible(mapping.compute_fn, iface_method, has_self = true):
           raise new_exception(types.Exception,
             "Implementation of interface " & gene_interface.name & " for " & target_class.name &
-            " has incompatible method signature for " & iface_method.name)
+            " has incompatible method signature for " & iface_method.name &
+            " (expected " & adapter_method_signature(iface_method) & ")")
         continue
       of AmkRename:
         let mapped_method = target_class.get_method(mapping.inner_name)
@@ -439,7 +535,8 @@ proc validate_implementation_complete(gene_interface: GeneInterface, target_clas
           continue
         raise new_exception(types.Exception,
           "Implementation of interface " & gene_interface.name & " for " & target_class.name &
-          " maps method " & iface_method.name & " to an incompatible or missing method")
+          " maps method " & iface_method.name & " to an incompatible or missing method" &
+          " (expected " & adapter_method_signature(iface_method) & ")")
       of AmkAccessor, AmkHidden:
         discard
 
@@ -459,7 +556,7 @@ proc validate_implementation_complete(gene_interface: GeneInterface, target_clas
       continue
     raise new_exception(types.Exception,
       "Implementation of interface " & gene_interface.name & " for " & target_class.name &
-      " is missing method " & iface_method.name)
+      " is missing method " & adapter_method_signature(iface_method))
 
   for key, iface_prop in gene_interface.props:
     if impl.prop_mappings.has_key(key):
@@ -471,10 +568,11 @@ proc validate_implementation_complete(gene_interface: GeneInterface, target_clas
     if class_prop.found:
       raise new_exception(types.Exception,
         "Implementation of interface " & gene_interface.name & " for " & target_class.name &
-        " has incompatible field signature for " & iface_prop.name)
+        " has incompatible field signature for " & iface_prop.name &
+        " (expected " & adapter_prop_signature(iface_prop) & ")")
     raise new_exception(types.Exception,
       "Implementation of interface " & gene_interface.name & " for " & target_class.name &
-      " is missing field " & iface_prop.name)
+      " is missing field " & adapter_prop_signature(iface_prop))
 
 proc exec_implement_check(vm: ptr VirtualMachine) =
   let context = vm.frame.current()

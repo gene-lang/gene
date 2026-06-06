@@ -734,7 +734,10 @@ proc check_interface_conformance(self: TypeChecker, cls: ClassInfo, interface_na
     if actual == nil:
       raise new_exception(types.Exception, "Type error: class " & cls.name & " does not implement field " & field_name & " required by interface " & interface_name)
     if not self.signature_compatible(actual, field_type):
-      raise new_exception(types.Exception, "Type error: field " & field_name & " on " & cls.name & " is incompatible with interface " & interface_name)
+      raise new_exception(types.Exception,
+        "Type error: field " & field_name & " on " & cls.name &
+        " is incompatible with interface " & interface_name &
+        " (expected " & type_to_string(field_type) & ", got " & type_to_string(actual) & ")")
 
   for method_name, method_type in iface.methods:
     let actual = self.find_method(cls, method_name)
@@ -743,7 +746,10 @@ proc check_interface_conformance(self: TypeChecker, cls: ClassInfo, interface_na
         continue
       raise new_exception(types.Exception, "Type error: class " & cls.name & " does not implement method " & method_name & " required by interface " & interface_name)
     if not self.signature_compatible(actual, method_type):
-      raise new_exception(types.Exception, "Type error: method " & method_name & " on " & cls.name & " is incompatible with interface " & interface_name)
+      raise new_exception(types.Exception,
+        "Type error: method " & method_name & " on " & cls.name &
+        " is incompatible with interface " & interface_name &
+        " (expected " & type_to_string(method_type) & ", got " & type_to_string(actual) & ")")
 
 proc check_duplicate_interface_defaults(self: TypeChecker, cls: ClassInfo) =
   var defaults = initTable[string, string]()
@@ -3592,12 +3598,18 @@ proc check_interface(self: TypeChecker, gene: ptr Gene): TypeExpr =
       iface.parents.add(parent_name)
       for field_name, field_type in parent.fields:
         if iface.fields.hasKey(field_name) and not self.signature_compatible(iface.fields[field_name], field_type):
-          raise new_exception(types.Exception, "Interface " & interface_name & " inherits incompatible field " & field_name)
+          raise new_exception(types.Exception,
+            "Interface " & interface_name & " inherits incompatible field " & field_name &
+            " (existing " & type_to_string(iface.fields[field_name]) &
+            ", inherited from " & parent_name & " as " & type_to_string(field_type) & ")")
         iface.fields[field_name] = field_type
       for method_name, method_type in parent.methods:
         if iface.methods.hasKey(method_name):
           if not self.signature_compatible(iface.methods[method_name], method_type):
-            raise new_exception(types.Exception, "Interface " & interface_name & " inherits incompatible method " & method_name)
+            raise new_exception(types.Exception,
+              "Interface " & interface_name & " inherits incompatible method " & method_name &
+              " (existing " & type_to_string(iface.methods[method_name]) &
+              ", inherited from " & parent_name & " as " & type_to_string(method_type) & ")")
           if iface.method_defaults.getOrDefault(method_name, false) and
              parent.method_defaults.getOrDefault(method_name, false) and
              not method_overrides.getOrDefault(method_name, false):
@@ -3625,7 +3637,10 @@ proc check_interface(self: TypeChecker, gene: ptr Gene): TypeExpr =
       self.check_field_decl(child.gene, local_fields)
       for field_name, field_type in local_fields:
         if iface.fields.hasKey(field_name) and not self.signature_compatible(iface.fields[field_name], field_type):
-          raise new_exception(types.Exception, "Interface " & interface_name & " overrides field " & field_name & " with an incompatible signature")
+          raise new_exception(types.Exception,
+            "Interface " & interface_name & " overrides field " & field_name &
+            " with an incompatible signature (inherited " & type_to_string(iface.fields[field_name]) &
+            ", override " & type_to_string(field_type) & ")")
         iface.fields[field_name] = field_type
     of "method":
       if child.gene.children.len < 2:
@@ -3644,7 +3659,10 @@ proc check_interface(self: TypeChecker, gene: ptr Gene): TypeExpr =
         idx += 2
       let has_default = idx < child.gene.children.len
       if inherited_method != nil and not self.signature_compatible(inherited_method, method_type):
-        raise new_exception(types.Exception, "Interface " & interface_name & " overrides method " & method_name & " with an incompatible signature")
+        raise new_exception(types.Exception,
+          "Interface " & interface_name & " overrides method " & method_name &
+          " with an incompatible signature (inherited " & type_to_string(inherited_method) &
+          ", override " & type_to_string(method_type) & ")")
       iface.methods[method_name] = method_type
       iface.method_defaults[method_name] = has_default
     of "prop":
@@ -3653,7 +3671,10 @@ proc check_interface(self: TypeChecker, gene: ptr Gene): TypeExpr =
       self.check_prop_decl(child.gene, local_fields)
       for field_name, field_type in local_fields:
         if iface.fields.hasKey(field_name) and not self.signature_compatible(iface.fields[field_name], field_type):
-          raise new_exception(types.Exception, "Interface " & interface_name & " overrides field " & field_name & " with an incompatible signature")
+          raise new_exception(types.Exception,
+            "Interface " & interface_name & " overrides field " & field_name &
+            " with an incompatible signature (inherited " & type_to_string(iface.fields[field_name]) &
+            ", override " & type_to_string(field_type) & ")")
         iface.fields[field_name] = field_type
     else:
       raise new_exception(types.Exception, "unsupported interface member: " & child.gene.`type`.str)

@@ -1,8 +1,8 @@
 # Interface Abstraction Proposal
 
-Status: core implementation completed for Gene's Beta interface and adapter
-system. Remaining work is limited to effect metadata, reflection polish, and
-diagnostic refinements.
+Status: implemented for Gene's Beta interface and adapter system. The remaining
+deferred edge is more precise cycle diagnostics if Gene later allows forward
+interface references.
 
 This document is for implementers working on Gene's abstraction model. It
 describes where interfaces and adapters are today, then proposes the next
@@ -58,9 +58,10 @@ checked by the strict checker, while external implementation blocks were mostly
 validated only for local mapping errors.
 
 The runtime and type checker now preserve interface method and field type
-metadata, validate required member completeness for external implementations
-and header-level inline implementations, flatten inherited interfaces, support
-default method bodies, and detect duplicate/default conflicts.
+metadata, including method effects, validate required member completeness for
+external implementations and header-level inline implementations, flatten
+inherited interfaces, support default method bodies, expose public interface
+reflection helpers, and detect duplicate/default conflicts.
 
 ## Implementation Status
 
@@ -69,10 +70,15 @@ Implemented in the current runtime:
 - Inline class declarations accept `implements [A B]`.
 - Interfaces accept `extends Parent` and `extends [A B]`.
 - Implementing a child interface registers parent-view conformance.
-- Runtime interface method metadata stores parameter descriptors and return
-  `TypeId` metadata backed by the compilation unit's `TypeDesc` table.
+- Runtime interface method metadata stores parameter descriptors, return
+  `TypeId` metadata, and effects backed by the compilation unit's `TypeDesc`
+  table.
 - Runtime interface field metadata stores field `TypeId` metadata backed by
   `TypeDesc`.
+- Runtime function/method matchers preserve declared effects so adapter
+  conformance checks can reject effect-incompatible implementations.
+- The `Interface` runtime class exposes `name`, `parents`, `methods`, `fields`,
+  `method`, and `field` reflection helpers.
 - Interface method declarations may include default bodies.
 - External `implement` blocks validate required methods and fields after the
   block body has registered mappings.
@@ -84,11 +90,11 @@ Implemented in the current runtime:
 - Duplicate defaults are rejected unless the child interface, class, or adapter
   explicitly overrides the method.
 - `satisfies?` is available as a global builtin and is parent-aware.
+- Runtime and type-checker diagnostics include expected and actual signatures
+  for interface conformance and inheritance conflicts where available.
 
 Still future work:
 
-- Full effect metadata in runtime signatures.
-- Public reflection helpers for inspecting interface signatures.
 - More precise diagnostics for complex inheritance cycles if Gene later allows
   forward interface references.
 
@@ -348,13 +354,13 @@ The core phases have been implemented in this order.
 - Implement the dispatch order for inline and external implementations.
 - Reject inherited default conflicts unless explicitly overridden.
 
-## Remaining Priority Order
+## Completed Follow-up Work
 
 | # | Work | Impact |
 |---|---|---|
-| 1 | Full effect metadata | Completes runtime signature parity with the type checker |
-| 2 | Public reflection helpers | Makes interface signatures inspectable from Gene code |
-| 3 | Diagnostic polish | Improves errors for complex conflict and inheritance cases |
+| 1 | Full effect metadata | Runtime signature parity with the type checker |
+| 2 | Public reflection helpers | Interface signatures are inspectable from Gene code |
+| 3 | Diagnostic polish | Errors for conformance and inheritance conflicts include signature context |
 
 ## Test Plan
 
@@ -387,8 +393,6 @@ Remaining coverage targets:
 
 - Parent cycles are rejected with precise diagnostics if forward interface
   references are later allowed.
-- Public reflection exposes full interface method signatures.
-- Effect metadata participates in conflict checks once effect metadata exists.
 
 ## Non-Goals
 

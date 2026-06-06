@@ -428,6 +428,9 @@ proc `==`*(a, b: Value): bool {.gcsafe, noSideEffect.} =
       let tag1 = u1 and 0xFFFF_0000_0000_0000u64
       let tag2 = u2 and 0xFFFF_0000_0000_0000u64
 
+      if tag1 == SPECIAL_TAG or tag2 == SPECIAL_TAG:
+        return u1 == u2
+
       if tag1 == REF_TAG and a.ref.kind == VkCustom and a.ref.custom_data != nil and
          a.ref.custom_data.materialize_hook != nil:
         return a.ref.custom_data.materialize_hook(a.ref.custom_data) == b

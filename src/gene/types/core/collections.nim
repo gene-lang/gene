@@ -76,9 +76,8 @@ proc has_key*(self: Namespace, key: Key): bool {.inline.} =
   return self.members.has_key(key) or (self.parent != nil and self.parent.has_key(key))
 
 proc `[]`*(self: Namespace, key: Key): Value =
-  let found = self.members.get_or_default(key, NOT_FOUND)
-  if found != NOT_FOUND:
-    return found
+  if self.members.has_key(key):
+    return self.members[key]
   elif not self.stop_inheritance and self.parent != nil:
     return self.parent[key]
   else:
@@ -87,9 +86,8 @@ proc `[]`*(self: Namespace, key: Key): Value =
     # raise new_exception(NotDefinedException, get_symbol(key.int64) & " is not defined")
 
 proc locate*(self: Namespace, key: Key): (Value, Namespace) =
-  let found = self.members.get_or_default(key, NOT_FOUND)
-  if found != NOT_FOUND:
-    result = (found, self)
+  if self.members.has_key(key):
+    result = (self.members[key], self)
   elif not self.stop_inheritance and self.parent != nil:
     result = self.parent.locate(key)
   else:

@@ -35,6 +35,21 @@ suite "Extended Type System":
     check $PLACEHOLDER == "_"
     check $42.Value == "42"
     check $3.14.to_value() == "3.14"
+
+  test "not_found equality":
+    check NOT_FOUND == NOT_FOUND
+    check NOT_FOUND != NIL
+    check NOT_FOUND != 0.Value
+    check 0.Value != NOT_FOUND
+
+  test "namespace resolves not_found values":
+    let ns = new_namespace("test")
+    let key = "not_found".to_key()
+    ns[key] = NOT_FOUND
+    check ns[key] == NOT_FOUND
+    let (value, owner) = ns.locate(key)
+    check value == NOT_FOUND
+    check owner == ns
   
   test "Value indexing and size":
     let arr = new_array_value(1.Value, 2.Value, 3.Value)

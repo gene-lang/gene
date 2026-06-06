@@ -26,6 +26,7 @@ proc new_interface*(name: string, module_path: string = ""): GeneInterface =
 proc add_method*(self: GeneInterface, name: string, callable: Value = NIL,
                  type_id: TypeId = NO_TYPE_ID,
                  param_descs: seq[CallableParamDesc] = @[],
+                 effects: seq[string] = @[],
                  type_descs: seq[TypeDesc] = @[]) =
   ## Add a method signature to the interface
   self.methods[name.to_key()] = InterfaceMethod(
@@ -33,6 +34,7 @@ proc add_method*(self: GeneInterface, name: string, callable: Value = NIL,
     callable: callable,
     type_id: type_id,
     param_descs: param_descs,
+    effects: effects,
     type_descs: type_descs
   )
 
