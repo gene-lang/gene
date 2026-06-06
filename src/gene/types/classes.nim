@@ -518,8 +518,6 @@ proc attach_native_method_signature*(class: Class, name: string,
   register_native_signature(meth.callable.ref.native_fn, method_sig)
   meth.native_signature_known = method_sig != nil
   meth.native_signature = method_sig
-  meth.native_param_types = @[]
-  meth.native_return_type = NIL
   if meth.class != nil:
     meth.class.version.inc()
   method_sig
@@ -659,10 +657,7 @@ proc def_native_method*(self: Class, name: string, f: NativeFn,
                         returns: Value = NIL) =
   let r = new_ref(VkNativeFn)
   r.native_fn = f
-  var native_params: seq[(string, Value)] = @[]
-  for p in params:
-    native_params.add((p[0], p[1]))
-  let sig = build_native_signature_from_legacy(native_params, returns,
+  let sig = build_native_signature_from_legacy(params, returns,
     receives_self = true, module_path = self.module_path)
   register_native_signature(f, sig)
   self.methods[name.to_key()] = Method(
@@ -671,8 +666,6 @@ proc def_native_method*(self: Class, name: string, f: NativeFn,
     callable: r.to_ref_value(),
     native_signature_known: true,
     native_signature: sig,
-    native_param_types: native_params,
-    native_return_type: returns,
   )
   self.version.inc()
 
@@ -688,23 +681,18 @@ proc def_native_method*(self: Class, name: string, f: NativeFn,
     callable: r.to_ref_value(),
     native_signature_known: method_sig != nil,
     native_signature: method_sig,
-    native_param_types: @[],
-    native_return_type: NIL,
   )
   self.version.inc()
 
 proc def_native_method*(self: Class, name: string, f: NativeFn) =
   let r = new_ref(VkNativeFn)
   r.native_fn = f
-  var native_params: seq[(string, Value)]
   self.methods[name.to_key()] = Method(
     class: self,
     name: name,
     callable: r.to_ref_value(),
     native_signature_known: false,
     native_signature: nil,
-    native_param_types: native_params,
-    native_return_type: NIL,
   )
   self.version.inc()
 
@@ -752,8 +740,6 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
     is_macro: true,
     native_signature_known: false,
     native_signature: nil,
-    native_param_types: @[],
-    native_return_type: NIL,
   )
   self.version.inc()
 
@@ -772,8 +758,6 @@ proc new_method*(class: Class, name: string, fn: Function): Method =
     callable: r.to_ref_value(),
     native_signature_known: false,
     native_signature: nil,
-    native_param_types: @[],
-    native_return_type: NIL,
   )
 
 proc clone*(self: Method): Method =
@@ -784,8 +768,6 @@ proc clone*(self: Method): Method =
     is_macro: self.is_macro,
     native_signature_known: self.native_signature_known,
     native_signature: self.native_signature,
-    native_param_types: self.native_param_types,
-    native_return_type: self.native_return_type,
   )
 
 #################### Callable ######################

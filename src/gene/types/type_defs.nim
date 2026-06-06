@@ -580,8 +580,6 @@ type
     is_macro*: bool
     native_signature_known*: bool
     native_signature*: NativeSignature
-    native_param_types*: seq[(string, Value)]  # (param_name, class_value) for native methods
-    native_return_type*: Value                  # class value; NIL means Any
 
   ## GeneInterface definition - defines the visible face (properties, methods)
   ## An interface specifies what members an adapter must expose.

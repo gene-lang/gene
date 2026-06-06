@@ -289,8 +289,6 @@ proc bind_adapter_callable(self_value: Value, method_name: string, callable: Val
       callable: callable,
       is_macro: callable.kind == VkFunction and callable.ref.fn.is_macro_like,
       native_signature_known: false,
-      native_param_types: @[],
-      native_return_type: NIL,
     )
   )
   r.to_ref_value()

@@ -44,6 +44,14 @@ const MISSING_RETURN_ANNOTATION = """
   candidate)
 """
 
+const STRING_LENGTH_NATIVE_METHOD = """
+(do
+  (fn string_len [s: String] -> Int
+    (s .length))
+  (var observed (string_len "abcd"))
+  [observed string_len])
+"""
+
 test "native trampoline: typed helper call compiles natively":
   init_all()
   let prev = VM.native_code
@@ -126,6 +134,31 @@ test "native codegen: repeated execution reuses published descriptors":
   check not f.native_failed
   check f.native_entry == first_entry
   check f.native_descriptors.len == first_descriptor_count
+
+test "native codegen: method calls use NativeSignature ABI":
+  init_all()
+  let prev = VM.native_code
+  let prev_tier = VM.native_tier
+  defer:
+    VM.native_code = prev
+    VM.native_tier = prev_tier
+  VM.native_tier = NctGuarded
+  VM.native_code = true
+
+  let result = VM.exec(STRING_LENGTH_NATIVE_METHOD, "test_native_method_signature_abi")
+  check result.kind == VkArray
+  let items = array_data(result)
+  check items.len == 2
+  check items[0].to_int() == 4
+  check items[1].kind == VkFunction
+
+  let f = items[1].ref.fn
+  check f.native_ready
+  check not f.native_failed
+  check f.native_descriptors.len == 1
+  check f.native_descriptors[0].argTypes == @[CatValue]
+  check f.native_descriptors[0].returnType == CrtInt64
+  check VM.exec_function(items[1], @["abcde".to_value()]).to_int() == 5
 
 test "native tier never disables native compile attempts":
   init_all()

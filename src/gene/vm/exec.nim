@@ -4106,8 +4106,6 @@ proc exec*(self: ptr VirtualMachine): Value =
           callable: fn_value,
           class: class,
           native_signature_known: false,
-          native_param_types: @[],
-          native_return_type: NIL,
         )
         class.methods[method_key] = m
         if fn_value.kind == VkNativeFn:
@@ -6397,8 +6395,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                   callable: method_callable,
                   is_macro: method_callable.kind == VkFunction and method_callable.ref.fn.is_macro_like,
                   native_signature_known: false,
-                  native_param_types: @[],
-                  native_return_type: NIL,
                 )
 
             if missing_value != NIL:
@@ -6414,8 +6410,6 @@ proc exec*(self: ptr VirtualMachine): Value =
                 callable: missing_value,
                 is_macro: missing_value.kind == VkFunction and missing_value.ref.fn.is_macro_like,
                 native_signature_known: false,
-                native_param_types: @[],
-                native_return_type: NIL,
               )
 
             class.version.inc()

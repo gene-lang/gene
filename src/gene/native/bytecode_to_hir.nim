@@ -102,19 +102,6 @@ proc typeIdToCallReturn(tid: TypeId, outType: var CallReturnType): bool =
   else:
     return false
 
-proc classValueToHirType(classValue: Value): HirType =
-  if classValue == NIL or classValue.kind != VkClass:
-    return HtValue
-  if classValue == App.app.int_class:
-    return HtI64
-  if classValue == App.app.float_class:
-    return HtF64
-  if classValue == App.app.string_class:
-    return HtString
-  if classValue == App.app.bool_class:
-    return HtBool
-  HtValue
-
 proc signatureFromMatcher(matcher: RootMatcher, dropFirst: bool,
                            argTypes: var seq[CallArgType],
                            returnType: var CallReturnType): bool =
@@ -342,15 +329,6 @@ proc callReturnTypeToHir(ret: CallReturnType): HirType =
   of CrtFloat64: HtF64
   of CrtValue: HtValue
 
-proc mapMethodParamToArgType(classValue: Value, fallback: StackSlot): CallArgType =
-  case classValueToHirType(classValue)
-  of HtI64:
-    CatInt64
-  of HtF64:
-    CatFloat64
-  else:
-    slotArgType(fallback)
-
 proc prepareCallRegs(ctx: ConversionContext, args: seq[StackSlot], argTypes: seq[CallArgType]): seq[HirReg] =
   if args.len != argTypes.len:
     raise newException(ValueError, "Argument count mismatch for native call")
@@ -420,6 +398,15 @@ proc emitResolvedCall(ctx: ConversionContext,
   let resultReg = ctx.builder.emitCallVM(descIdx, regs, rawType)
   ctx.pushCallResult(resultReg, rawType, desiredType)
 
+proc nativeSignatureForMethod(meth: Method): NativeSignature =
+  if meth == nil:
+    return nil
+  if meth.native_signature != nil:
+    return meth.native_signature
+  if meth.callable.kind == VkNativeFn:
+    return lookup_native_signature(meth.callable.ref.native_fn)
+  nil
+
 proc emitMethodCall(ctx: ConversionContext, obj: StackSlot, methodName: string, args: seq[StackSlot]) =
   var cls = resolveClassForType(obj.typ)
   # For HtValue receivers, try resolving from the original TypeId (Array, Map, etc.)
@@ -437,24 +424,17 @@ proc emitMethodCall(ctx: ConversionContext, obj: StackSlot, methodName: string, 
   for i in 0..<args.len:
     callArgs[i + 1] = args[i]
 
+  let methodSig = nativeSignatureForMethod(meth)
   var argTypes: seq[CallArgType] = @[slotArgType(obj)]
-  if meth.native_signature != nil and meth.native_signature.abi_arg_types.len == args.len + 1:
-    argTypes = meth.native_signature.abi_arg_types
-  elif meth.native_param_types.len == args.len:
-    for i, item in meth.native_param_types:
-      argTypes.add(mapMethodParamToArgType(item[1], args[i]))
+  if methodSig != nil and methodSig.abi_arg_types.len == args.len + 1:
+    argTypes = methodSig.abi_arg_types
   else:
     for arg in args:
       argTypes.add(slotArgType(arg))
 
   var retKind =
-    if meth.native_signature != nil: meth.native_signature.abi_return_type
-    else:
-      let desiredLegacyType = classValueToHirType(meth.native_return_type)
-      case desiredLegacyType
-      of HtI64: CrtInt64
-      of HtF64: CrtFloat64
-      else: CrtValue
+    if methodSig != nil: methodSig.abi_return_type
+    else: CrtValue
   var desiredType = callReturnTypeToHir(retKind)
   if desiredType == HtBool:
     desiredType = HtValue
