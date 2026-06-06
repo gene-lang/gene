@@ -279,6 +279,198 @@ proc init_gene_and_meta_classes*(object_class: Class) =
   let function_class = new_class("Function")
   function_class.parent = object_class
 
+  proc string_seq_value(items: seq[string]): Value {.gcsafe.} =
+    var result_ref = new_array_value()
+    for item in items:
+      array_data(result_ref).add(item.to_value())
+    result_ref
+
+  proc callable_param_kind_name(kind: CallableParamKind): string {.gcsafe.} =
+    case kind
+    of CpkPositional:
+      "positional"
+    of CpkPositionalRest:
+      "positional-rest"
+    of CpkKeyword:
+      "keyword"
+    of CpkKeywordRest:
+      "keyword-rest"
+
+  proc type_name_value(type_id: TypeId, type_descs: seq[TypeDesc]): Value {.gcsafe.} =
+    let descs =
+      if type_descs.len > 0: type_descs
+      else: builtin_type_descs()
+    let id =
+      if type_id == NO_TYPE_ID: BUILTIN_TYPE_ANY_ID
+      else: type_id
+    type_desc_to_string(id, descs).to_value()
+
+  proc callable_param_metadata(param: CallableParamDesc, type_descs: seq[TypeDesc],
+                               name = ""): Value {.gcsafe.} =
+    var data = initTable[Key, Value]()
+    data["kind".to_key()] = callable_param_kind_name(param.kind).to_value()
+    data["name".to_key()] = name.to_value()
+    data["keyword".to_key()] = param.keyword_name.to_value()
+    data["type".to_key()] = type_name_value(param.type_id, type_descs)
+    data["type_id".to_key()] = param.type_id.int.to_value()
+    new_map_value(data)
+
+  proc callable_params_metadata(params: seq[CallableParamDesc],
+                                type_descs: seq[TypeDesc],
+                                param_names: seq[string] = @[]): Value {.gcsafe.} =
+    var result_ref = new_array_value()
+    for i, param in params:
+      let name =
+        if i < param_names.len: param_names[i]
+        elif param.kind in {CpkKeyword, CpkKeywordRest}: param.keyword_name
+        else: ""
+      array_data(result_ref).add(callable_param_metadata(param, type_descs, name))
+    result_ref
+
+  proc matcher_param_name(param: Matcher): string {.gcsafe.} =
+    if param != nil and cast[int64](param.name_key) != 0:
+      return get_symbol_gcsafe(symbol_index(param.name_key))
+    ""
+
+  proc matcher_param_kind(param: Matcher): CallableParamKind {.gcsafe.} =
+    if param.kind == MatchProp or param.is_prop:
+      if param.is_splat: CpkKeywordRest else: CpkKeyword
+    else:
+      if param.is_splat: CpkPositionalRest else: CpkPositional
+
+  proc matcher_param_desc(param: Matcher): CallableParamDesc {.gcsafe.} =
+    let kind = matcher_param_kind(param)
+    let name = matcher_param_name(param)
+    CallableParamDesc(
+      kind: kind,
+      keyword_name: if kind in {CpkKeyword, CpkKeywordRest}: name else: "",
+      type_id: if param.type_id == NO_TYPE_ID: BUILTIN_TYPE_ANY_ID else: param.type_id)
+
+  proc matcher_param_metadata(param: Matcher, type_descs: seq[TypeDesc]): Value {.gcsafe.} =
+    callable_param_metadata(matcher_param_desc(param), type_descs, matcher_param_name(param))
+
+  proc matcher_params_metadata(matcher: RootMatcher, start = 0): Value {.gcsafe.} =
+    var result_ref = new_array_value()
+    if matcher == nil:
+      return result_ref
+    let descs =
+      if matcher.type_descriptors.len > 0: matcher.type_descriptors
+      else: builtin_type_descs()
+    for i in start..<matcher.children.len:
+      array_data(result_ref).add(matcher_param_metadata(matcher.children[i], descs))
+    result_ref
+
+  proc native_signature_for_callable(callable: Value): NativeSignature {.gcsafe.} =
+    case callable.kind
+    of VkNativeFn:
+      {.cast(gcsafe).}:
+        return lookup_native_signature(callable.ref.native_fn)
+    of VkNativeMethod:
+      {.cast(gcsafe).}:
+        return lookup_native_signature(callable.ref.native_method)
+    of VkBoundMethod:
+      let meth = callable.ref.bound_method.`method`
+      if meth == nil:
+        return nil
+      if meth.native_signature != nil:
+        return meth.native_signature
+      if meth.callable.kind == VkNativeFn:
+        {.cast(gcsafe).}:
+          return lookup_native_signature(meth.callable.ref.native_fn)
+    else:
+      discard
+    nil
+
+  proc matcher_for_callable(callable: Value): tuple[matcher: RootMatcher, start: int,
+                                                    receives_self: bool] {.gcsafe.} =
+    case callable.kind
+    of VkFunction:
+      if callable.ref.fn != nil:
+        return (callable.ref.fn.matcher, 0, false)
+    of VkBlock:
+      if callable.ref.`block` != nil:
+        return (callable.ref.`block`.matcher, 0, false)
+    of VkBoundMethod:
+      let meth = callable.ref.bound_method.`method`
+      if meth != nil and meth.callable.kind == VkFunction and meth.callable.ref.fn != nil:
+        let matcher = meth.callable.ref.fn.matcher
+        let start = if matcher != nil and matcher.children.len > 0: 1 else: 0
+        return (matcher, start, true)
+    of VkMethod:
+      let meth = callable.ref.`method`
+      if meth != nil and meth.callable.kind == VkFunction and meth.callable.ref.fn != nil:
+        let matcher = meth.callable.ref.fn.matcher
+        let start = if matcher != nil and matcher.children.len > 0: 1 else: 0
+        return (matcher, start, true)
+    else:
+      discard
+    (nil, 0, false)
+
+  proc callable_params_value(callable: Value): Value {.gcsafe.} =
+    let sig = native_signature_for_callable(callable)
+    if sig != nil:
+      return callable_params_metadata(sig.params, sig.type_descriptors, sig.param_names)
+
+    let info = matcher_for_callable(callable)
+    matcher_params_metadata(info.matcher, info.start)
+
+  proc callable_return_type_value(callable: Value): Value {.gcsafe.} =
+    let sig = native_signature_for_callable(callable)
+    if sig != nil:
+      return type_name_value(sig.return_type_id, sig.type_descriptors)
+
+    let info = matcher_for_callable(callable)
+    if info.matcher == nil:
+      return "Any".to_value()
+    type_name_value(info.matcher.return_type_id, info.matcher.type_descriptors)
+
+  proc callable_signature_value(callable: Value): Value {.gcsafe.} =
+    var data = initTable[Key, Value]()
+    let sig = native_signature_for_callable(callable)
+    if sig != nil:
+      data["params".to_key()] = callable_params_metadata(sig.params,
+        sig.type_descriptors, sig.param_names)
+      data["return".to_key()] = type_name_value(sig.return_type_id, sig.type_descriptors)
+      data["return_type".to_key()] = data["return".to_key()]
+      data["return_type_id".to_key()] = sig.return_type_id.int.to_value()
+      data["effects".to_key()] = new_array_value()
+      data["native?".to_key()] = TRUE
+      data["receives_self?".to_key()] = sig.receives_self.to_value()
+      data["has_type_annotations?".to_key()] = sig.has_type_annotations.to_value()
+      return new_map_value(data)
+
+    let info = matcher_for_callable(callable)
+    data["params".to_key()] = matcher_params_metadata(info.matcher, info.start)
+    if info.matcher == nil:
+      data["return".to_key()] = "Any".to_value()
+      data["return_type".to_key()] = "Any".to_value()
+      data["return_type_id".to_key()] = BUILTIN_TYPE_ANY_ID.int.to_value()
+      data["effects".to_key()] = new_array_value()
+      data["has_type_annotations?".to_key()] = FALSE
+    else:
+      data["return".to_key()] = type_name_value(info.matcher.return_type_id,
+        info.matcher.type_descriptors)
+      data["return_type".to_key()] = data["return".to_key()]
+      data["return_type_id".to_key()] =
+        (if info.matcher.return_type_id == NO_TYPE_ID: BUILTIN_TYPE_ANY_ID
+         else: info.matcher.return_type_id).int.to_value()
+      data["effects".to_key()] = string_seq_value(info.matcher.effects)
+      data["has_type_annotations?".to_key()] =
+        (info.matcher.has_type_annotations or
+         info.matcher.return_type_id notin [NO_TYPE_ID, BUILTIN_TYPE_ANY_ID]).to_value()
+    data["native?".to_key()] = FALSE
+    data["receives_self?".to_key()] = info.receives_self.to_value()
+    new_map_value(data)
+
+  proc require_callable_arg(args: ptr UncheckedArray[Value], arg_count: int,
+                            has_keyword_args: bool, method_name: string): Value {.gcsafe.} =
+    if get_positional_count(arg_count, has_keyword_args) < 1:
+      not_allowed("Function." & method_name & " requires self")
+    let fn_val = get_positional_arg(args, 0, has_keyword_args)
+    if fn_val.kind notin {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkMethod}:
+      not_allowed("Function." & method_name & " must be called on a callable")
+    fn_val
+
   proc function_intent_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
                               arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -334,9 +526,24 @@ proc init_gene_and_meta_classes*(object_class: Class) =
     {.cast(gcsafe).}:
       vm_exec_callable(vm, fn_val, call_args)
 
+  proc function_params_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                              arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    callable_params_value(require_callable_arg(args, arg_count, has_keyword_args, "params"))
+
+  proc function_return_type_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                   arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    callable_return_type_value(require_callable_arg(args, arg_count, has_keyword_args, "return_type"))
+
+  proc function_signature_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
+                                 arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    callable_signature_value(require_callable_arg(args, arg_count, has_keyword_args, "signature"))
+
   function_class.def_native_method("call", function_call_method)
   function_class.def_native_method("intent", function_intent_method)
   function_class.def_native_method("examples", function_examples_method)
+  function_class.def_native_method("params", function_params_method)
+  function_class.def_native_method("return_type", function_return_type_method)
+  function_class.def_native_method("signature", function_signature_method)
 
   let function_intent_fn = new_ref(VkNativeFn)
   function_intent_fn.native_fn = function_intent_method

@@ -1,4 +1,4 @@
-import unittest, strutils
+import unittest, strutils, tables
 
 import ./helpers
 import ../src/gene/native/trampoline
@@ -39,6 +39,14 @@ proc expect_static_ok(code: string) =
   let checker = tc.new_type_checker(strict = true, module_filename = "native_static.gene")
   for node in read_all(code):
     checker.type_check_node(node)
+
+proc map_value(value: Value, key: string): Value =
+  check value.kind == VkMap
+  map_data(value)[key.to_key()]
+
+proc param_at(params: Value, index: int): Value =
+  check params.kind == VkArray
+  array_data(params)[index]
 
 suite "Native signatures":
   test "native_sig parses built-in signatures and rejects unknown types":
@@ -207,6 +215,99 @@ suite "Native signatures":
     )
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
+
+  test "Function reflection exposes user and standalone native signatures uniformly":
+    init_all()
+    let fn = NativeFn(native_identity)
+    App.app.global_ns.ref.ns["nativeReflectImpl".to_key()] = fn.to_value()
+
+    let reflected = VM.exec("""
+      (fn reflectedUser [n: Int ^label: String] -> String
+        label)
+      (fn reflectedNative [n: Int] -> Int
+        ^native nativeReflectImpl)
+      [(reflectedUser .signature)
+       (reflectedNative .signature)
+       (reflectedNative .params)
+       (reflectedNative .return_type)
+       ((reflectedNative .class) .name)]
+    """, "native_reflection_fn.gene")
+    defer:
+      invalidate_native_signature(fn)
+
+    check reflected.kind == VkArray
+    let user_meta = array_data(reflected)[0]
+    let native_meta = array_data(reflected)[1]
+    let native_params = array_data(reflected)[2]
+
+    let user_params = map_value(user_meta, "params")
+    check map_value(param_at(user_params, 0), "name").str == "n"
+    check map_value(param_at(user_params, 0), "kind").str == "positional"
+    check map_value(param_at(user_params, 0), "type").str == "Int"
+    check map_value(param_at(user_params, 1), "name").str == "label"
+    check map_value(param_at(user_params, 1), "kind").str == "keyword"
+    check map_value(param_at(user_params, 1), "keyword").str == "label"
+    check map_value(param_at(user_params, 1), "type").str == "String"
+    check map_value(user_meta, "return_type").str == "String"
+    check map_value(user_meta, "native?") == FALSE
+
+    check map_value(native_meta, "return_type").str == "Int"
+    check map_value(native_meta, "native?") == TRUE
+    check map_value(native_meta, "receives_self?") == FALSE
+    check map_value(native_meta, "has_type_annotations?") == TRUE
+    check map_value(param_at(map_value(native_meta, "params"), 0), "name").str == "n"
+    check map_value(param_at(map_value(native_meta, "params"), 0), "type").str == "Int"
+    check map_value(param_at(native_params, 0), "type").str == "Int"
+    check array_data(reflected)[3].str == "Int"
+    check array_data(reflected)[4].str == "Function"
+
+  test "Function reflection hides implicit self for user and native methods":
+    init_all()
+    let native_fn = NativeFn(native_method_arg)
+    let cls = new_class("NativeReflectionMethodTest")
+    cls.def_native_method("native_id", native_fn, native_sig("[n: Int] -> Int"))
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = cls
+    App.app.global_ns.ref.ns["NativeReflectionMethodTest".to_key()] =
+      cls_ref.to_ref_value()
+    defer:
+      invalidate_native_signature(native_fn)
+
+    let user_class = VM.exec("""
+      (class UserReflectionMethodTest
+        (ctor [] nil)
+        (method id [n: Int] -> Int n))
+    """, "native_reflection_user_method.gene")
+    check user_class.kind == VkClass
+
+    let signature_method = App.app.function_class.ref.class.get_method("signature")
+    check signature_method != nil
+    check signature_method.callable.kind == VkNativeFn
+
+    let native_bound_ref = new_ref(VkBoundMethod)
+    native_bound_ref.bound_method = BoundMethod(self: NIL, `method`: cls.get_method("native_id"))
+    let native_meta = call_native_fn(signature_method.callable.ref.native_fn, VM,
+      @[native_bound_ref.to_ref_value()])
+
+    let user_bound_ref = new_ref(VkBoundMethod)
+    user_bound_ref.bound_method = BoundMethod(self: NIL,
+      `method`: user_class.ref.class.get_method("id"))
+    let user_meta = call_native_fn(signature_method.callable.ref.native_fn, VM,
+      @[user_bound_ref.to_ref_value()])
+
+    check map_value(native_meta, "native?") == TRUE
+    check map_value(native_meta, "receives_self?") == TRUE
+    check map_value(native_meta, "return_type").str == "Int"
+    check array_data(map_value(native_meta, "params")).len == 1
+    check map_value(param_at(map_value(native_meta, "params"), 0), "name").str == "n"
+    check map_value(param_at(map_value(native_meta, "params"), 0), "type").str == "Int"
+
+    check map_value(user_meta, "native?") == FALSE
+    check map_value(user_meta, "receives_self?") == TRUE
+    check map_value(user_meta, "return_type").str == "Int"
+    check array_data(map_value(user_meta, "params")).len == 1
+    check map_value(param_at(map_value(user_meta, "params"), 0), "name").str == "n"
+    check map_value(param_at(map_value(user_meta, "params"), 0), "type").str == "Int"
 
   test "binding-site method ^native treats self as implicit and enforces user args":
     init_all()

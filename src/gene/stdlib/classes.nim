@@ -124,6 +124,11 @@ proc value_class_value*(val: Value): Value =
       App.app.interface_class
     else:
       App.app.object_class
+  of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    if App.app.function_class.kind == VkClass:
+      App.app.function_class
+    else:
+      App.app.object_class
   of VkAdapter:
     if App.app.adapter_class.kind == VkClass:
       App.app.adapter_class
