@@ -143,12 +143,26 @@ proc validate_native_call_args(vm: ptr VirtualMachine, sig: NativeSignature,
           validate_native_value(vm, kw_value, param.type_id,
             sig.type_descriptors, "keyword argument", context)
 
+proc strict_native_types_enabled(vm: ptr VirtualMachine): bool {.inline.} =
+  if vm != nil and vm.strict_native_types:
+    return true
+  App.kind == VkApplication and App.app.strict_native_types
+
+proc enforce_native_signature_presence(fn: NativeFn, vm: ptr VirtualMachine,
+                                       sig: NativeSignature) {.inline.} =
+  if not strict_native_types_enabled(vm) or is_native_signature_strict_exempt(fn):
+    return
+  if sig != nil and sig.has_type_annotations:
+    return
+  not_allowed("strict native types require a non-Any NativeSignature before calling native callables; use a typed ^native declaration or $assign-type/$assign-method-type/$assign-ctor-type")
+
 proc call_typed_native_fn(fn: NativeFn, vm: ptr VirtualMachine,
                           args: ptr UncheckedArray[Value], arg_count: int,
                           has_keyword_args: bool): Value {.gcsafe.} =
   var sig: NativeSignature = nil
   {.cast(gcsafe).}:
     sig = lookup_native_signature(fn)
+    enforce_native_signature_presence(fn, vm, sig)
   let should_check = vm != nil and vm.type_check and sig != nil and sig.has_type_annotations
   if should_check:
     {.cast(gcsafe).}:

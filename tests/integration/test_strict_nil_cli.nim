@@ -105,6 +105,13 @@ suite "Strict nil CLI":
       "nil"
     ]
 
+  test "eval --strict-native-types rejects unannotated native callables":
+    let result = run_gene(@["eval", "--strict-native-types", "(println 1)"])
+    checkpoint result.output
+    check result.exitCode != 0
+    check result.output.contains("strict native types require a non-Any NativeSignature")
+    check result.output.contains("$assign-type")
+
   test "source fixture passes under --strict-nil without GIR cache":
     check fileExists(StrictNilFixture)
     let source_result = run_gene(@["run", "--strict-nil", "--no-gir-cache", StrictNilFixture])

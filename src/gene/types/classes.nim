@@ -744,6 +744,7 @@ proc def_native_constructor*(self: Class, f: NativeFn, sig: NativeSignature) =
 proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
   let r = new_ref(VkNativeFn)
   r.native_fn = f
+  exempt_native_signature_strict_check(f)
   self.methods[name.to_key()] = Method(
     class: self,
     name: name,

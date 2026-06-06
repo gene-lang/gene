@@ -88,6 +88,7 @@ task test, "Runs unit tests only":
   exec "nim c -r tests/test_source_trace.nim"
   exec "nim c -r tests/test_logging.nim"
   exec "nim c -r tests/test_native_trampoline.nim"
+  exec "nim c -r tests/test_native_signatures.nim"
   exec "nim c -r tests/test_wasm.nim"
   exec "nim c -r tests/test_ext.nim"
   exec "nim c -r tests/test_c_extension.nim"

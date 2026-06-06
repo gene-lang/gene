@@ -124,6 +124,37 @@ suite "Native signatures":
     check message.contains("producer=native")
     check message.contains("consumer=caller")
 
+  test "strict native types reject unannotated native callables until typed":
+    init_all()
+    let fn = NativeFn(native_identity)
+    defer:
+      VM.strict_native_types = false
+      App.app.strict_native_types = false
+      invalidate_native_signature(fn)
+
+    VM.strict_native_types = true
+    var message = expect_error(proc() =
+      discard call_native_fn(fn, VM, @[42.to_value()])
+    )
+    check message.contains("strict native types require a non-Any NativeSignature")
+
+    register_native_signature(fn, native_sig("[value: Any] -> Any"))
+    message = expect_error(proc() =
+      discard call_native_fn(fn, VM, @[42.to_value()])
+    )
+    check message.contains("strict native types require a non-Any NativeSignature")
+
+    register_native_signature(fn, native_sig("[n: Int] -> Int"))
+    check call_native_fn(fn, VM, @[42.to_value()]).to_int() == 42
+
+    VM.strict_native_types = false
+    invalidate_native_signature(fn)
+    App.app.strict_native_types = true
+    message = expect_error(proc() =
+      discard call_native_fn(fn, VM, @[42.to_value()])
+    )
+    check message.contains("strict native types require a non-Any NativeSignature")
+
   test "$assign-method-type attaches and enforces a native method signature":
     init_all()
     let cls = new_class("AssignMethodSigTest")

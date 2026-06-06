@@ -442,6 +442,7 @@ type
     cmd*: string
     args*: seq[string]
     main_module*: Module
+    strict_native_types*: bool
     gir_cache_reads_enabled*: bool
     gir_cache_writes_enabled*: bool
     # dep_root*: DependencyRoot
@@ -1251,6 +1252,7 @@ type
     native_code*: bool  # Enable native code execution when available
     type_check*: bool  # Whether runtime type validation is enabled (set from --no-type-check)
     strict_nil*: bool  # Whether nil is rejected at typed runtime boundaries unless explicitly admitted
+    strict_native_types*: bool  # Whether unannotated native callables fail when called
     contracts_enabled*: bool  # Whether runtime pre/post contract checks are enabled
 
   NativeContext* = object
@@ -1423,6 +1425,7 @@ include ./memory
 include ./descriptors
 
 var native_signature_registry* = initTable[pointer, NativeSignature]()
+var native_signature_strict_exemptions* = initHashSet[pointer]()
 
 proc native_signature_key*(fn: NativeFn): pointer {.inline.} =
   cast[pointer](fn)
@@ -1438,3 +1441,9 @@ proc lookup_native_signature*(fn: NativeFn): NativeSignature {.inline.} =
 
 proc invalidate_native_signature*(fn: NativeFn) {.inline.} =
   native_signature_registry.del(native_signature_key(fn))
+
+proc exempt_native_signature_strict_check*(fn: NativeFn) {.inline.} =
+  native_signature_strict_exemptions.incl(native_signature_key(fn))
+
+proc is_native_signature_strict_exempt*(fn: NativeFn): bool {.inline.} =
+  native_signature_strict_exemptions.contains(native_signature_key(fn))
