@@ -7,7 +7,9 @@
 proc is_known_native_macro_name(name: string): bool {.inline.} =
   name in [
     "$assign-type", "$assign-method-type", "$assign-ctor-type",
-    "assign-type", "assign-method-type", "assign-ctor-type"
+    "$assign-type!", "$assign-method-type!", "$assign-ctor-type!",
+    "assign-type", "assign-method-type", "assign-ctor-type",
+    "assign-type!", "assign-method-type!", "assign-ctor-type!"
   ]
 
 proc compile_gene_default(self: Compiler, gene: ptr Gene) {.inline.} =

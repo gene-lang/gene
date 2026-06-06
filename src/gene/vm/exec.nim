@@ -4113,7 +4113,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         if fn_value.kind == VkNativeFn:
           let sig = lookup_native_signature(fn_value.ref.native_fn)
           if sig != nil:
-            discard attach_native_method_signature(class, name.str, sig)
+            discard attach_native_method_signature(class, name.str, sig,
+              "native method " & class.name & "." & name.str,
+              allow_override = true)
           else:
             class.version.inc()
         else:
@@ -4157,7 +4159,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         if fn_value.kind == VkNativeFn:
           let sig = lookup_native_signature(fn_value.ref.native_fn)
           if sig != nil:
-            discard attach_native_constructor_signature(class, sig)
+            discard attach_native_constructor_signature(class, sig,
+              "native constructor " & class.name,
+              allow_override = true)
           else:
             class.constructor_native_signature_known = false
             class.constructor_native_signature = nil

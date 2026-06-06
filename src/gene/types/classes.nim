@@ -443,23 +443,78 @@ proc build_native_signature_from_gene*(params_value: Value,
   if result != nil:
     result.module_path = module_path
 
+proc native_signature_param_key(sig: NativeSignature, param: CallableParamDesc): string =
+  let descs =
+    if sig.type_descriptors.len > 0: sig.type_descriptors
+    else: builtin_type_descs()
+  let type_key = type_desc_key_for_id(descs, param.type_id)
+  case param.kind
+  of CpkPositional:
+    "pos:" & type_key
+  of CpkPositionalRest:
+    "rest:" & type_key
+  of CpkKeyword:
+    "kw:" & param.keyword_name & ":" & type_key
+  of CpkKeywordRest:
+    "kwrest:" & type_key
+
+proc native_signature_key(sig: NativeSignature): string =
+  if sig == nil:
+    return "nil"
+  let descs =
+    if sig.type_descriptors.len > 0: sig.type_descriptors
+    else: builtin_type_descs()
+  var params: seq[string] = @[]
+  for param in sig.params:
+    params.add(native_signature_param_key(sig, param))
+  "arity:" & $sig.arity_min & ".." & $sig.arity_max &
+    ";params:[" & params.join(",") & "]" &
+    ";return:" & type_desc_key_for_id(descs, sig.return_type_id)
+
+proc native_signatures_match(existing, incoming: NativeSignature): bool =
+  if existing == nil or incoming == nil:
+    return existing == incoming
+  native_signature_key(existing) == native_signature_key(incoming)
+
+proc ensure_native_signature_assignment(existing, incoming: NativeSignature,
+                                        context: string,
+                                        allow_override: bool) =
+  if allow_override or existing == nil or not existing.has_type_annotations:
+    return
+  if native_signatures_match(existing, incoming):
+    return
+  let override_context =
+    if context.endsWith("!"): context
+    else: context & "!"
+  not_allowed(context & " conflicts with existing native signature; use " &
+    override_context & " to override")
+
 proc attach_native_function_signature*(target: Value, sig: NativeSignature,
-                                       context = "$assign-type"): NativeSignature =
+                                       context = "$assign-type",
+                                       allow_override = false): NativeSignature =
   if target.kind != VkNativeFn:
     not_allowed(context & " target must be a native function, got " & $target.kind)
+  let existing = lookup_native_signature(target.ref.native_fn)
+  ensure_native_signature_assignment(existing, sig, context, allow_override)
   register_native_signature(target.ref.native_fn, sig)
   sig
 
 proc attach_native_method_signature*(class: Class, name: string,
-                                     sig: NativeSignature): NativeSignature =
+                                     sig: NativeSignature,
+                                     context = "$assign-method-type",
+                                     allow_override = false): NativeSignature =
   if class == nil:
-    not_allowed("$assign-method-type target must be a class")
+    not_allowed(context & " target must be a class")
   let meth = class.get_method(name)
   if meth == nil:
     not_allowed("No native method " & class.name & "." & name)
   if meth.callable.kind != VkNativeFn:
     not_allowed(class.name & "." & name & " is not a native method")
   let method_sig = native_signature_with_receiver(sig, receives_self = true)
+  let existing =
+    if meth.native_signature != nil: meth.native_signature
+    else: lookup_native_signature(meth.callable.ref.native_fn)
+  ensure_native_signature_assignment(existing, method_sig, context, allow_override)
   register_native_signature(meth.callable.ref.native_fn, method_sig)
   meth.native_signature_known = method_sig != nil
   meth.native_signature = method_sig
@@ -470,14 +525,20 @@ proc attach_native_method_signature*(class: Class, name: string,
   method_sig
 
 proc attach_native_constructor_signature*(class: Class,
-                                          sig: NativeSignature): NativeSignature =
+                                          sig: NativeSignature,
+                                          context = "$assign-ctor-type",
+                                          allow_override = false): NativeSignature =
   if class == nil:
-    not_allowed("$assign-ctor-type target must be a class")
+    not_allowed(context & " target must be a class")
   let ctor = class.get_constructor()
   if ctor == NIL:
     not_allowed("Class " & class.name & " has no constructor")
   if ctor.kind != VkNativeFn:
     not_allowed("Class " & class.name & " constructor is not native")
+  let existing =
+    if class.constructor_native_signature != nil: class.constructor_native_signature
+    else: lookup_native_signature(ctor.ref.native_fn)
+  ensure_native_signature_assignment(existing, sig, context, allow_override)
   register_native_signature(ctor.ref.native_fn, sig)
   class.constructor_native_signature_known = sig != nil
   class.constructor_native_signature = sig

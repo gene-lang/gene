@@ -93,7 +93,7 @@ proc join_strings(values: seq[string], sep: string): string {.gcsafe.} =
     result &= sep
     result &= values[i]
 
-proc type_desc_key_for_id(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): string {.gcsafe.}
+proc type_desc_key_for_id*(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): string {.gcsafe.}
 
 proc callable_param_type_key(type_descs: seq[TypeDesc], param: CallableParamDesc,
                              depth = 0): string {.gcsafe.} =
@@ -139,7 +139,7 @@ proc type_desc_key(desc: TypeDesc, type_descs: seq[TypeDesc], depth = 0): string
   of TdkVar:
     return module_prefix & "var:" & $desc.var_id
 
-proc type_desc_key_for_id(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): string {.gcsafe.} =
+proc type_desc_key_for_id*(type_descs: seq[TypeDesc], type_id: TypeId, depth = 0): string {.gcsafe.} =
   if type_id == NO_TYPE_ID:
     return "any"
   if type_id < 0 or type_id.int >= type_descs.len:

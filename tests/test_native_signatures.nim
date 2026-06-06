@@ -179,6 +179,36 @@ suite "Native signatures":
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
 
+  test "$assign-type rejects conflicts and bang form overrides":
+    init_all()
+    let fn = NativeFn(native_identity)
+    App.app.global_ns.ref.ns["assignConflictEcho".to_key()] = fn.to_value()
+
+    discard VM.exec("""($assign-type assignConflictEcho [n: Int] -> Int)""",
+      "assign_type_conflict_initial.gene")
+    defer:
+      invalidate_native_signature(fn)
+
+    discard VM.exec("""($assign-type assignConflictEcho [n: Int] -> Int)""",
+      "assign_type_conflict_same.gene")
+
+    let conflict_message = expect_error(proc() =
+      discard VM.exec("""($assign-type assignConflictEcho [s: String] -> String)""",
+        "assign_type_conflict_bad.gene")
+    )
+    check conflict_message.contains("$assign-type conflicts with existing native signature")
+    check conflict_message.contains("$assign-type! to override")
+    check lookup_native_signature(fn).return_type_id == BUILTIN_TYPE_INT_ID
+
+    discard VM.exec("""($assign-type! assignConflictEcho [s: String] -> String)""",
+      "assign_type_conflict_override.gene")
+
+    let overridden = lookup_native_signature(fn)
+    check overridden != nil
+    check overridden.return_type_id == BUILTIN_TYPE_STRING_ID
+    check VM.exec("""(assignConflictEcho "ok")""",
+      "assign_type_conflict_override_call.gene").str == "ok"
+
   test "binding-site fn ^native attaches and enforces a native function signature":
     init_all()
     let fn = NativeFn(native_identity)
@@ -356,6 +386,41 @@ suite "Native signatures":
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
 
+  test "$assign-method-type rejects conflicts and bang form overrides":
+    init_all()
+    let fn = NativeFn(native_method_arg)
+    let cls = new_class("AssignMethodConflictTest")
+    cls.def_native_method("id", fn)
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = cls
+    App.app.global_ns.ref.ns["AssignMethodConflictTest".to_key()] =
+      cls_ref.to_ref_value()
+
+    discard VM.exec("""($assign-method-type AssignMethodConflictTest "id" [n: Int] -> Int)""",
+      "assign_method_type_conflict_initial.gene")
+    defer:
+      invalidate_native_signature(fn)
+
+    discard VM.exec("""($assign-method-type AssignMethodConflictTest "id" [n: Int] -> Int)""",
+      "assign_method_type_conflict_same.gene")
+
+    let conflict_message = expect_error(proc() =
+      discard VM.exec("""($assign-method-type AssignMethodConflictTest "id" [s: String] -> String)""",
+        "assign_method_type_conflict_bad.gene")
+    )
+    check conflict_message.contains("$assign-method-type conflicts with existing native signature")
+    check conflict_message.contains("$assign-method-type! to override")
+    check cls.get_method("id").native_signature.return_type_id == BUILTIN_TYPE_INT_ID
+
+    discard VM.exec("""($assign-method-type! AssignMethodConflictTest "id" [s: String] -> String)""",
+      "assign_method_type_conflict_override.gene")
+
+    let overridden = cls.get_method("id").native_signature
+    check overridden != nil
+    check overridden.return_type_id == BUILTIN_TYPE_STRING_ID
+    check VM.exec("""((new AssignMethodConflictTest) .id "ok")""",
+      "assign_method_type_conflict_override_call.gene").str == "ok"
+
   test "static checker consumes standalone native function signatures":
     init_all()
     let fn = NativeFn(native_identity)
@@ -417,6 +482,40 @@ suite "Native signatures":
     )
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
+
+  test "$assign-ctor-type rejects conflicts and bang form overrides":
+    init_all()
+    let fn = NativeFn(native_identity)
+    let cls = new_class("AssignCtorConflictTest")
+    cls.def_native_constructor(fn)
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = cls
+    App.app.global_ns.ref.ns["AssignCtorConflictTest".to_key()] =
+      cls_ref.to_ref_value()
+
+    discard VM.exec("""($assign-ctor-type AssignCtorConflictTest [n: Int] -> Int)""",
+      "assign_ctor_type_conflict_initial.gene")
+    defer:
+      invalidate_native_signature(fn)
+
+    discard VM.exec("""($assign-ctor-type AssignCtorConflictTest [n: Int] -> Int)""",
+      "assign_ctor_type_conflict_same.gene")
+
+    let conflict_message = expect_error(proc() =
+      discard VM.exec("""($assign-ctor-type AssignCtorConflictTest [s: String] -> String)""",
+        "assign_ctor_type_conflict_bad.gene")
+    )
+    check conflict_message.contains("$assign-ctor-type conflicts with existing native signature")
+    check conflict_message.contains("$assign-ctor-type! to override")
+    check cls.constructor_native_signature.return_type_id == BUILTIN_TYPE_INT_ID
+
+    discard VM.exec("""($assign-ctor-type! AssignCtorConflictTest [s: String] -> String)""",
+      "assign_ctor_type_conflict_override.gene")
+
+    check cls.constructor_native_signature != nil
+    check cls.constructor_native_signature.return_type_id == BUILTIN_TYPE_STRING_ID
+    check VM.exec("""(new AssignCtorConflictTest "ok")""",
+      "assign_ctor_type_conflict_override_call.gene").str == "ok"
 
   test "static checker consumes native constructor signatures":
     init_all()

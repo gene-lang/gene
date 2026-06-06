@@ -4136,43 +4136,76 @@ proc build_assigned_native_signature(vm: ptr VirtualMachine,
     initTable[string, TypeId](), BUILTIN_TYPE_MODULE_PATH,
     receives_self = receives_self)
 
-proc assign_type_macro(vm: ptr VirtualMachine, gene_value: Value,
-                       caller_frame: Frame): Value {.gcsafe.} =
+proc assign_type_macro_impl(vm: ptr VirtualMachine, gene_value: Value,
+                            caller_frame: Frame, form_name: string,
+                            allow_override: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
     if gene_value.kind != VkGene or gene_value.gene.children.len < 2:
-      not_allowed("$assign-type requires target, parameter array, and optional return type")
+      not_allowed(form_name & " requires target, parameter array, and optional return type")
     let target = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
-    let parts = assign_type_signature_parts("$assign-type", gene_value, 1)
+    let parts = assign_type_signature_parts(form_name, gene_value, 1)
     let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
-    discard attach_native_function_signature(target, sig, "$assign-type")
+    discard attach_native_function_signature(target, sig, form_name, allow_override)
+    NIL
+
+proc assign_type_macro(vm: ptr VirtualMachine, gene_value: Value,
+                       caller_frame: Frame): Value {.gcsafe.} =
+  assign_type_macro_impl(vm, gene_value, caller_frame, "$assign-type", false)
+
+proc assign_type_bang_macro(vm: ptr VirtualMachine, gene_value: Value,
+                            caller_frame: Frame): Value {.gcsafe.} =
+  assign_type_macro_impl(vm, gene_value, caller_frame, "$assign-type!", true)
+
+proc assign_method_type_macro_impl(vm: ptr VirtualMachine, gene_value: Value,
+                                   caller_frame: Frame, form_name: string,
+                                   allow_override: bool): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if gene_value.kind != VkGene or gene_value.gene.children.len < 3:
+      not_allowed(form_name & " requires class, method name, parameter array, and optional return type")
+    let class_value = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
+    if class_value.kind != VkClass:
+      not_allowed(form_name & " target must be a class, got " & $class_value.kind)
+    let method_name = assign_type_name(gene_value.gene.children[1], form_name & " method name")
+    let parts = assign_type_signature_parts(form_name, gene_value, 2)
+    let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
+    discard attach_native_method_signature(class_value.ref.class, method_name,
+      sig, form_name, allow_override)
     NIL
 
 proc assign_method_type_macro(vm: ptr VirtualMachine, gene_value: Value,
                               caller_frame: Frame): Value {.gcsafe.} =
+  assign_method_type_macro_impl(vm, gene_value, caller_frame,
+    "$assign-method-type", false)
+
+proc assign_method_type_bang_macro(vm: ptr VirtualMachine, gene_value: Value,
+                                   caller_frame: Frame): Value {.gcsafe.} =
+  assign_method_type_macro_impl(vm, gene_value, caller_frame,
+    "$assign-method-type!", true)
+
+proc assign_ctor_type_macro_impl(vm: ptr VirtualMachine, gene_value: Value,
+                                 caller_frame: Frame, form_name: string,
+                                 allow_override: bool): Value {.gcsafe.} =
   {.cast(gcsafe).}:
-    if gene_value.kind != VkGene or gene_value.gene.children.len < 3:
-      not_allowed("$assign-method-type requires class, method name, parameter array, and optional return type")
+    if gene_value.kind != VkGene or gene_value.gene.children.len < 2:
+      not_allowed(form_name & " requires class, parameter array, and optional return type")
     let class_value = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
     if class_value.kind != VkClass:
-      not_allowed("$assign-method-type target must be a class, got " & $class_value.kind)
-    let method_name = assign_type_name(gene_value.gene.children[1], "$assign-method-type method name")
-    let parts = assign_type_signature_parts("$assign-method-type", gene_value, 2)
+      not_allowed(form_name & " target must be a class, got " & $class_value.kind)
+    let parts = assign_type_signature_parts(form_name, gene_value, 1)
     let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
-    discard attach_native_method_signature(class_value.ref.class, method_name, sig)
+    discard attach_native_constructor_signature(class_value.ref.class, sig,
+      form_name, allow_override)
     NIL
 
 proc assign_ctor_type_macro(vm: ptr VirtualMachine, gene_value: Value,
                             caller_frame: Frame): Value {.gcsafe.} =
-  {.cast(gcsafe).}:
-    if gene_value.kind != VkGene or gene_value.gene.children.len < 2:
-      not_allowed("$assign-ctor-type requires class, parameter array, and optional return type")
-    let class_value = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
-    if class_value.kind != VkClass:
-      not_allowed("$assign-ctor-type target must be a class, got " & $class_value.kind)
-    let parts = assign_type_signature_parts("$assign-ctor-type", gene_value, 1)
-    let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
-    discard attach_native_constructor_signature(class_value.ref.class, sig)
-    NIL
+  assign_ctor_type_macro_impl(vm, gene_value, caller_frame,
+    "$assign-ctor-type", false)
+
+proc assign_ctor_type_bang_macro(vm: ptr VirtualMachine, gene_value: Value,
+                                 caller_frame: Frame): Value {.gcsafe.} =
+  assign_ctor_type_macro_impl(vm, gene_value, caller_frame,
+    "$assign-ctor-type!", true)
 
 proc native_macro_value(f: NativeMacroFn): Value =
   let r = new_ref(VkNativeMacro)
@@ -4232,18 +4265,33 @@ proc init_stdlib*() =
   let assign_type_value = native_macro_value(assign_type_macro)
   let assign_method_type_value = native_macro_value(assign_method_type_macro)
   let assign_ctor_type_value = native_macro_value(assign_ctor_type_macro)
+  let assign_type_bang_value = native_macro_value(assign_type_bang_macro)
+  let assign_method_type_bang_value = native_macro_value(assign_method_type_bang_macro)
+  let assign_ctor_type_bang_value = native_macro_value(assign_ctor_type_bang_macro)
   global_ns["$assign-type".to_key()] = assign_type_value
   global_ns["$assign-method-type".to_key()] = assign_method_type_value
   global_ns["$assign-ctor-type".to_key()] = assign_ctor_type_value
+  global_ns["$assign-type!".to_key()] = assign_type_bang_value
+  global_ns["$assign-method-type!".to_key()] = assign_method_type_bang_value
+  global_ns["$assign-ctor-type!".to_key()] = assign_ctor_type_bang_value
   global_ns["assign-type".to_key()] = assign_type_value
   global_ns["assign-method-type".to_key()] = assign_method_type_value
   global_ns["assign-ctor-type".to_key()] = assign_ctor_type_value
+  global_ns["assign-type!".to_key()] = assign_type_bang_value
+  global_ns["assign-method-type!".to_key()] = assign_method_type_bang_value
+  global_ns["assign-ctor-type!".to_key()] = assign_ctor_type_bang_value
   App.app.gene_ns.ns["$assign-type".to_key()] = assign_type_value
   App.app.gene_ns.ns["$assign-method-type".to_key()] = assign_method_type_value
   App.app.gene_ns.ns["$assign-ctor-type".to_key()] = assign_ctor_type_value
+  App.app.gene_ns.ns["$assign-type!".to_key()] = assign_type_bang_value
+  App.app.gene_ns.ns["$assign-method-type!".to_key()] = assign_method_type_bang_value
+  App.app.gene_ns.ns["$assign-ctor-type!".to_key()] = assign_ctor_type_bang_value
   App.app.gene_ns.ns["assign-type".to_key()] = assign_type_value
   App.app.gene_ns.ns["assign-method-type".to_key()] = assign_method_type_value
   App.app.gene_ns.ns["assign-ctor-type".to_key()] = assign_ctor_type_value
+  App.app.gene_ns.ns["assign-type!".to_key()] = assign_type_bang_value
+  App.app.gene_ns.ns["assign-method-type!".to_key()] = assign_method_type_bang_value
+  App.app.gene_ns.ns["assign-ctor-type!".to_key()] = assign_ctor_type_bang_value
 
   vm_pubsub.init_pubsub_namespace()
   
