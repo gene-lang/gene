@@ -502,7 +502,18 @@ proc method_signature_compatible(meth: Method, iface_method: InterfaceMethod): b
   if meth.is_nil:
     return false
   if meth.native_signature_known:
-    if meth.native_param_types.len != iface_method.param_descs.len:
+    let sig = meth.native_signature
+    if sig == nil or sig.params.len != iface_method.param_descs.len:
+      return false
+    for i, iface_param in iface_method.param_descs:
+      let native_param = sig.params[i]
+      if native_param.kind != iface_param.kind:
+        return false
+      if not adapter_type_id_compatible(iface_param.type_id, iface_method.type_descs,
+                                        native_param.type_id, sig.type_descriptors):
+        return false
+    if not adapter_type_id_compatible(iface_method.type_id, iface_method.type_descs,
+                                      sig.return_type_id, sig.type_descriptors):
       return false
     return true
   callable_signature_compatible(meth.callable, iface_method, has_self = true)

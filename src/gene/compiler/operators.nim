@@ -4,6 +4,12 @@
 ## Included from compiler.nim — shares its scope.
 
 ## compile_range, compile_range_operator moved to compiler/collections.nim
+proc is_known_native_macro_name(name: string): bool {.inline.} =
+  name in [
+    "$assign-type", "$assign-method-type", "$assign-ctor-type",
+    "assign-type", "assign-method-type", "assign-ctor-type"
+  ]
+
 proc compile_gene_default(self: Compiler, gene: ptr Gene) {.inline.} =
   self.emit(Instruction(kind: IkGeneStart))
   self.compile(gene.type)
@@ -218,7 +224,9 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
   # Fast path optimizations for regular function calls (no properties, not macro-like, no spreads)
   if gene.props.len == 0 and gene.type.kind == VkSymbol:
     let func_name = gene.type.str
-    if (not func_name.ends_with("!")) and func_name notin ["return", "break", "continue", "throw", "interceptor", "fn-interceptor"]:
+    if (not func_name.ends_with("!")) and
+        func_name notin ["return", "break", "continue", "throw", "interceptor", "fn-interceptor"] and
+        not is_known_native_macro_name(func_name):
       var has_spread = false
       for k, _ in gene.props:
         if ($k).startsWith("..."):
@@ -269,7 +277,8 @@ proc compile_gene_unknown(self: Compiler, gene: ptr Gene) {.inline.} =
       self.compile(child)
     self.emit(Instruction(kind: IkUnifiedCall, arg1: gene.children.len.int32))
     return
-  elif gene.props.len > 0 and gene.type.kind == VkSymbol and not gene.type.str.ends_with("!"):
+  elif gene.props.len > 0 and gene.type.kind == VkSymbol and
+      not gene.type.str.ends_with("!") and not is_known_native_macro_name(gene.type.str):
     # Keyword argument fast path for eager functions (no spreads)
     var has_spread = false
     for k, _ in gene.props:

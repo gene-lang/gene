@@ -4040,6 +4040,145 @@ proc core_if_main(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_c
     return code
   return NIL
 
+proc assign_type_resolve_symbol(caller_frame: Frame, name: string): Value =
+  let key = name.to_key()
+
+  if caller_frame != nil and caller_frame.scope != nil and caller_frame.scope.tracker != nil:
+    let found = caller_frame.scope.tracker.locate(key)
+    if found.local_index >= 0:
+      var scope = caller_frame.scope
+      var parent_index = found.parent_index
+      while parent_index > 0:
+        parent_index.dec()
+        scope = scope.parent
+      if scope != nil and found.local_index < scope.members.len:
+        return scope.members[found.local_index]
+
+  if caller_frame != nil and caller_frame.ns != nil:
+    let ns_value = caller_frame.ns[key]
+    if ns_value != NIL:
+      return ns_value
+
+  if VM != nil and VM.thread_local_ns != nil:
+    let thread_value = VM.thread_local_ns[key]
+    if thread_value != NIL:
+      return thread_value
+
+  if App != NIL and App.kind == VkApplication:
+    if App.app.global_ns.kind == VkNamespace:
+      let global_value = App.app.global_ns.ref.ns[key]
+      if global_value != NIL:
+        return global_value
+    if App.app.gene_ns.kind == VkNamespace:
+      let gene_value = App.app.gene_ns.ref.ns[key]
+      if gene_value != NIL:
+        return gene_value
+
+  NIL
+
+proc assign_type_eval_target(expr: Value, caller_frame: Frame): Value =
+  case expr.kind
+  of VkQuote:
+    return expr.ref.quote
+  of VkSymbol, VkString:
+    let resolved = assign_type_resolve_symbol(caller_frame, expr.str)
+    if resolved == NIL:
+      not_allowed("Unknown symbol in native type assignment: " & expr.str)
+    resolved
+  else:
+    expr
+
+proc assign_type_name(expr: Value, label: string): string =
+  case expr.kind
+  of VkQuote:
+    assign_type_name(expr.ref.quote, label)
+  of VkSymbol, VkString:
+    expr.str
+  else:
+    not_allowed(label & " must be a symbol or string, got " & $expr.kind)
+    ""
+
+proc assign_type_signature_parts(form_name: string, gene_value: Value,
+                                 params_index: int): tuple[params: Value, return_type: Value] =
+  if gene_value.kind != VkGene:
+    not_allowed(form_name & " must be called as a Gene form")
+  let children = gene_value.gene.children
+  if params_index >= children.len:
+    not_allowed(form_name & " requires a parameter array")
+  result.params = children[params_index]
+  if result.params.kind != VkArray:
+    not_allowed(form_name & " parameters must be an array")
+  result.return_type = NIL
+  var next = params_index + 1
+  if next < children.len:
+    if children[next].kind != VkSymbol or children[next].str != "->":
+      not_allowed(form_name & " expected '-> ReturnType' after the parameter array")
+    if next + 1 >= children.len:
+      not_allowed(form_name & " missing return type after '->'")
+    result.return_type = children[next + 1]
+    next += 2
+  if next < children.len:
+    not_allowed(form_name & " has unexpected trailing arguments")
+
+proc build_assigned_native_signature(vm: ptr VirtualMachine,
+                                     params: Value,
+                                     return_type: Value,
+                                     receives_self = false): NativeSignature =
+  if vm != nil and vm.cu != nil:
+    if vm.cu.type_registry == nil:
+      vm.cu.type_registry = populate_registry(vm.cu.type_descriptors, vm.cu.module_path)
+    return build_native_signature_from_gene(params, return_type,
+      vm.cu.type_descriptors, vm.cu.type_aliases, vm.cu.module_path,
+      vm.cu.type_registry, receives_self = receives_self)
+
+  var type_descs = builtin_type_descs()
+  build_native_signature_from_gene(params, return_type, type_descs,
+    initTable[string, TypeId](), BUILTIN_TYPE_MODULE_PATH,
+    receives_self = receives_self)
+
+proc assign_type_macro(vm: ptr VirtualMachine, gene_value: Value,
+                       caller_frame: Frame): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if gene_value.kind != VkGene or gene_value.gene.children.len < 2:
+      not_allowed("$assign-type requires target, parameter array, and optional return type")
+    let target = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
+    let parts = assign_type_signature_parts("$assign-type", gene_value, 1)
+    let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
+    discard attach_native_function_signature(target, sig, "$assign-type")
+    NIL
+
+proc assign_method_type_macro(vm: ptr VirtualMachine, gene_value: Value,
+                              caller_frame: Frame): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if gene_value.kind != VkGene or gene_value.gene.children.len < 3:
+      not_allowed("$assign-method-type requires class, method name, parameter array, and optional return type")
+    let class_value = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
+    if class_value.kind != VkClass:
+      not_allowed("$assign-method-type target must be a class, got " & $class_value.kind)
+    let method_name = assign_type_name(gene_value.gene.children[1], "$assign-method-type method name")
+    let parts = assign_type_signature_parts("$assign-method-type", gene_value, 2)
+    let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
+    discard attach_native_method_signature(class_value.ref.class, method_name, sig)
+    NIL
+
+proc assign_ctor_type_macro(vm: ptr VirtualMachine, gene_value: Value,
+                            caller_frame: Frame): Value {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if gene_value.kind != VkGene or gene_value.gene.children.len < 2:
+      not_allowed("$assign-ctor-type requires class, parameter array, and optional return type")
+    let class_value = assign_type_eval_target(gene_value.gene.children[0], caller_frame)
+    if class_value.kind != VkClass:
+      not_allowed("$assign-ctor-type target must be a class, got " & $class_value.kind)
+    let parts = assign_type_signature_parts("$assign-ctor-type", gene_value, 1)
+    let sig = build_assigned_native_signature(vm, parts.params, parts.return_type)
+    discard attach_native_constructor_signature(class_value.ref.class, sig)
+    NIL
+
+proc native_macro_value(f: NativeMacroFn): Value =
+  let r = new_ref(VkNativeMacro)
+  r.native_macro = f
+  r.to_ref_value()
+
 proc init_stdlib*() =
   # Initialize gene namespace first (classes, methods, etc.)
   init_gene_namespace()
@@ -4090,6 +4229,21 @@ proc init_stdlib*() =
   global_ns["$tap".to_key()] = core_tap.to_value()
   global_ns["$if_main".to_key()] = core_if_main.to_value()
   global_ns["$repl".to_key()] = NativeFn(core_repl).to_value()
+  let assign_type_value = native_macro_value(assign_type_macro)
+  let assign_method_type_value = native_macro_value(assign_method_type_macro)
+  let assign_ctor_type_value = native_macro_value(assign_ctor_type_macro)
+  global_ns["$assign-type".to_key()] = assign_type_value
+  global_ns["$assign-method-type".to_key()] = assign_method_type_value
+  global_ns["$assign-ctor-type".to_key()] = assign_ctor_type_value
+  global_ns["assign-type".to_key()] = assign_type_value
+  global_ns["assign-method-type".to_key()] = assign_method_type_value
+  global_ns["assign-ctor-type".to_key()] = assign_ctor_type_value
+  App.app.gene_ns.ns["$assign-type".to_key()] = assign_type_value
+  App.app.gene_ns.ns["$assign-method-type".to_key()] = assign_method_type_value
+  App.app.gene_ns.ns["$assign-ctor-type".to_key()] = assign_ctor_type_value
+  App.app.gene_ns.ns["assign-type".to_key()] = assign_type_value
+  App.app.gene_ns.ns["assign-method-type".to_key()] = assign_method_type_value
+  App.app.gene_ns.ns["assign-ctor-type".to_key()] = assign_ctor_type_value
 
   vm_pubsub.init_pubsub_namespace()
   

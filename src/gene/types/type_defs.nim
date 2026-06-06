@@ -557,6 +557,8 @@ type
     module_path*: string
     internal_path*: string
     constructor*: Value
+    constructor_native_signature_known*: bool
+    constructor_native_signature*: NativeSignature
     runtime_type*: RtTypeObj
     methods*: Table[Key, Method]
     members*: Table[Key, Value]  # Static members - class acts as namespace

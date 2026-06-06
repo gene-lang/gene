@@ -338,6 +338,152 @@ proc native_signature_with_receiver(sig: NativeSignature, receives_self: bool): 
     abi_arg_types: abi_args,
     abi_return_type: sig.abi_return_type)
 
+proc native_param_name_from_matcher(matcher: Matcher): string =
+  try:
+    if cast[int64](matcher.name_key) != 0:
+      return cast[Value](matcher.name_key).str
+  except CatchableError:
+    discard
+  ""
+
+proc native_param_kind_from_matcher(matcher: Matcher): CallableParamKind =
+  if matcher.kind == MatchProp or matcher.is_prop:
+    if matcher.is_splat: CpkKeywordRest else: CpkKeyword
+  else:
+    if matcher.is_splat: CpkPositionalRest else: CpkPositional
+
+proc build_native_signature_from_matcher*(matcher: RootMatcher,
+                                          receives_self = false): NativeSignature =
+  if matcher == nil:
+    return nil
+
+  var params: seq[CallableParamDesc] = @[]
+  var param_names: seq[string] = @[]
+  var abi_args: seq[CallArgType] = @[]
+  var has_annotations = false
+  var is_variadic = false
+  var arity_min = 0
+  var arity_max = 0
+
+  if receives_self:
+    abi_args.add(CatValue)
+
+  let type_descs =
+    if matcher.type_descriptors.len > 0: matcher.type_descriptors
+    else: builtin_type_descs()
+
+  for child in matcher.children:
+    let param_kind = native_param_kind_from_matcher(child)
+    let param_name = native_param_name_from_matcher(child)
+    let type_id =
+      if child.type_id == NO_TYPE_ID: BUILTIN_TYPE_ANY_ID
+      else: child.type_id
+    let keyword_name =
+      if param_kind in {CpkKeyword, CpkKeywordRest}: param_name
+      else: ""
+
+    params.add(CallableParamDesc(kind: param_kind,
+      keyword_name: keyword_name, type_id: type_id))
+    param_names.add(param_name)
+    abi_args.add(native_call_arg_type(type_id, type_descs))
+
+    if type_id != BUILTIN_TYPE_ANY_ID and type_id != NO_TYPE_ID:
+      has_annotations = true
+    if param_kind in {CpkPositionalRest, CpkKeywordRest}:
+      is_variadic = true
+    if param_kind == CpkPositional:
+      if child.required:
+        arity_min.inc()
+      arity_max.inc()
+    elif param_kind == CpkPositionalRest:
+      arity_max = -1
+
+  let return_type_id =
+    if matcher.return_type_id == NO_TYPE_ID: BUILTIN_TYPE_ANY_ID
+    else: matcher.return_type_id
+  if return_type_id != BUILTIN_TYPE_ANY_ID and return_type_id != NO_TYPE_ID:
+    has_annotations = true
+
+  NativeSignature(
+    params: params,
+    param_names: param_names,
+    return_type_id: return_type_id,
+    type_descriptors: type_descs,
+    module_path: BUILTIN_TYPE_MODULE_PATH,
+    receives_self: receives_self,
+    has_type_annotations: has_annotations,
+    is_variadic: is_variadic,
+    arity_min: arity_min,
+    arity_max: arity_max,
+    abi_arg_types: abi_args,
+    abi_return_type: native_call_return_type(return_type_id, type_descs))
+
+proc build_native_signature_from_gene*(params_value: Value,
+                                       return_type_value: Value,
+                                       cu_type_descs: var seq[TypeDesc],
+                                       type_aliases: Table[string, TypeId],
+                                       module_path: string,
+                                       type_registry: ModuleTypeRegistry = nil,
+                                       receives_self = false): NativeSignature =
+  if params_value.kind != VkArray:
+    not_allowed("native signature parameters must be an array")
+
+  var fn_value = new_gene_value()
+  fn_value.gene.type = "fn".to_symbol_value()
+  fn_value.gene.children.add("__native_signature".to_symbol_value())
+  fn_value.gene.children.add(params_value)
+  if return_type_value != NIL:
+    fn_value.gene.children.add("->".to_symbol_value())
+    fn_value.gene.children.add(return_type_value)
+  fn_value.gene.children.add(NIL)
+
+  let fn = to_function(fn_value, cu_type_descs, type_aliases,
+    module_path, type_registry)
+  result = build_native_signature_from_matcher(fn.matcher, receives_self)
+  if result != nil:
+    result.module_path = module_path
+
+proc attach_native_function_signature*(target: Value, sig: NativeSignature,
+                                       context = "$assign-type"): NativeSignature =
+  if target.kind != VkNativeFn:
+    not_allowed(context & " target must be a native function, got " & $target.kind)
+  register_native_signature(target.ref.native_fn, sig)
+  sig
+
+proc attach_native_method_signature*(class: Class, name: string,
+                                     sig: NativeSignature): NativeSignature =
+  if class == nil:
+    not_allowed("$assign-method-type target must be a class")
+  let meth = class.get_method(name)
+  if meth == nil:
+    not_allowed("No native method " & class.name & "." & name)
+  if meth.callable.kind != VkNativeFn:
+    not_allowed(class.name & "." & name & " is not a native method")
+  let method_sig = native_signature_with_receiver(sig, receives_self = true)
+  register_native_signature(meth.callable.ref.native_fn, method_sig)
+  meth.native_signature_known = method_sig != nil
+  meth.native_signature = method_sig
+  meth.native_param_types = @[]
+  meth.native_return_type = NIL
+  if meth.class != nil:
+    meth.class.version.inc()
+  method_sig
+
+proc attach_native_constructor_signature*(class: Class,
+                                          sig: NativeSignature): NativeSignature =
+  if class == nil:
+    not_allowed("$assign-ctor-type target must be a class")
+  let ctor = class.get_constructor()
+  if ctor == NIL:
+    not_allowed("Class " & class.name & " has no constructor")
+  if ctor.kind != VkNativeFn:
+    not_allowed("Class " & class.name & " constructor is not native")
+  register_native_signature(ctor.ref.native_fn, sig)
+  class.constructor_native_signature_known = sig != nil
+  class.constructor_native_signature = sig
+  class.version.inc()
+  sig
+
 proc native_sig*(signature: string): NativeSignature =
   let arrow = signature.find("->")
   let params_part =
@@ -522,6 +668,8 @@ proc def_native_constructor*(self: Class, f: NativeFn) =
   let r = new_ref(VkNativeFn)
   r.native_fn = f
   self.constructor = r.to_ref_value()
+  self.constructor_native_signature_known = false
+  self.constructor_native_signature = nil
 
 proc def_native_constructor*(self: Class, f: NativeFn, sig: NativeSignature) =
   let r = new_ref(VkNativeFn)
@@ -529,6 +677,8 @@ proc def_native_constructor*(self: Class, f: NativeFn, sig: NativeSignature) =
   let ctor_sig = native_signature_with_receiver(sig, receives_self = false)
   register_native_signature(f, ctor_sig)
   self.constructor = r.to_ref_value()
+  self.constructor_native_signature_known = ctor_sig != nil
+  self.constructor_native_signature = ctor_sig
 
 proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
   let r = new_ref(VkNativeFn)

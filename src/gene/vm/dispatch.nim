@@ -495,9 +495,22 @@ proc invoke_method_value(self: ptr VirtualMachine, value: Value, meth: Method,
   proc validate_native_method_arity(meth: Method, positional_count: int, keyword_count: int) =
     if not meth.native_signature_known:
       return
-    let expected = meth.native_param_types.len
-    if keyword_count > 0 or positional_count != expected:
-      not_allowed(meth.class.name & "." & meth.name & " expects " & $expected &
+    let sig = meth.native_signature
+    if sig == nil:
+      return
+    var accepts_keywords = false
+    for param in sig.params:
+      if param.kind in {CpkKeyword, CpkKeywordRest}:
+        accepts_keywords = true
+        break
+    if keyword_count > 0 and not accepts_keywords:
+      not_allowed(meth.class.name & "." & meth.name & " does not accept keyword arguments")
+    if positional_count < sig.arity_min or (sig.arity_max >= 0 and positional_count > sig.arity_max):
+      let expected =
+        if sig.arity_max >= 0 and sig.arity_min == sig.arity_max: $sig.arity_min
+        elif sig.arity_max >= 0: $sig.arity_min & ".." & $sig.arity_max
+        else: $sig.arity_min & "+"
+      not_allowed(meth.class.name & "." & meth.name & " expects " & expected &
                   " arguments after self, got " & $positional_count)
 
   case meth.callable.kind:
