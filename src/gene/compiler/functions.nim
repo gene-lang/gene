@@ -274,20 +274,6 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
   if args.kind != VkArray:
     not_allowed("method requires an array argument list; use [] for no arguments")
 
-  var method_args = new_array_value()
-  let src = array_data(args)
-  if src.len == 0:
-    array_data(method_args).add("self".to_symbol_value())
-  elif src[0].kind == VkSymbol and src[0].str == "self":
-    for arg in src:
-      array_data(method_args).add(arg)
-  else:
-    array_data(method_args).add("self".to_symbol_value())
-    for arg in src:
-      array_data(method_args).add(arg)
-  
-  fn_value.gene.children.add(method_args)
-
   var body_start = 2
   if gene.children.len > body_start and gene.children[body_start].kind == VkSymbol and gene.children[body_start].str == "->":
     if gene.children.len <= body_start + 1:
@@ -298,8 +284,30 @@ proc compile_method_definition(self: Compiler, gene: ptr Gene) =
       not_allowed("Missing effects list after !")
     body_start += 2
 
-  if body_start >= gene.children.len:
+  let native_target = native_declaration_target(gene, gene.children, body_start,
+    "native method " & name_str)
+
+  if body_start >= gene.children.len and native_target == NIL:
     return
+
+  var method_args = new_array_value()
+  let src = array_data(args)
+  if native_target != NIL:
+    if src.len > 0 and src[0].kind == VkSymbol and src[0].str == "self":
+      not_allowed("native method declarations must not declare self; self is implicit")
+    for arg in src:
+      array_data(method_args).add(arg)
+  elif src.len == 0:
+    array_data(method_args).add("self".to_symbol_value())
+  elif src[0].kind == VkSymbol and src[0].str == "self":
+    for arg in src:
+      array_data(method_args).add(arg)
+  else:
+    array_data(method_args).add("self".to_symbol_value())
+    for arg in src:
+      array_data(method_args).add(arg)
+
+  fn_value.gene.children.add(method_args)
 
   # Add the body
   for i in 2..<gene.children.len:
@@ -342,9 +350,21 @@ proc compile_constructor_definition(self: Compiler, gene: ptr Gene) =
     not_allowed(gene.type.str & " requires an array argument list; use [] for no arguments")
   let args_array = args
   fn_value.gene.children.add(args_array)
+
+  var body_start = 1
+  if gene.children.len > body_start and gene.children[body_start].kind == VkSymbol and gene.children[body_start].str == "->":
+    if gene.children.len <= body_start + 1:
+      not_allowed("Missing return type after ->")
+    body_start += 2
+  if gene.children.len > body_start and gene.children[body_start].kind == VkSymbol and gene.children[body_start].str == "!":
+    if gene.children.len <= body_start + 1:
+      not_allowed("Missing effects list after !")
+    body_start += 2
+  let native_target = native_declaration_target(gene, gene.children, body_start,
+    "native constructor")
   
   # Add remaining body
-  if gene.children.len == 1:
+  if gene.children.len == 1 and native_target == NIL:
     fn_value.gene.children.add(NIL)
   else:
     for i in 1..<gene.children.len:

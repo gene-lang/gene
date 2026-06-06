@@ -15,6 +15,44 @@ proc new_fn*(name: string, matcher: RootMatcher, body: sink seq[Value]): Functio
     examples: @[],
   )
 
+proc native_declaration_target*(children: seq[Value], body_start = 0,
+                                context = "native declaration"): Value =
+  ## Return the implementation target for a declaration body shaped as either:
+  ##   ^native <target>      # property form parsed from source
+  ##   [^native, <target>]   # child-marker shape, if constructed by hand
+  ##
+  ## Any extra body expressions are rejected because there is no Gene body to
+  ## execute once the declaration is backed by a native function pointer.
+  if body_start < 0 or body_start >= children.len:
+    return NIL
+  let marker = children[body_start]
+  if marker.kind == VkSymbol and marker.str == "^native":
+    if body_start + 2 != children.len:
+      not_allowed(context & " expects exactly '^native <target>'")
+    return children[body_start + 1]
+  NIL
+
+proc native_declaration_target*(gene: ptr Gene, children: seq[Value],
+                                body_start = 0,
+                                context = "native declaration"): Value =
+  if gene != nil:
+    let native_key = "native".to_key()
+    if gene.props.has_key(native_key):
+      if body_start < children.len:
+        not_allowed(context & " cannot combine ^native with a Gene body")
+      return gene.props[native_key]
+  native_declaration_target(children, body_start, context)
+
+proc native_declaration_target*(gene: ptr Gene, body: seq[Value],
+                                context = "native declaration"): Value =
+  if gene != nil:
+    let native_key = "native".to_key()
+    if gene.props.has_key(native_key):
+      if body.len > 0:
+        not_allowed(context & " cannot combine ^native with a Gene body")
+      return gene.props[native_key]
+  native_declaration_target(body, 0, context)
+
 proc anchor_module_paths(type_descs: var seq[TypeDesc], module_path: string) =
   ## Ensure non-builtin descriptors carry the parent module path.
   if module_path.len == 0:

@@ -3472,6 +3472,10 @@ proc check_fn(self: TypeChecker, gene: ptr Gene): TypeExpr =
   self.effect_stack.add(effects)
   defer:
     discard self.effect_stack.pop()
+  if native_declaration_target(gene, gene.children, body_start, "native function " & name) != NIL:
+    self.current_return = saved_return
+    self.pop_scope()
+    return fn_type
   var last: TypeExpr = TypeExpr(kind: TkNamed, name: "Nil")
   for i in body_start..<gene.children.len:
     last = self.check_expr(gene.children[i])
@@ -3571,6 +3575,10 @@ proc check_ctor(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Clas
   self.effect_stack.add(effects)
   defer:
     discard self.effect_stack.pop()
+  if native_declaration_target(gene, gene.children, body_start, "native constructor " & class_name) != NIL:
+    self.current_return = saved_return
+    self.pop_scope()
+    return fn_type
   var last: TypeExpr = TypeExpr(kind: TkNamed, name: "Nil")
   for i in body_start..<gene.children.len:
     last = self.check_expr(gene.children[i])
@@ -3694,6 +3702,11 @@ proc check_method(self: TypeChecker, gene: ptr Gene, class_name: string, cls: Cl
   self.effect_stack.add(effects)
   defer:
     discard self.effect_stack.pop()
+  if native_declaration_target(gene, gene.children, body_start,
+      "native method " & class_name & "." & method_name) != NIL:
+    self.current_return = saved_return
+    self.pop_scope()
+    return fn_type
   var last: TypeExpr = TypeExpr(kind: TkNamed, name: "Nil")
   for i in body_start..<gene.children.len:
     last = self.check_expr(gene.children[i])

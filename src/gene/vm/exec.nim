@@ -108,6 +108,100 @@ proc validate_instance_native_method_arity(meth: Method, positional_count: int, 
     not_allowed(meth.class.name & "." & meth.name & " expects " & expected &
                 " arguments after self, got " & $positional_count)
 
+proc resolve_native_declaration_target(self: ptr VirtualMachine, target: Value,
+                                       context: string): Value =
+  case target.kind
+  of VkNativeFn:
+    result = target
+  of VkSymbol, VkString:
+    let resolved = self.resolve_local_or_namespace(target.str)
+    if resolved.found:
+      result = resolved.value
+    elif self.thread_local_ns != nil:
+      let thread_resolved = resolve_namespace_value(self.thread_local_ns, target.str.to_key())
+      if thread_resolved.found:
+        result = thread_resolved.value
+    if result == NIL:
+      not_allowed(context & " target '" & target.str & "' is not defined")
+  of VkComplexSymbol:
+    if target.ref == nil or target.ref.csymbol.len == 0:
+      not_allowed(context & " target path is empty")
+    var ns = self.frame.ns
+    for i in 0..<target.ref.csymbol.len - 1:
+      let part = target.ref.csymbol[i]
+      if part == "":
+        continue
+      if part == "$ns" and i == 0:
+        continue
+      let resolved = resolve_namespace_value(ns, part.to_key())
+      if not resolved.found or resolved.value.kind != VkNamespace:
+        not_allowed(context & " target namespace '" & part & "' is not defined")
+      ns = resolved.value.ref.ns
+    let final_name = target.ref.csymbol[^1]
+    let resolved = resolve_namespace_value(ns, final_name.to_key())
+    if not resolved.found:
+      not_allowed(context & " target '" & final_name & "' is not defined")
+    result = resolved.value
+  else:
+    not_allowed(context & " target must be a native function name")
+
+  if result.kind != VkNativeFn:
+    not_allowed(context & " target must be a native function, got " & $result.kind)
+
+proc publish_function_definition_value(self: ptr VirtualMachine, info: FunctionDefInfo,
+                                       f: Function, value: Value) =
+  var define_in_ns = true
+  let main_module_scope =
+    self.cu != nil and self.cu.kind == CkModule and
+    self.frame != nil and self.frame.ns != nil and
+    self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) == TRUE
+  if info.input.kind == VkGene and info.input.gene != nil:
+    let local_key = "local_def".to_key()
+    if info.input.gene.props.has_key(local_key) and info.input.gene.props[local_key] == TRUE:
+      define_in_ns = false
+    if info.input.gene.children.len > 0 and info.input.gene.children[0].kind == VkArray:
+      define_in_ns = false
+    elif main_module_scope:
+      let first = info.input.gene.children[0]
+      if first.kind in {VkSymbol, VkString} and first.str != "__init__":
+        define_in_ns = false
+  let imported_module_scope =
+    self.cu != nil and self.cu.kind == CkModule and
+    self.frame != nil and self.frame.ns != nil and
+    self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) != TRUE
+  if not define_in_ns and imported_module_scope:
+    define_in_ns = true
+
+  if define_in_ns:
+    if info.input.kind == VkGene and info.input.gene.children.len > 0:
+      let first = info.input.gene.children[0]
+      case first.kind
+      of VkComplexSymbol:
+        # n/m/f or $ns/f - define in target namespace.
+        var ns = self.frame.ns
+        for i in 0..<first.ref.csymbol.len - 1:
+          let part = first.ref.csymbol[i]
+          if part == "":
+            continue
+          if part == "$ns" and i == 0:
+            continue
+          let key = part.to_key()
+          if ns.has_key(key):
+            let nsval = ns[key]
+            if nsval.kind == VkNamespace:
+              ns = nsval.ref.ns
+            else:
+              raise new_exception(types.Exception, fmt"{part} is not a namespace")
+          else:
+            raise new_exception(types.Exception, fmt"Namespace {part} not found")
+        ns[f.name.to_key()] = value
+      else:
+        # Simple name - define in current namespace.
+        f.ns[f.name.to_key()] = value
+    else:
+      # Fallback for other cases.
+      f.ns[f.name.to_key()] = value
+
 proc require_enum_constructor_member(variant: Value): EnumMember {.inline.} =
   if variant.kind != VkEnumMember:
     not_allowed("Enum constructor expected VkEnumMember, got " & $variant.kind)
@@ -3996,8 +4090,8 @@ proc exec*(self: ptr VirtualMachine): Value =
         if class_value.kind != VkClass:
           not_allowed("Can only define methods on classes, got " & $class_value.kind)
 
-        if fn_value.kind != VkFunction:
-          not_allowed("Method value must be a function")
+        if fn_value.kind notin {VkFunction, VkNativeFn}:
+          not_allowed("Method value must be a function or native function")
 
         # Access the class - VkClass should always be a reference value
         let class = class_value.ref.class
@@ -4015,15 +4109,23 @@ proc exec*(self: ptr VirtualMachine): Value =
           native_param_types: @[],
           native_return_type: NIL,
         )
-        class.methods[name.str.to_key()] = m
-        class.version.inc()
+        class.methods[method_key] = m
+        if fn_value.kind == VkNativeFn:
+          let sig = lookup_native_signature(fn_value.ref.native_fn)
+          if sig != nil:
+            discard attach_native_method_signature(class, name.str, sig)
+          else:
+            class.version.inc()
+        else:
+          class.version.inc()
 
         # Set the function's namespace to the class namespace
-        fn_value.ref.fn.ns = class.ns
+        if fn_value.kind == VkFunction:
+          fn_value.ref.fn.ns = class.ns
 
         # Return the method
         let r = new_ref(VkMethod)
-        r.`method` = m
+        r.`method` = class.methods[method_key]
         self.frame.push(r.to_ref_value())
 
       of IkDefineConstructor:
@@ -4039,12 +4141,12 @@ proc exec*(self: ptr VirtualMachine): Value =
         if class_value.kind != VkClass:
           not_allowed("Can only define constructor on classes, got " & $class_value.kind)
 
-        if fn_value.kind != VkFunction:
-          not_allowed("Constructor value must be a function")
+        if fn_value.kind notin {VkFunction, VkNativeFn}:
+          not_allowed("Constructor value must be a function or native function")
 
         # Access the class
         let class = class_value.ref.class
-        if fn_value.ref.fn.is_macro_like:
+        if fn_value.kind == VkFunction and fn_value.ref.fn.is_macro_like:
           not_allowed("Macro-like constructors are not supported")
 
         if class.constructor != NIL:
@@ -4052,11 +4154,19 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         # Set the constructor
         class.constructor = fn_value
+        if fn_value.kind == VkNativeFn:
+          let sig = lookup_native_signature(fn_value.ref.native_fn)
+          if sig != nil:
+            discard attach_native_constructor_signature(class, sig)
+          else:
+            class.constructor_native_signature_known = false
+            class.constructor_native_signature = nil
         let runtime_type = ensure_class_runtime_type(self, class)
         runtime_type.constructor = fn_value
 
         # Set the function's namespace to the class namespace
-        fn_value.ref.fn.ns = class.ns
+        if fn_value.kind == VkFunction:
+          fn_value.ref.fn.ns = class.ns
 
         # Return the function
         self.frame.push(fn_value)
@@ -4219,64 +4329,30 @@ proc exec*(self: ptr VirtualMachine): Value =
             if not f.scope_tracker.mappings.hasKey(child.name_key):
               f.scope_tracker.add(child.name_key)
 
-        let r = new_ref(VkFunction)
-        r.fn = f
-        let v = r.to_ref_value()
-
-        var define_in_ns = true
-        let main_module_scope =
-          self.cu != nil and self.cu.kind == CkModule and
-          self.frame != nil and self.frame.ns != nil and
-          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) == TRUE
-        if info.input.kind == VkGene and info.input.gene != nil:
-          let local_key = "local_def".to_key()
-          if info.input.gene.props.has_key(local_key) and info.input.gene.props[local_key] == TRUE:
-            define_in_ns = false
-          if info.input.gene.children.len > 0 and info.input.gene.children[0].kind == VkArray:
-            define_in_ns = false
-          elif main_module_scope:
-            let first = info.input.gene.children[0]
-            if first.kind in {VkSymbol, VkString} and first.str != "__init__":
-              define_in_ns = false
-        let imported_module_scope =
-          self.cu != nil and self.cu.kind == CkModule and
-          self.frame != nil and self.frame.ns != nil and
-          self.frame.ns.members.getOrDefault("__is_main__".to_key(), FALSE) != TRUE
-        if not define_in_ns and imported_module_scope:
-          define_in_ns = true
-
-        # Handle namespaced function definitions
-        if define_in_ns:
-          if info.input.kind == VkGene and info.input.gene.children.len > 0:
-            let first = info.input.gene.children[0]
-            case first.kind:
-            of VkComplexSymbol:
-              # n/m/f or $ns/f - define in target namespace
-              var ns = self.frame.ns
-              for i in 0..<first.ref.csymbol.len - 1:
-                let part = first.ref.csymbol[i]
-                if part == "":
-                  continue  # Skip empty parts
-                if part == "$ns" and i == 0:
-                  continue  # $ns means current namespace, already set
-                let key = part.to_key()
-                if ns.has_key(key):
-                  let nsval = ns[key]
-                  if nsval.kind == VkNamespace:
-                    ns = nsval.ref.ns
-                  else:
-                    raise new_exception(types.Exception, fmt"{part} is not a namespace")
-                else:
-                  raise new_exception(types.Exception, fmt"Namespace {part} not found")
-              ns[f.name.to_key()] = v
-            else:
-              # Simple name - define in current namespace
-              f.ns[f.name.to_key()] = v
+        let native_target =
+          if info.input.kind == VkGene:
+            native_declaration_target(info.input.gene, f.body,
+              "native function " & f.name)
           else:
-            # Fallback for other cases
-            f.ns[f.name.to_key()] = v
+            native_declaration_target(f.body, 0, "native function " & f.name)
+        if native_target != NIL:
+          let native_value = self.resolve_native_declaration_target(native_target,
+            "native function " & f.name)
+          let sig = build_native_signature_from_matcher(f.matcher, receives_self = false)
+          if sig != nil and self.cu != nil:
+            sig.module_path = self.cu.module_path
+          discard attach_native_function_signature(native_value, sig,
+            "native function " & f.name)
+          self.publish_function_definition_value(info, f, native_value)
+          self.frame.push(native_value)
+        else:
+          let r = new_ref(VkFunction)
+          r.fn = f
+          let v = r.to_ref_value()
 
-        self.frame.push(v)
+          self.publish_function_definition_value(info, f, v)
+
+          self.frame.push(v)
         {.pop.}
 
       of IkBlock:
