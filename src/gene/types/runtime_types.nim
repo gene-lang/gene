@@ -396,7 +396,8 @@ proc is_named_compatible(value: Value, expected_type: string): bool =
   of "Collection":
     return actual in ["Array", "Map", "HashMap", "HashSet"]
   of "Function":
-    return value.kind in {VkFunction, VkBlock, VkNativeFn}
+    return value.kind in {VkFunction, VkBlock, VkNativeFn, VkNativeMethod,
+      VkBoundMethod}
   else:
     discard
   if value.kind == VkClass:
@@ -491,7 +492,7 @@ proc type_expr_compatible(actual: RtType, expected: RtType): bool =
 proc function_value_compatible(value: Value, expected: RtType): bool =
   if expected.kind != RtFn:
     return false
-  if value.kind == VkNativeFn:
+  if value.kind in {VkNativeFn, VkNativeMethod, VkBoundMethod}:
     return true
   let matcher =
     if value.kind == VkFunction: value.ref.fn.matcher

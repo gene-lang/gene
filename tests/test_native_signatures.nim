@@ -48,6 +48,13 @@ proc param_at(params: Value, index: int): Value =
   check params.kind == VkArray
   array_data(params)[index]
 
+proc desc_at(sig: NativeSignature, type_id: TypeId): TypeDesc =
+  check sig != nil
+  check type_id != NO_TYPE_ID
+  check type_id.int >= 0
+  check type_id.int < sig.type_descriptors.len
+  sig.type_descriptors[type_id.int]
+
 suite "Native signatures":
   test "native_sig parses built-in signatures and rejects unknown types":
     let sig = native_sig("[n: Int label: String] -> (Int | Nil)")
@@ -63,6 +70,52 @@ suite "Native signatures":
       discard native_sig("[user: User] -> Int")
     )
     check message.contains("native_sig only accepts built-in types")
+
+  test "stdlib type retrofits annotate callback-shaped collection methods at bootstrap":
+    init_all()
+
+    let array_map = App.app.array_class.ref.class.get_method("map")
+    check array_map != nil
+    check array_map.native_signature_known
+    check array_map.native_signature != nil
+    check array_map.native_signature.receives_self
+    check array_map.native_signature.params.len == 1
+    check array_map.native_signature.param_names == @["callback"]
+
+    let callback_desc = desc_at(array_map.native_signature,
+      array_map.native_signature.params[0].type_id)
+    check callback_desc.kind == TdkFn
+    check callback_desc.params.len == 1
+    check callback_desc.params[0].type_id == BUILTIN_TYPE_ANY_ID
+    check callback_desc.ret == BUILTIN_TYPE_ANY_ID
+
+    let array_return_desc = desc_at(array_map.native_signature,
+      array_map.native_signature.return_type_id)
+    check array_return_desc.kind == TdkApplied
+    check array_return_desc.ctor == "Array"
+    check array_return_desc.args == @[BUILTIN_TYPE_ANY_ID]
+
+    let array_filter = App.app.array_class.ref.class.get_method("filter")
+    check array_filter != nil
+    let predicate_desc = desc_at(array_filter.native_signature,
+      array_filter.native_signature.params[0].type_id)
+    check predicate_desc.kind == TdkFn
+    check predicate_desc.ret == BUILTIN_TYPE_BOOL_ID
+
+    let map_reduce = App.app.map_class.ref.class.get_method("reduce")
+    check map_reduce != nil
+    let reducer_desc = desc_at(map_reduce.native_signature,
+      map_reduce.native_signature.params[1].type_id)
+    check reducer_desc.kind == TdkFn
+    check reducer_desc.params.len == 3
+
+    let mapped = VM.exec("""
+      ([1 2] .map (fn [value: Any] -> Any
+        (* value 2)))
+    """, "stdlib_collection_type_retrofit_callback.gene")
+    check mapped.kind == VkArray
+    check array_data(mapped)[0].to_int() == 2
+    check array_data(mapped)[1].to_int() == 4
 
   test "native method signature overload prefixes receiver ABI":
     init_all()

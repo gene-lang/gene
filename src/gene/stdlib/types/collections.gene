@@ -1,0 +1,12 @@
+# Native type retrofits for collection methods whose signatures reference
+# user-visible generic classes or callable shapes.
+
+($assign-method-type! Array "each" [callback: (Fn [Any] -> Any)] -> (Array Any))
+($assign-method-type! Array "map" [callback: (Fn [Any] -> Any)] -> (Array Any))
+($assign-method-type! Array "filter" [predicate: (Fn [Any] -> Bool)] -> (Array Any))
+($assign-method-type! Array "reduce" [initial: Any reducer: (Fn [Any Any] -> Any)] -> Any)
+
+($assign-method-type! Map "each" [callback: (Fn [Any Any] -> Any)] -> (Map Any Any))
+($assign-method-type! Map "map" [callback: (Fn [Any Any] -> Any)] -> (Map Any Any))
+($assign-method-type! Map "filter" [predicate: (Fn [Any Any] -> Bool)] -> (Map Any Any))
+($assign-method-type! Map "reduce" [initial: Any reducer: (Fn [Any Any Any] -> Any)] -> Any)
