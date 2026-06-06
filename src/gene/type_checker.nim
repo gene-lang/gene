@@ -2156,6 +2156,181 @@ proc native_signature_for_method(meth: Method): NativeSignature =
     return lookup_native_signature(meth.callable.ref.native_fn)
   nil
 
+proc native_signature_for_value(value: Value): NativeSignature =
+  if value.kind == VkNativeFn:
+    return lookup_native_signature(value.ref.native_fn)
+  nil
+
+proc native_signature_for_constructor(cls: Class): NativeSignature =
+  if cls == nil:
+    return nil
+  if cls.constructor_native_signature != nil:
+    return cls.constructor_native_signature
+  let ctor = cls.get_constructor()
+  if ctor.kind == VkNativeFn:
+    return lookup_native_signature(ctor.ref.native_fn)
+  nil
+
+proc runtime_global_value(name: string): Value =
+  if name.len == 0 or App.kind != VkApplication:
+    return NIL
+  let key = name.to_key()
+  if App.app.global_ns.kind == VkNamespace:
+    let global_value = App.app.global_ns.ref.ns[key]
+    if global_value != NIL:
+      return global_value
+  if App.app.gene_ns.kind == VkNamespace:
+    let gene_value = App.app.gene_ns.ref.ns[key]
+    if gene_value != NIL:
+      return gene_value
+  NIL
+
+proc runtime_member_value(target: Value, name: string): Value =
+  if target == NIL or name.len == 0:
+    return NIL
+  let key = name.to_key()
+  case target.kind
+  of VkNamespace:
+    target.ref.ns[key]
+  of VkClass:
+    let member_value = target.ref.class.get_member(key)
+    if member_value != NIL:
+      return member_value
+    if target.ref.class.ns != nil:
+      return target.ref.class.ns[key]
+    NIL
+  else:
+    NIL
+
+proc runtime_value_for_name(name: Value): Value =
+  case name.kind
+  of VkSymbol, VkString:
+    runtime_global_value(name.str)
+  of VkComplexSymbol:
+    let parts = name.ref.csymbol
+    if parts.len == 0:
+      return NIL
+    var current = runtime_global_value(parts[0])
+    for i in 1..<parts.len:
+      if current == NIL:
+        return NIL
+      if parts[i].startsWith("."):
+        return NIL
+      current = runtime_member_value(current, parts[i])
+    current
+  else:
+    NIL
+
+proc runtime_name_shadowed_by_scope(self: TypeChecker, name: Value): bool =
+  case name.kind
+  of VkSymbol, VkString:
+    self.lookup(name.str) != nil
+  of VkComplexSymbol:
+    let parts = name.ref.csymbol
+    parts.len > 0 and self.lookup(parts[0]) != nil
+  else:
+    false
+
+proc runtime_name_to_string(name: Value): string =
+  case name.kind
+  of VkSymbol, VkString:
+    name.str
+  of VkComplexSymbol:
+    name.ref.csymbol.join("/")
+  else:
+    "<native>"
+
+proc report_native_signature_arity(self: TypeChecker, msg: string) =
+  if self.strict:
+    raise new_exception(types.Exception, msg)
+  self.warn("Warning: " & msg)
+
+proc check_native_signature_call(self: TypeChecker, sig: NativeSignature,
+                                 display_name: string,
+                                 args: seq[Value],
+                                 props: Table[Key, Value],
+                                 context: string): TypeExpr =
+  if sig == nil:
+    return ANY_TYPE
+
+  if sig.params.len == 0 and sig.return_type_id in [NO_TYPE_ID, BUILTIN_TYPE_ANY_ID]:
+    return ANY_TYPE
+
+  if args.len < sig.arity_min:
+    self.report_native_signature_arity(
+      "Type error: too few positional arguments for " & display_name &
+      " (expected " & $sig.arity_min & ", got " & $args.len & ") in " & context)
+  elif sig.arity_max >= 0 and args.len > sig.arity_max:
+    self.report_native_signature_arity(
+      "Type error: too many positional arguments for " & display_name &
+      " (expected " & $sig.arity_max & ", got " & $args.len & ") in " & context)
+
+  var pos_params: seq[ParamType] = @[]
+  var kw_params = initTable[string, ParamType]()
+  var kw_rest = ParamType(kind: CpkKeywordRest, keyword_name: "", typ: ANY_TYPE)
+  var has_kw_rest = false
+  for param in sig.params:
+    let param_type = ParamType(
+      kind: param.kind,
+      keyword_name: param.keyword_name,
+      typ: self.type_expr_from_type_id(param.type_id, sig.type_descriptors))
+    case param.kind
+    of CpkPositional, CpkPositionalRest:
+      pos_params.add(param_type)
+    of CpkKeyword:
+      kw_params[param.keyword_name] = param_type
+    of CpkKeywordRest:
+      kw_rest = param_type
+      has_kw_rest = true
+
+  let pos_count = args.len
+  let rest_index = rest_param_index(pos_params)
+  if rest_index < 0:
+    let check_count = min(pos_count, pos_params.len)
+    for i in 0..<check_count:
+      self.check_expected_arg(pos_params[i].typ, args[i], context)
+  else:
+    let prefix_count = rest_index
+    let suffix_count = pos_params.len - rest_index - 1
+    let prefix_check_count = min(pos_count, prefix_count)
+    for i in 0..<prefix_check_count:
+      self.check_expected_arg(pos_params[i].typ, args[i], context)
+
+    let available_suffix = min(suffix_count, max(0, pos_count - prefix_count))
+    if available_suffix > 0:
+      let suffix_param_start = pos_params.len - available_suffix
+      let suffix_arg_start = pos_count - available_suffix
+      for i in 0..<available_suffix:
+        self.check_expected_arg(pos_params[suffix_param_start + i].typ,
+          args[suffix_arg_start + i], context)
+
+    let rest_start = min(prefix_count, pos_count)
+    let rest_end = pos_count - available_suffix
+    if rest_end > rest_start:
+      let elem_type = self.rest_element_type(pos_params[rest_index])
+      for i in rest_start..<rest_end:
+        self.check_expected_arg(elem_type, args[i], context)
+
+  for k, value in props:
+    let key_name = key_to_string(k)
+    if key_name.startsWith("..."):
+      discard self.check_expr(value)
+    elif kw_params.hasKey(key_name):
+      self.check_expected_arg(kw_params[key_name].typ, value, context)
+    elif has_kw_rest:
+      self.check_expected_arg(kw_rest.typ, value, context)
+    else:
+      let msg = "Type error: unexpected keyword argument '" & key_name &
+        "' for " & display_name & " in " & context
+      if self.strict:
+        raise new_exception(types.Exception, msg)
+      else:
+        self.warn("Warning: " & msg)
+
+  if sig.return_type_id == NO_TYPE_ID or sig.return_type_id == BUILTIN_TYPE_ANY_ID:
+    return ANY_TYPE
+  self.resolve_self(self.type_expr_from_type_id(sig.return_type_id, sig.type_descriptors))
+
 proc runtime_class_for_type(self: TypeChecker, recv_type: TypeExpr): Class =
   let rt = self.resolve(recv_type)
   var class_name = ""
@@ -2197,51 +2372,8 @@ proc check_native_method_call(self: TypeChecker, recv_type: TypeExpr, method_nam
   if sig == nil:
     return ANY_TYPE
 
-  if sig.params.len == 0 and sig.return_type_id in [NO_TYPE_ID, BUILTIN_TYPE_ANY_ID]:
-    return ANY_TYPE
-
-  if args.len < sig.arity_min:
-    let msg = "Type error: too few positional arguments for " & runtime_class.name & "." &
-      method_name & " (expected " & $sig.arity_min & ", got " & $args.len & ") in " & context
-    if self.strict:
-      raise new_exception(types.Exception, msg)
-    else:
-      self.warn("Warning: " & msg)
-  elif sig.arity_max >= 0 and args.len > sig.arity_max:
-    let msg = "Type error: too many positional arguments for " & runtime_class.name & "." &
-      method_name & " (expected " & $sig.arity_max & ", got " & $args.len & ") in " & context
-    if self.strict:
-      raise new_exception(types.Exception, msg)
-    else:
-      self.warn("Warning: " & msg)
-
-  let check_count = min(args.len, sig.params.len)
-  for i in 0..<check_count:
-    let arg_type = self.check_expr(args[i])
-    let param = sig.params[i]
-    if param.kind != CpkPositional:
-      continue
-    if param.type_id == NO_TYPE_ID or param.type_id == BUILTIN_TYPE_ANY_ID:
-      continue
-    let param_name =
-      if i < sig.param_names.len and sig.param_names[i].len > 0: sig.param_names[i]
-      else: "argument " & $(i + 1)
-    let expected_type = self.type_expr_from_type_id(param.type_id, sig.type_descriptors)
-    let arg_context = context & " " & runtime_class.name & "." & method_name & " arg '" & param_name & "'"
-    if self.strict:
-      self.unify(expected_type, arg_type, arg_context)
-    else:
-      try:
-        self.unify(expected_type, arg_type, arg_context)
-      except CatchableError as e:
-        self.warn("Warning: " & e.msg)
-
-  for _, value in props:
-    discard self.check_expr(value)
-
-  if sig.return_type_id == NO_TYPE_ID or sig.return_type_id == BUILTIN_TYPE_ANY_ID:
-    return ANY_TYPE
-  return self.resolve_self(self.type_expr_from_type_id(sig.return_type_id, sig.type_descriptors))
+  self.check_native_signature_call(sig, runtime_class.name & "." & method_name,
+    args, props, context)
 
 proc check_method_call(self: TypeChecker, recv_type: TypeExpr, method_name: string, args: seq[Value], props: Table[Key, Value], context: string): TypeExpr =
   if method_name.ends_with("!"):
@@ -4023,6 +4155,16 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
             let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
             discard self.check_call(cls.ctor_type, args, gene.props, "new")
           return TypeExpr(kind: TkNamed, name: class_val.str)
+        let runtime_class_value = runtime_value_for_name(class_val)
+        if runtime_class_value.kind == VkClass:
+          let runtime_class = runtime_class_value.ref.class
+          let sig = native_signature_for_constructor(runtime_class)
+          if sig != nil:
+            let args = if gene.children.len > 1: gene.children[1..^1] else: @[]
+            discard self.check_native_signature_call(sig,
+              runtime_class.name & ".ctor", args, gene.props, "new")
+          if runtime_class.name.len > 0:
+            return TypeExpr(kind: TkNamed, name: runtime_class.name)
         return ANY_TYPE
       of "new!":
         raise new_exception(types.Exception, "Type error: macro-like constructors are not supported; use (new Class ...)")
@@ -4075,6 +4217,15 @@ proc check_expr(self: TypeChecker, v: Value): TypeExpr =
         discard
 
     # Function call
+    if gene.`type`.kind in {VkSymbol, VkString, VkComplexSymbol} and
+       not self.runtime_name_shadowed_by_scope(gene.`type`):
+      let runtime_callee = runtime_value_for_name(gene.`type`)
+      let sig = native_signature_for_value(runtime_callee)
+      if sig != nil:
+        let display_name = runtime_name_to_string(gene.`type`)
+        return self.check_native_signature_call(sig, display_name,
+          gene.children, gene.props, "native call " & display_name)
+
     let callee_type = self.check_expr(gene.`type`)
     return self.check_call(callee_type, gene.children, gene.props, "call")
   else:

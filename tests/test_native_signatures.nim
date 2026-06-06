@@ -2,6 +2,8 @@ import unittest, strutils
 
 import ./helpers
 import ../src/gene/native/trampoline
+import ../src/gene/parser
+import ../src/gene/type_checker as tc
 import ../src/gene/types except Exception
 import ../src/gene/vm
 
@@ -23,6 +25,20 @@ proc expect_error(action: proc() {.closure.}): string =
     fail()
   except CatchableError as e:
     result = e.msg
+
+proc expect_static_error(code: string): string =
+  let checker = tc.new_type_checker(strict = true, module_filename = "native_static.gene")
+  try:
+    for node in read_all(code):
+      checker.type_check_node(node)
+    fail()
+  except CatchableError as e:
+    result = e.msg
+
+proc expect_static_ok(code: string) =
+  let checker = tc.new_type_checker(strict = true, module_filename = "native_static.gene")
+  for node in read_all(code):
+    checker.type_check_node(node)
 
 suite "Native signatures":
   test "native_sig parses built-in signatures and rejects unknown types":
@@ -155,6 +171,26 @@ suite "Native signatures":
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
 
+  test "static checker consumes standalone native function signatures":
+    init_all()
+    let fn = NativeFn(native_identity)
+    App.app.global_ns.ref.ns["staticNativeEcho".to_key()] = fn.to_value()
+    register_native_signature(fn, native_sig("[n: Int] -> Int"))
+    defer:
+      invalidate_native_signature(fn)
+
+    expect_static_ok("""(staticNativeEcho 9)""")
+
+    let arg_message = expect_static_error("""(staticNativeEcho "bad")""")
+    check arg_message.contains("expected Int")
+    check arg_message.contains("got String")
+
+    let ret_message = expect_static_error("""
+      (var x: String (staticNativeEcho 9))
+    """)
+    check ret_message.contains("expected String")
+    check ret_message.contains("got Int")
+
   test "$assign-ctor-type attaches and enforces a native constructor signature":
     init_all()
     let cls = new_class("AssignCtorSigTest")
@@ -181,3 +217,23 @@ suite "Native signatures":
     )
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
+
+  test "static checker consumes native constructor signatures":
+    init_all()
+    let cls = new_class("StaticNativeCtorSigTest")
+    cls.def_native_constructor(NativeFn(native_identity),
+      native_sig("[n: Int] -> Int"))
+    let cls_ref = new_ref(VkClass)
+    cls_ref.class = cls
+    App.app.global_ns.ref.ns["StaticNativeCtorSigTest".to_key()] =
+      cls_ref.to_ref_value()
+    defer:
+      invalidate_native_signature(NativeFn(native_identity))
+
+    expect_static_ok("""(new StaticNativeCtorSigTest 11)""")
+
+    let message = expect_static_error("""
+      (new StaticNativeCtorSigTest "bad")
+    """)
+    check message.contains("expected Int")
+    check message.contains("got String")
