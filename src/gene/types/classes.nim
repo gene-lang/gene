@@ -1,4 +1,4 @@
-import tables
+import strutils, tables
 
 import ./type_defs
 import ./core
@@ -219,6 +219,234 @@ proc is_a*(self: Value, class: Class): bool {.inline.} =
     else:
       my_class = my_class.parent
 
+proc native_type_id_for_class_value(class_value: Value, type_descs: var seq[TypeDesc]): TypeId =
+  if class_value == NIL or class_value.kind != VkClass:
+    return BUILTIN_TYPE_ANY_ID
+  let cls = class_value.ref.class
+  if cls.is_nil or cls.name.len == 0:
+    return BUILTIN_TYPE_ANY_ID
+  let builtin_id = lookup_builtin_type(cls.name)
+  if builtin_id != NO_TYPE_ID:
+    return builtin_id
+  let module_path =
+    if cls.module_path.len > 0: cls.module_path
+    else: BUILTIN_TYPE_MODULE_PATH
+  intern_type_desc(type_descs, TypeDesc(module_path: module_path,
+    kind: TdkNamed, name: cls.name))
+
+proc native_call_arg_type(type_id: TypeId, type_descs: seq[TypeDesc]): CallArgType =
+  if type_id == BUILTIN_TYPE_INT_ID:
+    return CatInt64
+  if type_id == BUILTIN_TYPE_FLOAT_ID:
+    return CatFloat64
+  if type_id >= 0 and type_id.int < type_descs.len:
+    let desc = type_descs[type_id.int]
+    if desc.kind == TdkNamed:
+      case desc.name
+      of "Int": return CatInt64
+      of "Float": return CatFloat64
+      else: discard
+  CatValue
+
+proc native_call_return_type(type_id: TypeId, type_descs: seq[TypeDesc]): CallReturnType =
+  if type_id == BUILTIN_TYPE_INT_ID:
+    return CrtInt64
+  if type_id == BUILTIN_TYPE_FLOAT_ID:
+    return CrtFloat64
+  if type_id >= 0 and type_id.int < type_descs.len:
+    let desc = type_descs[type_id.int]
+    if desc.kind == TdkNamed:
+      case desc.name
+      of "Int": return CrtInt64
+      of "Float": return CrtFloat64
+      else: discard
+  CrtValue
+
+proc split_signature_items(input: string): seq[string] =
+  var current = ""
+  var depth = 0
+  for ch in input:
+    case ch
+    of '(':
+      depth.inc()
+      current.add(ch)
+    of ')':
+      depth.dec()
+      current.add(ch)
+    of ' ', '\t', '\n', '\r':
+      if depth == 0:
+        if current.len > 0:
+          result.add(current)
+          current = ""
+      else:
+        current.add(ch)
+    else:
+      current.add(ch)
+  if current.len > 0:
+    result.add(current)
+
+proc parse_builtin_native_type(type_expr: string, type_descs: var seq[TypeDesc]): TypeId =
+  let expr = type_expr.strip()
+  if expr.len == 0:
+    return BUILTIN_TYPE_ANY_ID
+  let builtin_id = lookup_builtin_type(expr)
+  if builtin_id != NO_TYPE_ID:
+    return builtin_id
+  if "|" in expr:
+    let union_expr =
+      if expr.startsWith("(") and expr.endsWith(")"): expr[1..^2].strip()
+      else: expr
+    var members: seq[TypeId] = @[]
+    for part in union_expr.split("|"):
+      members.add(parse_builtin_native_type(part, type_descs))
+    return intern_type_desc(type_descs, TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH,
+      kind: TdkUnion, members: members))
+  if expr.startsWith("(") and expr.endsWith(")"):
+    let inner = expr[1..^2].strip()
+    let parts = split_signature_items(inner)
+    if parts.len == 0:
+      not_allowed("native_sig has empty applied type")
+    let ctor_id = lookup_builtin_type(parts[0])
+    if ctor_id == NO_TYPE_ID:
+      not_allowed("native_sig only accepts built-in types, got " & parts[0])
+    var args: seq[TypeId] = @[]
+    for i in 1..<parts.len:
+      args.add(parse_builtin_native_type(parts[i], type_descs))
+    return intern_type_desc(type_descs, TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH,
+      kind: TdkApplied, ctor: parts[0], args: args))
+  not_allowed("native_sig only accepts built-in types, got " & expr)
+  BUILTIN_TYPE_ANY_ID
+
+proc native_signature_with_receiver(sig: NativeSignature, receives_self: bool): NativeSignature =
+  if sig == nil:
+    return nil
+  var abi_args: seq[CallArgType] = @[]
+  if receives_self:
+    abi_args.add(CatValue)
+  abi_args.add(sig.abi_arg_types)
+  NativeSignature(
+    params: sig.params,
+    param_names: sig.param_names,
+    return_type_id: sig.return_type_id,
+    type_descriptors: sig.type_descriptors,
+    module_path: sig.module_path,
+    receives_self: receives_self,
+    has_type_annotations: sig.has_type_annotations,
+    is_variadic: sig.is_variadic,
+    arity_min: sig.arity_min,
+    arity_max: sig.arity_max,
+    abi_arg_types: abi_args,
+    abi_return_type: sig.abi_return_type)
+
+proc native_sig*(signature: string): NativeSignature =
+  let arrow = signature.find("->")
+  let params_part =
+    if arrow >= 0: signature[0..<arrow].strip()
+    else: signature.strip()
+  let return_part =
+    if arrow >= 0: signature[(arrow + 2)..^1].strip()
+    else: "Any"
+  if not params_part.startsWith("[") or not params_part.endsWith("]"):
+    not_allowed("native_sig expects [params] -> Return")
+
+  var type_descs = builtin_type_descs()
+  var params: seq[CallableParamDesc] = @[]
+  var param_names: seq[string] = @[]
+  var abi_args: seq[CallArgType] = @[]
+  var has_annotations = false
+
+  let tokens = split_signature_items(params_part[1..^2].strip())
+  var i = 0
+  while i < tokens.len:
+    var name = "argument " & $(params.len + 1)
+    var type_token = ""
+    let token = tokens[i]
+    if token.endsWith(":"):
+      name = token[0..^2]
+      i.inc()
+      if i >= tokens.len:
+        not_allowed("native_sig parameter '" & name & "' is missing a type")
+      type_token = tokens[i]
+    elif token.contains(":"):
+      let parts = token.split(":", maxsplit = 1)
+      name = parts[0]
+      if parts.len > 1 and parts[1].len > 0:
+        type_token = parts[1]
+      else:
+        i.inc()
+        if i >= tokens.len:
+          not_allowed("native_sig parameter '" & name & "' is missing a type")
+        type_token = tokens[i]
+    else:
+      type_token = token
+
+    let type_id = parse_builtin_native_type(type_token, type_descs)
+    params.add(CallableParamDesc(kind: CpkPositional,
+      keyword_name: "", type_id: type_id))
+    param_names.add(name)
+    abi_args.add(native_call_arg_type(type_id, type_descs))
+    if type_id != BUILTIN_TYPE_ANY_ID and type_id != NO_TYPE_ID:
+      has_annotations = true
+    i.inc()
+
+  let return_type_id = parse_builtin_native_type(return_part, type_descs)
+  if return_type_id != BUILTIN_TYPE_ANY_ID and return_type_id != NO_TYPE_ID:
+    has_annotations = true
+
+  NativeSignature(
+    params: params,
+    param_names: param_names,
+    return_type_id: return_type_id,
+    type_descriptors: type_descs,
+    module_path: BUILTIN_TYPE_MODULE_PATH,
+    receives_self: false,
+    has_type_annotations: has_annotations,
+    is_variadic: false,
+    arity_min: params.len,
+    arity_max: params.len,
+    abi_arg_types: abi_args,
+    abi_return_type: native_call_return_type(return_type_id, type_descs))
+
+proc build_native_signature_from_legacy*(params: openArray[(string, Value)],
+                                         returns: Value = NIL,
+                                         receives_self = true,
+                                         module_path = BUILTIN_TYPE_MODULE_PATH): NativeSignature =
+  var type_descs = builtin_type_descs()
+  var param_descs: seq[CallableParamDesc] = @[]
+  var param_names: seq[string] = @[]
+  var has_annotations = false
+  var abi_args: seq[CallArgType] = @[]
+
+  if receives_self:
+    abi_args.add(CatValue)
+
+  for p in params:
+    let type_id = native_type_id_for_class_value(p[1], type_descs)
+    param_descs.add(CallableParamDesc(kind: CpkPositional,
+      keyword_name: "", type_id: type_id))
+    param_names.add(p[0])
+    abi_args.add(native_call_arg_type(type_id, type_descs))
+    if type_id != BUILTIN_TYPE_ANY_ID and type_id != NO_TYPE_ID:
+      has_annotations = true
+
+  let return_type_id = native_type_id_for_class_value(returns, type_descs)
+  if return_type_id != BUILTIN_TYPE_ANY_ID and return_type_id != NO_TYPE_ID:
+    has_annotations = true
+
+  NativeSignature(
+    params: param_descs,
+    param_names: param_names,
+    return_type_id: return_type_id,
+    type_descriptors: type_descs,
+    module_path: module_path,
+    receives_self: receives_self,
+    has_type_annotations: has_annotations,
+    is_variadic: false,
+    arity_min: param_descs.len,
+    arity_max: param_descs.len,
+    abi_arg_types: abi_args,
+    abi_return_type: native_call_return_type(return_type_id, type_descs))
+
 proc def_native_method*(self: Class, name: string, f: NativeFn,
                         params: openArray[(string, Value)],
                         returns: Value = NIL) =
@@ -227,13 +455,34 @@ proc def_native_method*(self: Class, name: string, f: NativeFn,
   var native_params: seq[(string, Value)] = @[]
   for p in params:
     native_params.add((p[0], p[1]))
+  let sig = build_native_signature_from_legacy(native_params, returns,
+    receives_self = true, module_path = self.module_path)
+  register_native_signature(f, sig)
   self.methods[name.to_key()] = Method(
     class: self,
     name: name,
     callable: r.to_ref_value(),
     native_signature_known: true,
+    native_signature: sig,
     native_param_types: native_params,
     native_return_type: returns,
+  )
+  self.version.inc()
+
+proc def_native_method*(self: Class, name: string, f: NativeFn,
+                        sig: NativeSignature) =
+  let r = new_ref(VkNativeFn)
+  r.native_fn = f
+  let method_sig = native_signature_with_receiver(sig, receives_self = true)
+  register_native_signature(f, method_sig)
+  self.methods[name.to_key()] = Method(
+    class: self,
+    name: name,
+    callable: r.to_ref_value(),
+    native_signature_known: method_sig != nil,
+    native_signature: method_sig,
+    native_param_types: @[],
+    native_return_type: NIL,
   )
   self.version.inc()
 
@@ -246,6 +495,7 @@ proc def_native_method*(self: Class, name: string, f: NativeFn) =
     name: name,
     callable: r.to_ref_value(),
     native_signature_known: false,
+    native_signature: nil,
     native_param_types: native_params,
     native_return_type: NIL,
   )
@@ -273,6 +523,13 @@ proc def_native_constructor*(self: Class, f: NativeFn) =
   r.native_fn = f
   self.constructor = r.to_ref_value()
 
+proc def_native_constructor*(self: Class, f: NativeFn, sig: NativeSignature) =
+  let r = new_ref(VkNativeFn)
+  r.native_fn = f
+  let ctor_sig = native_signature_with_receiver(sig, receives_self = false)
+  register_native_signature(f, ctor_sig)
+  self.constructor = r.to_ref_value()
+
 proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
   let r = new_ref(VkNativeFn)
   r.native_fn = f
@@ -282,6 +539,7 @@ proc def_native_macro_method*(self: Class, name: string, f: NativeFn) =
     callable: r.to_ref_value(),
     is_macro: true,
     native_signature_known: false,
+    native_signature: nil,
     native_param_types: @[],
     native_return_type: NIL,
   )
@@ -301,6 +559,7 @@ proc new_method*(class: Class, name: string, fn: Function): Method =
     name: name,
     callable: r.to_ref_value(),
     native_signature_known: false,
+    native_signature: nil,
     native_param_types: @[],
     native_return_type: NIL,
   )
@@ -312,6 +571,7 @@ proc clone*(self: Method): Method =
     callable: self.callable,
     is_macro: self.is_macro,
     native_signature_known: self.native_signature_known,
+    native_signature: self.native_signature,
     native_param_types: self.native_param_types,
     native_return_type: self.native_return_type,
   )

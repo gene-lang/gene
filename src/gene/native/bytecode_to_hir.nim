@@ -438,21 +438,26 @@ proc emitMethodCall(ctx: ConversionContext, obj: StackSlot, methodName: string, 
     callArgs[i + 1] = args[i]
 
   var argTypes: seq[CallArgType] = @[slotArgType(obj)]
-  if meth.native_param_types.len == args.len:
+  if meth.native_signature != nil and meth.native_signature.abi_arg_types.len == args.len + 1:
+    argTypes = meth.native_signature.abi_arg_types
+  elif meth.native_param_types.len == args.len:
     for i, item in meth.native_param_types:
       argTypes.add(mapMethodParamToArgType(item[1], args[i]))
   else:
     for arg in args:
       argTypes.add(slotArgType(arg))
 
-  var desiredType = classValueToHirType(meth.native_return_type)
+  var retKind =
+    if meth.native_signature != nil: meth.native_signature.abi_return_type
+    else:
+      let desiredLegacyType = classValueToHirType(meth.native_return_type)
+      case desiredLegacyType
+      of HtI64: CrtInt64
+      of HtF64: CrtFloat64
+      else: CrtValue
+  var desiredType = callReturnTypeToHir(retKind)
   if desiredType == HtBool:
     desiredType = HtValue
-
-  let retKind = case desiredType
-    of HtI64: CrtInt64
-    of HtF64: CrtFloat64
-    else: CrtValue
   ctx.emitResolvedCall(callable, callArgs, argTypes, retKind, desiredType)
 
 proc emitCall(ctx: ConversionContext, fnSlot: StackSlot, args: seq[StackSlot]) =

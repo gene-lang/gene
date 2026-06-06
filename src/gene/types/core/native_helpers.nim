@@ -83,13 +83,32 @@ proc create_gene_args*(args: ptr UncheckedArray[Value], arg_count: int, has_keyw
     gene_args.gene.children.add(args[i])
   return gene_args
 
-# Helper for calling native functions with proper casting
-proc call_native_fn*(fn: NativeFn, vm: ptr VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
-  ## Helper to call native function with proper array casting
+type VmNativeCallHook* = proc(fn: NativeFn, vm: ptr VirtualMachine,
+                             args: ptr UncheckedArray[Value],
+                             arg_count: int,
+                             has_keyword_args: bool): Value {.gcsafe, nimcall.}
+
+var vm_native_call_hook*: VmNativeCallHook
+
+proc set_vm_native_call_hook*(hook: VmNativeCallHook) {.inline.} =
+  vm_native_call_hook = hook
+
+proc call_raw_native_fn*(fn: NativeFn, vm: ptr VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
+  ## Helper to call native function with proper array casting, without VM hooks.
   if args.len == 0:
     return fn(vm, nil, 0, has_keyword_args)
   else:
     return fn(vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len, has_keyword_args)
+
+# Helper for calling native functions with proper casting
+proc call_native_fn*(fn: NativeFn, vm: ptr VirtualMachine, args: openArray[Value], has_keyword_args: bool = false): Value {.inline.} =
+  ## Helper to call native function with proper array casting and VM hooks.
+  if vm_native_call_hook.isNil:
+    return call_raw_native_fn(fn, vm, args, has_keyword_args)
+  if args.len == 0:
+    return vm_native_call_hook(fn, vm, nil, 0, has_keyword_args)
+  vm_native_call_hook(fn, vm, cast[ptr UncheckedArray[Value]](args[0].unsafeAddr),
+    args.len, has_keyword_args)
 
 type VmExecCallableHook* = proc(vm: ptr VirtualMachine, callable: Value, args: seq[Value]): Value {.nimcall.}
 type VmExecCallableWithSelfHook* = proc(vm: ptr VirtualMachine, callable: Value, self_value: Value, args: seq[Value]): Value {.nimcall.}

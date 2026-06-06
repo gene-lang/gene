@@ -17,6 +17,11 @@ proc lookup_native_sig*(fn: NativeFn, sig: var NativeFnSig): bool =
   if key in native_fn_sigs:
     sig = native_fn_sigs[key]
     return true
+  let native_sig = lookup_native_signature(fn)
+  if native_sig != nil and native_sig.abi_arg_types.len > 0:
+    sig = NativeFnSig(argTypes: native_sig.abi_arg_types,
+                      returnType: native_sig.abi_return_type)
+    return true
   false
 
 proc release_descriptors*(descs: seq[CallDescriptor]) =

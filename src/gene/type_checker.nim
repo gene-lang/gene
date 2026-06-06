@@ -2110,35 +2110,51 @@ proc bind_receiver_type(self: TypeChecker, t: TypeExpr, recv_type: TypeExpr): Ty
   of TkVar:
     TypeExpr(kind: TkVar, id: rt.id)
 
-proc native_type_from_class_value(self: TypeChecker, class_value: Value): TypeExpr =
-  if class_value == NIL or class_value.kind != VkClass:
+proc type_expr_from_type_id(self: TypeChecker, type_id: TypeId,
+                            type_descs: seq[TypeDesc], depth = 0): TypeExpr =
+  if type_id == NO_TYPE_ID or depth > 64:
     return ANY_TYPE
-  let cls = class_value.ref.class
-  if cls.is_nil or cls.name.len == 0:
+  if type_descs.len == 0 or type_id < 0 or type_id.int >= type_descs.len:
     return ANY_TYPE
-  if cls.name == "Array":
-    return TypeExpr(kind: TkApplied, ctor: "Array", args: @[ANY_TYPE])
-  if cls.name == "Map":
-    return TypeExpr(kind: TkApplied, ctor: "Map", args: @[ANY_TYPE, ANY_TYPE])
-  if cls.name == "HashMap":
-    return TypeExpr(kind: TkApplied, ctor: "HashMap", args: @[ANY_TYPE, ANY_TYPE])
-  if cls.name == "HashSet":
-    return TypeExpr(kind: TkApplied, ctor: "HashSet", args: @[ANY_TYPE])
-  if cls.name == "Option":
-    return TypeExpr(kind: TkApplied, ctor: "Option", args: @[ANY_TYPE])
-  if cls.name == "Result":
-    return TypeExpr(kind: TkApplied, ctor: "Result", args: @[ANY_TYPE, ANY_TYPE])
-  return TypeExpr(kind: TkNamed, name: cls.name)
+  let desc = type_descs[type_id.int]
+  case desc.kind
+  of TdkAny:
+    ANY_TYPE
+  of TdkNamed:
+    TypeExpr(kind: TkNamed, name: desc.name)
+  of TdkApplied:
+    var args: seq[TypeExpr] = @[]
+    for arg in desc.args:
+      args.add(self.type_expr_from_type_id(arg, type_descs, depth + 1))
+    TypeExpr(kind: TkApplied, ctor: desc.ctor, args: args)
+  of TdkUnion:
+    var members: seq[TypeExpr] = @[]
+    for member in desc.members:
+      members.add(self.type_expr_from_type_id(member, type_descs, depth + 1))
+    TypeExpr(kind: TkUnion, members: members)
+  of TdkFn:
+    var params: seq[ParamType] = @[]
+    for param in desc.params:
+      params.add(ParamType(
+        kind: param.kind,
+        keyword_name: param.keyword_name,
+        typ: self.type_expr_from_type_id(param.type_id, type_descs, depth + 1)))
+    TypeExpr(
+      kind: TkFn,
+      params: params,
+      ret: self.type_expr_from_type_id(desc.ret, type_descs, depth + 1),
+      effects: desc.effects)
+  of TdkVar:
+    TypeExpr(kind: TkVar, id: desc.var_id.int)
 
-proc class_matches_expected(actual_class: Class, expected_class: Class): bool =
-  if actual_class.is_nil or expected_class.is_nil:
-    return false
-  var current = actual_class
-  while current != nil:
-    if current == expected_class:
-      return true
-    current = current.parent
-  return false
+proc native_signature_for_method(meth: Method): NativeSignature =
+  if meth == nil:
+    return nil
+  if meth.native_signature != nil:
+    return meth.native_signature
+  if meth.callable.kind == VkNativeFn:
+    return lookup_native_signature(meth.callable.ref.native_fn)
+  nil
 
 proc runtime_class_for_type(self: TypeChecker, recv_type: TypeExpr): Class =
   let rt = self.resolve(recv_type)
@@ -2177,58 +2193,55 @@ proc check_native_method_call(self: TypeChecker, recv_type: TypeExpr, method_nam
   if runtime_method.is_nil:
     return ANY_TYPE
 
-  if runtime_method.native_param_types.len == 0 and runtime_method.native_return_type == NIL:
+  let sig = native_signature_for_method(runtime_method)
+  if sig == nil:
     return ANY_TYPE
 
-  let expected_count = runtime_method.native_param_types.len
-  if args.len < expected_count:
+  if sig.params.len == 0 and sig.return_type_id in [NO_TYPE_ID, BUILTIN_TYPE_ANY_ID]:
+    return ANY_TYPE
+
+  if args.len < sig.arity_min:
     let msg = "Type error: too few positional arguments for " & runtime_class.name & "." &
-      method_name & " (expected " & $expected_count & ", got " & $args.len & ") in " & context
+      method_name & " (expected " & $sig.arity_min & ", got " & $args.len & ") in " & context
     if self.strict:
       raise new_exception(types.Exception, msg)
     else:
       self.warn("Warning: " & msg)
-  elif args.len > expected_count:
+  elif sig.arity_max >= 0 and args.len > sig.arity_max:
     let msg = "Type error: too many positional arguments for " & runtime_class.name & "." &
-      method_name & " (expected " & $expected_count & ", got " & $args.len & ") in " & context
+      method_name & " (expected " & $sig.arity_max & ", got " & $args.len & ") in " & context
     if self.strict:
       raise new_exception(types.Exception, msg)
     else:
       self.warn("Warning: " & msg)
 
-  let check_count = min(args.len, expected_count)
+  let check_count = min(args.len, sig.params.len)
   for i in 0..<check_count:
     let arg_type = self.check_expr(args[i])
-    let param = runtime_method.native_param_types[i]
-    let expected_class_value = param[1]
-    if expected_class_value == NIL:
+    let param = sig.params[i]
+    if param.kind != CpkPositional:
       continue
-    let expected_class = if expected_class_value.kind == VkClass: expected_class_value.ref.class else: nil
-    let actual_class = self.runtime_class_for_type(arg_type)
-    let arg_context = context & " " & runtime_class.name & "." & method_name & " arg '" & param[0] & "'"
-    if not expected_class.is_nil and not actual_class.is_nil:
-      if not class_matches_expected(actual_class, expected_class):
-        let msg = "Type error: expected " & expected_class.name & ", got " & actual_class.name & " in " & arg_context
-        if self.strict:
-          raise new_exception(types.Exception, msg)
-        else:
-          self.warn("Warning: " & msg)
+    if param.type_id == NO_TYPE_ID or param.type_id == BUILTIN_TYPE_ANY_ID:
+      continue
+    let param_name =
+      if i < sig.param_names.len and sig.param_names[i].len > 0: sig.param_names[i]
+      else: "argument " & $(i + 1)
+    let expected_type = self.type_expr_from_type_id(param.type_id, sig.type_descriptors)
+    let arg_context = context & " " & runtime_class.name & "." & method_name & " arg '" & param_name & "'"
+    if self.strict:
+      self.unify(expected_type, arg_type, arg_context)
     else:
-      let expected_type = self.native_type_from_class_value(expected_class_value)
-      if self.strict:
+      try:
         self.unify(expected_type, arg_type, arg_context)
-      else:
-        try:
-          self.unify(expected_type, arg_type, arg_context)
-        except CatchableError as e:
-          self.warn("Warning: " & e.msg)
+      except CatchableError as e:
+        self.warn("Warning: " & e.msg)
 
   for _, value in props:
     discard self.check_expr(value)
 
-  if runtime_method.native_return_type == NIL:
+  if sig.return_type_id == NO_TYPE_ID or sig.return_type_id == BUILTIN_TYPE_ANY_ID:
     return ANY_TYPE
-  return self.resolve_self(self.native_type_from_class_value(runtime_method.native_return_type))
+  return self.resolve_self(self.type_expr_from_type_id(sig.return_type_id, sig.type_descriptors))
 
 proc check_method_call(self: TypeChecker, recv_type: TypeExpr, method_name: string, args: seq[Value], props: Table[Key, Value], context: string): TypeExpr =
   if method_name.ends_with("!"):

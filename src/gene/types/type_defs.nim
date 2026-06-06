@@ -576,6 +576,7 @@ type
     # public*: bool
     is_macro*: bool
     native_signature_known*: bool
+    native_signature*: NativeSignature
     native_param_types*: seq[(string, Value)]  # (param_name, class_value) for native methods
     native_return_type*: Value                  # class value; NIL means Any
 
@@ -670,6 +671,20 @@ type
     CrtInt64
     CrtFloat64
     CrtValue
+
+  NativeSignature* = ref object
+    params*: seq[CallableParamDesc]
+    param_names*: seq[string]
+    return_type_id*: TypeId
+    type_descriptors*: seq[TypeDesc]
+    module_path*: string
+    receives_self*: bool
+    has_type_annotations*: bool
+    is_variadic*: bool
+    arity_min*: int
+    arity_max*: int
+    abi_arg_types*: seq[CallArgType]
+    abi_return_type*: CallReturnType
 
   CallDescriptor* = object
     callable*: Value
@@ -1404,3 +1419,20 @@ include ./reference_types
 include ./memory
 
 include ./descriptors
+
+var native_signature_registry* = initTable[pointer, NativeSignature]()
+
+proc native_signature_key*(fn: NativeFn): pointer {.inline.} =
+  cast[pointer](fn)
+
+proc register_native_signature*(fn: NativeFn, sig: NativeSignature) {.inline.} =
+  if sig == nil:
+    native_signature_registry.del(native_signature_key(fn))
+  else:
+    native_signature_registry[native_signature_key(fn)] = sig
+
+proc lookup_native_signature*(fn: NativeFn): NativeSignature {.inline.} =
+  native_signature_registry.getOrDefault(native_signature_key(fn), nil)
+
+proc invalidate_native_signature*(fn: NativeFn) {.inline.} =
+  native_signature_registry.del(native_signature_key(fn))
