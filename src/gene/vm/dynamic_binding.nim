@@ -29,15 +29,22 @@ proc new_dyn_pointer_value(custom_class: Class, address: pointer): Value =
   data.materialize_hook = dyn_pointer_materialize
   new_custom_value(custom_class, data)
 
-proc dyn_pointer_address(value: Value): pointer =
+proc dyn_pointer_address(value: Value): tuple[valid: bool, address: pointer] =
   if value.kind == VkPointer:
-    return value.to_pointer()
+    return (true, value.to_pointer())
   if value.kind == VkCustom and value.ref != nil and value.ref.custom_data != nil and
       (value.ref.custom_data of DynPointerValueData):
-    return DynPointerValueData(value.ref.custom_data).address
-  nil
+    return (true, DynPointerValueData(value.ref.custom_data).address)
+  (false, nil)
 
 when not defined(gene_wasm):
+  proc dyn_library_finalize(data: CustomValue) {.gcsafe, raises: [].} =
+    let lib = DynLibraryValueData(data)
+    if lib.handle != nil:
+      {.cast(gcsafe).}:
+        unloadLib(lib.handle)
+      lib.handle = nil
+
   type
     CdeclI64Fn0 = proc(): int64 {.cdecl, gcsafe.}
     CdeclI64Fn1 = proc(a0: int64): int64 {.cdecl, gcsafe.}
@@ -59,11 +66,6 @@ when not defined(gene_wasm):
 
 var dyn_library_class: Class = nil
 var dyn_symbol_class: Class = nil
-const DynamicNativeSlotCount = 64
-var dynamic_native_bindings: array[DynamicNativeSlotCount, DynamicNativeBinding]
-var dynamic_native_bindings_lock: Lock
-
-initLock(dynamic_native_bindings_lock)
 
 proc call_dynamic_native_binding*(binding: DynamicNativeBinding,
                                   vm: ptr VirtualMachine,
@@ -71,170 +73,16 @@ proc call_dynamic_native_binding*(binding: DynamicNativeBinding,
                                   arg_count: int,
                                   has_keyword_args: bool): Value {.gcsafe.}
 
-proc dynamic_native_slot(slot: int, vm: ptr VirtualMachine,
-                         args: ptr UncheckedArray[Value], arg_count: int,
-                         has_keyword_args: bool): Value {.gcsafe.} =
-  if slot < 0 or slot >= DynamicNativeSlotCount:
-    not_allowed("dynamic native binding slot out of range: " & $slot)
-  var binding: DynamicNativeBinding
-  {.cast(gcsafe).}:
-    binding = dynamic_native_bindings[slot]
-  if binding == nil:
-    not_allowed("dynamic native binding slot is not initialized: " & $slot)
-  call_dynamic_native_binding(binding, vm, args, arg_count, has_keyword_args)
-
-template dynamicWrapper(name: untyped, slot: static[int]) =
-  proc name(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
-            arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    dynamic_native_slot(slot, vm, args, arg_count, has_keyword_args)
-
-dynamicWrapper(dynamic_native_0, 0)
-dynamicWrapper(dynamic_native_1, 1)
-dynamicWrapper(dynamic_native_2, 2)
-dynamicWrapper(dynamic_native_3, 3)
-dynamicWrapper(dynamic_native_4, 4)
-dynamicWrapper(dynamic_native_5, 5)
-dynamicWrapper(dynamic_native_6, 6)
-dynamicWrapper(dynamic_native_7, 7)
-dynamicWrapper(dynamic_native_8, 8)
-dynamicWrapper(dynamic_native_9, 9)
-dynamicWrapper(dynamic_native_10, 10)
-dynamicWrapper(dynamic_native_11, 11)
-dynamicWrapper(dynamic_native_12, 12)
-dynamicWrapper(dynamic_native_13, 13)
-dynamicWrapper(dynamic_native_14, 14)
-dynamicWrapper(dynamic_native_15, 15)
-dynamicWrapper(dynamic_native_16, 16)
-dynamicWrapper(dynamic_native_17, 17)
-dynamicWrapper(dynamic_native_18, 18)
-dynamicWrapper(dynamic_native_19, 19)
-dynamicWrapper(dynamic_native_20, 20)
-dynamicWrapper(dynamic_native_21, 21)
-dynamicWrapper(dynamic_native_22, 22)
-dynamicWrapper(dynamic_native_23, 23)
-dynamicWrapper(dynamic_native_24, 24)
-dynamicWrapper(dynamic_native_25, 25)
-dynamicWrapper(dynamic_native_26, 26)
-dynamicWrapper(dynamic_native_27, 27)
-dynamicWrapper(dynamic_native_28, 28)
-dynamicWrapper(dynamic_native_29, 29)
-dynamicWrapper(dynamic_native_30, 30)
-dynamicWrapper(dynamic_native_31, 31)
-dynamicWrapper(dynamic_native_32, 32)
-dynamicWrapper(dynamic_native_33, 33)
-dynamicWrapper(dynamic_native_34, 34)
-dynamicWrapper(dynamic_native_35, 35)
-dynamicWrapper(dynamic_native_36, 36)
-dynamicWrapper(dynamic_native_37, 37)
-dynamicWrapper(dynamic_native_38, 38)
-dynamicWrapper(dynamic_native_39, 39)
-dynamicWrapper(dynamic_native_40, 40)
-dynamicWrapper(dynamic_native_41, 41)
-dynamicWrapper(dynamic_native_42, 42)
-dynamicWrapper(dynamic_native_43, 43)
-dynamicWrapper(dynamic_native_44, 44)
-dynamicWrapper(dynamic_native_45, 45)
-dynamicWrapper(dynamic_native_46, 46)
-dynamicWrapper(dynamic_native_47, 47)
-dynamicWrapper(dynamic_native_48, 48)
-dynamicWrapper(dynamic_native_49, 49)
-dynamicWrapper(dynamic_native_50, 50)
-dynamicWrapper(dynamic_native_51, 51)
-dynamicWrapper(dynamic_native_52, 52)
-dynamicWrapper(dynamic_native_53, 53)
-dynamicWrapper(dynamic_native_54, 54)
-dynamicWrapper(dynamic_native_55, 55)
-dynamicWrapper(dynamic_native_56, 56)
-dynamicWrapper(dynamic_native_57, 57)
-dynamicWrapper(dynamic_native_58, 58)
-dynamicWrapper(dynamic_native_59, 59)
-dynamicWrapper(dynamic_native_60, 60)
-dynamicWrapper(dynamic_native_61, 61)
-dynamicWrapper(dynamic_native_62, 62)
-dynamicWrapper(dynamic_native_63, 63)
-
-proc dynamic_native_fn_for_slot(slot: int): NativeFn =
-  case slot
-  of 0: dynamic_native_0
-  of 1: dynamic_native_1
-  of 2: dynamic_native_2
-  of 3: dynamic_native_3
-  of 4: dynamic_native_4
-  of 5: dynamic_native_5
-  of 6: dynamic_native_6
-  of 7: dynamic_native_7
-  of 8: dynamic_native_8
-  of 9: dynamic_native_9
-  of 10: dynamic_native_10
-  of 11: dynamic_native_11
-  of 12: dynamic_native_12
-  of 13: dynamic_native_13
-  of 14: dynamic_native_14
-  of 15: dynamic_native_15
-  of 16: dynamic_native_16
-  of 17: dynamic_native_17
-  of 18: dynamic_native_18
-  of 19: dynamic_native_19
-  of 20: dynamic_native_20
-  of 21: dynamic_native_21
-  of 22: dynamic_native_22
-  of 23: dynamic_native_23
-  of 24: dynamic_native_24
-  of 25: dynamic_native_25
-  of 26: dynamic_native_26
-  of 27: dynamic_native_27
-  of 28: dynamic_native_28
-  of 29: dynamic_native_29
-  of 30: dynamic_native_30
-  of 31: dynamic_native_31
-  of 32: dynamic_native_32
-  of 33: dynamic_native_33
-  of 34: dynamic_native_34
-  of 35: dynamic_native_35
-  of 36: dynamic_native_36
-  of 37: dynamic_native_37
-  of 38: dynamic_native_38
-  of 39: dynamic_native_39
-  of 40: dynamic_native_40
-  of 41: dynamic_native_41
-  of 42: dynamic_native_42
-  of 43: dynamic_native_43
-  of 44: dynamic_native_44
-  of 45: dynamic_native_45
-  of 46: dynamic_native_46
-  of 47: dynamic_native_47
-  of 48: dynamic_native_48
-  of 49: dynamic_native_49
-  of 50: dynamic_native_50
-  of 51: dynamic_native_51
-  of 52: dynamic_native_52
-  of 53: dynamic_native_53
-  of 54: dynamic_native_54
-  of 55: dynamic_native_55
-  of 56: dynamic_native_56
-  of 57: dynamic_native_57
-  of 58: dynamic_native_58
-  of 59: dynamic_native_59
-  of 60: dynamic_native_60
-  of 61: dynamic_native_61
-  of 62: dynamic_native_62
-  of 63: dynamic_native_63
-  else:
-    not_allowed("dynamic native binding slot out of range: " & $slot)
-    dynamic_native_0
-
-proc allocate_dynamic_native_slot(binding: DynamicNativeBinding): tuple[slot: int, fn: NativeFn] =
-  {.cast(gcsafe).}:
-    acquire(dynamic_native_bindings_lock)
-    try:
-      for i in 0..<DynamicNativeSlotCount:
-        if dynamic_native_bindings[i] == nil:
-          dynamic_native_bindings[i] = binding
-          return (i, dynamic_native_fn_for_slot(i))
-    finally:
-      release(dynamic_native_bindings_lock)
-  not_allowed("dynamic native binding pool exhausted")
-  (-1, dynamic_native_0)
+proc dynamic_native_direct_call(vm: ptr VirtualMachine,
+                                args: ptr UncheckedArray[Value],
+                                arg_count: int,
+                                has_keyword_args: bool): Value {.gcsafe.} =
+  discard vm
+  discard args
+  discard arg_count
+  discard has_keyword_args
+  not_allowed("dynamic native bindings must be called through their VkNativeFn value")
+  NIL
 
 proc ensure_dyn_namespace(): Namespace =
   if App == NIL or App.kind != VkApplication:
@@ -535,11 +383,13 @@ proc dyn_load_native(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
         {.cast(gcsafe).}:
           let ns = ensure_dyn_classes()
           discard ns
-          return new_custom_value(dyn_library_class, DynLibraryValueData(
+          let data = DynLibraryValueData(
             handle: handle,
             requested_path: path_arg.str,
             resolved_path: candidate
-          ))
+          )
+          data.finalize_hook = dyn_library_finalize
+          return new_custom_value(dyn_library_class, data)
     not_allowed("[GENE.DYN.LOAD_FAILED] Failed to load dynamic library '" &
       path_arg.str & "'; tried: " & candidates.join(", "))
 
@@ -635,11 +485,11 @@ proc dyn_store_arg(value: Value, type_id: TypeId, sig: NativeSignature,
   of BUILTIN_TYPE_STRING_ID:
     dyn_store_cstring(value, slots, string_allocs, index, binding)
   of BUILTIN_TYPE_POINTER_ID:
-    let address = dyn_pointer_address(value)
+    let pointer_arg = dyn_pointer_address(value)
     if value == NIL:
       slots[index] = 0
-    elif address != nil:
-      slots[index] = cast[int64](address)
+    elif pointer_arg.valid:
+      slots[index] = cast[int64](pointer_arg.address)
     else:
       not_allowed(dyn_arg_error(binding, index, "Pointer", value))
   else:
@@ -773,10 +623,9 @@ proc make_dynamic_native_value*(symbol_value: Value, sig: NativeSignature,
     abi: normalized_abi,
     sig: sig
   )
-  let allocated = allocate_dynamic_native_slot(binding)
-  binding.fn = allocated.fn
+  binding.fn = dynamic_native_direct_call
   let r = new_ref(VkNativeFn)
-  r.native_fn = allocated.fn
+  r.native_fn = dynamic_native_direct_call
   r.native_binding = binding
   r.to_ref_value()
 
@@ -801,10 +650,9 @@ proc make_dynamic_native_value_from_target*(target_expr: Value, sig: NativeSigna
     target_tracker: target_tracker,
     target_context: context
   )
-  let allocated = allocate_dynamic_native_slot(binding)
-  binding.fn = allocated.fn
+  binding.fn = dynamic_native_direct_call
   let r = new_ref(VkNativeFn)
-  r.native_fn = allocated.fn
+  r.native_fn = dynamic_native_direct_call
   r.native_binding = binding
   r.to_ref_value()
 

@@ -83,6 +83,11 @@ proc destroy_instance(inst: ptr InstanceObj) =
   destroyAndDealloc(inst)
 
 proc destroy_reference(ref_obj: ptr Reference) =
+  if ref_obj != nil and ref_obj.kind == VkCustom and
+      ref_obj.custom_data != nil and
+      ref_obj.custom_data.finalize_hook != nil:
+    ref_obj.custom_data.finalize_hook(ref_obj.custom_data)
+    ref_obj.custom_data.finalize_hook = nil
   destroyAndDealloc(ref_obj)
 
 when defined(phase1_rc_branch_probe):

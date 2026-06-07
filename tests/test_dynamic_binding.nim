@@ -147,6 +147,17 @@ suite "Dynamic Library Binding":
     """)
     check method_result == TRUE
 
+  test "dynamic cdecl bindings are not capped by wrapper slots":
+    var code = ""
+    for i in 0..<70:
+      code.add("""
+        (fn dyn-add-""" & $i & """ [a: Int b: Int] -> Int
+          ^native """ & dyn_find("gene_dyn_add") & """
+          ^abi "cdecl")
+      """)
+    code.add("(dyn-add-69 1 2)")
+    check exec_dyn(code).to_int() == 3
+
   test "$dyn/find reports symbol and library on missing symbol":
     let message = expect_error(proc() =
       discard exec_dyn("""

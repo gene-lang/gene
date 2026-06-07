@@ -19,6 +19,7 @@ type
 
   CustomValue* = ref object of RootObj
     materialize_hook*: proc(data: CustomValue): Value {.gcsafe.}
+    finalize_hook*: proc(data: CustomValue) {.gcsafe, raises: [].}
 
   EnumPayloadShapeKind* = enum
     EpsUnit
