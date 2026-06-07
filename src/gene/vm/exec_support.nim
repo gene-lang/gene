@@ -391,10 +391,11 @@ proc exec_fn_proxy(self: ptr VirtualMachine, callable: Value, args: seq[Value],
       native_args[0] = kw_map
       for i, arg in checked.positional:
         native_args[i + 1] = arg
-      let fn =
-        if proxy.target.kind == VkNativeMethod: proxy.target.ref.native_method
-        else: proxy.target.ref.native_fn
-      result = call_native_fn(fn, self, native_args, true)
+      if proxy.target.kind == VkNativeFn:
+        result = call_native_value(proxy.target, self, native_args, true)
+      else:
+        let fn = proxy.target.ref.native_method
+        result = call_native_fn(fn, self, native_args, true)
     of VkBoundMethod:
       result = self.call_bound_method(proxy.target, checked.positional, checked.keywords)
     else:
@@ -416,7 +417,7 @@ proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value])
   of VkFunction:
     return self.exec_function(callable, args)
   of VkNativeFn:
-    return call_native_fn(callable.ref.native_fn, self, args)
+    return call_native_value(callable, self, args)
   of VkNativeMethod:
     return call_native_fn(callable.ref.native_method, self, args)
   of VkBoundMethod:
@@ -537,7 +538,7 @@ proc exec_callable_with_self*(self: ptr VirtualMachine, callable: Value, self_va
     return self.exec_function_with_self(callable, self_value, args)
   of VkNativeFn:
     # Native functions don't use IkSelf, pass args as-is
-    return call_native_fn(callable.ref.native_fn, self, args)
+    return call_native_value(callable, self, args)
   of VkBlock:
     let blk = callable.ref.block
     if blk.body_compiled == nil:

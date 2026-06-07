@@ -183,6 +183,7 @@ type
         adapter_internal*: Adapter  # Reference to adapter for internal data access
       of VkNativeFn:
         native_fn*: NativeFn
+        native_binding*: DynamicNativeBinding
       of VkNativeMacro:
         native_macro*: NativeMacroFn
       of VkNativeMethod:

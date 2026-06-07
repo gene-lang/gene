@@ -84,6 +84,8 @@ proc value_class_value*(val: Value): Value =
     App.app.symbol_class
   of VkComplexSymbol:
     App.app.complex_symbol_class
+  of VkPointer:
+    App.app.pointer_class
   of VkArray:
     App.app.array_class
   of VkMap:
@@ -444,6 +446,15 @@ proc init_symbol_classes*(object_class: Class) =
   App.app.complex_symbol_class = r.to_ref_value()
   App.app.gene_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
   App.app.global_ns.ns["ComplexSymbol".to_key()] = App.app.complex_symbol_class
+
+  let pointer_class = new_class("Pointer")
+  pointer_class.parent = object_class
+  pointer_class.def_native_method("to_s", object_to_s_method)
+  r = new_ref(VkClass)
+  r.class = pointer_class
+  App.app.pointer_class = r.to_ref_value()
+  App.app.gene_ns.ns["Pointer".to_key()] = App.app.pointer_class
+  App.app.global_ns.ns["Pointer".to_key()] = App.app.pointer_class
 
 proc to_ctor(node: Value): Function =
   let name = "ctor"

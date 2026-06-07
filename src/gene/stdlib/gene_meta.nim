@@ -363,8 +363,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
   proc native_signature_for_callable(callable: Value): NativeSignature {.gcsafe.} =
     case callable.kind
     of VkNativeFn:
-      {.cast(gcsafe).}:
-        return lookup_native_signature(callable.ref.native_fn)
+      return native_signature_for_native_value(callable)
     of VkNativeMethod:
       {.cast(gcsafe).}:
         return lookup_native_signature(callable.ref.native_method)
@@ -375,8 +374,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
       if meth.native_signature != nil:
         return meth.native_signature
       if meth.callable.kind == VkNativeFn:
-        {.cast(gcsafe).}:
-          return lookup_native_signature(meth.callable.ref.native_fn)
+        return native_signature_for_native_value(meth.callable)
     else:
       discard
     nil

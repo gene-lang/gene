@@ -466,6 +466,7 @@ type
     string_class*   : Value
     symbol_class*   : Value
     complex_symbol_class*: Value
+    pointer_class*  : Value
     array_class*    : Value
     map_class*      : Value
     hash_map_class* : Value
@@ -683,10 +684,27 @@ type
     receives_self*: bool
     has_type_annotations*: bool
     is_variadic*: bool
+    abi*: string
     arity_min*: int
     arity_max*: int
     abi_arg_types*: seq[CallArgType]
     abi_return_type*: CallReturnType
+
+  DynamicNativeBinding* = ref object
+    handle*: LibHandle
+    handle_value*: Value
+    library_path*: string
+    symbol_name*: string
+    symbol*: pointer
+    abi*: string
+    sig*: NativeSignature
+    fn*: NativeFn
+    result_class*: Class
+    target_expr*: Value
+    target_ns*: Namespace
+    target_scope*: Scope
+    target_tracker*: ScopeTracker
+    target_context*: string
 
   FnProxy* = ref object
     target*: Value

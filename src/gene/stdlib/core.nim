@@ -123,6 +123,8 @@ proc value_class_value(val: Value): Value =
     App.app.symbol_class
   of VkComplexSymbol:
     App.app.complex_symbol_class
+  of VkPointer:
+    App.app.pointer_class
   of VkArray:
     App.app.array_class
   of VkMap:

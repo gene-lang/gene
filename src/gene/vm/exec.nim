@@ -63,6 +63,26 @@ proc resolve_dynamic_selector_prop(self: ptr VirtualMachine, prop: Value): Value
   else:
     prop
 
+proc resolve_native_scope_value(scope: Scope, key: Key,
+                                tracker_override: ScopeTracker = nil): tuple[found: bool, value: Value] =
+  let tracker =
+    if tracker_override != nil: tracker_override
+    elif scope != nil: scope.tracker
+    else: nil
+  if scope == nil or tracker == nil:
+    return (false, NIL)
+  let found = tracker.locate(key)
+  if found.local_index < 0:
+    return (false, NIL)
+  var target_scope = scope
+  var parent_index = found.parent_index
+  while parent_index > 0 and target_scope != nil:
+    parent_index.dec()
+    target_scope = target_scope.parent
+  if target_scope != nil and found.local_index < target_scope.members.len:
+    return (true, target_scope.members[found.local_index])
+  (false, NIL)
+
 proc call_native_with_gene_args(self: ptr VirtualMachine, native_fn: NativeFn, args_gene: Value): Value {.inline.} =
   if args_gene.kind != VkGene:
     return call_native_fn(native_fn, self, [])
@@ -78,6 +98,150 @@ proc call_native_with_gene_args(self: ptr VirtualMachine, native_fn: NativeFn, a
   for i, arg in args_gene.gene.children:
     native_args[i + 1] = arg
   call_native_fn(native_fn, self, native_args, true)
+
+proc resolve_native_complex_target(self: ptr VirtualMachine, target: Value,
+                                   context: string,
+                                   fallback_ns: Namespace = nil,
+                                   fallback_scope: Scope = nil): Value =
+  if target.ref == nil or target.ref.csymbol.len == 0:
+    not_allowed(context & " target path is empty")
+  var ns =
+    if self.frame != nil and self.frame.ns != nil: self.frame.ns
+    else: fallback_ns
+  for i in 0..<target.ref.csymbol.len - 1:
+    let part = target.ref.csymbol[i]
+    if part == "":
+      continue
+    if part == "$ns" and i == 0:
+      continue
+    let resolved = resolve_namespace_value(ns, part.to_key())
+    if not resolved.found or resolved.value.kind != VkNamespace:
+      not_allowed(context & " target namespace '" & part & "' is not defined")
+    ns = resolved.value.ref.ns
+  let final_name = target.ref.csymbol[^1]
+  let resolved = resolve_namespace_value(ns, final_name.to_key())
+  if not resolved.found:
+    not_allowed(context & " target '" & final_name & "' is not defined")
+  resolved.value
+
+proc resolve_native_name_target(self: ptr VirtualMachine, target: Value,
+                                context: string,
+                                fallback_ns: Namespace = nil,
+                                fallback_scope: Scope = nil,
+                                fallback_tracker: ScopeTracker = nil): Value =
+  let resolved = self.resolve_local_or_namespace(target.str)
+  if resolved.found:
+    return resolved.value
+  let scope_resolved = resolve_native_scope_value(fallback_scope, target.str.to_key(), fallback_tracker)
+  if scope_resolved.found:
+    return scope_resolved.value
+  if fallback_ns != nil:
+    let ns_resolved = resolve_namespace_value(fallback_ns, target.str.to_key())
+    if ns_resolved.found:
+      return ns_resolved.value
+  if self.thread_local_ns != nil:
+    let thread_resolved = resolve_namespace_value(self.thread_local_ns, target.str.to_key())
+    if thread_resolved.found:
+      return thread_resolved.value
+  not_allowed(context & " target '" & target.str & "' is not defined")
+  NIL
+
+proc eval_native_declaration_expr(self: ptr VirtualMachine, expr: Value,
+                                  context: string,
+                                  fallback_ns: Namespace = nil,
+                                  fallback_scope: Scope = nil,
+                                  fallback_tracker: ScopeTracker = nil): Value =
+  case expr.kind
+  of VkGene:
+    let has_gene_type = not expr.gene.type.is_nil()
+    if not has_gene_type and expr.gene.children.len == 0:
+      not_allowed(context & " target expression is empty")
+    let op_expr =
+      if has_gene_type: expr.gene.type
+      else: expr.gene.children[0]
+    let arg_start = if has_gene_type: 0 else: 1
+    let callable =
+      case op_expr.kind
+      of VkSymbol:
+        self.resolve_native_name_target(op_expr, context, fallback_ns, fallback_scope,
+          fallback_tracker)
+      of VkComplexSymbol:
+        self.resolve_native_complex_target(op_expr, context, fallback_ns, fallback_scope)
+      else:
+        eval_native_declaration_expr(self, op_expr, context, fallback_ns, fallback_scope,
+          fallback_tracker)
+    if callable.kind != VkNativeFn:
+      not_allowed(context & " target expression must call a native function, got " & $callable.kind)
+    var call_args = newSeq[Value](expr.gene.children.len - arg_start)
+    for i in arg_start..<expr.gene.children.len:
+      call_args[i - arg_start] = eval_native_declaration_expr(self, expr.gene.children[i],
+        context, fallback_ns, fallback_scope, fallback_tracker)
+    if expr.gene.props.len == 0:
+      return call_native_value(callable, self, call_args)
+    var native_args = newSeq[Value](call_args.len + 1)
+    let kw_map = new_map_value()
+    for k, v in expr.gene.props:
+      map_data(kw_map)[k] = eval_native_declaration_expr(self, v, context,
+        fallback_ns, fallback_scope, fallback_tracker)
+    native_args[0] = kw_map
+    for i, arg in call_args:
+      native_args[i + 1] = arg
+    call_native_value(callable, self, native_args, true)
+  of VkSymbol:
+    let resolved = self.resolve_local_or_namespace(expr.str)
+    if resolved.found:
+      if resolved.value.kind == VkGene:
+        if dyn_is_erased_load_expr(resolved.value):
+          return dyn_load_path(self, resolved.value.gene.children[0])
+        return self.eval_native_declaration_expr(resolved.value, context,
+          fallback_ns, fallback_scope, fallback_tracker)
+      return resolved.value
+    let scope_resolved = resolve_native_scope_value(fallback_scope, expr.str.to_key(),
+      fallback_tracker)
+    if scope_resolved.found:
+      if scope_resolved.value.kind == VkGene:
+        if dyn_is_erased_load_expr(scope_resolved.value):
+          return dyn_load_path(self, scope_resolved.value.gene.children[0])
+        return self.eval_native_declaration_expr(scope_resolved.value, context,
+          fallback_ns, fallback_scope, fallback_tracker)
+      return scope_resolved.value
+    if fallback_ns != nil:
+      let ns_resolved = resolve_namespace_value(fallback_ns, expr.str.to_key())
+      if ns_resolved.found:
+        if dyn_is_erased_load_expr(ns_resolved.value):
+          return dyn_load_path(self, ns_resolved.value.gene.children[0])
+        return ns_resolved.value
+    if self.thread_local_ns != nil:
+      let thread_resolved = resolve_namespace_value(self.thread_local_ns, expr.str.to_key())
+      if thread_resolved.found:
+        if dyn_is_erased_load_expr(thread_resolved.value):
+          return dyn_load_path(self, thread_resolved.value.gene.children[0])
+        return thread_resolved.value
+    expr
+  of VkComplexSymbol:
+    self.resolve_native_complex_target(expr, context, fallback_ns, fallback_scope)
+  else:
+    expr
+
+proc is_dynamic_find_target_expr(expr: Value): bool =
+  if expr.kind != VkGene:
+    return false
+  let head =
+    if not expr.gene.type.is_nil():
+      expr.gene.type
+    elif expr.gene.children.len > 0:
+      expr.gene.children[0]
+    else:
+      NIL
+  case head.kind
+  of VkSymbol, VkString:
+    head.str == "$dyn/find"
+  of VkComplexSymbol:
+    head.ref != nil and head.ref.csymbol.join("/") == "$dyn/find"
+  of VkNativeFn:
+    head.ref != nil and head.ref.native_fn == dyn_find_native
+  else:
+    false
 
 proc gene_keyword_pairs(args_gene: Value): seq[(Key, Value)] {.inline.} =
   if args_gene.kind != VkGene or args_gene.gene.props.len == 0:
@@ -109,44 +273,26 @@ proc validate_instance_native_method_arity(meth: Method, positional_count: int, 
                 " arguments after self, got " & $positional_count)
 
 proc resolve_native_declaration_target(self: ptr VirtualMachine, target: Value,
-                                       context: string): Value =
+                                       context: string,
+                                       fallback_ns: Namespace = nil,
+                                       fallback_scope: Scope = nil,
+                                       fallback_tracker: ScopeTracker = nil): Value =
   case target.kind
   of VkNativeFn:
     result = target
   of VkSymbol, VkString:
-    let resolved = self.resolve_local_or_namespace(target.str)
-    if resolved.found:
-      result = resolved.value
-    elif self.thread_local_ns != nil:
-      let thread_resolved = resolve_namespace_value(self.thread_local_ns, target.str.to_key())
-      if thread_resolved.found:
-        result = thread_resolved.value
-    if result == NIL:
-      not_allowed(context & " target '" & target.str & "' is not defined")
+    result = self.resolve_native_name_target(target, context, fallback_ns, fallback_scope,
+      fallback_tracker)
   of VkComplexSymbol:
-    if target.ref == nil or target.ref.csymbol.len == 0:
-      not_allowed(context & " target path is empty")
-    var ns = self.frame.ns
-    for i in 0..<target.ref.csymbol.len - 1:
-      let part = target.ref.csymbol[i]
-      if part == "":
-        continue
-      if part == "$ns" and i == 0:
-        continue
-      let resolved = resolve_namespace_value(ns, part.to_key())
-      if not resolved.found or resolved.value.kind != VkNamespace:
-        not_allowed(context & " target namespace '" & part & "' is not defined")
-      ns = resolved.value.ref.ns
-    let final_name = target.ref.csymbol[^1]
-    let resolved = resolve_namespace_value(ns, final_name.to_key())
-    if not resolved.found:
-      not_allowed(context & " target '" & final_name & "' is not defined")
-    result = resolved.value
+    result = self.resolve_native_complex_target(target, context, fallback_ns, fallback_scope)
+  of VkGene:
+    result = self.eval_native_declaration_expr(target, context, fallback_ns, fallback_scope,
+      fallback_tracker)
   else:
-    not_allowed(context & " target must be a native function name")
+    not_allowed(context & " target must be a native function name or expression")
 
-  if result.kind != VkNativeFn:
-    not_allowed(context & " target must be a native function, got " & $result.kind)
+  if result.kind != VkNativeFn and not is_dynamic_symbol_value(result):
+    not_allowed(context & " target must be a native function or dynamic symbol, got " & $result.kind)
 
 proc publish_function_definition_value(self: ptr VirtualMachine, info: FunctionDefInfo,
                                        f: Function, value: Value) =
@@ -4143,7 +4289,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         )
         class.methods[method_key] = m
         if fn_value.kind == VkNativeFn:
-          let sig = lookup_native_signature(fn_value.ref.native_fn)
+          let sig = native_signature_for_native_value(fn_value)
           if sig != nil:
             discard attach_native_method_signature(class, name.str, sig,
               "native method " & class.name & "." & name.str,
@@ -4189,7 +4335,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         # Set the constructor
         class.constructor = fn_value
         if fn_value.kind == VkNativeFn:
-          let sig = lookup_native_signature(fn_value.ref.native_fn)
+          let sig = native_signature_for_native_value(fn_value)
           if sig != nil:
             discard attach_native_constructor_signature(class, sig,
               "native constructor " & class.name,
@@ -4371,12 +4517,31 @@ proc exec*(self: ptr VirtualMachine): Value =
               "native function " & f.name)
           else:
             native_declaration_target(f.body, 0, "native function " & f.name)
+        let native_abi =
+          if info.input.kind == VkGene:
+            native_declaration_abi(info.input.gene, f.body,
+              "native function " & f.name)
+          else:
+            native_declaration_abi(f.body, 0, "native function " & f.name)
         if native_target != NIL:
-          let native_value = self.resolve_native_declaration_target(native_target,
-            "native function " & f.name)
           let sig = build_native_signature_from_matcher(f.matcher, receives_self = false)
           if sig != nil and self.cu != nil:
             sig.module_path = self.cu.module_path
+          let native_value =
+            if is_dynamic_find_target_expr(native_target):
+              make_dynamic_native_value_from_target(native_target, sig, native_abi,
+                "native function " & f.name, f.ns, f.parent_scope, info.scope_tracker)
+            else:
+              let resolved_native_value = self.resolve_native_declaration_target(native_target,
+                "native function " & f.name, f.ns, f.parent_scope, info.scope_tracker)
+              if is_dynamic_symbol_value(resolved_native_value):
+                make_dynamic_native_value(resolved_native_value, sig, native_abi,
+                  "native function " & f.name)
+              else:
+                if native_abi.len > 0:
+                  not_allowed("native function " & f.name &
+                    " ^abi is only supported for dynamic $dyn/find targets")
+                resolved_native_value
           discard attach_native_function_signature(native_value, sig,
             "native function " & f.name)
           self.publish_function_definition_value(info, f, native_value)
@@ -4687,10 +4852,10 @@ proc exec*(self: ptr VirtualMachine): Value =
               native_args[0] = kw_map
               for i, child in args.gene.children:
                 native_args[i + 1] = child
-              let result = call_native_fn(class.constructor.ref.native_fn, self, native_args, true)
+              let result = call_native_value(class.constructor, self, native_args, true)
               self.frame.push(result)
             else:
-              let result = call_native_fn(class.constructor.ref.native_fn, self, args.gene.children)
+              let result = call_native_value(class.constructor, self, args.gene.children)
               self.frame.push(result)
 
           of VkFunction:
@@ -5560,7 +5725,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         # Combined PUSH; CALL; POP for void function calls
         if inst.arg0.kind != VkNativeFn:
           not_allowed("IkPushCallPop currently supports native functions only")
-        discard call_native_fn(inst.arg0.ref.native_fn, self, [])
+        discard call_native_value(inst.arg0, self, [])
 
       of IkLoadCallPop:
         # Combined LOADK; CALL1; POP
@@ -5756,7 +5921,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         of VkNativeFn:
           # Zero arguments - route through native hook for typed boundary checks.
-          let result = call_native_fn(target.ref.native_fn, self, [])
+          let result = call_native_value(target, self, [])
           self.frame.push(result)
 
         of VkBoundMethod:
@@ -5853,7 +6018,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
             of VkNativeFn:
               # Call native init method with instance as first argument
-              discard call_native_fn(init_method.callable.ref.native_fn, self, [instance])
+              discard call_native_value(init_method.callable, self, [instance])
               self.frame.push(instance)
 
             else:
@@ -5957,7 +6122,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         of VkNativeFn:
           # Single argument - use new signature with helper
-          let result = call_native_fn(target.ref.native_fn, self, [arg])
+          let result = call_native_value(target, self, [arg])
           self.frame.push(result)
 
         of VkBoundMethod:
@@ -6044,7 +6209,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
             of VkNativeFn:
               # Call native init method with instance and argument
-              discard call_native_fn(init_method.callable.ref.native_fn, self, [instance, arg])
+              discard call_native_value(init_method.callable, self, [instance, arg])
               self.frame.push(instance)
 
             else:
@@ -6180,7 +6345,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
         of VkNativeFn:
-          let result = call_native_fn(target.ref.native_fn, self, args)
+          let result = call_native_value(target, self, args)
           self.frame.push(result)
 
         of VkBoundMethod:
@@ -6356,7 +6521,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           native_args[0] = kw_map
           for i, arg in args:
             native_args[i + 1] = arg
-          let result = call_native_fn(target.ref.native_fn, self, native_args, kw_pairs.len > 0)
+          let result = call_native_value(target, self, native_args, kw_pairs.len > 0)
           self.frame.push(result)
 
         of VkBoundMethod:
@@ -6615,7 +6780,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         of VkNativeFn:
           # Multi-argument - use new signature with helper
-          let result = call_native_fn(target.ref.native_fn, self, args)
+          let result = call_native_value(target, self, args)
           self.frame.push(result)
 
         of VkBoundMethod:
@@ -6836,7 +7001,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           if value_class != nil:
             let meth = value_class.get_method(method_key_0)
             if meth != nil and meth.callable.kind == VkNativeFn:
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
+              let result = call_native_value(meth.callable, self, [obj])
               self.frame.push(result)
               self.pc.inc()
               inst = self.cu.instructions[self.pc].addr
@@ -6923,7 +7088,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             of VkNativeFn:
               validate_instance_native_method_arity(meth, 0)
               # Method call with self as first argument
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
+              let result = call_native_value(meth.callable, self, [obj])
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, @[], @[])
@@ -6954,7 +7119,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             let meth = value_class.methods[method_key_0]
             case meth.callable.kind:
             of VkNativeFn:
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj])
+              let result = call_native_value(meth.callable, self, [obj])
               self.frame.push(result)
             else:
               not_allowed($obj.kind & " method must be a native function")
@@ -6995,7 +7160,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           if value_class != nil:
             let meth = value_class.get_method(method_key_1)
             if meth != nil and meth.callable.kind == VkNativeFn:
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
+              let result = call_native_value(meth.callable, self, [obj, arg])
               self.frame.push(result)
               self.pc.inc()
               inst = self.cu.instructions[self.pc].addr
@@ -7091,7 +7256,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             of VkNativeFn:
               validate_instance_native_method_arity(meth, 1)
               # Method call with self and one argument
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
+              let result = call_native_value(meth.callable, self, [obj, arg])
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, @[arg], @[])
@@ -7116,7 +7281,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             case meth.callable.kind:
             of VkNativeFn:
               # Method call with self and one argument
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg])
+              let result = call_native_value(meth.callable, self, [obj, arg])
               self.frame.push(result)
             else:
               not_allowed($obj.kind & " method must be a native function")
@@ -7250,7 +7415,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             of VkNativeFn:
               validate_instance_native_method_arity(meth, 2)
               # Method call with self and two arguments
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              let result = call_native_value(meth.callable, self, [obj, arg1, arg2])
               self.frame.push(result)
 
             of VkInterception:
@@ -7276,7 +7441,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             case meth.callable.kind:
             of VkNativeFn:
               # Method call with self and two arguments
-              let result = call_native_fn(meth.callable.ref.native_fn, self, [obj, arg1, arg2])
+              let result = call_native_value(meth.callable, self, [obj, arg1, arg2])
               self.frame.push(result)
             else:
               not_allowed($obj.kind & " method must be a native function")
@@ -7365,7 +7530,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               # Multi-argument method call with self as first argument
               var call_args = @[obj]
               call_args.add(args)
-              let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
+              let result = call_native_value(meth.callable, self, call_args)
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, args, @[])
@@ -7392,7 +7557,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               # Multi-argument method call with self as first argument
               var call_args = @[obj]
               call_args.add(args)
-              let result = call_native_fn(meth.callable.ref.native_fn, self, call_args)
+              let result = call_native_value(meth.callable, self, call_args)
               self.frame.push(result)
             else:
               not_allowed($obj.kind & " method must be a native function")
@@ -7526,7 +7691,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               native_args[offset] = obj
               for i, arg in args:
                 native_args[i + offset + 1] = arg
-              let result = call_native_fn(meth.callable.ref.native_fn, self, native_args, has_kw)
+              let result = call_native_value(meth.callable, self, native_args, has_kw)
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, args, kw_pairs)
@@ -7652,7 +7817,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               native_args[0] = obj
               for i, arg in args:
                 native_args[i + 1] = arg
-              let result = call_native_fn(meth.callable.ref.native_fn, self, native_args)
+              let result = call_native_value(meth.callable, self, native_args)
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, args, @[])

@@ -17,7 +17,8 @@ const
   BUILTIN_TYPE_CHAR_ID*: TypeId = 8
   BUILTIN_TYPE_ARRAY_ID*: TypeId = 9
   BUILTIN_TYPE_MAP_ID*: TypeId = 10
-  BUILTIN_TYPE_COUNT* = 11
+  BUILTIN_TYPE_POINTER_ID*: TypeId = 11
+  BUILTIN_TYPE_COUNT* = 12
 
 proc builtin_type_descs*(): seq[TypeDesc] =
   ## Return the pre-created TypeDesc objects for all built-in types.
@@ -34,6 +35,7 @@ proc builtin_type_descs*(): seq[TypeDesc] =
     TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Char"),            # 8 = Char
     TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Array"),           # 9 = Array
     TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Map"),             # 10 = Map
+    TypeDesc(module_path: BUILTIN_TYPE_MODULE_PATH, kind: TdkNamed, name: "Pointer"),         # 11 = Pointer
   ]
 
 proc lookup_builtin_type*(name: string): TypeId =
@@ -51,6 +53,7 @@ proc lookup_builtin_type*(name: string): TypeId =
   of "Char": BUILTIN_TYPE_CHAR_ID
   of "Array": BUILTIN_TYPE_ARRAY_ID
   of "Map": BUILTIN_TYPE_MAP_ID
+  of "Pointer", "pointer", "Ptr", "ptr": BUILTIN_TYPE_POINTER_ID
   else: NO_TYPE_ID
 
 proc module_path_from_source*(source_name: string): string {.inline.} =

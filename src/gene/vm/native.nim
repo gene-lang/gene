@@ -74,7 +74,7 @@ proc native_trampoline*(
     of VkFunction:
       ctx.vm.exec_function(desc.callable, boxed)
     of VkNativeFn:
-      call_native_fn(desc.callable.ref.native_fn, ctx.vm, boxed)
+      call_native_value(desc.callable, ctx.vm, boxed)
     of VkBoundMethod:
       let bm = desc.callable.ref.bound_method
       ctx.vm.exec_method(bm.method.callable, bm.self, boxed)

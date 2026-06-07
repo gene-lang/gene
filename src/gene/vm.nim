@@ -210,6 +210,33 @@ proc call_typed_native_fn(fn: NativeFn, vm: ptr VirtualMachine,
       validate_native_value(vm, result, sig.return_type_id, sig.type_descriptors,
         "native return value", native_guard_context(GpReturn, "native", "caller", site))
 
+proc call_native_value*(callable: Value, vm: ptr VirtualMachine,
+                        args: openArray[Value],
+                        has_keyword_args: bool = false): Value {.inline.}
+
+include ./vm/dynamic_binding
+
+proc call_typed_native_value(callable: Value, vm: ptr VirtualMachine,
+                             args: ptr UncheckedArray[Value], arg_count: int,
+                             has_keyword_args: bool): Value {.gcsafe.} =
+  if callable.kind != VkNativeFn:
+    not_allowed("native value dispatch expected VkNativeFn, got " & $callable.kind)
+  if callable.ref != nil and callable.ref.native_binding != nil:
+    return call_dynamic_native_binding(callable.ref.native_binding, vm, args,
+      arg_count, has_keyword_args)
+  call_typed_native_fn(callable.ref.native_fn, vm, args, arg_count, has_keyword_args)
+
+proc call_native_value*(callable: Value, vm: ptr VirtualMachine,
+                        args: openArray[Value],
+                        has_keyword_args: bool = false): Value {.inline.} =
+  if callable.kind != VkNativeFn:
+    not_allowed("native value dispatch expected VkNativeFn, got " & $callable.kind)
+  if args.len == 0:
+    return call_typed_native_value(callable, vm, nil, 0, has_keyword_args)
+  call_typed_native_value(callable, vm,
+    cast[ptr UncheckedArray[Value]](args[0].unsafeAddr), args.len,
+    has_keyword_args)
+
 import ./vm/arithmetic
 import ./vm/generator
 import ./vm/thread

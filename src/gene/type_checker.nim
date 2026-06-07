@@ -149,7 +149,7 @@ proc rest_source_type(t: TypeExpr): TypeExpr {.inline.} =
   t
 
 const BUILTIN_TYPE_NAMES = [
-  "Any", "Self", "Int", "Float", "Bool", "String", "Nil", "Void", "Symbol",
+  "Any", "Self", "Int", "Float", "Bool", "String", "Nil", "Void", "Symbol", "Pointer",
   "Array", "Map", "HashMap", "HashSet", "Result", "Option", "Tuple",
   "Module", "Namespace", "Class"
 ]
@@ -2153,12 +2153,12 @@ proc native_signature_for_method(meth: Method): NativeSignature =
   if meth.native_signature != nil:
     return meth.native_signature
   if meth.callable.kind == VkNativeFn:
-    return lookup_native_signature(meth.callable.ref.native_fn)
+    return native_signature_for_native_value(meth.callable)
   nil
 
 proc native_signature_for_value(value: Value): NativeSignature =
   if value.kind == VkNativeFn:
-    return lookup_native_signature(value.ref.native_fn)
+    return native_signature_for_native_value(value)
   nil
 
 proc native_signature_for_constructor(cls: Class): NativeSignature =
@@ -2168,7 +2168,7 @@ proc native_signature_for_constructor(cls: Class): NativeSignature =
     return cls.constructor_native_signature
   let ctor = cls.get_constructor()
   if ctor.kind == VkNativeFn:
-    return lookup_native_signature(ctor.ref.native_fn)
+    return native_signature_for_native_value(ctor)
   nil
 
 proc runtime_global_value(name: string): Value =

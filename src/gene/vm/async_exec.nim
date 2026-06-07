@@ -88,7 +88,7 @@ proc setup_callback_execution*(self: ptr VirtualMachine, callback: Value, arg: V
   of VkNativeFn:
     # Native functions can be called directly - they don't need frame setup
     var args_arr = [arg]
-    discard call_native_fn(callback.ref.native_fn, self, args_arr)
+    discard call_native_value(callback, self, args_arr)
     return false  # Return false since we executed it directly
 
   else:

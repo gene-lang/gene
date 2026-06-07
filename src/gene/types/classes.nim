@@ -144,6 +144,8 @@ proc get_class*(val: Value): Class {.inline.} =
       return App.ref.app.symbol_class.ref.class
     of VkComplexSymbol:
       return App.ref.app.complex_symbol_class.ref.class
+    of VkPointer:
+      return App.ref.app.pointer_class.ref.class
     of VkArray:
       return App.ref.app.array_class.ref.class
     of VkMap:
@@ -239,12 +241,15 @@ proc native_call_arg_type(type_id: TypeId, type_descs: seq[TypeDesc]): CallArgTy
     return CatInt64
   if type_id == BUILTIN_TYPE_FLOAT_ID:
     return CatFloat64
+  if type_id in [BUILTIN_TYPE_BOOL_ID, BUILTIN_TYPE_STRING_ID, BUILTIN_TYPE_POINTER_ID]:
+    return CatValue
   if type_id >= 0 and type_id.int < type_descs.len:
     let desc = type_descs[type_id.int]
     if desc.kind == TdkNamed:
       case desc.name
       of "Int": return CatInt64
       of "Float": return CatFloat64
+      of "Bool", "String", "Pointer": return CatValue
       else: discard
   CatValue
 
@@ -253,12 +258,15 @@ proc native_call_return_type(type_id: TypeId, type_descs: seq[TypeDesc]): CallRe
     return CrtInt64
   if type_id == BUILTIN_TYPE_FLOAT_ID:
     return CrtFloat64
+  if type_id in [BUILTIN_TYPE_BOOL_ID, BUILTIN_TYPE_STRING_ID, BUILTIN_TYPE_POINTER_ID, BUILTIN_TYPE_VOID_ID]:
+    return CrtValue
   if type_id >= 0 and type_id.int < type_descs.len:
     let desc = type_descs[type_id.int]
     if desc.kind == TdkNamed:
       case desc.name
       of "Int": return CrtInt64
       of "Float": return CrtFloat64
+      of "Bool", "String", "Pointer", "Void": return CrtValue
       else: discard
   CrtValue
 
@@ -330,6 +338,7 @@ proc native_signature_with_receiver(sig: NativeSignature, receives_self: bool): 
     return_type_id: sig.return_type_id,
     type_descriptors: sig.type_descriptors,
     module_path: sig.module_path,
+    abi: sig.abi,
     receives_self: receives_self,
     has_type_annotations: sig.has_type_annotations,
     is_variadic: sig.is_variadic,
@@ -337,6 +346,86 @@ proc native_signature_with_receiver(sig: NativeSignature, receives_self: bool): 
     arity_max: sig.arity_max,
     abi_arg_types: abi_args,
     abi_return_type: sig.abi_return_type)
+
+proc native_signature_for_native_value*(target: Value): NativeSignature {.gcsafe.} =
+  case target.kind
+  of VkNativeFn:
+    if target.ref == nil:
+      return nil
+    if target.ref.native_binding != nil and target.ref.native_binding.sig != nil:
+      return target.ref.native_binding.sig
+    {.cast(gcsafe).}:
+      return lookup_native_signature(target.ref.native_fn)
+  of VkNativeMethod:
+    if target.ref == nil:
+      return nil
+    {.cast(gcsafe).}:
+      return lookup_native_signature(target.ref.native_method)
+  else:
+    return nil
+
+proc dynamic_native_type_name(sig: NativeSignature, type_id: TypeId): string {.gcsafe.} =
+  if type_id == NO_TYPE_ID:
+    return "Any"
+  if type_id >= 0 and sig != nil and type_id.int < sig.type_descriptors.len:
+    return type_desc_to_string(type_id, sig.type_descriptors)
+  case type_id
+  of BUILTIN_TYPE_ANY_ID: "Any"
+  of BUILTIN_TYPE_INT_ID: "Int"
+  of BUILTIN_TYPE_FLOAT_ID: "Float"
+  of BUILTIN_TYPE_STRING_ID: "String"
+  of BUILTIN_TYPE_BOOL_ID: "Bool"
+  of BUILTIN_TYPE_NIL_ID: "Nil"
+  of BUILTIN_TYPE_VOID_ID: "Void"
+  of BUILTIN_TYPE_SYMBOL_ID: "Symbol"
+  of BUILTIN_TYPE_CHAR_ID: "Char"
+  of BUILTIN_TYPE_ARRAY_ID: "Array"
+  of BUILTIN_TYPE_MAP_ID: "Map"
+  of BUILTIN_TYPE_POINTER_ID: "Pointer"
+  else: "type " & $type_id
+
+proc dynamic_native_builtin_id(sig: NativeSignature, type_id: TypeId): TypeId {.gcsafe.} =
+  if type_id in [
+    BUILTIN_TYPE_ANY_ID, BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_FLOAT_ID,
+    BUILTIN_TYPE_STRING_ID, BUILTIN_TYPE_BOOL_ID, BUILTIN_TYPE_NIL_ID,
+    BUILTIN_TYPE_VOID_ID, BUILTIN_TYPE_SYMBOL_ID, BUILTIN_TYPE_CHAR_ID,
+    BUILTIN_TYPE_ARRAY_ID, BUILTIN_TYPE_MAP_ID, BUILTIN_TYPE_POINTER_ID
+  ]:
+    return type_id
+  if sig != nil and type_id >= 0 and type_id.int < sig.type_descriptors.len:
+    let desc = sig.type_descriptors[type_id.int]
+    if desc.kind == TdkNamed:
+      return lookup_builtin_type(desc.name)
+  NO_TYPE_ID
+
+proc ensure_dynamic_native_signature_supported*(sig: NativeSignature,
+                                                context: string) =
+  if sig == nil:
+    not_allowed(context & " requires a concrete native signature")
+  let c_arg_count = sig.params.len + (if sig.receives_self: 1 else: 0)
+  if c_arg_count > 7:
+    not_allowed(context & " cdecl bindings support at most 7 arguments")
+  if sig.is_variadic:
+    not_allowed(context & " cdecl bindings do not support rest, keyword-rest, or variadic parameters")
+  for i, param in sig.params:
+    if param.kind != CpkPositional:
+      not_allowed(context & " cdecl bindings only support positional parameters")
+    case dynamic_native_builtin_id(sig, param.type_id)
+    of BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_BOOL_ID, BUILTIN_TYPE_STRING_ID,
+       BUILTIN_TYPE_POINTER_ID:
+      discard
+    else:
+      not_allowed(context & " cdecl parameter " & $(i + 1) &
+        " uses unsupported type " & dynamic_native_type_name(sig, param.type_id) &
+        "; v1 supports Int, Bool, String, and Pointer")
+  case dynamic_native_builtin_id(sig, sig.return_type_id)
+  of BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_BOOL_ID, BUILTIN_TYPE_STRING_ID,
+     BUILTIN_TYPE_POINTER_ID, BUILTIN_TYPE_VOID_ID:
+    discard
+  else:
+    not_allowed(context & " cdecl return uses unsupported type " &
+      dynamic_native_type_name(sig, sig.return_type_id) &
+      "; v1 supports Int, Bool, String, Pointer, and Void")
 
 proc native_param_name_from_matcher(matcher: Matcher): string =
   try:
@@ -538,9 +627,15 @@ proc attach_native_function_signature*(target: Value, sig: NativeSignature,
                                        allow_override = false): NativeSignature =
   if target.kind != VkNativeFn:
     not_allowed(context & " target must be a native function, got " & $target.kind)
-  let existing = lookup_native_signature(target.ref.native_fn)
+  let existing = native_signature_for_native_value(target)
   ensure_native_signature_assignment(existing, sig, context, allow_override)
-  register_native_signature(target.ref.native_fn, sig)
+  if target.ref.native_binding != nil:
+    ensure_dynamic_native_signature_supported(sig, context)
+    if sig.abi.len == 0:
+      sig.abi = target.ref.native_binding.abi
+    target.ref.native_binding.sig = sig
+  else:
+    register_native_signature(target.ref.native_fn, sig)
   sig
 
 proc attach_native_method_signature*(class: Class, name: string,
@@ -557,9 +652,15 @@ proc attach_native_method_signature*(class: Class, name: string,
   let method_sig = native_signature_with_receiver(sig, receives_self = true)
   let existing =
     if meth.native_signature != nil: meth.native_signature
-    else: lookup_native_signature(meth.callable.ref.native_fn)
+    else: native_signature_for_native_value(meth.callable)
   ensure_native_signature_assignment(existing, method_sig, context, allow_override)
-  register_native_signature(meth.callable.ref.native_fn, method_sig)
+  if meth.callable.ref.native_binding != nil:
+    ensure_dynamic_native_signature_supported(method_sig, context)
+    if method_sig.abi.len == 0:
+      method_sig.abi = meth.callable.ref.native_binding.abi
+    meth.callable.ref.native_binding.sig = method_sig
+  else:
+    register_native_signature(meth.callable.ref.native_fn, method_sig)
   meth.native_signature_known = method_sig != nil
   meth.native_signature = method_sig
   if meth.class != nil:
@@ -579,9 +680,17 @@ proc attach_native_constructor_signature*(class: Class,
     not_allowed("Class " & class.name & " constructor is not native")
   let existing =
     if class.constructor_native_signature != nil: class.constructor_native_signature
-    else: lookup_native_signature(ctor.ref.native_fn)
+    else: native_signature_for_native_value(ctor)
   ensure_native_signature_assignment(existing, sig, context, allow_override)
-  register_native_signature(ctor.ref.native_fn, sig)
+  if ctor.ref.native_binding != nil:
+    ensure_dynamic_native_signature_supported(sig, context)
+    if sig.abi.len == 0:
+      sig.abi = ctor.ref.native_binding.abi
+    ctor.ref.native_binding.sig = sig
+    if dynamic_native_builtin_id(sig, sig.return_type_id) == BUILTIN_TYPE_POINTER_ID:
+      ctor.ref.native_binding.result_class = class
+  else:
+    register_native_signature(ctor.ref.native_fn, sig)
   class.constructor_native_signature_known = sig != nil
   class.constructor_native_signature = sig
   class.version.inc()

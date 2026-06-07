@@ -309,6 +309,7 @@ proc runtime_type_name*(v: Value): string =
   of VkString: "String"
   of VkSymbol: "Symbol"
   of VkComplexSymbol: "ComplexSymbol"
+  of VkPointer: "Pointer"
   of VkNil: "Nil"
   of VkArray: "Array"
   of VkMap: "Map"
@@ -507,6 +508,8 @@ proc native_signature_for_fn_value(value: Value): NativeSignature {.gcsafe.} =
   of VkNativeFn:
     if value.ref == nil:
       return nil
+    if value.ref.native_binding != nil:
+      return value.ref.native_binding.sig
     lookup_native_signature_for_guard(value.ref.native_fn)
   of VkNativeMethod:
     if value.ref == nil:
@@ -521,6 +524,8 @@ proc native_signature_for_fn_value(value: Value): NativeSignature {.gcsafe.} =
     if meth.native_signature != nil:
       return meth.native_signature
     if meth.callable.kind == VkNativeFn and meth.callable.ref != nil:
+      if meth.callable.ref.native_binding != nil:
+        return meth.callable.ref.native_binding.sig
       return lookup_native_signature_for_guard(meth.callable.ref.native_fn)
     nil
   else:

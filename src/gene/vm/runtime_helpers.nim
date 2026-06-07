@@ -188,7 +188,7 @@ when not defined(gene_wasm):
                 of VkFunction:
                   discard VM.exec_function(callback, @[msg_value])
                 of VkNativeFn:
-                  discard call_native_fn(callback.ref.native_fn, VM, @[msg_value])
+                  discard call_native_value(callback, VM, @[msg_value])
                 of VkBlock:
                   discard VM.exec_function(callback, @[])
                 else:

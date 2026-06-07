@@ -374,7 +374,7 @@ proc call_instance_method(self: ptr VirtualMachine, instance: Value, method_name
     all_args[offset] = instance
     for i in 0..<args.len:
       all_args[i + offset + 1] = args[i]
-    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args, has_kw)
+    let result = call_native_value(meth.callable, self, all_args, has_kw)
     self.frame.push(result)
     return true
 
@@ -475,7 +475,7 @@ proc call_super_method_resolved(self: ptr VirtualMachine, parent_class: Class, i
     all_args[offset] = instance
     for i in 0..<args.len:
       all_args[i + offset + 1] = args[i]
-    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args, has_kw)
+    let result = call_native_value(meth.callable, self, all_args, has_kw)
     self.frame.push(result)
     return true
 
@@ -584,7 +584,7 @@ proc invoke_method_value(self: ptr VirtualMachine, value: Value, meth: Method,
     all_args[offset] = value
     for i in 0..<args.len:
       all_args[i + offset + 1] = args[i]
-    let result = call_native_fn(meth.callable.ref.native_fn, self, all_args, has_kw)
+    let result = call_native_value(meth.callable, self, all_args, has_kw)
     self.frame.push(result)
     return true
 
@@ -673,7 +673,7 @@ proc call_interception_original(self: ptr VirtualMachine, original: Value, insta
     else:
       for i, arg in args:
         call_args[i + offset] = arg
-    return call_native_fn(original.ref.native_fn, self, call_args, has_kw)
+    return call_native_value(original, self, call_args, has_kw)
   of VkInterception:
     return self.run_intercepted_method(original.ref.interception, instance, args, kw_pairs)
   else:
@@ -753,7 +753,7 @@ proc run_intercepted_method(self: ptr VirtualMachine, interception: Interception
       call_args[offset] = instance
       for i, arg in advice_args:
         call_args[i + offset + 1] = arg
-      return call_native_fn(advice_fn.ref.native_fn, self, call_args, has_kw)
+      return call_native_value(advice_fn, self, call_args, has_kw)
     else:
       not_allowed("Advice callable must be a function or native function")
       return NIL
@@ -829,7 +829,7 @@ proc call_bound_method(self: ptr VirtualMachine, target: Value, args: seq[Value]
     call_args[offset] = bm.self
     for i, arg in args:
       call_args[i + offset + 1] = arg
-    return call_native_fn(callable.ref.native_fn, self, call_args, has_kw)
+    return call_native_value(callable, self, call_args, has_kw)
   of VkNativeMethod:
     let has_kw = kw_pairs.len > 0
     let offset = if has_kw: 1 else: 0
@@ -970,11 +970,11 @@ proc call_super_constructor(self: ptr VirtualMachine, parent_class: Class, insta
       native_args[0] = kw_map
       for i in 0..<args.len:
         native_args[i + 1] = args[i]
-      let result = call_native_fn(ctor.ref.native_fn, self, native_args, true)
+      let result = call_native_value(ctor, self, native_args, true)
       self.frame.push(result)
       return true
 
-    let result = call_native_fn(ctor.ref.native_fn, self, args)
+    let result = call_native_value(ctor, self, args)
     self.frame.push(result)
     return true
 

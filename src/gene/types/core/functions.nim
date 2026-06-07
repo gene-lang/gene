@@ -25,12 +25,29 @@ proc native_declaration_target*(children: seq[Value], body_start = 0,
   ## execute once the declaration is backed by a native function pointer.
   if body_start < 0 or body_start >= children.len:
     return NIL
-  let marker = children[body_start]
-  if marker.kind == VkSymbol and marker.str == "^native":
-    if body_start + 2 != children.len:
-      not_allowed(context & " expects exactly '^native <target>'")
-    return children[body_start + 1]
-  NIL
+  let first = children[body_start]
+  if first.kind != VkSymbol or first.str notin ["^native", "^abi"]:
+    return NIL
+
+  var target = NIL
+  var i = body_start
+  while i < children.len:
+    let marker = children[i]
+    if marker.kind != VkSymbol or marker.str notin ["^native", "^abi"]:
+      not_allowed(context & " cannot combine native metadata with a Gene body")
+    if i + 1 >= children.len:
+      not_allowed(context & " missing value after " & marker.str)
+    case marker.str
+    of "^native":
+      if target != NIL:
+        not_allowed(context & " has duplicate ^native metadata")
+      target = children[i + 1]
+    of "^abi":
+      discard
+    else:
+      discard
+    i += 2
+  target
 
 proc native_declaration_target*(gene: ptr Gene, children: seq[Value],
                                 body_start = 0,
@@ -52,6 +69,51 @@ proc native_declaration_target*(gene: ptr Gene, body: seq[Value],
         not_allowed(context & " cannot combine ^native with a Gene body")
       return gene.props[native_key]
   native_declaration_target(body, 0, context)
+
+proc native_abi_from_value(value: Value, context: string): string =
+  case value.kind
+  of VkString, VkSymbol:
+    value.str
+  else:
+    not_allowed(context & " ^abi value must be a string or symbol")
+    ""
+
+proc native_declaration_abi*(children: seq[Value], body_start = 0,
+                             context = "native declaration"): string =
+  if body_start < 0 or body_start >= children.len:
+    return ""
+  let first = children[body_start]
+  if first.kind != VkSymbol or first.str notin ["^native", "^abi"]:
+    return ""
+  var i = body_start
+  while i < children.len:
+    let marker = children[i]
+    if marker.kind != VkSymbol or marker.str notin ["^native", "^abi"]:
+      not_allowed(context & " cannot combine native metadata with a Gene body")
+    if i + 1 >= children.len:
+      not_allowed(context & " missing value after " & marker.str)
+    if marker.str == "^abi":
+      if result.len > 0:
+        not_allowed(context & " has duplicate ^abi metadata")
+      result = native_abi_from_value(children[i + 1], context)
+    i += 2
+
+proc native_declaration_abi*(gene: ptr Gene, children: seq[Value],
+                             body_start = 0,
+                             context = "native declaration"): string =
+  if gene != nil:
+    let abi_key = "abi".to_key()
+    if gene.props.has_key(abi_key):
+      result = native_abi_from_value(gene.props[abi_key], context)
+  let body_abi = native_declaration_abi(children, body_start, context)
+  if result.len > 0 and body_abi.len > 0:
+    not_allowed(context & " has duplicate ^abi metadata")
+  if body_abi.len > 0:
+    result = body_abi
+
+proc native_declaration_abi*(gene: ptr Gene, body: seq[Value],
+                             context = "native declaration"): string =
+  native_declaration_abi(gene, body, 0, context)
 
 proc anchor_module_paths(type_descs: var seq[TypeDesc], module_path: string) =
   ## Ensure non-builtin descriptors carry the parent module path.
