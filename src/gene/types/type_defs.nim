@@ -1,5 +1,5 @@
 # Forward declarations for new types
-import tables, sets, asyncdispatch, hashes
+import tables, sets, asyncdispatch, hashes, locks
 
 when defined(gene_wasm):
   type
@@ -1436,24 +1436,52 @@ include ./descriptors
 
 var native_signature_registry* = initTable[pointer, NativeSignature]()
 var native_signature_strict_exemptions* = initHashSet[pointer]()
+var native_signature_registry_lock: Lock
+
+initLock(native_signature_registry_lock)
 
 proc native_signature_key*(fn: NativeFn): pointer {.inline.} =
   cast[pointer](fn)
 
 proc register_native_signature*(fn: NativeFn, sig: NativeSignature) {.inline.} =
-  if sig == nil:
-    native_signature_registry.del(native_signature_key(fn))
-  else:
-    native_signature_registry[native_signature_key(fn)] = sig
+  {.cast(gcsafe).}:
+    acquire(native_signature_registry_lock)
+    try:
+      if sig == nil:
+        native_signature_registry.del(native_signature_key(fn))
+      else:
+        native_signature_registry[native_signature_key(fn)] = sig
+    finally:
+      release(native_signature_registry_lock)
 
 proc lookup_native_signature*(fn: NativeFn): NativeSignature {.inline.} =
-  native_signature_registry.getOrDefault(native_signature_key(fn), nil)
+  {.cast(gcsafe).}:
+    acquire(native_signature_registry_lock)
+    try:
+      result = native_signature_registry.getOrDefault(native_signature_key(fn), nil)
+    finally:
+      release(native_signature_registry_lock)
 
 proc invalidate_native_signature*(fn: NativeFn) {.inline.} =
-  native_signature_registry.del(native_signature_key(fn))
+  {.cast(gcsafe).}:
+    acquire(native_signature_registry_lock)
+    try:
+      native_signature_registry.del(native_signature_key(fn))
+    finally:
+      release(native_signature_registry_lock)
 
 proc exempt_native_signature_strict_check*(fn: NativeFn) {.inline.} =
-  native_signature_strict_exemptions.incl(native_signature_key(fn))
+  {.cast(gcsafe).}:
+    acquire(native_signature_registry_lock)
+    try:
+      native_signature_strict_exemptions.incl(native_signature_key(fn))
+    finally:
+      release(native_signature_registry_lock)
 
 proc is_native_signature_strict_exempt*(fn: NativeFn): bool {.inline.} =
-  native_signature_strict_exemptions.contains(native_signature_key(fn))
+  {.cast(gcsafe).}:
+    acquire(native_signature_registry_lock)
+    try:
+      result = native_signature_strict_exemptions.contains(native_signature_key(fn))
+    finally:
+      release(native_signature_registry_lock)

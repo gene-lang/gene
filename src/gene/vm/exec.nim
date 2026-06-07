@@ -5755,8 +5755,8 @@ proc exec*(self: ptr VirtualMachine): Value =
               continue
 
         of VkNativeFn:
-          # Zero arguments - use new signature with nil pointer
-          let result = target.ref.native_fn(self, nil, 0, false)
+          # Zero arguments - route through native hook for typed boundary checks.
+          let result = call_native_fn(target.ref.native_fn, self, [])
           self.frame.push(result)
 
         of VkBoundMethod:
@@ -7526,7 +7526,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               native_args[offset] = obj
               for i, arg in args:
                 native_args[i + offset + 1] = arg
-              let result = meth.callable.ref.native_fn(self, cast[ptr UncheckedArray[Value]](native_args[0].addr), native_args.len, has_kw)
+              let result = call_native_fn(meth.callable.ref.native_fn, self, native_args, has_kw)
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, args, kw_pairs)
@@ -7652,7 +7652,7 @@ proc exec*(self: ptr VirtualMachine): Value =
               native_args[0] = obj
               for i, arg in args:
                 native_args[i + 1] = arg
-              let result = meth.callable.ref.native_fn(self, cast[ptr UncheckedArray[Value]](native_args[0].addr), native_args.len, false)
+              let result = call_native_fn(meth.callable.ref.native_fn, self, native_args)
               self.frame.push(result)
             of VkInterception:
               let result = self.run_intercepted_method(meth.callable.ref.interception, obj, args, @[])

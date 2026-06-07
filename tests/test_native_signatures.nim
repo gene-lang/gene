@@ -332,6 +332,23 @@ suite "Native signatures":
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
 
+  test "zero-arg binding-site fn ^native enforces return guard through VM opcode":
+    init_all()
+    let fn = NativeFn(native_bad_return)
+    App.app.global_ns.ref.ns["nativeZeroBadReturnImpl".to_key()] = fn.to_value()
+    defer:
+      invalidate_native_signature(fn)
+
+    let message = expect_error(proc() =
+      discard VM.exec("""
+        (fn nativeZeroBadReturn [] -> Int
+          ^native nativeZeroBadReturnImpl)
+        (nativeZeroBadReturn)
+      """, "native_zero_return_bad.gene")
+    )
+    check message.contains("expected Int, got String")
+    check message.contains("phase=return")
+
   test "generic native signatures are rejected until native generics are designed":
     init_all()
     let fn = NativeFn(native_identity)
@@ -485,6 +502,62 @@ suite "Native signatures":
         ((new NativeDeclMethodBadTest) .id "bad")
       """,
         "native_decl_method_bad.gene")
+    )
+    check message.contains("expected Int, got String")
+    check message.contains("phase=argument")
+
+  test "keyword native method opcode enforces keyword argument guard":
+    init_all()
+    let fn = NativeFn(native_method_arg)
+    App.app.global_ns.ref.ns["nativeKeywordMethodImpl".to_key()] = fn.to_value()
+    defer:
+      invalidate_native_signature(fn)
+
+    check VM.exec("""
+      (class NativeKeywordMethodOkTest
+        (ctor [] nil)
+        (method id [n: Int ^label: String] -> Int
+          ^native nativeKeywordMethodImpl))
+      ((new NativeKeywordMethodOkTest) .id 41 ^label "ok")
+    """, "native_keyword_method_ok.gene").to_int() == 41
+
+    let message = expect_error(proc() =
+      discard VM.exec("""
+        (class NativeKeywordMethodBadTest
+          (ctor [] nil)
+          (method id [n: Int ^label: String] -> Int
+            ^native nativeKeywordMethodImpl))
+        ((new NativeKeywordMethodBadTest) .id 41 ^label 99)
+      """, "native_keyword_method_bad.gene")
+    )
+    check message.contains("expected String, got Int")
+    check message.contains("phase=argument")
+
+  test "dynamic native method opcode enforces native signature guard":
+    init_all()
+    let fn = NativeFn(native_method_arg)
+    App.app.global_ns.ref.ns["nativeDynamicMethodImpl".to_key()] = fn.to_value()
+    defer:
+      invalidate_native_signature(fn)
+
+    check VM.exec("""
+      (class NativeDynamicMethodOkTest
+        (ctor [] nil)
+        (method id [n: Int] -> Int
+          ^native nativeDynamicMethodImpl))
+      (var method_name "id")
+      ((new NativeDynamicMethodOkTest) . method_name 17)
+    """, "native_dynamic_method_ok.gene").to_int() == 17
+
+    let message = expect_error(proc() =
+      discard VM.exec("""
+        (class NativeDynamicMethodBadTest
+          (ctor [] nil)
+          (method id [n: Int] -> Int
+            ^native nativeDynamicMethodImpl))
+        (var method_name "id")
+        ((new NativeDynamicMethodBadTest) . method_name "bad")
+      """, "native_dynamic_method_bad.gene")
     )
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
