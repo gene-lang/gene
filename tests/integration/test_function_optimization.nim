@@ -115,6 +115,15 @@ test "Performance: Fibonacci comparison":
     (fib 10)
   """, 55.to_value())
 
+test "Inherited function lookup observes rebinding":
+  test_vm("""
+    (fn callee [n] 1)
+    (fn caller [n] (callee n))
+    (var before (caller 0))
+    (callee = (fn replacement [n] 2))
+    [before (caller 0)]
+  """, new_array_value(@[1.to_value(), 2.to_value()]))
+
 test "Performance: Zero-arg function calls":
   # # Test that zero-arg optimization works - DISABLED (closures not fully implemented)
   # test_vm("""

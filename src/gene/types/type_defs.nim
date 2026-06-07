@@ -1219,6 +1219,9 @@ type
     version*: uint64      # Namespace version when cached
     value*: Value         # Cached value
     ns*: Namespace        # Namespace where value was found
+    scope*: Scope         # Cached scope for inherited local resolution
+    fn*: Function         # Cached function for call-site body reuse
+    compiled_body*: CompilationUnit
     class*: Class         # Cached class for method lookup
     class_version*: uint64
     cached_method*: Method       # Cached method reference

@@ -17,6 +17,21 @@ proc require_published_body(b: Block): CompilationUnit {.inline.} =
   if result == nil:
     raise new_exception(types.Exception, "Block body failed to publish")
 
+proc require_published_body_for_call_pc(self: ptr VirtualMachine, f: Function, pc: int): CompilationUnit {.inline.} =
+  if self.cu != nil and pc >= 0 and pc < self.cu.inline_caches.len:
+    let cache = addr self.cu.inline_caches[pc]
+    result = cache.compiled_body
+    if cache.fn == f and result != nil and result == f.body_compiled:
+      result.matcher = f.matcher
+      return result
+
+    result = require_published_body(f)
+    cache.fn = f
+    cache.compiled_body = result
+    return result
+
+  result = require_published_body(f)
+
 template guard_deep_frozen_write(target: Value, op_name: static[string]) =
   if target.deep_frozen:
     raise_frozen_write(op_name, target)
@@ -82,6 +97,28 @@ proc resolve_native_scope_value(scope: Scope, key: Key,
   if target_scope != nil and found.local_index < target_scope.members.len:
     return (true, target_scope.members[found.local_index])
   (false, NIL)
+
+proc inherited_scope_for_pc(self: ptr VirtualMachine, pc: int, parent_index: int32,
+                            context: static[string]): Scope {.inline.} =
+  if self.cu != nil and pc >= 0 and pc < self.cu.inline_caches.len:
+    let cached = self.cu.inline_caches[pc].scope
+    if cached != nil:
+      return cached
+
+  var scope = self.frame.scope
+  var depth = parent_index
+  while depth > 0:
+    depth.dec()
+    if scope == nil or scope.parent == nil:
+      raise new_exception(types.Exception, context & ": scope.parent is nil at parent_index " & $depth)
+    scope = scope.parent
+
+  if scope == nil:
+    raise new_exception(types.Exception, context & ": scope is nil after traversing " & $parent_index & " parent levels")
+
+  if self.cu != nil and pc >= 0 and pc < self.cu.inline_caches.len:
+    self.cu.inline_caches[pc].scope = scope
+  scope
 
 proc call_native_with_gene_args(self: ptr VirtualMachine, native_fn: NativeFn, args_gene: Value): Value {.inline.} =
   if args_gene.kind != VkGene:
@@ -897,7 +934,8 @@ proc exec*(self: ptr VirtualMachine): Value =
   {.push boundChecks: off, overflowChecks: off, nilChecks: off, assertions: off.}
   while true:
     # Poll for async/thread events periodically
-    self.poll_event_loop()
+    if self.poll_enabled:
+      self.poll_event_loop()
 
     when defined(geneVmChecks):
       let before_stack = if self.frame != nil: self.frame.stack_index else: 0'u16
@@ -1117,15 +1155,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         {.pop.}
 
       of IkVarResolveInherited:
-        var parent_index = inst.arg1.int32
-        var scope = self.frame.scope
-        while parent_index > 0:
-          parent_index.dec()
-          if scope.parent == nil:
-            raise new_exception(types.Exception, fmt"IkVarResolveInherited: scope.parent is nil at parent_index {parent_index}")
-          scope = scope.parent
-        if scope == nil:
-          raise new_exception(types.Exception, fmt"IkVarResolveInherited: scope is nil after traversing {inst.arg1.int32} parent levels")
+        let scope = self.inherited_scope_for_pc(self.pc, inst.arg1.int32, "IkVarResolveInherited")
         let index = inst.arg0.int64.int
         if index >= scope.members.len:
           raise new_exception(types.Exception, fmt"IkVarResolveInherited: index {index} >= scope.members.len {scope.members.len}")
@@ -5876,10 +5906,10 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.frame.push(new_generator_value(f, @[]))
           else:
             var native_result: Value
-            if self.try_native_call0(f, native_result):
+            if (self.native_tier != NctNever or self.native_code) and self.try_native_call0(f, native_result):
               self.frame.push(native_result)
             else:
-              let compiled = require_published_body(f)
+              let compiled = self.require_published_body_for_call_pc(f, self.pc)
 
               var scope: Scope
               if f.matcher.is_empty():
@@ -6075,10 +6105,10 @@ proc exec*(self: ptr VirtualMachine): Value =
             self.frame.push(new_generator_value(f, @[arg]))
           else:
             var native_result: Value
-            if self.try_native_call1(f, arg, native_result):
+            if (self.native_tier != NctNever or self.native_code) and self.try_native_call1(f, arg, native_result):
               self.frame.push(native_result)
             else:
-              let compiled = require_published_body(f)
+              let compiled = self.require_published_body_for_call_pc(f, self.pc)
 
               var scope: Scope
               if f.matcher.is_empty():

@@ -124,30 +124,42 @@ template ensure_scope_capacity(scope: Scope, count: int) =
     for idx in old_len..<count:
       scope.members[idx] = NIL
 
-proc fast_builtin_type_match(value: Value, type_id: TypeId): bool {.inline.} =
-  case type_id
-  of NO_TYPE_ID, BUILTIN_TYPE_ANY_ID:
+proc fast_descriptor_type_match(value: Value, type_id: TypeId, type_descs: seq[TypeDesc]): bool {.inline.} =
+  if type_id == NO_TYPE_ID:
+    return true
+  if type_id < 0 or type_id.int >= type_descs.len:
+    return false
+
+  let desc = type_descs[type_id.int]
+  case desc.kind
+  of TdkAny:
     true
-  of BUILTIN_TYPE_INT_ID:
-    value.kind == VkInt
-  of BUILTIN_TYPE_FLOAT_ID:
-    value.kind == VkFloat
-  of BUILTIN_TYPE_STRING_ID:
-    value.kind == VkString
-  of BUILTIN_TYPE_BOOL_ID:
-    value.kind == VkBool
-  of BUILTIN_TYPE_NIL_ID:
-    value.kind == VkNil
-  of BUILTIN_TYPE_SYMBOL_ID:
-    value.kind == VkSymbol
-  of BUILTIN_TYPE_CHAR_ID:
-    value.kind == VkChar
-  of BUILTIN_TYPE_ARRAY_ID:
-    value.kind == VkArray
-  of BUILTIN_TYPE_MAP_ID:
-    value.kind == VkMap
-  of BUILTIN_TYPE_POINTER_ID:
-    value.kind == VkPointer
+  of TdkNamed:
+    case desc.name
+    of "Int", "Int64":
+      value.kind == VkInt
+    of "Float", "Float64":
+      value.kind == VkFloat
+    of "String":
+      value.kind == VkString
+    of "Bool":
+      value.kind == VkBool
+    of "Nil":
+      value.kind == VkNil
+    of "Void":
+      value.kind == VkVoid
+    of "Symbol":
+      value.kind == VkSymbol
+    of "Char":
+      value.kind == VkChar
+    of "Array":
+      value.kind == VkArray
+    of "Map":
+      value.kind == VkMap
+    of "Pointer":
+      value.kind == VkPointer
+    else:
+      false
   else:
     false
 
@@ -173,7 +185,7 @@ proc validate_bound_arg_fast(matcher: RootMatcher, param: Matcher, value: var Va
   let strict_nil = current_strict_nil()
   if value == NIL and not strict_nil:
     return
-  if fast_builtin_type_match(value, param.type_id):
+  if fast_descriptor_type_match(value, param.type_id, matcher.type_descriptors):
     return
 
   let location = if strict_nil: current_type_error_location() else: ""
@@ -338,12 +350,14 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope,
                        context: GuardContext = GuardContext()) {.inline.} =
   ## Ultra-fast path for single-argument functions
   if matcher.is_simple_positional(1) and not matcher.has_type_annotations:
-    ensure_scope_capacity(scope, 1)
+    if scope.members.len < 1:
+      scope.members.setLen(1)
     scope.members[0] = arg
     return
   if matcher.has_type_annotations and matcher.is_simple_positional_shape(1):
     var value = arg
-    ensure_scope_capacity(scope, 1)
+    if scope.members.len < 1:
+      scope.members.setLen(1)
     validate_bound_arg_fast(matcher, matcher.children[0], value, context)
     scope.members[0] = value
     return

@@ -45,6 +45,10 @@ proc publish_compiled_body*(b: Block, cu: CompilationUnit) =
 proc load_published_body*(f: Function): CompilationUnit =
   if f == nil:
     return nil
+  result = f.body_compiled
+  if result != nil and result.inline_caches.len == result.instructions.len:
+    result.matcher = f.matcher
+    return result
   acquire(body_publication_lock)
   defer: release(body_publication_lock)
   result = f.body_compiled
@@ -55,6 +59,10 @@ proc load_published_body*(f: Function): CompilationUnit =
 proc load_published_body*(b: Block): CompilationUnit =
   if b == nil:
     return nil
+  result = b.body_compiled
+  if result != nil and result.inline_caches.len == result.instructions.len:
+    result.matcher = b.matcher
+    return result
   acquire(body_publication_lock)
   defer: release(body_publication_lock)
   result = b.body_compiled
