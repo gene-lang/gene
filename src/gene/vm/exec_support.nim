@@ -295,19 +295,40 @@ proc fn_proxy_suffix_positional(params: seq[CallableParamDesc], start: int): int
     if params[i].kind == CpkPositional:
       result.inc()
 
+proc fn_proxy_keyword_name(key: Key): string {.inline.} =
+  get_symbol(symbol_index(key))
+
+proc fn_proxy_keyword_index(kw_pairs: seq[(Key, Value)], key: Key): int {.inline.} =
+  result = -1
+  for i, pair in kw_pairs:
+    if pair[0] == key:
+      result = i
+
+proc fn_proxy_mark_keyword_used(used: var seq[int], index: int) {.inline.} =
+  if index >= 0 and index notin used:
+    used.add(index)
+
 proc validate_fn_proxy_args(self: ptr VirtualMachine, proxy: FnProxy,
-                            args: seq[Value]): seq[Value] =
+                            args: seq[Value],
+                            kw_pairs: seq[(Key, Value)] = @[]): tuple[
+                              positional: seq[Value],
+                              keywords: seq[(Key, Value)]] =
   if proxy == nil:
-    return args
-  result = @[]
+    result.positional = args
+    result.keywords = kw_pairs
+    return
+  result.positional = @[]
+  result.keywords = kw_pairs
   let context = fn_proxy_guard_context(proxy, GpArgument, BpNegative)
   var pos_index = 0
+  var used_keyword_indices: seq[int] = @[]
+  var has_keyword_rest = false
   for param_index, param in proxy.params:
     case param.kind
     of CpkPositional:
       if pos_index >= args.len:
         not_allowed("Fn proxy expected " & $(pos_index + 1) & " arguments, got " & $args.len)
-      result.add(self.validate_fn_proxy_value(proxy, args[pos_index], param.type_id,
+      result.positional.add(self.validate_fn_proxy_value(proxy, args[pos_index], param.type_id,
         fn_proxy_param_name(proxy, param_index), context))
       pos_index.inc()
     of CpkPositionalRest:
@@ -316,26 +337,72 @@ proc validate_fn_proxy_args(self: ptr VirtualMachine, proxy: FnProxy,
       if rest_count < 0:
         rest_count = 0
       while rest_count > 0:
-        result.add(self.validate_fn_proxy_value(proxy, args[pos_index], param.type_id,
+        result.positional.add(self.validate_fn_proxy_value(proxy, args[pos_index], param.type_id,
           fn_proxy_param_name(proxy, param_index), context))
         pos_index.inc()
         rest_count.dec()
-    of CpkKeyword, CpkKeywordRest:
-      not_allowed("Fn proxy keyword parameters are not supported by positional calls")
+    of CpkKeyword:
+      let key = param.keyword_name.to_key()
+      let kw_index = fn_proxy_keyword_index(kw_pairs, key)
+      if kw_index < 0:
+        not_allowed("Fn proxy missing keyword argument: " & param.keyword_name)
+      let checked = self.validate_fn_proxy_value(proxy, kw_pairs[kw_index][1],
+        param.type_id, param.keyword_name, context)
+      result.keywords[kw_index] = (kw_pairs[kw_index][0], checked)
+      fn_proxy_mark_keyword_used(used_keyword_indices, kw_index)
+    of CpkKeywordRest:
+      has_keyword_rest = true
+      for kw_index, pair in kw_pairs:
+        if kw_index in used_keyword_indices:
+          continue
+        let checked = self.validate_fn_proxy_value(proxy, pair[1],
+          param.type_id, "keyword argument", context)
+        result.keywords[kw_index] = (pair[0], checked)
+        fn_proxy_mark_keyword_used(used_keyword_indices, kw_index)
   if pos_index < args.len:
     not_allowed("Fn proxy expected " & $pos_index & " arguments, got " & $args.len)
+  if not has_keyword_rest:
+    for kw_index, pair in kw_pairs:
+      if kw_index notin used_keyword_indices:
+        not_allowed("Fn proxy unexpected keyword argument: " &
+          fn_proxy_keyword_name(pair[0]))
 
 proc exec_fn_proxy(self: ptr VirtualMachine, callable: Value, args: seq[Value],
-                   self_value: Value = NIL, with_self = false): Value =
+                   self_value: Value = NIL, with_self = false,
+                   kw_pairs: seq[(Key, Value)] = @[]): Value =
   if callable.ref == nil or callable.ref.fn_proxy == nil:
     not_allowed("Fn proxy is missing target")
   let proxy = callable.ref.fn_proxy
-  let checked_args = self.validate_fn_proxy_args(proxy, args)
-  result =
-    if with_self:
-      self.exec_callable_with_self(proxy.target, self_value, checked_args)
+  let checked = self.validate_fn_proxy_args(proxy, args, kw_pairs)
+  if checked.keywords.len > 0:
+    case proxy.target.kind
+    of VkFnProxy:
+      result = self.exec_fn_proxy(proxy.target, checked.positional,
+        kw_pairs = checked.keywords)
+    of VkFunction:
+      if with_self:
+        not_allowed("Fn proxy keyword calls with self are not supported")
+      result = self.exec_function_kw(proxy.target, checked.positional, checked.keywords)
+    of VkNativeFn, VkNativeMethod:
+      var native_args = newSeq[Value](checked.positional.len + 1)
+      let kw_map = new_map_value()
+      for (k, v) in checked.keywords:
+        map_data(kw_map)[k] = v
+      native_args[0] = kw_map
+      for i, arg in checked.positional:
+        native_args[i + 1] = arg
+      let fn =
+        if proxy.target.kind == VkNativeMethod: proxy.target.ref.native_method
+        else: proxy.target.ref.native_fn
+      result = call_native_fn(fn, self, native_args, true)
+    of VkBoundMethod:
+      result = self.call_bound_method(proxy.target, checked.positional, checked.keywords)
     else:
-      self.exec_callable(proxy.target, checked_args)
+      not_allowed("Fn proxy target does not support keyword calls")
+  elif with_self:
+    result = self.exec_callable_with_self(proxy.target, self_value, checked.positional)
+  else:
+    result = self.exec_callable(proxy.target, checked.positional)
   let context = fn_proxy_guard_context(proxy, GpReturn, BpPositive)
   result = self.validate_fn_proxy_value(proxy, result, proxy.return_type_id,
     "return value of fn proxy", context)

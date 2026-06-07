@@ -249,6 +249,56 @@ suite "Runtime guard contract":
     check message.contains("producer=fn-proxy-target")
     check message.contains("consumer=caller")
 
+  test "Fn proxy validates keyword arguments":
+    init_all()
+
+    let ok = VM.exec("""
+      (fn callKw [f: (Fn [^value Int] -> Int)] -> Int
+        (f ^value 7))
+      (callKw (fn [^value: Int] -> Int value))
+    """, "fn_proxy_keyword_ok.gene")
+    check ok.to_int() == 7
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (fn callKwBad [f: (Fn [^value Int] -> Int)] -> Int
+          (f ^value "bad"))
+        (callKwBad (fn [^value] value))
+      """, "fn_proxy_keyword_bad.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("value")
+    check message.contains("phase=argument")
+    check message.contains("blame=negative")
+    check message.contains("consumer=fn-proxy")
+
+  test "Fn proxy validates keyword rest arguments":
+    init_all()
+
+    let ok = VM.exec("""
+      (fn callKwRest [f: (Fn [^... Int] -> Int)] -> Int
+        (f ^a 1 ^b 2))
+      (callKwRest (fn [^rest...] -> Int
+        (+ rest/a rest/b)))
+    """, "fn_proxy_keyword_rest_ok.gene")
+    check ok.to_int() == 3
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (fn callKwRestBad [f: (Fn [^... Int] -> Int)] -> Int
+          (f ^a 1 ^b "bad"))
+        (callKwRestBad (fn [^rest...] -> Int
+          0))
+      """, "fn_proxy_keyword_rest_bad.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("keyword argument")
+    check message.contains("phase=argument")
+    check message.contains("blame=negative")
+    check message.contains("consumer=fn-proxy")
+
   test "typed Array element access validates elements transiently":
     init_all()
 

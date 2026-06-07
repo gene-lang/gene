@@ -6288,9 +6288,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         case target.kind:
         of VkFnProxy:
-          if kw_pairs.len > 0:
-            not_allowed("Fn proxy keyword calls are not supported")
-          self.frame.push(self.exec_callable(target, args))
+          self.frame.push(self.exec_fn_proxy(target, args, kw_pairs = kw_pairs))
 
         of VkFunction:
           let f = target.ref.fn

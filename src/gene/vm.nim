@@ -229,6 +229,9 @@ proc spawn_thread(code: Value, return_value: bool): Value
 proc poll_event_loop*(self: ptr VirtualMachine)
 proc run_module_init*(self: ptr VirtualMachine, module_ns: Namespace): tuple[ran: bool, value: Value]
 proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value
+proc exec_fn_proxy(self: ptr VirtualMachine, callable: Value, args: seq[Value],
+                   self_value: Value = NIL, with_self = false,
+                   kw_pairs: seq[(Key, Value)] = @[]): Value
 proc exec_callable_with_self*(self: ptr VirtualMachine, callable: Value, self_value: Value, args: seq[Value]): Value
 proc exec_continue*(self: ptr VirtualMachine): Value
 
