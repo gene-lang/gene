@@ -2,6 +2,7 @@ import unittest, strutils
 
 import ./helpers
 import ../src/gene/parser
+import ../src/gene/compiler
 import ../src/gene/type_checker as tc
 import ../src/gene/types except Exception
 import ../src/gene/vm
@@ -58,6 +59,57 @@ proc test_strict_type_ok(code: string) =
     check true
 
 suite "Static type checking":
+  test "compiler pipeline remains gradual by default":
+    let code = cleanup """
+      (fn add [a: Int b: Int] -> Int
+        (+ a b)
+      )
+      (add 1 "x")
+    """
+
+    let compiled = parse_and_compile(code, "gradual_default_compile.gene")
+    check compiled != nil
+
+  test "compiler pipeline exposes strict type checking":
+    let code = cleanup """
+      (fn add [a: Int b: Int] -> Int
+        (+ a b)
+      )
+      (add 1 "x")
+    """
+
+    var raised = false
+    var message = ""
+    try:
+      discard parse_and_compile(code, "strict_compile.gene",
+        strict_type_check = true)
+    except CatchableError as e:
+      raised = true
+      message = e.msg
+
+    check raised
+    check message.contains("expected Int, got String")
+
+  test "module compilation exposes strict type checking":
+    let code = cleanup """
+      (fn add [a: Int b: Int] -> Int
+        (+ a b)
+      )
+      (add 1 "x")
+    """
+
+    var raised = false
+    var message = ""
+    try:
+      discard parse_and_compile(code, "strict_module_compile.gene",
+        module_mode = true, run_init = false, strict_type_check = true)
+    except CatchableError as e:
+      raised = true
+      message = e.msg
+
+    check raised
+    check message.contains("expected Int, got String")
+
   test_strict_type_ok """
     (fn typed_middle_rest [head: Int nums...: Int tail: Bool]
       [head nums tail]

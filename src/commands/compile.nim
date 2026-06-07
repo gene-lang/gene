@@ -20,6 +20,7 @@ type
     emit_debug: bool # Include debug info in GIR
     eager_functions: bool
     type_check: bool
+    strict_type_check: bool
     pending_eval: bool
 
 proc handle*(cmd: string, args: seq[string]): CommandResult
@@ -257,6 +258,8 @@ let long_no_val = @[
   "force",
   "emit-debug",
   "eager",
+  "strict-typecheck",
+  "strict-type-check",
   "no-typecheck",
   "no-type-check",
 ]
@@ -275,6 +278,7 @@ Options:
   --force                 Rebuild even if cache is up-to-date
   --emit-debug            Include debug info in GIR files
   --eager                 Eagerly compile function bodies (default for GIR output)
+  --strict-type-check     Treat static type-check diagnostics as compilation errors
   --no-type-check         Disable static type checking (alias: --no-typecheck)
 
 Examples:
@@ -330,6 +334,8 @@ proc parseArgs(args: seq[string]): CompileOptions =
         result.emit_debug = true
       of "eager":
         result.eager_functions = true
+      of "strict-typecheck", "strict-type-check":
+        result.strict_type_check = true
       of "no-typecheck", "no-type-check":
         result.type_check = false
       else:
@@ -395,7 +401,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
             stderr.writeLine("Error: Failed to open file: " & file)
             quit(1)
           defer: stream.close()
-          let compiled = parse_and_compile(stream, file, options.eager_functions, options.type_check, module_mode = true, run_init = false)
+          let compiled = parse_and_compile(stream, file, options.eager_functions,
+            options.type_check, module_mode = true, run_init = false,
+            strict_type_check = options.strict_type_check)
 
           # Save to GIR file
           save_gir(compiled, gir_path, file, options.emit_debug)
@@ -412,7 +420,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
           quit(1)
       elif options.format == "ai-metadata":
         try:
-          let compiled = parse_and_compile(code, file, options.eager_functions, options.type_check, module_mode = true, run_init = false)
+          let compiled = parse_and_compile(code, file, options.eager_functions,
+            options.type_check, module_mode = true, run_init = false,
+            strict_type_check = options.strict_type_check)
           metadata_outputs.add(metadata_json(compiled, source_name))
         except ParseError as e:
           stderr.writeLine("Parse error in " & source_name & ": " & e.msg)
@@ -429,8 +439,9 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
         echo "=== Compiling: " & source_name & " ==="
         
         try:
-          let parsed = read_all(code)
-          let compiled = compile(parsed, options.eager_functions)
+          let compiled = parse_and_compile(code, source_name, options.eager_functions,
+            options.type_check, module_mode = false, run_init = false,
+            strict_type_check = options.strict_type_check)
           
           echo "Instructions (" & $compiled.instructions.len & "):"
           for i, inst in compiled.instructions:
@@ -469,11 +480,14 @@ proc handle*(cmd: string, args: seq[string]): CommandResult =
   # Compile single code string
   try:
     if options.format == "ai-metadata":
-      let compiled = parse_and_compile(code, source_name, options.eager_functions, options.type_check, module_mode = false, run_init = false)
+      let compiled = parse_and_compile(code, source_name, options.eager_functions,
+        options.type_check, module_mode = false, run_init = false,
+        strict_type_check = options.strict_type_check)
       return success(metadata_json(compiled, source_name))
     else:
-      let parsed = read_all(code)
-      let compiled = compile(parsed, options.eager_functions)
+      let compiled = parse_and_compile(code, source_name, options.eager_functions,
+        options.type_check, module_mode = false, run_init = false,
+        strict_type_check = options.strict_type_check)
       
       echo "Instructions (" & $compiled.instructions.len & "):"
       for i, inst in compiled.instructions:

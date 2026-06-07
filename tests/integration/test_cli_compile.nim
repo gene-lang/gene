@@ -1,7 +1,14 @@
-import unittest, json, os
+import unittest, json, os, osproc, strutils
 
 import commands/compile as compile_command
 import gene/types except Exception
+
+proc ensure_gene_bin_for_test(): string =
+  result = absolutePath("bin/gene")
+  let build = execCmdEx("nimble build")
+  checkpoint build.output
+  check build.exitCode == 0
+  check fileExists(result)
 
 proc find_callable(metadata: JsonNode, name: string): JsonNode =
   if metadata.kind != JObject or not metadata.hasKey("callables"):
@@ -28,6 +35,29 @@ proc descriptor_matches(metadata: JsonNode, type_id: int, kind: string, name: st
   false
 
 suite "Compile CLI":
+  test "compile strict type check rejects gradual diagnostics":
+    let source_path = absolutePath("tmp/compile_strict_type_check_bad.gene")
+    let out_dir = absolutePath("build/tests/strict_type_check_cli")
+    createDir(parentDir(source_path))
+    createDir(out_dir)
+    writeFile(source_path, """
+      (fn add [a: Int b: Int] -> Int
+        (+ a b)
+      )
+      (add 1 "x")
+    """)
+
+    defer:
+      if fileExists(source_path):
+        removeFile(source_path)
+
+    let gene_bin = ensure_gene_bin_for_test()
+    let result = execCmdEx(gene_bin.quoteShell & " compile --strict-type-check --force --out-dir " &
+      out_dir.quoteShell & " " & source_path.quoteShell)
+
+    check result.exitCode != 0
+    check result.output.contains("expected Int, got String")
+
   test "compile ai-metadata exports typed callable signatures":
     let result = compile_command.handle("compile", @[
       "--format:ai-metadata",

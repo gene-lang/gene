@@ -449,7 +449,7 @@ proc normalize_module_nodes(nodes: seq[Value], run_init: bool): seq[Value] =
   result = defs
 
 # Parse and compile functions - unified interface for future streaming implementation
-proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false): CompilationUnit =
+proc parse_and_compile*(input: string, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false, strict_type_check = false): CompilationUnit =
   ## Parse and compile Gene code from a string with streaming compilation
   ## Parse one item -> compile immediately -> repeat
 
@@ -475,8 +475,8 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
 
   var is_first = true
   var prev_pushed = false
-  # Gradual typing: non-strict mode allows unknown types (treated as Any)
-  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
+  # Gradual typing: non-strict mode allows unknown types (treated as Any).
+  let checker = if type_check: new_type_checker(strict = strict_type_check, module_filename = filename) else: nil
 
   if module_mode:
     let self_key = "self".to_key()
@@ -605,7 +605,7 @@ proc parse_and_compile*(input: string, filename = "<input>", eager_functions = f
   self.finalize_type_metadata("source compile", filename)
   return self.output
 
-proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: ScopeTracker, eager_functions = false, type_check = true): CompilationUnit =
+proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: ScopeTracker, eager_functions = false, type_check = true, strict_type_check = false): CompilationUnit =
   ## Parse and compile Gene code for REPL inputs with a persistent scope tracker.
   ## The REPL root scope is created outside of compiled code.
 
@@ -636,8 +636,8 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
 
   var is_first = true
   var prev_pushed = false
-  # Gradual typing: non-strict mode allows unknown types (treated as Any)
-  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
+  # Gradual typing: non-strict mode allows unknown types (treated as Any).
+  let checker = if type_check: new_type_checker(strict = strict_type_check, module_filename = filename) else: nil
 
   try:
     while true:
@@ -698,7 +698,7 @@ proc parse_and_compile_repl*(input: string, filename = "<repl>", scope_tracker: 
 
 proc compile_repl_value*(node: Value, filename = "<repl>", scope_tracker: ScopeTracker,
                          trace_root: SourceTrace = nil, eager_functions = false,
-                         type_check = true): CompilationUnit =
+                         type_check = true, strict_type_check = false): CompilationUnit =
   ## Compile one already-parsed REPL form while preserving its source trace.
   ## The caller owns parsing and can therefore interleave parse -> execute per form.
   var root_tracker = scope_tracker
@@ -721,7 +721,7 @@ proc compile_repl_value*(node: Value, filename = "<repl>", scope_tracker: ScopeT
   self.output.type_check = type_check
   self.emit(Instruction(kind: IkStart))
 
-  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
+  let checker = if type_check: new_type_checker(strict = strict_type_check, module_filename = filename) else: nil
 
   if node != PARSER_IGNORE:
     self.last_error_trace = nil
@@ -769,7 +769,7 @@ proc compile_repl_value*(node: Value, filename = "<repl>", scope_tracker: ScopeT
   self.finalize_type_metadata("repl value compile", filename)
   return self.output
 
-proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false): CompilationUnit =
+proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = false, type_check = true, module_mode = false, run_init = false, strict_type_check = false): CompilationUnit =
   ## Parse and compile Gene code from a stream with streaming compilation
   ## This is more memory-efficient for large files as it doesn't load everything into memory
   ## Parse one item -> compile immediately -> repeat
@@ -795,8 +795,8 @@ proc parse_and_compile*(stream: Stream, filename = "<input>", eager_functions = 
 
   var is_first = true
   var prev_pushed = false
-  # Gradual typing: non-strict mode allows unknown types (treated as Any)
-  let checker = if type_check: new_type_checker(strict = false, module_filename = filename) else: nil
+  # Gradual typing: non-strict mode allows unknown types (treated as Any).
+  let checker = if type_check: new_type_checker(strict = strict_type_check, module_filename = filename) else: nil
 
   if module_mode:
     let self_key = "self".to_key()
