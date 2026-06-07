@@ -335,11 +335,11 @@ proc init_regex_class*(object_class: Class) =
 
   proc regexp_match_predicate(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("Regexp.match? requires an input string")
+      not_allowed("Regexp.matches requires an input string")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     let input_val = get_positional_arg(args, 1, has_keyword_args)
     if self_arg.kind != VkRegex or input_val.kind != VkString:
-      not_allowed("Regexp.match? expects a Regexp and string")
+      not_allowed("Regexp.matches expects a Regexp and string")
     regex_match_bool(input_val.str, self_arg).to_value()
 
   proc regexp_process(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -412,7 +412,7 @@ proc init_regex_class*(object_class: Class) =
     regexp_replace_all(vm, args, arg_count, has_keyword_args)
 
   regex_class.def_native_method("match", regexp_match)
-  regex_class.def_native_method("match?", regexp_match_predicate)
+  regex_class.def_native_method("matches", regexp_match_predicate)
   regex_class.def_native_method("process", regexp_process)
   regex_class.def_native_method("find", regexp_find)
   regex_class.def_native_method("find_all", regexp_find_all)

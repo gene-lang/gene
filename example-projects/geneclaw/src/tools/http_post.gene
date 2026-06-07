@@ -17,7 +17,7 @@
      ^required ["url"]}
     (fn [args]
       (var url ((args/url || "") .to_s))
-      (if url/.empty?
+      (if url/.empty
         (return {^error "Missing url"})
       )
 
@@ -37,7 +37,7 @@
         (var parts ["curl" "-s" #"-w '\\n%{http_code}'" #"-X #{method}"])
 
         # Add Content-Type for methods with body
-        (if ((method != "DELETE") || body/.not_empty?)
+        (if ((method != "DELETE") || body/.not_empty)
           (parts .push #"-H 'Content-Type: #{content_type}'")
         )
 
@@ -47,7 +47,7 @@
         ))
 
         # Add body
-        (if body/.not_empty?
+        (if body/.not_empty
           # Write body to temp file to avoid shell quoting issues
           (var tmp_file #"/tmp/geneclaw_http_body_#{gene/now/.call/.to_i}.tmp")
           (gene/io/write tmp_file body)
@@ -61,7 +61,7 @@
         (var result (system/shell cmd))
 
         # Clean up temp file
-        (if body/.not_empty?
+        (if body/.not_empty
           (system/shell #"rm -f /tmp/geneclaw_http_body_#{gene/now/.call/.to_i}.tmp")
         )
 

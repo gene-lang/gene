@@ -3,7 +3,7 @@
 # Expected: immutable map testsuite ok
 
 (var m #{^a 1})
-(assert ((m .immutable?) == true))
+(assert ((m .immutable) == true))
 (println m)
 
 (var set_caught false)

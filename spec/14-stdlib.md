@@ -52,12 +52,12 @@ Aliases are provided for common spellings: `File/remove`, `File/rename`, `Dir/mk
 | `.capitalize`    | Capitalize first char              | `"hi" .capitalize` => "Hi"            |
 | `.reverse`       | Reverse string                     | `"abc" .reverse` => "cba"             |
 | `.append`        | Concatenate                        | `("a" .append "b")` => "ab"           |
-| `.start_with?`   | Prefix check                       | `("hello" .start_with? "he")` => true |
-| `.include?`      | Contains (string or regex)         | `("hello" .include? "ell")` => true   |
+| `.starts_with`   | Prefix check                       | `("hello" .starts_with "he")` => true |
+| `.contains`      | Contains (string or regex)         | `("hello" .contains "ell")` => true   |
 | `.chars`         | Split to char array                | `"abc" .chars` => ["a","b","c"]       |
 | `.char_at`       | Character at index                 | `("abc" .char_at 1)` => "b"           |
 | `.split`         | Split by string or regex           | `("a,b,c" .split ",")` => ["a","b","c"] |
-| `.contain`       | Contains (alias for include?)      | `("hi" .contain "h")` => true         |
+| `.contain`       | Contains (alias for contains)      | `("hi" .contain "h")` => true         |
 | `.trim`          | Trim surrounding whitespace        | `(" hi " .trim)` => "hi"              |
 | `.index`         | Find first index of string/regex   | `("abc" .index "b")` => 1             |
 | `.find`          | Find first match                   | `("abc" .find #/b/)` => "b"           |
@@ -337,7 +337,7 @@ result/exit_code # => 0
 
 ## Potential Improvements
 
-- **String methods consistency**: Some use `?` suffix (`.start_with?`, `.include?`), others don't (`.contain`). Standardize naming.
+- **String methods consistency**: `.contain` remains as a legacy alias for `.contains`. Standardize on `.contains`.
 - **Missing string methods**: No `.pad_left`, `.pad_right`, `.repeat`, or richer substring/slice variants beyond `.index` and `.trim`.
 - **Missing array methods**: No `.flatten`, `.any?`, `.all?`, `.index_of`, `.insert`, or `.remove_at`.
 - **Missing map methods**: No dedicated `.entries`, `.has_key?` alias, or `.delete` helper.

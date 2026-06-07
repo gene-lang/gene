@@ -425,17 +425,16 @@ proc init_collection_classes*(object_class: Class) =
     (array_data(arr).len == 0).to_value()
 
   array_class.def_native_method("empty", vm_array_empty)
-  array_class.def_native_method("empty?", vm_array_empty)
 
   proc vm_array_not_empty(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Array.not_empty? requires self")
+      not_allowed("Array.not_empty requires self")
     let arr = get_positional_arg(args, 0, has_keyword_args)
     if arr.kind != VkArray:
-      not_allowed("not_empty? must be called on an array")
+      not_allowed("not_empty must be called on an array")
     (array_data(arr).len != 0).to_value()
 
-  array_class.def_native_method("not_empty?", vm_array_not_empty)
+  array_class.def_native_method("not_empty", vm_array_not_empty)
 
   proc vm_array_contains(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -945,13 +944,13 @@ proc init_collection_classes*(object_class: Class) =
 
   proc vm_map_immutable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Map.immutable? requires self")
+      not_allowed("Map.immutable requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
-      not_allowed("immutable? must be called on a map")
+      not_allowed("immutable must be called on a map")
     map_is_frozen(map_val).to_value()
 
-  map_class.def_native_method("immutable?", vm_map_immutable, @[], App.app.bool_class)
+  map_class.def_native_method("immutable", vm_map_immutable, @[], App.app.bool_class)
 
   map_class.def_native_method("contains", vm_map_contains)
   map_class.def_native_method("has", vm_map_contains, @[("key", NIL)], App.app.bool_class)
@@ -1159,17 +1158,16 @@ proc init_collection_classes*(object_class: Class) =
     (map_data(map_val).len == 0).to_value()
 
   map_class.def_native_method("empty", vm_map_empty)
-  map_class.def_native_method("empty?", vm_map_empty)
 
   proc vm_map_not_empty(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Map.not_empty? requires self")
+      not_allowed("Map.not_empty requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
-      not_allowed("not_empty? must be called on a map")
+      not_allowed("not_empty must be called on a map")
     (map_data(map_val).len != 0).to_value()
 
-  map_class.def_native_method("not_empty?", vm_map_not_empty)
+  map_class.def_native_method("not_empty", vm_map_not_empty)
 
   proc vm_map_clear(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -1384,13 +1382,13 @@ proc init_collection_classes*(object_class: Class) =
 
   proc vm_hash_map_immutable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("HashMap.immutable? requires self")
+      not_allowed("HashMap.immutable requires self")
     let hash_map = get_positional_arg(args, 0, has_keyword_args)
     if hash_map.kind != VkHashMap:
-      not_allowed("HashMap.immutable? must be called on a HashMap")
+      not_allowed("HashMap.immutable must be called on a HashMap")
     hash_map_is_frozen(hash_map).to_value()
 
-  hash_map_class.def_native_method("immutable?", vm_hash_map_immutable, @[], App.app.bool_class)
+  hash_map_class.def_native_method("immutable", vm_hash_map_immutable, @[], App.app.bool_class)
 
 proc init_hash_set_class*(object_class: Class) =
   var r: ptr Reference
@@ -1582,11 +1580,11 @@ proc init_hash_set_class*(object_class: Class) =
 
   proc vm_hash_set_subset(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("HashSet.subset? expects another HashSet")
+      not_allowed("HashSet.subset expects another HashSet")
     let hash_set = get_positional_arg(args, 0, has_keyword_args)
     if hash_set.kind != VkSet:
-      not_allowed("HashSet.subset? must be called on a HashSet")
-    let other = require_hash_set_arg(args, arg_count, has_keyword_args, 1, "subset?")
+      not_allowed("HashSet.subset must be called on a HashSet")
+    let other = require_hash_set_arg(args, arg_count, has_keyword_args, 1, "subset")
     for item in hash_set_items(hash_set):
       let present = block:
         {.cast(gcsafe).}:
@@ -1595,4 +1593,4 @@ proc init_hash_set_class*(object_class: Class) =
         return FALSE
     TRUE
 
-  hash_set_class.def_native_method("subset?", vm_hash_set_subset, @[("other", NIL)], App.app.bool_class)
+  hash_set_class.def_native_method("subset", vm_hash_set_subset, @[("other", NIL)], App.app.bool_class)

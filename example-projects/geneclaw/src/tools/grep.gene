@@ -15,14 +15,14 @@
       (var path (((args/path || ".") .to_s) || "."))
       (var flags (args/flags || ""))
 
-      (if pattern/.empty?
+      (if pattern/.empty
         (return {^error "Missing pattern"})
       )
       (if ((path .starts_with "/") || (path .starts_with "~"))
         (return {^error "Path must be relative to the current workspace"})
       )
       # Block path traversal
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
 

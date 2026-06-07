@@ -13,6 +13,6 @@
 (assert (search_result/count == 1))
 (var top_result ((search_result/results || []) .get 0))
 (assert (top_result/heading == "OAuth Only"))
-(assert ((top_result/text || "") .include? "oauth"))
+(assert ((top_result/text || "") .contains "oauth"))
 
 (println "ok")

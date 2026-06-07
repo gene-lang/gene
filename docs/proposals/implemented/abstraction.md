@@ -90,7 +90,7 @@ Implemented in the current runtime:
   rejected.
 - Duplicate defaults are rejected unless the child interface, class, or adapter
   explicitly overrides the method.
-- `satisfies?` is available as a global builtin and is parent-aware.
+- `satisfies` is available as a global builtin and is parent-aware.
 - Runtime and type-checker diagnostics include expected and actual signatures
   for interface conformance and inheritance conflicts where available.
 
@@ -150,7 +150,7 @@ That keeps adapter descriptors simple and makes each adapter view explicit.
 
 The current adapter design tolerates partial external implementations: missing
 members fail later when accessed. That weakens the meaning of an interface as a
-contract and makes `satisfies?` ambiguous.
+contract and makes `satisfies` ambiguous.
 
 The rule is:
 
@@ -194,17 +194,17 @@ The runtime should also validate completeness at the end of every external
 `implement` block. That end-of-block check covers non-strict mode and dynamic
 cases where the type checker cannot prove the target class shape.
 
-### 5. Add A Nominal `satisfies?` Predicate
+### 5. Add A Nominal `satisfies` Predicate
 
 Runtime code needs a non-throwing conformance check:
 
 ```gene
-(satisfies? obj Readable)
+(satisfies obj Readable)
 ```
 
-`satisfies?` is a global builtin for now, not a method added to every object.
+`satisfies` is a global builtin for now, not a method added to every object.
 
-`satisfies?` should be side-effect-free. It must not create an adapter, call an
+`satisfies` should be side-effect-free. It must not create an adapter, call an
 adapter constructor, or evaluate user methods. It only answers whether the value
 can be viewed as the interface.
 
@@ -323,7 +323,7 @@ The core phases have been implemented in this order.
 - Keep runtime behavior unchanged except for improved validation and
   diagnostics.
 
-### Phase 2: `satisfies?`
+### Phase 2: `satisfies`
 
 - Add a nominal runtime predicate.
 - Implement parent-aware behavior so child-interface conformance implies parent
@@ -377,13 +377,13 @@ Core implementation coverage includes:
 - External adapter satisfies a complete interface through explicit methods.
 - External adapter satisfies a method through same-name fallback.
 - External adapter missing a required member is rejected.
-- `satisfies?` returns true for inline implementations.
-- `satisfies?` returns true for every interface listed in inline
+- `satisfies` returns true for inline implementations.
+- `satisfies` returns true for every interface listed in inline
   `implements [A B]`.
-- `satisfies?` returns true for externally adaptable values without creating an
+- `satisfies` returns true for externally adaptable values without creating an
   adapter.
-- `satisfies?` returns true for already adapted values.
-- `satisfies?` returns false for unregistered values.
+- `satisfies` returns true for already adapted values.
+- `satisfies` returns false for unregistered values.
 - Parent interface satisfaction works transitively.
 - Inherited member conflicts are rejected at interface definition time.
 - Interface default method is used when no class or adapter method exists.
@@ -397,7 +397,7 @@ Remaining coverage targets:
 
 ## Non-Goals
 
-- **Structural typing:** no `satisfies?` based only on field and method shape.
+- **Structural typing:** no `satisfies` based only on field and method shape.
 - **Partial implementations:** no `partial implement` and no `^partial` mode.
   Split large interfaces into smaller interfaces instead.
 - **Implicit adapter synthesis:** no automatic wrapper just because two values

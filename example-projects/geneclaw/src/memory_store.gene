@@ -49,27 +49,27 @@
 
 (fn structured_warning_payload? [text]
   (var raw (((text || "") .to_s) .trim))
-  (if raw/.empty?
+  (if raw/.empty
     false
   else
     (((raw .starts_with "{") || (raw .starts_with "{^")) &&
-     ((raw .include? "\"data\"") ||
-      (raw .include? "^data ") ||
-      (raw .include? "\"embedding\"") ||
-      (raw .include? "^embedding ") ||
-      (raw .include? "\"model\"") ||
-      (raw .include? "^model ")))
+     ((raw .contains "\"data\"") ||
+      (raw .contains "^data ") ||
+      (raw .contains "\"embedding\"") ||
+      (raw .contains "^embedding ") ||
+      (raw .contains "\"model\"") ||
+      (raw .contains "^model ")))
   )
 )
 
 (fn normalize_warning_text [warning fallback = ""]
   (var default_text ((fallback || "") .to_s))
   (var raw ((value_text warning default_text) .trim))
-  (if raw/.empty?
+  (if raw/.empty
     (return default_text)
   )
   (if (structured_warning_payload? raw)
-    (return (if default_text/.empty?
+    (return (if default_text/.empty
       "unexpected response payload"
     else
       #"#{default_text}: unexpected response payload"
@@ -104,9 +104,9 @@
 (fn merge_warning_messages [left right]
   (var left_text ((normalize_warning_text left "") .trim))
   (var right_text ((normalize_warning_text right "") .trim))
-  (if left_text/.empty?
+  (if left_text/.empty
     right_text
-  elif right_text/.empty?
+  elif right_text/.empty
     left_text
   elif (text_equals? left_text right_text)
     left_text
@@ -153,7 +153,7 @@
 
 (fn file_sha256 [path]
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     (return "")
   )
 
@@ -260,7 +260,7 @@
 (fn build_section_text [section content]
   (var heading (section_heading_line section))
   (var body (((content || "") .to_s) .trim))
-  (if body/.empty?
+  (if body/.empty
     heading
   else
     #"#{heading}\n#{body}"
@@ -270,10 +270,10 @@
 (fn append_section_text [existing content]
   (var base ((existing || "") .to_s))
   (var addition (((content || "") .to_s) .trim))
-  (if addition/.empty?
+  (if addition/.empty
     (return base)
   )
-  (if base/.empty?
+  (if base/.empty
     (return addition)
   )
   (if (base .ends_with "\n")
@@ -289,7 +289,7 @@
   (if (normalized_left/.length != normalized_right/.length)
     (return false)
   )
-  (if normalized_left/.empty?
+  (if normalized_left/.empty
     true
   else
     ((normalized_left .starts_with normalized_right) && (normalized_right .starts_with normalized_left))
@@ -298,7 +298,7 @@
 
 (fn chunk_markdown [text]
   (var source ((text || "") .to_s))
-  (var lines (if source/.empty? [] else (source .split "\n")))
+  (var lines (if source/.empty [] else (source .split "\n")))
   (var raw_chunks [])
   (var preamble [])
   (var current_heading "")
@@ -309,7 +309,7 @@
     (if (line .starts_with "## ")
       (if seen_heading
         (raw_chunks .append {^heading current_heading ^text (current_lines .join "\n")})
-      elif preamble/.not_empty?
+      elif preamble/.not_empty
         (raw_chunks .append {^heading "" ^text (preamble .join "\n")})
       )
       (seen_heading = true)
@@ -326,7 +326,7 @@
 
   (if seen_heading
     (raw_chunks .append {^heading current_heading ^text (current_lines .join "\n")})
-  elif preamble/.not_empty?
+  elif preamble/.not_empty
     (raw_chunks .append {^heading "" ^text (preamble .join "\n")})
   )
 
@@ -356,7 +356,7 @@
   (var parts [])
   (for chunk in (ensure_array chunks)
     (var text (record_text chunk "text" ""))
-    (if text/.not_empty?
+    (if text/.not_empty
       (parts .append text)
     )
   )
@@ -377,7 +377,7 @@
 
 (fn apply_section_update [current_text section content mode]
   (var resolved_section (((section || "") .to_s) .trim))
-  (if resolved_section/.empty?
+  (if resolved_section/.empty
     (return {^ok false ^error "Missing section"})
   )
 
@@ -414,7 +414,7 @@
 
 (fn embedding_credentials_available? []
   (if genex/ai
-    ((OPENAI_EMBEDDING_API_KEY || "") .not_empty?)
+    ((OPENAI_EMBEDDING_API_KEY || "") .not_empty)
   else
     false
   )
@@ -427,13 +427,13 @@
 (fn build_embedding_client []
   (var client_opts {^model EMBEDDING_MODEL ^timeout_ms OPENAI_TIMEOUT_MS})
   (var resolved_api_key (embedding_api_key))
-  (if resolved_api_key/.not_empty?
+  (if resolved_api_key/.not_empty
     (client_opts .set "api_key" resolved_api_key)
   )
-  (if OPENAI_ACCOUNT_ID/.not_empty?
+  (if OPENAI_ACCOUNT_ID/.not_empty
     (client_opts .set "account_id" OPENAI_ACCOUNT_ID)
   )
-  (if OPENAI_BASE_URL/.not_empty?
+  (if OPENAI_BASE_URL/.not_empty
     (client_opts .set "base_url" OPENAI_BASE_URL)
   )
   (new OpenAIClient client_opts)
@@ -484,7 +484,7 @@
   (var data_value ((response .get "data" nil) || nil))
   (summary_parts .append #"data_kind=#{(value_kind_name data_value)}")
 
-  (if ((data_value is Array) && data_value/.not_empty?)
+  (if ((data_value is Array) && data_value/.not_empty)
     (var first_item (ensure_map (data_value .get 0)))
     (summary_parts .append #"first_keys=#{(map_keys_preview first_item)}")
     (var embedding_value ((first_item .get "embedding" nil) || nil))
@@ -511,22 +511,22 @@
   )
 
   (var data_value ((response .get "data" nil) || nil))
-  (if ((data_value is Array) && data_value/.not_empty?)
+  (if ((data_value is Array) && data_value/.not_empty)
     (var first_item (ensure_map (data_value .get 0)))
     (var embedding_value (ensure_array ((first_item .get "embedding" []) || [])))
-    (if embedding_value/.not_empty?
+    (if embedding_value/.not_empty
       (return {^ok true ^vector embedding_value})
     )
   elif (data_value is Map)
     (var data_map (ensure_map data_value))
     (var embedding_value (ensure_array ((data_map .get "embedding" []) || [])))
-    (if embedding_value/.not_empty?
+    (if embedding_value/.not_empty
       (return {^ok true ^vector embedding_value})
     )
   )
 
   (var top_level_embedding (ensure_array ((response .get "embedding" []) || [])))
-  (if top_level_embedding/.not_empty?
+  (if top_level_embedding/.not_empty
     (return {^ok true ^vector top_level_embedding})
   )
 
@@ -536,7 +536,7 @@
 (fn embedding_error_message [response]
   (if (response is OpenAIError)
     (var message (normalize_warning_text (response/message || response/provider_error || response/raw_body || (response .to_s)) "Embedding request failed"))
-    (if message/.not_empty?
+    (if message/.not_empty
       (return message)
     )
     (return "Embedding request failed")
@@ -547,7 +547,7 @@
   (var error_map (if (response/error is Map) response/error else nil))
   (if error_map
     (var message (normalize_warning_text (record_text error_map "message" "") "Embedding request failed"))
-    (if message/.not_empty?
+    (if message/.not_empty
       (return message)
     )
   )
@@ -568,11 +568,11 @@
     (return {^ok true ^vector extracted/vector})
   )
   (var error_message (embedding_error_message response))
-  (if error_message/.not_empty?
+  (if error_message/.not_empty
     (return {^ok false ^error error_message})
   )
   (var summary ((extracted/summary || "") .to_s))
-  (if summary/.not_empty?
+  (if summary/.not_empty
     (return {^ok false ^error #"Embedding request returned no vector (#{summary})"})
   )
   {^ok false ^error "Embedding request returned no vector"}
@@ -588,7 +588,7 @@
     (var normalized (ensure_map chunk))
     (var hash (record_text normalized "hash" ""))
     (var vector (ensure_array (normalized/vector || [])))
-    (if (hash/.not_empty? && vector/.not_empty?)
+    (if (hash/.not_empty && vector/.not_empty)
       (reuse .set hash vector)
     )
   )
@@ -611,7 +611,7 @@
   (var counts {})
   (for token in (ensure_array tokens)
     (var key (((token || "") .to_s) .trim))
-    (if key/.not_empty?
+    (if key/.not_empty
       (counts .set key ((counts .get key 0) + 1))
     )
   )
@@ -623,7 +623,7 @@
   (var result [])
   (for token in (ensure_array tokens)
     (var key (((token || "") .to_s) .trim))
-    (if (key/.not_empty? && (not (seen .get key false)))
+    (if (key/.not_empty && (not (seen .get key false)))
       (seen .set key true)
       (result .append key)
     )
@@ -633,7 +633,7 @@
 
 (fn keyword_coverage [query_terms token_counts]
   (var terms (ensure_array query_terms))
-  (if terms/.empty?
+  (if terms/.empty
     (return 0.0)
   )
   (var matched 0.0)
@@ -649,7 +649,7 @@
 
 (fn bm25_score [query_terms chunk doc_freq total_chunks avg_doc_len]
   (var terms (ensure_array query_terms))
-  (if (terms/.empty? || (total_chunks <= 0))
+  (if (terms/.empty || (total_chunks <= 0))
     (return 0.0)
   )
 
@@ -694,7 +694,7 @@
     (return false)
   )
   (var chunks (ensure_array (current/chunks || [])))
-  (if chunks/.empty?
+  (if chunks/.empty
     true
   else
     (var first_chunk (ensure_map (chunks .get 0)))
@@ -713,7 +713,7 @@
   (for chunk in (ensure_array (current/chunks || []))
     (var normalized (ensure_map chunk))
     (var vector (ensure_array (normalized/vector || [])))
-    (if vector/.not_empty?
+    (if vector/.not_empty
       (return true)
     )
   )
@@ -739,7 +739,7 @@
     (total_token_count += tokens/.size)
     (for token in token_counts/.keys
       (var token_name (((token || "") .to_s) .trim))
-      (if token_name/.not_empty?
+      (if token_name/.not_empty
         (doc_freq .set token_name ((doc_freq .get token_name 0) + 1))
       )
     )
@@ -772,7 +772,7 @@
     })
   )
 
-  (var avg_doc_len (if indexed_chunks/.not_empty? (/ total_token_count/.to_f indexed_chunks/.size) else 0.0))
+  (var avg_doc_len (if indexed_chunks/.not_empty (/ total_token_count/.to_f indexed_chunks/.size) else 0.0))
   {^ok true ^index {
     ^file_hash (text_sha256 source)
     ^model (if (dimensions > 0) EMBEDDING_MODEL else "")
@@ -920,7 +920,7 @@
   (for chunk in indexed_chunks
     (var normalized (ensure_map chunk))
     (var vector (ensure_array (normalized/vector || [])))
-    (if vector/.not_empty?
+    (if vector/.not_empty
       (var score (cosine_similarity query_vector vector))
       (if (score >= threshold)
         (results .append {
@@ -938,7 +938,7 @@
 (fn search_keyword [query index limit threshold]
   (var ensured_index (ensure_map (if index index else {})))
   (var query_terms (unique_tokens (tokenize query)))
-  (if query_terms/.empty?
+  (if query_terms/.empty
     (return [])
   )
 
@@ -975,7 +975,7 @@
 (fn $ns/memory_read [section = nil]
   (var markdown_text (read_memory_markdown_text))
   (var requested (((section || "") .to_s) .trim))
-  (if requested/.empty?
+  (if requested/.empty
     (return {^ok true ^content markdown_text})
   )
 
@@ -990,7 +990,7 @@
 
 (fn $ns/memory_write [section content mode = "append"]
   (var requested (((section || "") .to_s) .trim))
-  (if requested/.empty?
+  (if requested/.empty
     (return {^ok false ^error "Missing section"})
   )
   (var body_text (if (content == nil) "" else (content .to_s)))
@@ -1023,12 +1023,12 @@
 
 (fn $ns/memory_search [query limit = DEFAULT_SEARCH_LIMIT threshold = DEFAULT_SEARCH_THRESHOLD]
   (var query_text (((query || "") .to_s) .trim))
-  (if query_text/.empty?
+  (if query_text/.empty
     (return {^ok false ^error "Missing query"})
   )
 
   (var markdown_text (read_memory_markdown_text))
-  (if markdown_text/.trim/.empty?
+  (if markdown_text/.trim/.empty
     (return {^ok true ^results [] ^count 0})
   )
 
@@ -1039,7 +1039,7 @@
 
   (var ensured_index (ensure_map (ensured .get "index" {})))
   (var warning_text (normalize_warning_text (ensured/warning || "") ""))
-  (if warning_text/.not_empty?
+  (if warning_text/.not_empty
     (log .warn #"memory_search index warning: #{warning_text}")
   )
 
@@ -1053,7 +1053,7 @@
     )
   )
 
-  (if results/.empty?
+  (if results/.empty
     (results = (search_keyword query_text ensured_index limit threshold))
   )
 

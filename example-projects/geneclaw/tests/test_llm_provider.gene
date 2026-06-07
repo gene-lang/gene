@@ -37,8 +37,8 @@
 (assert (empty_images_check/error == ""))
 (var invalid_provider_check (validate_image_inputs [image_attachment] "bogus"))
 (var invalid_provider_json (gene/json/stringify invalid_provider_check))
-(assert (invalid_provider_json .include? "\"ok\":false"))
-(assert (invalid_provider_json .include? "does not support image inputs"))
+(assert (invalid_provider_json .contains "\"ok\":false"))
+(assert (invalid_provider_json .contains "does not support image inputs"))
 
 (var openai_request (build_openai_request [] "What is in this image?" tools_spec [image_attachment]))
 (var openai_request_json (gene/json/stringify openai_request))
@@ -48,8 +48,8 @@
 (assert (openai_request/messages/1/content/0/type == "text"))
 (assert (openai_request/messages/1/content/0/text == "What is in this image?"))
 (assert (openai_request/messages/1/content/1/type == "image_url"))
-(assert (openai_request_json .include? "\"type\":\"image_url\""))
-(assert (openai_request_json .include? "\"data:image/png;base64,"))
+(assert (openai_request_json .contains "\"type\":\"image_url\""))
+(assert (openai_request_json .contains "\"data:image/png;base64,"))
 
 (var codex_history [
   {^role "assistant"
@@ -94,9 +94,9 @@
 (assert (codex_request/input/3/content/0/text == "Continue based on the tool results above."))
 (assert (codex_request/input/3/content/1/type == "input_image"))
 (assert (codex_request/input/3/content/1/source/type == "base64"))
-(assert (codex_request_json .include? "\"type\":\"function_call_output\""))
-(assert (codex_request_json .include? "\"name\":\"list_files\""))
-(assert (codex_request_json .include? "\"type\":\"input_image\""))
+(assert (codex_request_json .contains "\"type\":\"function_call_output\""))
+(assert (codex_request_json .contains "\"name\":\"list_files\""))
+(assert (codex_request_json .contains "\"type\":\"input_image\""))
 
 (var history [
   {^role "assistant"
@@ -135,9 +135,9 @@
 (assert (request/messages/1/content/0/is_error == true))
 (assert (request/messages/1/content/1/type == "text"))
 (assert (request/messages/1/content/1/text == "Continue based on the tool results above."))
-(assert (anthropic_request_json .include? "\"type\":\"image\""))
-(assert (anthropic_request_json .include? "\"media_type\":\"image/png\""))
-(assert (anthropic_request_json .include? "\"type\":\"tool_result\""))
+(assert (anthropic_request_json .contains "\"type\":\"image\""))
+(assert (anthropic_request_json .contains "\"media_type\":\"image/png\""))
+(assert (anthropic_request_json .contains "\"type\":\"tool_result\""))
 
 (var normalized (normalize_anthropic_response {
   ^content [
@@ -217,9 +217,9 @@
   ^raw_body "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}"
 }))
 
-(assert (anthropic_error_message .include? "Anthropic API Error: Error"))
-(assert (anthropic_error_message .include? "status=401"))
-(assert (anthropic_error_message .include? "body={\"type\":\"error\""))
+(assert (anthropic_error_message .contains "Anthropic API Error: Error"))
+(assert (anthropic_error_message .contains "status=401"))
+(assert (anthropic_error_message .contains "body={\"type\":\"error\""))
 
 (var success_openai_message (error_message_from_response {
   ^id "resp_123"
@@ -236,6 +236,6 @@
   ^status "failed"
 }))
 
-(assert (failed_openai_message .include? "OpenAI response status=failed"))
+(assert (failed_openai_message .contains "OpenAI response status=failed"))
 
 (println "ok")

@@ -15,13 +15,13 @@
       (var old_text args/old_text)
       (var new_text args/new_text)
 
-      (if path/.empty?
+      (if path/.empty
         (return {^error "Missing path"})
       )
       (if ((path .starts_with "/") || (path .starts_with "~"))
         (return {^error "Path must be relative to the workspace"})
       )
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
 

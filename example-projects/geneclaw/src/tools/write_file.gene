@@ -2,7 +2,7 @@
 
 (fn ensure_parent_dir [path]
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     (return nil)
   )
   (var parts (target .split "/"))
@@ -10,7 +10,7 @@
     (return nil)
   )
   (var parent ((parts .slice 0 (parts/.size - 1)) .join "/"))
-  (if parent/.not_empty?
+  (if parent/.not_empty
     (system/shell #"mkdir -p '#{parent}'")
   )
 )
@@ -26,13 +26,13 @@
      ^required ["path" "content"]}
     (fn [args]
       (var path ((args/path || "") .to_s))
-      (if path/.empty?
+      (if path/.empty
         (return {^error "Missing path"})
       )
       (if ((path .starts_with "/") || (path .starts_with "~"))
         (return {^error "Path must be relative to the workspace"})
       )
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
       (if_not (args .contains "content")

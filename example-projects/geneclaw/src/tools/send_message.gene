@@ -19,10 +19,10 @@
       (var text args/text)
       (var thread_ts args/thread_ts)
 
-      (if channel/.empty?
+      (if channel/.empty
         (return {^error "Missing channel"})
       )
-      (if text/.empty?
+      (if text/.empty
         (return {^error "Missing text"})
       )
       (if_not CONFIG/slack/agentx_token

@@ -6,7 +6,7 @@
 
 (fn file_exists? [path]
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     false
   else
     (try
@@ -40,10 +40,10 @@
       (var workspace_id (((ctx .get "workspace_id" "default") || "default") .to_s))
       (var session_id (((ctx .get "session_id" "") || "") .to_s))
 
-      (if path/.empty?
+      (if path/.empty
         (return {^ok false ^error "Missing path"})
       )
-      (if channel_id/.empty?
+      (if channel_id/.empty
         (return {^ok false ^error "Missing channel_id"})
       )
       (if_not CONFIG/slack/bot_token
@@ -75,10 +75,10 @@
         (var uploaded_permalink ((upload/permalink || "") .to_s))
         (var uploaded_byte_size (upload/byte_size || 0))
 
-        (if uploaded_file_id/.empty?
+        (if uploaded_file_id/.empty
           (throw "Slack upload returned no file_id")
         )
-        (if uploaded_real_path/.empty?
+        (if uploaded_real_path/.empty
           (throw "Slack upload returned no real_path")
         )
 

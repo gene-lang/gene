@@ -223,12 +223,12 @@ proc object_is_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], a
 proc core_satisfies(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
   let positional = get_positional_count(arg_count, has_keyword_args)
   if positional < 2:
-    not_allowed("satisfies? expects a value and an interface")
+    not_allowed("satisfies expects a value and an interface")
 
   let value_arg = get_positional_arg(args, 0, has_keyword_args)
   let interface_arg = get_positional_arg(args, 1, has_keyword_args)
   if interface_arg.kind != VkInterface:
-    not_allowed("satisfies? expects an interface as the second argument")
+    not_allowed("satisfies expects an interface as the second argument")
 
   let gene_interface = interface_arg.ref.gene_interface
   if value_arg.kind == VkAdapter and value_arg.ref.adapter.gene_interface.extends_interface(gene_interface):
@@ -434,8 +434,8 @@ when not defined(gene_wasm):
       NIL
     )
 
-    io_handle_class_global.def_native_method("isatty?", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.isatty?")
+    io_handle_class_global.def_native_method("isatty", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.isatty")
       console_handle_isatty(handle_name).to_value()
     )
 
@@ -540,10 +540,10 @@ else:
       NIL
     )
 
-    io_handle_class_global.def_native_method("isatty?", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
+    io_handle_class_global.def_native_method("isatty", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
       discard vm
       discard arg_count
-      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.isatty?")
+      let handle_name = get_io_handle_name(get_self(args, has_keyword_args), "IOHandle.isatty")
       console_handle_isatty(handle_name).to_value()
     )
 
@@ -891,20 +891,22 @@ proc init_string_class(object_class: Class) =
 
   proc string_contain(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("String.contain requires a pattern")
+      not_allowed("String.contains requires a pattern")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     let pattern_val = get_positional_arg(args, 1, has_keyword_args)
     if self_arg.kind != VkString:
-      not_allowed("contain must be called on a string")
+      not_allowed("contains must be called on a string")
     case pattern_val.kind
     of VkRegex:
       result = regex_match_bool(self_arg.str, pattern_val).to_value()
     of VkString:
       result = (self_arg.str.find(pattern_val.str) >= 0).to_value()
     else:
-      not_allowed("String.contain expects a Regexp or string pattern")
+      not_allowed("String.contains expects a Regexp or string pattern")
 
+  string_class.def_native_method("matches", string_match)
   string_class.def_native_method("contain", string_contain)
+  string_class.def_native_method("contains", string_contain)
 
   proc string_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -1132,6 +1134,7 @@ proc init_regex_class(object_class: Class) =
     regex_replace_value(input_val.str, self_arg, replacement_val, true)
 
   regex_class.def_native_method("match", regexp_match)
+  regex_class.def_native_method("matches", regexp_match)
   regex_class.def_native_method("process", regexp_process)
   regex_class.def_native_method("find", regexp_find)
   regex_class.def_native_method("find_all", regexp_find_all)
@@ -1372,7 +1375,7 @@ proc init_collection_classes(object_class: Class) =
     return false.to_value()
 
   proc vm_map_get(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
-    # map.get(key, default?) -> value|default|nil
+    # map.get(key, default_value) -> value|default|nil
     if arg_count < 2:
       not_allowed("Map.get expects at least a key argument")
 
@@ -1430,13 +1433,13 @@ proc init_collection_classes(object_class: Class) =
   
   proc vm_map_immutable(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Map.immutable? requires self")
+      not_allowed("Map.immutable requires self")
     let map_val = get_positional_arg(args, 0, has_keyword_args)
     if map_val.kind != VkMap:
-      not_allowed("immutable? must be called on a map")
+      not_allowed("immutable must be called on a map")
     map_is_frozen(map_val).to_value()
 
-  map_class.def_native_method("immutable?", vm_map_immutable)
+  map_class.def_native_method("immutable", vm_map_immutable)
 
   map_class.def_native_method("contains", vm_map_contains)
 
@@ -1728,13 +1731,13 @@ proc init_gene_and_meta_classes(object_class: Class) =
 
   proc gene_immutable_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Gene.immutable? requires self")
+      not_allowed("Gene.immutable requires self")
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
     if gene_val.kind != VkGene:
-      not_allowed("immutable? must be called on a gene")
+      not_allowed("immutable must be called on a gene")
     gene_is_frozen(gene_val).to_value()
 
-  gene_class.def_native_method("immutable?", gene_immutable_method, @[], App.app.bool_class)
+  gene_class.def_native_method("immutable", gene_immutable_method, @[], App.app.bool_class)
 
   # Gene property (member) APIs
   proc gene_has_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -2166,17 +2169,16 @@ proc init_gene_and_meta_classes(object_class: Class) =
     (ns_val.ref.ns.members.len == 0).to_value()
 
   namespace_class.def_native_method("empty", ns_empty_method)
-  namespace_class.def_native_method("empty?", ns_empty_method)
 
   proc ns_not_empty_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Namespace.not_empty? requires self")
+      not_allowed("Namespace.not_empty requires self")
     let ns_val = get_positional_arg(args, 0, has_keyword_args)
     if ns_val.kind != VkNamespace:
-      not_allowed("Namespace.not_empty? must be called on a namespace")
+      not_allowed("Namespace.not_empty must be called on a namespace")
     (ns_val.ref.ns.members.len != 0).to_value()
 
-  namespace_class.def_native_method("not_empty?", ns_not_empty_method)
+  namespace_class.def_native_method("not_empty", ns_not_empty_method)
 
   proc ns_clear_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -3816,7 +3818,7 @@ proc init_gene_core_functions() =
   App.app.gene_ns.ns["repl".to_key()] = NativeFn(core_repl).to_value()  # $repl resolves via global repl
   App.app.gene_ns.ns["types_equivalent".to_key()] = core_types_equivalent.to_value()
   App.app.gene_ns.ns["types_equiv".to_key()] = core_types_equivalent.to_value()
-  App.app.gene_ns.ns["satisfies?".to_key()] = core_satisfies.to_value()
+  App.app.gene_ns.ns["satisfies".to_key()] = core_satisfies.to_value()
 
   var sleep_ref = new_ref(VkNativeFn)
   sleep_ref.native_fn = gene_sleep
@@ -4217,7 +4219,7 @@ proc init_stdlib*() =
   global_ns["freeze".to_key()] = NativeFn(stdlib_freeze.core_freeze).to_value()
   global_ns["types_equivalent".to_key()] = core_types_equivalent.to_value()
   global_ns["types_equiv".to_key()] = core_types_equivalent.to_value()
-  global_ns["satisfies?".to_key()] = core_satisfies.to_value()
+  global_ns["satisfies".to_key()] = core_satisfies.to_value()
 
   # Assertions and debugging
   global_ns["assert".to_key()] = core_assert.to_value()

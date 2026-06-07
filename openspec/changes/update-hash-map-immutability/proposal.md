@@ -6,7 +6,7 @@ The value-vs-entity proposal reserves `#{...}` for immutable maps, but the imple
 
 - Add `#{...}` as immutable map literal syntax.
 - Add immutable-map runtime semantics so map mutation attempts fail clearly instead of mutating in place.
-- Add a map runtime predicate `.immutable?` so code can observe frozen state.
+- Add a map runtime predicate `.immutable` so code can observe frozen state.
 - **BREAKING** Stop using `#{...}` as the textual form for `VkSet` values so hash-brace syntax is unambiguous.
 - Leave immutable gene syntax `#(...)` out of scope for this change.
 

@@ -10,11 +10,11 @@ test_vm """
 """, 2
 
 test_vm """
-  ([] .empty?)
+  ([] .empty)
 """, true
 
 test_vm """
-  ([1 2] .not_empty?)
+  ([1 2] .not_empty)
 """, true
 
 test_vm """

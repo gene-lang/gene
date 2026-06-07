@@ -145,8 +145,8 @@
 (log .info #"Anthropic model=#{CONFIG/llm/anthropic/model} timeout_ms=#{CONFIG/llm/anthropic/timeout_ms} configured=#{((secret_configured CONFIG/llm/anthropic/api_key) || (secret_configured CONFIG/llm/anthropic/auth_token))}")
 (log .info #"Documents upload_bytes=#{CONFIG/documents/max_upload_bytes} inline_chars=#{CONFIG/documents/max_inline_chars} image_max=#{CONFIG/documents/max_image_count}")
 (log .info #"Scheduler tick_ms=#{CONFIG/scheduler/tick_ms} hotswap pause_timeout_ms=#{CONFIG/hotswap/pause_timeout_ms} pause_check_interval_ms=#{CONFIG/hotswap/pause_check_interval_ms}")
-(if CONFIG/slack/app_token/.empty?
-  (if CONFIG/slack/bot_token/.empty?
+(if CONFIG/slack/app_token/.empty
+  (if CONFIG/slack/bot_token/.empty
     (log .debug "Slack integration not configured")
   else
     (log .info "Slack Webhook Mode enabled")

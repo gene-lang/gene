@@ -15,11 +15,11 @@ test_vm """
 """, 2
 
 test_vm """
-  ({} .empty?)
+  ({} .empty)
 """, true
 
 test_vm """
-  ({^a 1} .not_empty?)
+  ({^a 1} .not_empty)
 """, true
 
 test_vm """
@@ -48,11 +48,11 @@ test_vm """
   check map_data(result)["b".to_key()] == 2.to_value()
 
 test_vm """
-  (#{^a 1} .immutable?)
+  (#{^a 1} .immutable)
 """, true
 
 test_vm """
-  ({^a 1} .immutable?)
+  ({^a 1} .immutable)
 """, false
 
 suite "Immutable map guards":

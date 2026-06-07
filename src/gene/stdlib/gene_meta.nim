@@ -52,13 +52,13 @@ proc init_gene_and_meta_classes*(object_class: Class) =
 
   proc gene_immutable_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Gene.immutable? requires self")
+      not_allowed("Gene.immutable requires self")
     let gene_val = get_positional_arg(args, 0, has_keyword_args)
     if gene_val.kind != VkGene:
-      not_allowed("immutable? must be called on a gene")
+      not_allowed("immutable must be called on a gene")
     gene_is_frozen(gene_val).to_value()
 
-  gene_class.def_native_method("immutable?", gene_immutable_method)
+  gene_class.def_native_method("immutable", gene_immutable_method)
 
   # Gene property (member) APIs
   proc gene_has_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
@@ -432,9 +432,9 @@ proc init_gene_and_meta_classes*(object_class: Class) =
       data["return_type".to_key()] = data["return".to_key()]
       data["return_type_id".to_key()] = sig.return_type_id.int.to_value()
       data["effects".to_key()] = new_array_value()
-      data["native?".to_key()] = TRUE
-      data["receives_self?".to_key()] = sig.receives_self.to_value()
-      data["has_type_annotations?".to_key()] = sig.has_type_annotations.to_value()
+      data["native".to_key()] = TRUE
+      data["receives_self".to_key()] = sig.receives_self.to_value()
+      data["has_type_annotations".to_key()] = sig.has_type_annotations.to_value()
       return new_map_value(data)
 
     let info = matcher_for_callable(callable)
@@ -444,7 +444,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
       data["return_type".to_key()] = "Any".to_value()
       data["return_type_id".to_key()] = BUILTIN_TYPE_ANY_ID.int.to_value()
       data["effects".to_key()] = new_array_value()
-      data["has_type_annotations?".to_key()] = FALSE
+      data["has_type_annotations".to_key()] = FALSE
     else:
       data["return".to_key()] = type_name_value(info.matcher.return_type_id,
         info.matcher.type_descriptors)
@@ -453,11 +453,11 @@ proc init_gene_and_meta_classes*(object_class: Class) =
         (if info.matcher.return_type_id == NO_TYPE_ID: BUILTIN_TYPE_ANY_ID
          else: info.matcher.return_type_id).int.to_value()
       data["effects".to_key()] = string_seq_value(info.matcher.effects)
-      data["has_type_annotations?".to_key()] =
+      data["has_type_annotations".to_key()] =
         (info.matcher.has_type_annotations or
          info.matcher.return_type_id notin [NO_TYPE_ID, BUILTIN_TYPE_ANY_ID]).to_value()
-    data["native?".to_key()] = FALSE
-    data["receives_self?".to_key()] = info.receives_self.to_value()
+    data["native".to_key()] = FALSE
+    data["receives_self".to_key()] = info.receives_self.to_value()
     new_map_value(data)
 
   proc require_callable_arg(args: ptr UncheckedArray[Value], arg_count: int,
@@ -765,17 +765,16 @@ proc init_gene_and_meta_classes*(object_class: Class) =
     (ns_val.ref.ns.members.len == 0).to_value()
 
   namespace_class.def_native_method("empty", ns_empty_method)
-  namespace_class.def_native_method("empty?", ns_empty_method)
 
   proc ns_not_empty_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("Namespace.not_empty? requires self")
+      not_allowed("Namespace.not_empty requires self")
     let ns_val = get_positional_arg(args, 0, has_keyword_args)
     if ns_val.kind != VkNamespace:
-      not_allowed("Namespace.not_empty? must be called on a namespace")
+      not_allowed("Namespace.not_empty must be called on a namespace")
     (ns_val.ref.ns.members.len != 0).to_value()
 
-  namespace_class.def_native_method("not_empty?", ns_not_empty_method)
+  namespace_class.def_native_method("not_empty", ns_not_empty_method)
 
   proc ns_clear_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:

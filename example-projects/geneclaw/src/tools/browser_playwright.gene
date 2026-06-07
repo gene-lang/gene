@@ -4,7 +4,7 @@
 
 (fn ensure_parent_dir [path]
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     (return nil)
   )
   (var parts (target .split "/"))
@@ -12,7 +12,7 @@
     (return nil)
   )
   (var parent ((parts .slice 0 (parts/.size - 1)) .join "/"))
-  (if parent/.not_empty?
+  (if parent/.not_empty
     (system/shell #"mkdir -p '#{parent}'")
   )
 )
@@ -20,7 +20,7 @@
 (fn normalized_relative_output_path [path]
   (var requested ((path || "") .to_s))
   (requested = (requested .replace "\\" "/"))
-  (if ((requested .starts_with "/") || (requested .include? ".."))
+  (if ((requested .starts_with "/") || (requested .contains ".."))
     (throw #"Invalid relative screenshot path: #{path}")
   )
   requested
@@ -28,7 +28,7 @@
 
 (fn $ns/resolve_browser_output_path [path artifact_root]
   (var requested ((path || "") .to_s))
-  (if requested/.empty?
+  (if requested/.empty
     #"#{artifact_root}/geneclaw-shot-#{gene/now/.call/.to_i}.png"
   elif (requested .starts_with "/")
     requested

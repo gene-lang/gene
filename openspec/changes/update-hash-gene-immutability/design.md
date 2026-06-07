@@ -11,7 +11,7 @@ Genes already expose mutating APIs through direct assignment paths and stdlib he
 - Goals:
   - Make `#(...)` produce an immutable gene value.
   - Reject runtime mutations against immutable genes with explicit errors.
-  - Expose `Gene.immutable?` for frozen-state inspection.
+  - Expose `Gene.immutable` for frozen-state inspection.
   - Preserve immutable genes through display and roundtrip paths.
   - Leave `#"` string interpolation behavior unchanged.
 - Non-Goals:

@@ -14,17 +14,17 @@
 (fn separator_cell? [cell]
   (var text cell/.to_s)
   (var cleaned (text .replace_all #/[\s:\-]/ ""))
-  (((cleaned .length) == 0) && ((text .include? "-") || (text .include? ":")))
+  (((cleaned .length) == 0) && ((text .contains "-") || (text .contains ":")))
 )
 
 (fn table_separator_line? [line]
   (var text line/.to_s/.trim)
-  (if_not (text .include? "|")
+  (if_not (text .contains "|")
     (return false)
   )
 
   (var cells (split_table_row text))
-  (if cells/.empty?
+  (if cells/.empty
     (return false)
   )
 
@@ -52,7 +52,7 @@
 
     (if (trimmed .starts_with "```")
       (in_code = (! in_code))
-    elif ((in_code == false) && (i < (lines/.size - 1)) && (trimmed .include? "|"))
+    elif ((in_code == false) && (i < (lines/.size - 1)) && (trimmed .contains "|"))
       (var next_index (i + 1))
       (var next_item lines/<next_index>)
       (var next_trimmed next_item/.to_s/.trim)
@@ -63,13 +63,13 @@
         (while (row_index < lines/.size)
           (var row_item lines/<row_index>)
           (var row_trimmed row_item/.to_s/.trim)
-          (if row_trimmed/.empty?
+          (if row_trimmed/.empty
             (break)
           )
           (if (row_trimmed .starts_with "```")
             (break)
           )
-          (if_not (row_trimmed .include? "|")
+          (if_not (row_trimmed .contains "|")
             (break)
           )
           (table_end = row_index)
@@ -103,7 +103,7 @@
       (for cell in (split_table_row lines/<i>)
         (row .append {^type "raw_text" ^text cell})
       )
-      (if row/.not_empty?
+      (if row/.not_empty
         (rows .append row)
       )
     )
@@ -115,15 +115,15 @@
   (var before_text ((before_lines .join "\n") .trim))
   (var after_text ((after_lines .join "\n") .trim))
 
-  (if before_text/.not_empty?
+  (if before_text/.not_empty
     (parts .append before_text)
   )
-  (if after_text/.not_empty?
+  (if after_text/.not_empty
     (parts .append after_text)
   )
 
   (var body_text (parts .join "\n\n"))
-  (if body_text/.empty?
+  (if body_text/.empty
     (body_text = "_Table rendered below._")
   else
     (body_text = #"#{body_text}\n\n_Table rendered below._")
@@ -148,16 +148,16 @@
     ^channel channel/.to_s
     ^text text_value
   })
-  (if render_plan/body_text/.not_empty?
+  (if render_plan/body_text/.not_empty
     (payload .set "blocks" [{
       ^type "markdown"
       ^text render_plan/body_text
     }])
   )
-  (if render_plan/attachments/.not_empty?
+  (if render_plan/attachments/.not_empty
     (payload .set "attachments" render_plan/attachments)
   )
-  (if thread_value/.not_empty?
+  (if thread_value/.not_empty
     (payload .set "thread_ts" thread_value)
   )
   payload

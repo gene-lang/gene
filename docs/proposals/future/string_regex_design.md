@@ -290,7 +290,7 @@ Representative capabilities to support:
 - `scan`
 - `sub` / `gsub`
 - `strip` / `lstrip` / `rstrip`
-- `start_with?` / `end_with?` equivalents
+- `starts_with` / `ends_with` equivalents
 - Unicode-aware case operations
 - byte-explicit counterparts where needed
 

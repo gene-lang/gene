@@ -27,7 +27,7 @@ test_vm """
   (var p (system/Process/start "sleep" "1"))
   (var first (p .wait ^timeout 0.05))
   (assert (first == nil))
-  (assert (p .alive?))
+  (assert (p .alive))
   (p .signal "KILL")
   (var code (p .wait ^timeout 5))
   (assert (code == 137))
@@ -101,7 +101,7 @@ test_vm """
     r/stderr
     r/exit_code
     r/timed_out
-    ((system/which "sh") .not_empty?)
+    ((system/which "sh") .not_empty)
   ]
 """, proc(result: Value) =
   check result.kind == VkArray

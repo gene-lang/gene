@@ -17,7 +17,7 @@
         (return {^error "Path must be relative to the current workspace"})
       )
       # Block path traversal
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
 

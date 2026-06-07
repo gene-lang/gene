@@ -367,13 +367,12 @@ proc init_basic_classes*(): Class =
     TRUE
 
   nil_class.def_native_method("empty", nil_empty_method)
-  nil_class.def_native_method("empty?", nil_empty_method)
 
   proc nil_not_empty_method(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value],
                             arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     FALSE
 
-  nil_class.def_native_method("not_empty?", nil_not_empty_method)
+  nil_class.def_native_method("not_empty", nil_not_empty_method)
 
   r = new_ref(VkClass)
   r.class = nil_class
@@ -385,8 +384,7 @@ proc init_basic_classes*(): Class =
   void_class.parent = object_class
   void_class.def_native_method("to_s", object_to_s_method)
   void_class.def_native_method("empty", nil_empty_method)
-  void_class.def_native_method("empty?", nil_empty_method)
-  void_class.def_native_method("not_empty?", nil_not_empty_method)
+  void_class.def_native_method("not_empty", nil_not_empty_method)
 
   r = new_ref(VkClass)
   r.class = void_class
@@ -629,7 +627,7 @@ proc init_interface_adapter_classes*(object_class: Class) =
     data["return".to_key()] = type_name_value(method_info.type_id, method_info.type_descs)
     data["return_type_id".to_key()] = method_info.type_id.int.to_value()
     data["effects".to_key()] = string_seq_value(method_info.effects)
-    data["default?".to_key()] = (method_info.callable != NIL).to_value()
+    data["default".to_key()] = (method_info.callable != NIL).to_value()
     new_map_value(data)
 
   proc interface_field_metadata_value(prop: InterfaceProp): Value {.gcsafe.} =
@@ -637,7 +635,7 @@ proc init_interface_adapter_classes*(object_class: Class) =
     data["name".to_key()] = prop.name.to_value()
     data["type".to_key()] = type_name_value(prop.type_id, prop.type_descs)
     data["type_id".to_key()] = prop.type_id.int.to_value()
-    data["readonly?".to_key()] = prop.readonly.to_value()
+    data["readonly".to_key()] = prop.readonly.to_value()
     new_map_value(data)
 
   interface_class.def_native_method "name", proc(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =

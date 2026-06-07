@@ -14,21 +14,21 @@
 (var abs_path (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
   (gene/json/parse "{\"pattern\":\"*.gene\",\"path\":\"/etc\"}")))
 (assert (abs_path/ok == false))
-(assert (abs_path/result/error .include? "relative"))
+(assert (abs_path/result/error .contains "relative"))
 (println "PASS: absolute path rejected")
 
 # Test 3: path traversal should be rejected
 (var traversal (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
   (gene/json/parse "{\"pattern\":\"*.gene\",\"path\":\"../../etc\"}")))
 (assert (traversal/ok == false))
-(assert (traversal/result/error .include? "traversal"))
+(assert (traversal/result/error .contains "traversal"))
 (println "PASS: path traversal rejected")
 
 # Test 4: valid search should succeed
 (var valid (invoke_tool "run-test" "ws-test" "user-1" "chan-1" "" "session-1" "find_files"
   (gene/json/parse "{\"pattern\":\"*.gene\"}")))
 (assert valid/ok)
-(assert (valid/result/results .include? ".gene"))
+(assert (valid/result/results .contains ".gene"))
 (println "PASS: valid search returns results")
 
 # Test 5: search with max_depth

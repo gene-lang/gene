@@ -1387,7 +1387,7 @@ suite "GIR CLI":
   test "cached GIR preserves immutable map runtime semantics":
     let code = """
       (var m #{^a 1})
-      (assert ((m .immutable?) == true))
+      (assert ((m .immutable) == true))
       (var caught false)
       (try
         (m .set "a" 2)
@@ -1420,7 +1420,7 @@ suite "GIR CLI":
   test "cached GIR preserves immutable gene runtime semantics":
     let code = """
       (var g #(1 ^a 2 3))
-      (assert ((g .immutable?) == true))
+      (assert ((g .immutable) == true))
       (var caught false)
       (try
         (g .set "a" 4)

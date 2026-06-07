@@ -178,7 +178,7 @@ else
     (if (input == "exit") (break))
     (if (input == "quit") (break))
     (var trimmed (input .trim))
-    (if trimmed/.empty? (continue))
+    (if trimmed/.empty (continue))
 
     # Run agent through the standard pipeline (reuses existing logic).
     # thread_id carries --session so each named session gets its own
@@ -210,7 +210,7 @@ else
 > **Note on one-shot / pipe mode:** When stdin is a pipe, `readline` returns
 > `nil` after the last line, which breaks the loop. The final `User: ` prompt
 > will still be printed before EOF is detected. To suppress it, the loop could
-> check `(stdin .isatty?)` and skip the prompt for non-TTY input — but
+> check `(stdin .isatty)` and skip the prompt for non-TTY input — but
 > `isatty` is another runtime primitive that doesn't exist yet. For v1, the
 > trailing prompt in pipe mode is acceptable.
 
@@ -258,7 +258,7 @@ The CLI loop does not need to call any session APIs directly.
 Uses `system/Process/start` (the actual API — see `system.nim:413`,
 `test_stdlib_process.nim`).
 
-String containment uses `.contain` or `.include?` (registered at
+String containment uses `.contain` or `.contains` (registered at
 `strings.nim:609`), not `.contains`.
 
 ```gene
@@ -273,7 +273,7 @@ String containment uses `.contain` or `.include?` (registered at
   # Test basic response
   (gc .write_line "what time is it?")
   (var response (gc .read_until "User: " ^timeout 30))
-  (assert (response .include? "Assistant:"))
+  (assert (response .contains "Assistant:"))
 
   # Clean exit
   (gc .signal "INT")
@@ -295,7 +295,7 @@ String containment uses `.contain` or `.include?` (registered at
   (gc2 .read_until "User: ")
   (gc2 .write_line "when is the project deadline?")
   (var response (gc2 .read_until "User: " ^timeout 30))
-  (assert (response .include? "March 30"))
+  (assert (response .contains "March 30"))
   (gc2 .signal "INT")
   (gc2 .wait)
   (println "PASS: session persistence")
@@ -312,7 +312,7 @@ String containment uses `.contain` or `.include?` (registered at
   # Search memory
   (gc .write_line "search your memory for my favorite language")
   (var response (gc .read_until "User: " ^timeout 30))
-  (assert (response .include? "Gene"))
+  (assert (response .contains "Gene"))
 
   (gc .signal "INT")
   (gc .wait)

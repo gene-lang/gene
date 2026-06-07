@@ -68,7 +68,7 @@ Int Float Bool String Symbol Char Nil
 
 ```gene
 (fn first [arr: (Array T)] -> (Option T)
-  (if (arr .empty?)
+  (if (arr .empty)
     None
     (Some arr/0)))
 

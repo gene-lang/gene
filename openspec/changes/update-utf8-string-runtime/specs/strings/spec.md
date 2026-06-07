@@ -87,9 +87,9 @@ aliases for common string workflows without requiring full Ruby method parity.
 
 #### Scenario: Ruby-style predicate aliases work with string helpers
 
-- **WHEN** a program evaluates `("abc" .start_with? "ab")`
+- **WHEN** a program evaluates `("abc" .starts_with "ab")`
 - **THEN** it SHALL return `true`.
-- **AND WHEN** a program evaluates `("a你b" .include? #/你/)`
+- **AND WHEN** a program evaluates `("a你b" .contains #/你/)`
 - **THEN** it SHALL return `true`.
 
 #### Scenario: Ruby-style casing helpers remain Unicode-aware

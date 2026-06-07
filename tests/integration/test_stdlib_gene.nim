@@ -28,16 +28,16 @@ test_vm """
   check array_data(result)[1] == 4.to_value()
 
 test_vm """
-  (#(1 ^a 2 3) .immutable?)
+  (#(1 ^a 2 3) .immutable)
 """, true
 
 test_vm """
-  ((_ 1 2) .immutable?)
+  ((_ 1 2) .immutable)
 """, false
 
 test_vm """
   (var g #(1 ^a 2 3))
-  [g/a (g .get_child 0) (g .immutable?)]
+  [g/a (g .get_child 0) (g .immutable)]
 """, proc(result: Value) =
   check result.kind == VkArray
   check array_data(result)[0] == 2.to_value()

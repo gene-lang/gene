@@ -80,7 +80,7 @@
   (try
     (var now gene/now/.call/.to_i)
     (var due_jobs (job_list_due now))
-    (if due_jobs/.not_empty?
+    (if due_jobs/.not_empty
       (log .info #"Scheduler tick: #{due_jobs/.size} job(s) due")
       (due_jobs .each (fn [job]
         (job_mark_running job/job_id)

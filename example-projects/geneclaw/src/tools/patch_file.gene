@@ -13,16 +13,16 @@
       (var path ((args/path || "") .to_s))
       (var diff args/diff)
 
-      (if path/.empty?
+      (if path/.empty
         (return {^error "Missing path"})
       )
       (if ((path .starts_with "/") || (path .starts_with "~"))
         (return {^error "Path must be relative to the workspace"})
       )
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
-      (if diff/.empty?
+      (if diff/.empty
         (return {^error "Missing diff"})
       )
 

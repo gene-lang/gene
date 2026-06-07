@@ -14,7 +14,7 @@
 
 (var readme_result (invoke_tool "run-tool-workspaces" "ws-tool-workspaces" "user-1" "chan-1" "" "session-1" "read_file" {^path "README.md"}))
 (assert (readme_result/ok == true))
-(assert ((readme_result/result/content || "") .include? "# GeneClaw"))
+(assert ((readme_result/result/content || "") .contains "# GeneClaw"))
 
 (var readme_traversal (invoke_tool "run-tool-workspaces" "ws-tool-workspaces" "user-1" "chan-1" "" "session-1" "read_file" {^path "../README.md"}))
 (assert (readme_traversal/ok == false))
@@ -22,11 +22,11 @@
 
 (var list_result (invoke_tool "run-tool-workspaces" "ws-tool-workspaces" "user-1" "chan-1" "" "session-1" "list_files" {^path "."}))
 (assert (list_result/ok == true))
-(assert ((list_result/result/entries || "") .include? "README.md"))
+(assert ((list_result/result/entries || "") .contains "README.md"))
 
 (var grep_result (invoke_tool "run-tool-workspaces" "ws-tool-workspaces" "user-1" "chan-1" "" "session-1" "grep" {^pattern "GeneClaw CLI mode" ^path "src/cli.gene"}))
 (assert (grep_result/ok == true))
-(assert ((grep_result/result/matches || "") .include? "GeneClaw CLI mode"))
+(assert ((grep_result/result/matches || "") .contains "GeneClaw CLI mode"))
 
 (var write_result (invoke_tool "run-tool-workspaces" "ws-tool-workspaces" "user-1" "chan-1" "" "session-1" "write_file" {^path managed_rel_path ^content "alpha\n"}))
 (assert (write_result/ok == true))

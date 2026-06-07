@@ -126,7 +126,7 @@ The type checker already has infrastructure for generics:
     (items .push val))
 
   (method pop [] -> (Option T)
-    (if (items .empty?)
+    (if (items .empty)
       None
     else
       (Some (items .pop)))))
@@ -152,7 +152,7 @@ The type checker already has infrastructure for generics:
     (items .push val))
 
   (method pop [] -> (Option T)
-    (if (items .empty?)
+    (if (items .empty)
       None
     else
       (Some (items .pop)))))

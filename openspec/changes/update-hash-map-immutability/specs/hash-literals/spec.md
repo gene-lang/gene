@@ -35,8 +35,8 @@ Immutable maps SHALL behave like normal maps for non-mutating operations.
 ### Requirement: Immutable Maps Expose Frozen-State Inspection
 Immutable maps SHALL expose a predicate that reports whether a map is immutable.
 
-#### Scenario: immutable? distinguishes frozen and mutable maps
-- **WHEN** a program evaluates `[(#{^a 1} .immutable?) ({^a 1} .immutable?)]`
+#### Scenario: immutable distinguishes frozen and mutable maps
+- **WHEN** a program evaluates `[(#{^a 1} .immutable) ({^a 1} .immutable)]`
 - **THEN** the first result is `true`
 - **AND** the second result is `false`
 

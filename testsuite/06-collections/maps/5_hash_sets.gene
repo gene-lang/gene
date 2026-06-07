@@ -26,6 +26,6 @@
 (println ((a .union b) .to_array))
 (println ((a .intersect b) .to_array))
 (println ((a .diff b) .to_array))
-(println ((new HashSet 1 2) .subset? a))
+(println ((new HashSet 1 2) .subset a))
 
 (println ((new HashSet 1 "two") .to_s))

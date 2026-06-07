@@ -49,7 +49,7 @@
 (assert (search_result/count == 1))
 (var top_search_result ((search_result/results || []) .get 0))
 (assert (top_search_result/heading == "User Preferences"))
-(assert ((top_search_result/text || "") .include? "Prefers concise responses"))
+(assert ((top_search_result/text || "") .contains "Prefers concise responses"))
 (assert ((top_search_result/score || 0.0) >= 0.3))
 
 (gene/io/write MEMORY_MARKDOWN_PATH "## Decisions\n- Durable memory matters")
@@ -59,7 +59,7 @@
 (assert (rebuilt_search/count == 1))
 (var rebuilt_top_result ((rebuilt_search/results || []) .get 0))
 (assert (rebuilt_top_result/heading == "Decisions"))
-(assert ((rebuilt_top_result/text || "") .include? "Durable memory matters"))
+(assert ((rebuilt_top_result/text || "") .contains "Durable memory matters"))
 
 (var sorted (sort_results_by_score [
   {^heading "low" ^score 0.2}

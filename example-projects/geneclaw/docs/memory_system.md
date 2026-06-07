@@ -113,7 +113,7 @@ Split MEMORY.md into chunks at `##` heading boundaries:
     (var line (lines .at i))
     (if (line .starts_with? "## ")
       # Flush previous chunk
-      (if current_lines/.not_empty?
+      (if current_lines/.not_empty
         (var chunk_text (current_lines .join "\n"))
         (chunks .append {
           ^id chunk_id
@@ -134,7 +134,7 @@ Split MEMORY.md into chunks at `##` heading boundaries:
   )
 
   # Flush final chunk
-  (if current_lines/.not_empty?
+  (if current_lines/.not_empty
     (var chunk_text (current_lines .join "\n"))
     (chunks .append {
       ^id chunk_id
@@ -176,7 +176,7 @@ No external dependencies. Works immediately.
   # Lowercase, split on non-alphanumeric, remove stopwords and short tokens
   (var words ((text .downcase) .split /[^a-z0-9]+/))
   (words .filter (fn [w]
-    (and (w/.length > 2) (not (STOPWORDS .include? w)))
+    (and (w/.length > 2) (not (STOPWORDS .contains w)))
   ))
 )
 ```
@@ -236,7 +236,7 @@ No external dependencies. Works immediately.
 
 (fn search_keyword [query chunks_index ^limit 5 ^threshold 0.1]
   (var query_tokens (tokenize query))
-  (if query_tokens/.empty?
+  (if query_tokens/.empty
     (return [])
   )
 
@@ -333,7 +333,7 @@ embedding vectors per chunk, enabling semantic search.
 (fn search_hybrid [query chunks_index ^limit 5 ^keyword_weight 0.3 ^vector_weight 0.7]
   # Get keyword scores (normalized to 0-1)
   (var keyword_results (search_keyword query chunks_index ^limit chunks_index/total_chunks))
-  (var max_kw_score (if keyword_results/.not_empty? (keyword_results .at 0)/score else 1.0))
+  (var max_kw_score (if keyword_results/.not_empty (keyword_results .at 0)/score else 1.0))
 
   # Get embedding scores
   (var query_vector (embed_text query))  # OpenAI API call

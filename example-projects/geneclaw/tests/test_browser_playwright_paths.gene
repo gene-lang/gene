@@ -10,8 +10,8 @@
 (assert (nested_path == #"#{ARTIFACT_ROOT}/screenshots/board.png"))
 
 (var generated_path (resolve_browser_output_path "" ARTIFACT_ROOT))
-(assert ((generated_path .start_with? #"#{ARTIFACT_ROOT}/geneclaw-shot-") == true))
-(assert ((generated_path .end_with? ".png") == true))
+(assert ((generated_path .starts_with #"#{ARTIFACT_ROOT}/geneclaw-shot-") == true))
+(assert ((generated_path .ends_with ".png") == true))
 
 (var absolute_path "/tmp/browser-shot.png")
 (assert ((resolve_browser_output_path absolute_path ARTIFACT_ROOT) == absolute_path))

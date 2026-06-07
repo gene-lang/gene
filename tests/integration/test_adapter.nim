@@ -74,7 +74,7 @@ suite "adapter runtime":
     (do
       (interface SizedForFalse (method length []))
       (class UnsizedForSatisfies (ctor [] nil))
-      (satisfies? (new UnsizedForSatisfies) SizedForFalse)
+      (satisfies (new UnsizedForSatisfies) SizedForFalse)
     )
   """, FALSE
 
@@ -82,7 +82,7 @@ suite "adapter runtime":
     (do
       (interface SizedForSatisfies (method length []))
       (implement SizedForSatisfies for String)
-      (satisfies? "abc" SizedForSatisfies)
+      (satisfies "abc" SizedForSatisfies)
     )
   """, TRUE
 
@@ -95,8 +95,8 @@ suite "adapter runtime":
         (method read [] "r")
         (method write [value] value))
       (var b (new Buffer))
-      (if (satisfies? b Readable)
-        (if (satisfies? b Writable)
+      (if (satisfies b Readable)
+        (if (satisfies b Writable)
           (((Readable b) .read) ++ ((Writable b) .write "w"))
         else
           "bad")
@@ -159,12 +159,12 @@ suite "adapter runtime":
         (Reflectable .name)
         parent_names/0
         field_meta/type
-        field_meta/readonly?
+        field_meta/readonly
         method_meta/return
         method_meta/effects/0
         method_meta/effects/1
         method_meta/params/0/type
-        method_meta/default?
+        method_meta/default
       ]
     )
   """, new_array_value(
@@ -208,7 +208,7 @@ suite "adapter runtime":
         (method read [] "r")
         (method write [value] value))
       (var b (new ParentBuffer))
-      (if (satisfies? b ParentReadable)
+      (if (satisfies b ParentReadable)
         (((ParentReadable b) .read) ++ ((ParentWritable b) .write "w"))
       else
         "bad")

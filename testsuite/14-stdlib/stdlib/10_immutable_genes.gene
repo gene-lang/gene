@@ -3,7 +3,7 @@
 # Expected: immutable gene testsuite ok
 
 (var g #(1 ^a 2 3))
-(assert ((g .immutable?) == true))
+(assert ((g .immutable) == true))
 (println g)
 
 (var set_caught false)

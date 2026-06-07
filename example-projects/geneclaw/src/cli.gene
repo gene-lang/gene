@@ -55,7 +55,7 @@
     (if ((trimmed == "exit") || (trimmed == "quit"))
       (break)
     )
-    (if trimmed/.empty?
+    (if trimmed/.empty
       (continue)
     )
 

@@ -20,13 +20,13 @@
       (var max_depth (args/max_depth || 0))
       (var hidden (args/hidden || false))
 
-      (if pattern/.empty?
+      (if pattern/.empty
         (return {^error "Missing pattern"})
       )
       (if ((path .starts_with "/") || (path .starts_with "~"))
         (return {^error "Path must be relative to the current workspace"})
       )
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
 
@@ -43,7 +43,7 @@
       (try
         # Try fd first (faster, respects .gitignore by default)
         (var has_fd (system/shell "command -v fd >/dev/null 2>&1 && echo yes || echo no"))
-        (var use_fd (has_fd/output .include? "yes"))
+        (var use_fd (has_fd/output .contains "yes"))
 
         (var cmd
           (if use_fd

@@ -38,12 +38,12 @@ Immutable genes MUST reject operations that would mutate their type, props, or c
 Immutable genes SHALL behave like normal genes for read operations and SHALL expose their frozen state.
 
 #### Scenario: Reads and predicate succeed
-- **WHEN** a program evaluates `(do (var g #(f ^a 1 2)) [g/a (g .get_child 0) (g .immutable?)])`
+- **WHEN** a program evaluates `(do (var g #(f ^a 1 2)) [g/a (g .get_child 0) (g .immutable)])`
 - **THEN** it reads `1` and `2` successfully
-- **AND** `immutable?` returns `true`
+- **AND** `immutable` returns `true`
 
-#### Scenario: immutable? distinguishes frozen and mutable genes
-- **WHEN** a program evaluates `[(#(f) .immutable?) ((_ f) .immutable?)]`
+#### Scenario: immutable distinguishes frozen and mutable genes
+- **WHEN** a program evaluates `[(#(f) .immutable) ((_ f) .immutable)]`
 - **THEN** the first result is `true`
 - **AND** the second result is `false`
 

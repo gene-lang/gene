@@ -40,7 +40,7 @@ Gene's current collection surface does not provide a first-class set optimized f
 - Decision: include `.to_array` plus `for` iteration support in the first implementation.
   - Alternatives considered: shipping only membership operations first. Rejected because a set without iteration is incomplete for real use.
 
-- Decision: include `.union`, `.intersect`, `.diff`, and `.subset?` in the first implementation.
+- Decision: include `.union`, `.intersect`, `.diff`, and `.subset` in the first implementation.
   - Alternatives considered: deferring set algebra to a follow-up. Rejected because these operations are core to why users reach for a set in the first place.
 
 - Decision: render `HashSet` values as `(HashSet item1 item2 ...)`.

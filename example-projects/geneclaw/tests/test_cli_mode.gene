@@ -3,8 +3,8 @@
 
 (fn start_cli_process [session_name = ""]
   (var gene_bin (($env .get "GENE_BIN" "") .to_s))
-  (assert gene_bin/.not_empty?)
-  (if (((session_name || "") .to_s) .not_empty?)
+  (assert gene_bin/.not_empty)
+  (if (((session_name || "") .to_s) .not_empty)
     (system/Process/start gene_bin "run" "--no-gir-cache" "src/main.gene" "--cli" "--session" session_name)
   else
     (system/Process/start gene_bin "run" "--no-gir-cache" "src/main.gene" "--cli")

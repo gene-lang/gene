@@ -44,7 +44,7 @@ suite "HashSet":
     (do
       (var a (new HashSet 1 2 3))
       (var b (new HashSet 3 4))
-      [((a .union b) .to_array) ((a .intersect b) .to_array) ((a .diff b) .to_array) ((new HashSet 1 2) .subset? a)]
+      [((a .union b) .to_array) ((a .intersect b) .to_array) ((a .diff b) .to_array) ((new HashSet 1 2) .subset a)]
     )
   """, proc(result: Value) =
     check result.kind == VkArray

@@ -74,7 +74,7 @@
 
 (fn $ns/build_session_id [workspace_id channel_id thread_id = ""]
   (var thread_part thread_id/.to_s)
-  (if thread_part/.not_empty?
+  (if thread_part/.not_empty
     #"#{workspace_id}:#{channel_id}:#{thread_part}"
   else
     #"#{workspace_id}:#{channel_id}"
@@ -251,10 +251,10 @@
     (var memory_text (build_memory_user_text text ingest))
     (log .debug #"#{run_id} prepared prompt_len=#{prompt_text/.length} memory_len=#{memory_text/.length}")
     (var followup_context_parts [])
-    (if memory_text/.not_empty?
+    (if memory_text/.not_empty
       (followup_context_parts .append memory_text)
     )
-    (if ((ingest/context || "") .not_empty?)
+    (if ((ingest/context || "") .not_empty)
       (followup_context_parts .append (ingest/context || ""))
     )
     (if (((ingest/notices || []) .size) > 0)

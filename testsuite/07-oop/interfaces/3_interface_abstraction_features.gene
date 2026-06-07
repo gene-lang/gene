@@ -32,12 +32,12 @@
 
 (var buffer (new TsBuffer))
 (println ("multi_inline=" ++ ((TsReadable buffer) .read) ++ ((TsWritable buffer) .write "w")))
-(println ("satisfies_readable=" ++ (bool_str (satisfies? buffer TsReadable))))
+(println ("satisfies_readable=" ++ (bool_str (satisfies buffer TsReadable))))
 
 (class TsPlain
   (ctor [] nil))
 
-(println ("satisfies_plain=" ++ (bool_str (satisfies? (new TsPlain) TsReadable))))
+(println ("satisfies_plain=" ++ (bool_str (satisfies (new TsPlain) TsReadable))))
 
 (interface TsIdentA
   (method identify [] -> String))
@@ -67,7 +67,7 @@
     "closed"))
 
 (var inherited (new TsInheritedBuffer))
-(println ("parent_satisfies=" ++ (bool_str (satisfies? inherited TsReadable)) ++ "/" ++ (bool_str (satisfies? inherited TsCloseable))))
+(println ("parent_satisfies=" ++ (bool_str (satisfies inherited TsReadable)) ++ "/" ++ (bool_str (satisfies inherited TsCloseable))))
 (println ("parent_cast=" ++ ((TsReadable inherited) .read) ++ ((TsWritable inherited) .write "r")))
 (println ("child_dispatch=" ++ ((TsReadWriteClose inherited) .close)))
 

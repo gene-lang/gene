@@ -104,7 +104,7 @@
   (var source (record || {}))
   (var source_run_id (record_text source "run_id" ""))
   {
-    ^run_id (if source_run_id/.to_s/.empty? run_id else source_run_id)
+    ^run_id (if source_run_id/.to_s/.empty run_id else source_run_id)
     ^workspace_id (record_text source "workspace_id" "")
     ^user_id (record_text source "user_id" "")
     ^state (record_text source "state" "queued")
@@ -174,7 +174,7 @@
   (var session_id (record_text source "session_id" ""))
   (var document_id (record_text source "document_id" ""))
   (var storage_path (record_text source "storage_path" ""))
-  (if storage_path/.empty?
+  (if storage_path/.empty
     (storage_path = (document_record_relative_path session_id document_id resolved_role))
   )
   {
@@ -266,7 +266,7 @@
   (var result [])
   (for path in (list_dir_paths JOBS_PATH)
     (var job_id (path_key path))
-    (if job_id/.not_empty?
+    (if job_id/.not_empty
       (var record (load_job_record job_id))
       (if record
         (result .append record)
@@ -340,7 +340,7 @@
   (var chunk_count (if normalized/chunks normalized/chunks/.size else 0))
   (log .info #"document_save id=#{normalized/document_id} session=#{normalized/session_id} status=#{normalized/status} chunks=#{chunk_count}")
   (save_document_entry normalized)
-  (if normalized/session_id/.not_empty?
+  (if normalized/session_id/.not_empty
     (session_add_document_ref normalized/workspace_id normalized/session_id (document_ref_from_entry normalized))
   )
   normalized
@@ -355,7 +355,7 @@
   (for ref in refs
     (var storage_path (record_text ref "storage_path" ""))
     (var entry nil)
-    (if storage_path/.not_empty?
+    (if storage_path/.not_empty
       (entry = (load_document_entry storage_path))
     )
     (if entry

@@ -80,7 +80,7 @@ The system SHALL provide `HashSet` as a mutable arbitrary-value set constructed 
 - **AND** the returned members match the standard set operation semantics
 
 #### Scenario: Subset checks containment across sets
-- **WHEN** a program evaluates `(a .subset? b)`
+- **WHEN** a program evaluates `(a .subset b)`
 - **THEN** the result is `true` only when every member of `a` is present in `b`
 
 ### Requirement: HashSet Renders With Constructor Syntax

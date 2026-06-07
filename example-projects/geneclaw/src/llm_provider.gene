@@ -55,7 +55,7 @@
 
 (fn image_attachment_error [image_attachments provider = nil]
   (var images (ensure_array image_attachments))
-  (if images/.empty?
+  (if images/.empty
     (return "")
   )
   (var selected_provider (((provider || CONFIG/llm/provider || "") .to_s) .to_lower))
@@ -69,7 +69,7 @@
   )
 
   (for image in images
-    (if image/local_path/.empty?
+    (if image/local_path/.empty
       (return #"Image attachment #{(image/filename || image/document_id || "unknown")} is missing a local file path.")
     )
     (if_not (supported_image_mime? image/mime_type)
@@ -85,7 +85,7 @@
 
 (fn $ns/validate_image_inputs [image_attachments provider = nil]
   (var error (image_attachment_error image_attachments provider))
-  (if error/.empty?
+  (if error/.empty
     {^ok true ^error ""}
   else
     {^ok false ^error error}
@@ -94,7 +94,7 @@
 
 (fn read_image_base64 [image]
   (var existing (image/base64_data || ""))
-  (if existing/.not_empty?
+  (if existing/.not_empty
     (return existing)
   )
   (var encoded (genex/ai/documents/file_to_base64 image/local_path))
@@ -130,12 +130,12 @@
 
 (fn build_openai_user_content [user_text image_attachments]
   (var images (ensure_array image_attachments))
-  (if images/.empty?
+  (if images/.empty
     (return user_text)
   )
 
   (var content [])
-  (if user_text/.not_empty?
+  (if user_text/.not_empty
     (content .append {^type "text" ^text user_text})
   )
   (images .each (fn [image]
@@ -146,12 +146,12 @@
 
 (fn build_openai_responses_user_content [user_text image_attachments]
   (var images (ensure_array image_attachments))
-  (if images/.empty?
+  (if images/.empty
     (return user_text)
   )
 
   (var content [])
-  (if user_text/.not_empty?
+  (if user_text/.not_empty
     (content .append {^type "input_text" ^text user_text})
   )
   (images .each (fn [image]
@@ -163,7 +163,7 @@
 (fn build_anthropic_user_blocks [user_text image_attachments]
   (var blocks [])
   (var images (ensure_array image_attachments))
-  (if user_text/.not_empty?
+  (if user_text/.not_empty
     (blocks .append {^type "text" ^text user_text})
   )
   (images .each (fn [image]
@@ -331,30 +331,30 @@
   (history .each (fn [entry]
     (if (entry/role == "assistant")
       (var assistant_content (history_content_to_openai_responses (entry/content || "")))
-      (if (if (assistant_content is String) assistant_content/.not_empty? else ((ensure_array assistant_content)/.size > 0))
+      (if (if (assistant_content is String) assistant_content/.not_empty else ((ensure_array assistant_content)/.size > 0))
         (input .append {^type "message" ^role "assistant" ^content assistant_content})
       )
       ((ensure_array (entry/tool_calls || [])) .each (fn [tool_call]
         (var call_item (openai_codex_function_call_from_history tool_call))
-        (if call_item/call_id/.not_empty?
+        (if call_item/call_id/.not_empty
           (input .append call_item)
         )
       ))
     elif (entry/role == "tool")
       (var call_id (entry/tool_call_id || ""))
-      (if call_id/.not_empty?
+      (if call_id/.not_empty
         (input .append (openai_codex_tool_output_from_history entry))
       )
     elif (entry/role == "user")
       (var history_content (history_content_to_openai_responses (entry/content || "")))
-      (if (if (history_content is String) history_content/.not_empty? else ((ensure_array history_content)/.size > 0))
+      (if (if (history_content is String) history_content/.not_empty else ((ensure_array history_content)/.size > 0))
         (input .append {^type "message" ^role "user" ^content history_content})
       )
     )
   ))
 
   (var current_content (build_openai_responses_user_content user_text image_attachments))
-  (if (if (current_content is String) current_content/.not_empty? else ((ensure_array current_content)/.size > 0))
+  (if (if (current_content is String) current_content/.not_empty else ((ensure_array current_content)/.size > 0))
     (input .append {^type "message" ^role "user" ^content current_content})
   )
 
@@ -415,7 +415,7 @@
   (history .each (fn [entry]
     (if (entry/role == "tool")
       (var tool_use_id (entry/tool_call_id || ""))
-      (if tool_use_id/.not_empty?
+      (if tool_use_id/.not_empty
         (pending_tool_results .append (anthropic_tool_result_from_history entry))
       )
     else
@@ -426,7 +426,7 @@
 
       (var blocks [])
       (var text (entry/content || ""))
-      (if text/.not_empty?
+      (if text/.not_empty
         (blocks .append {^type "text" ^text text})
       )
 
@@ -437,13 +437,13 @@
         ))
       )
 
-      (if blocks/.not_empty?
+      (if blocks/.not_empty
         (messages .append {^role entry/role ^content blocks})
       )
     )
   ))
 
-  (if pending_tool_results/.not_empty?
+  (if pending_tool_results/.not_empty
     (var final_blocks [])
     (pending_tool_results .each (fn [block]
       (final_blocks .append block)
@@ -451,12 +451,12 @@
     ((build_anthropic_user_blocks user_text image_attachments) .each (fn [block]
       (final_blocks .append block)
     ))
-    (if final_blocks/.not_empty?
+    (if final_blocks/.not_empty
       (messages .append {^role "user" ^content final_blocks})
     )
   else
     (var final_blocks (build_anthropic_user_blocks user_text image_attachments))
-    (if final_blocks/.not_empty?
+    (if final_blocks/.not_empty
       (messages .append {^role "user" ^content final_blocks})
     )
   )
@@ -482,7 +482,7 @@
 (fn $ns/normalize_openai_response [response]
   (var choices (try (response .get "choices" []) catch * []))
   (var response_output_text ((try (response .get "output_text" "") catch * "") .to_s))
-  (if choices/.not_empty?
+  (if choices/.not_empty
     (var first_choice choices/0)
     (var msg first_choice/message)
     (var content msg/content/.to_s)
@@ -492,7 +492,7 @@
   )
 
   (var output (ensure_array (try (response .get "output" []) catch * [])))
-  (if output/.not_empty?
+  (if output/.not_empty
     (var text_parts [])
     (var tool_calls [])
     (output .each (fn [item]
@@ -500,7 +500,7 @@
       (if (item_type == "message")
         (var item_content (item/content || []))
         (if (item_content is String)
-          (if item_content/.not_empty?
+          (if item_content/.not_empty
             (text_parts .append item_content)
           )
         else
@@ -526,16 +526,16 @@
       )
     ))
     (var content (text_parts .join "\n\n"))
-    (if (content/.empty? && response_output_text/.not_empty?)
+    (if (content/.empty && response_output_text/.not_empty)
       (content = response_output_text)
     )
-    (if (content/.empty? && (tool_calls/.size == 0))
+    (if (content/.empty && (tool_calls/.size == 0))
       (content = "I could not generate a response.")
     )
     (return {^content content ^tool_calls tool_calls})
   )
 
-  (if response_output_text/.not_empty?
+  (if response_output_text/.not_empty
     (return {^content response_output_text ^tool_calls []})
   )
 
@@ -572,16 +572,16 @@
 
 (fn provider_has_credentials []
   (if (CONFIG/llm/provider == "anthropic")
-    (CONFIG/llm/anthropic/api_key/.not_empty? || CONFIG/llm/anthropic/auth_token/.not_empty?)
+    (CONFIG/llm/anthropic/api_key/.not_empty || CONFIG/llm/anthropic/auth_token/.not_empty)
   elif (CONFIG/llm/provider == "openai")
-    (CONFIG/llm/openai/api_key/.not_empty? || CONFIG/llm/openai/auth_token/.not_empty?)
+    (CONFIG/llm/openai/api_key/.not_empty || CONFIG/llm/openai/auth_token/.not_empty)
   else
     false
   )
 )
 
 (fn openai_oauth_mode? []
-  CONFIG/llm/openai/auth_token/.not_empty?
+  CONFIG/llm/openai/auth_token/.not_empty
 )
 
 (fn mock_mode_response []
@@ -599,7 +599,7 @@
       (return "")
     )
     (var raw_body ((response .get "raw_body" "") .to_s))
-    (if raw_body/.not_empty?
+    (if raw_body/.not_empty
       (return raw_body)
     )
     (var metadata ((response .get "metadata" nil) || nil))
@@ -629,7 +629,7 @@
       (message = ((error_value .get "message" "") .to_s))
     )
 
-    (if (message/.empty? && ((response_type == "error") || (response_type == "failed")))
+    (if (message/.empty && ((response_type == "error") || (response_type == "failed")))
       (message = ((response .get "message" "") .to_s))
     )
 
@@ -655,10 +655,10 @@
 
     (if (["failed" "incomplete" "cancelled" "expired"] .contains status_value_text)
       (has_error = true)
-      (if message/.empty?
+      (if message/.empty
         (message = #"OpenAI response status=#{status_value_text}")
       )
-      (if status_text/.empty?
+      (if status_text/.empty
         (status_text = status_value_text)
       )
     )
@@ -669,13 +669,13 @@
 
     (var body_text (response_error_body_text response))
     (var parts [])
-    (if message/.not_empty?
+    (if message/.not_empty
       (parts .append message)
     )
-    (if status_text/.not_empty?
+    (if status_text/.not_empty
       (parts .append #"status=#{status_text}")
     )
-    (if body_text/.not_empty?
+    (if body_text/.not_empty
       (parts .append #"body=#{body_text}")
     )
     (parts .join " | ")
@@ -694,16 +694,16 @@
   (var request_item_count (if oauth_mode request/input/.size else request/messages/.size))
   (log .info #"Calling LLM provider=openai mode=#{(if oauth_mode "codex-oauth" else "api-key")} model=#{CONFIG/llm/openai/model} items=#{request_item_count} tools=#{request/tools/.size} timeout_ms=#{CONFIG/llm/openai/timeout_ms}")
   (var client_opts {^model CONFIG/llm/openai/model ^timeout_ms CONFIG/llm/openai/timeout_ms})
-  (if CONFIG/llm/openai/api_key/.not_empty?
+  (if CONFIG/llm/openai/api_key/.not_empty
     (client_opts .set "api_key" CONFIG/llm/openai/api_key)
   )
-  (if CONFIG/llm/openai/auth_token/.not_empty?
+  (if CONFIG/llm/openai/auth_token/.not_empty
     (client_opts .set "auth_token" CONFIG/llm/openai/auth_token)
   )
-  (if CONFIG/llm/openai/account_id/.not_empty?
+  (if CONFIG/llm/openai/account_id/.not_empty
     (client_opts .set "account_id" CONFIG/llm/openai/account_id)
   )
-  (if CONFIG/llm/openai/base_url/.not_empty?
+  (if CONFIG/llm/openai/base_url/.not_empty
     (client_opts .set "base_url" CONFIG/llm/openai/base_url)
   )
   (var client (new OpenAIClient client_opts))
@@ -715,13 +715,13 @@
   (var request (build_anthropic_request history user_text tools_spec image_attachments))
   (log .info #"Calling LLM provider=anthropic model=#{CONFIG/llm/anthropic/model} messages=#{request/messages/.size} tools=#{request/tools/.size} timeout_ms=#{CONFIG/llm/anthropic/timeout_ms}")
   (var client_opts {^model CONFIG/llm/anthropic/model ^timeout_ms CONFIG/llm/anthropic/timeout_ms})
-  (if CONFIG/llm/anthropic/api_key/.not_empty?
+  (if CONFIG/llm/anthropic/api_key/.not_empty
     (client_opts .set "api_key" CONFIG/llm/anthropic/api_key)
   )
-  (if CONFIG/llm/anthropic/auth_token/.not_empty?
+  (if CONFIG/llm/anthropic/auth_token/.not_empty
     (client_opts .set "auth_token" CONFIG/llm/anthropic/auth_token)
   )
-  (if CONFIG/llm/anthropic/base_url/.not_empty?
+  (if CONFIG/llm/anthropic/base_url/.not_empty
     (client_opts .set "base_url" CONFIG/llm/anthropic/base_url)
   )
   (var client (new AnthropicClient client_opts))
@@ -732,7 +732,7 @@
 (fn $ns/call_llm [history user_text tools_spec image_attachments = []]
   (var images (ensure_array image_attachments))
   (var image_error (image_attachment_error images))
-  (if image_error/.not_empty?
+  (if image_error/.not_empty
     (log .warn #"Image input rejected: #{image_error}")
     (return {^content image_error ^tool_calls []})
   )
@@ -774,7 +774,7 @@
         )
       )
       (log .debug #"LLM post-call: error envelope checked len=#{error_message/.size}")
-      (if error_message/.not_empty?
+      (if error_message/.not_empty
         (log .error #"LLM call failed: #{error_message}")
         (return {^content #"LLM error: #{error_message}" ^tool_calls []})
       )

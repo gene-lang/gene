@@ -4,7 +4,7 @@
   (var arr [1 2 3 4])
   (println "array methods:" (arr .map (fn [x] (x * 2))) (arr .filter (fn [x] (x > 2))) (arr .reduce 0 (fn [acc x] (acc + x))))
 
-  (println "strings:" ("hello" .to_upper) ("a你b" .reverse) ("abc" .start_with? "ab"))
+  (println "strings:" ("hello" .to_upper) ("a你b" .reverse) ("abc" .starts_with "ab"))
   (println "regex:" (#/a/ .match "ba") ("a1b2" .replace_all #/(\d)/[\\1]/))
 
   (var payload [1 2 {^lang "Gene" ^typed true}])

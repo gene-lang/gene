@@ -399,12 +399,12 @@ suite "Native signatures":
     check map_value(param_at(user_params, 1), "keyword").str == "label"
     check map_value(param_at(user_params, 1), "type").str == "String"
     check map_value(user_meta, "return_type").str == "String"
-    check map_value(user_meta, "native?") == FALSE
+    check map_value(user_meta, "native") == FALSE
 
     check map_value(native_meta, "return_type").str == "Int"
-    check map_value(native_meta, "native?") == TRUE
-    check map_value(native_meta, "receives_self?") == FALSE
-    check map_value(native_meta, "has_type_annotations?") == TRUE
+    check map_value(native_meta, "native") == TRUE
+    check map_value(native_meta, "receives_self") == FALSE
+    check map_value(native_meta, "has_type_annotations") == TRUE
     check map_value(param_at(map_value(native_meta, "params"), 0), "name").str == "n"
     check map_value(param_at(map_value(native_meta, "params"), 0), "type").str == "Int"
     check map_value(param_at(native_params, 0), "type").str == "Int"
@@ -445,15 +445,15 @@ suite "Native signatures":
     let user_meta = call_native_fn(signature_method.callable.ref.native_fn, VM,
       @[user_bound_ref.to_ref_value()])
 
-    check map_value(native_meta, "native?") == TRUE
-    check map_value(native_meta, "receives_self?") == TRUE
+    check map_value(native_meta, "native") == TRUE
+    check map_value(native_meta, "receives_self") == TRUE
     check map_value(native_meta, "return_type").str == "Int"
     check array_data(map_value(native_meta, "params")).len == 1
     check map_value(param_at(map_value(native_meta, "params"), 0), "name").str == "n"
     check map_value(param_at(map_value(native_meta, "params"), 0), "type").str == "Int"
 
-    check map_value(user_meta, "native?") == FALSE
-    check map_value(user_meta, "receives_self?") == TRUE
+    check map_value(user_meta, "native") == FALSE
+    check map_value(user_meta, "receives_self") == TRUE
     check map_value(user_meta, "return_type").str == "Int"
     check array_data(map_value(user_meta, "params")).len == 1
     check map_value(param_at(map_value(user_meta, "params"), 0), "name").str == "n"

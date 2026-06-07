@@ -85,17 +85,16 @@ proc init_string_class*(object_class: Class) =
     (self_arg.str.len == 0).to_value()
 
   string_class.def_native_method("empty", string_empty)
-  string_class.def_native_method("empty?", string_empty)
 
   proc string_not_empty(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 1:
-      not_allowed("String.not_empty? requires self")
+      not_allowed("String.not_empty requires self")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     if self_arg.kind != VkString:
-      not_allowed("not_empty? must be called on a string")
+      not_allowed("not_empty must be called on a string")
     (self_arg.str.len != 0).to_value()
 
-  string_class.def_native_method("not_empty?", string_not_empty)
+  string_class.def_native_method("not_empty", string_not_empty)
 
   proc string_to_i(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
@@ -432,8 +431,6 @@ proc init_string_class*(object_class: Class) =
 
   string_class.def_native_method("starts_with", string_starts_with)
   string_class.def_native_method("ends_with", string_ends_with)
-  string_class.def_native_method("start_with?", string_starts_with)
-  string_class.def_native_method("end_with?", string_ends_with)
 
   proc string_char_at(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -564,34 +561,34 @@ proc init_string_class*(object_class: Class) =
 
   proc string_match_predicate(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("String.match? requires a Regexp")
+      not_allowed("String.matches requires a Regexp")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     let pattern_val = get_positional_arg(args, 1, has_keyword_args)
     if self_arg.kind != VkString:
-      not_allowed("match? must be called on a string")
+      not_allowed("matches must be called on a string")
     if pattern_val.kind != VkRegex:
-      not_allowed("String.match? requires a Regexp")
+      not_allowed("String.matches requires a Regexp")
     regex_match_bool(self_arg.str, pattern_val).to_value()
 
-  string_class.def_native_method("match?", string_match_predicate)
+  string_class.def_native_method("matches", string_match_predicate)
 
   proc string_contain(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
-      not_allowed("String.contain requires a pattern")
+      not_allowed("String.contains requires a pattern")
     let self_arg = get_positional_arg(args, 0, has_keyword_args)
     let pattern_val = get_positional_arg(args, 1, has_keyword_args)
     if self_arg.kind != VkString:
-      not_allowed("contain must be called on a string")
+      not_allowed("contains must be called on a string")
     case pattern_val.kind
     of VkRegex:
       result = regex_match_bool(self_arg.str, pattern_val).to_value()
     of VkString:
       result = (self_arg.str.find(pattern_val.str) >= 0).to_value()
     else:
-      not_allowed("String.contain expects a Regexp or string pattern")
+      not_allowed("String.contains expects a Regexp or string pattern")
 
   string_class.def_native_method("contain", string_contain)
-  string_class.def_native_method("include?", string_contain)
+  string_class.def_native_method("contains", string_contain)
 
   proc string_find(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:
@@ -615,15 +612,6 @@ proc init_string_class*(object_class: Class) =
       not_allowed("String.find expects a Regexp or string pattern")
 
   string_class.def_native_method("find", string_find)
-
-  proc string_contains(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
-    let self_arg = get_positional_arg(args, 0, has_keyword_args)
-    let pattern_val = get_positional_arg(args, 1, has_keyword_args)
-    if self_arg.kind != VkString or pattern_val.kind != VkString:
-      not_allowed("String.contains requires a string argument")
-    if self_arg.str.find(pattern_val.str) >= 0: TRUE else: FALSE
-
-  string_class.def_native_method("contains", string_contains)
 
   proc string_find_all(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value {.gcsafe.} =
     if get_positional_count(arg_count, has_keyword_args) < 2:

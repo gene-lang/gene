@@ -31,7 +31,7 @@
 
 (fn $ns/file_exists? [path]
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     false
   else
     (try
@@ -54,7 +54,7 @@
 
 (fn $ns/serialized_exists? [path]
   (var base ((path || "") .to_s))
-  (if base/.empty?
+  (if base/.empty
     false
   elif (Dir/exists base)
     true
@@ -72,7 +72,7 @@
   (result = (result .replace_all "\\" "%5C"))
   (result = (result .replace_all ":" "%3A"))
   (result = (result .replace_all " " "%20"))
-  (if result/.empty? fallback else result)
+  (if result/.empty fallback else result)
 )
 
 (fn $ns/path_key [path]
@@ -99,7 +99,7 @@
   else
     ""
   ))
-  (if parent/.not_empty?
+  (if parent/.not_empty
     (system/shell #"mkdir -p '#{parent}'")
   )
 )
@@ -120,7 +120,7 @@
   (var group (ensure_map value))
   (group .each (fn [key child]
     (var key_text (((key || "") .to_s) .trim))
-    (if key_text/.not_empty?
+    (if key_text/.not_empty
       (var child_path #"#{path}/#{key_text}")
       (if ((child is Map) && (config_directory_key? key_text))
         (write_config_group child_path child)
@@ -139,7 +139,7 @@
   )
   (for entry in (Dir/list path)
     (var key (path_key entry))
-    (if key/.not_empty?
+    (if key/.not_empty
       (if (Dir/exists entry)
         (result .set key (read_config_directory entry))
       elif (entry .ends_with ".gene")
@@ -154,7 +154,7 @@
 
 (fn read_serialized_file_or_default [path fallback]
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     (return fallback)
   )
   (var candidate (if (file_exists? target) target else (serialized_file_path target)))
@@ -198,7 +198,7 @@
 (fn $ns/read_serialized_or_default [path fallback]
   (ensure_home_bootstrap)
   (var target ((path || "") .to_s))
-  (if target/.empty?
+  (if target/.empty
     fallback
   elif (Dir/exists target)
     (read_config_directory target)

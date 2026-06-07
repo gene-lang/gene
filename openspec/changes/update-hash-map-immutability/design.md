@@ -22,7 +22,7 @@ Maps are implemented as `MapObj` values with in-place mutation across VM assignm
 - Decision: enforce immutability at map mutation boundaries, including `.set`, direct property assignment, and any in-place merge/delete helpers.
 - Alternatives considered: copy-on-write mutation. Rejected because the proposal wants immutable value semantics, not implicit cloning through mutable APIs.
 
-- Decision: expose frozen-state inspection via `Map.immutable?` in the same change.
+- Decision: expose frozen-state inspection via `Map.immutable` in the same change.
 - Alternatives considered: defer the predicate to a later proposal. Rejected because the surface is small and the user-facing proposal already relies on distinguishing value semantics explicitly.
 
 - Decision: retire `#{...}` as the string form for `VkSet` and use an explicit unsupported marker for now.

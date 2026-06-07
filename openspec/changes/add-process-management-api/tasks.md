@@ -25,7 +25,7 @@
   - [x] `.read_available`
   - [x] `.read_stderr`
 - [x] 2.4 Implement process control methods
-  - [x] `.alive?`
+  - [x] `.alive`
   - [x] `.signal`
   - [x] `.wait`
   - [x] `.shutdown`

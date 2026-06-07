@@ -31,7 +31,7 @@
 
 (println "\n== shutdown ==")
 (var sleep_proc (system/Process/start "sh" "-c" "exec sleep 5"))
-(println "alive?:" (sleep_proc .alive?))
+(println "alive:" (sleep_proc .alive))
 (println "shutdown exit:" (sleep_proc .shutdown ^timeout 1))
 
 (println "\nProcess example finished.")

@@ -136,31 +136,31 @@ test_vm """
 """, "  abc"
 
 test_vm """
-  ("abc" .empty?)
+  ("abc" .empty)
 """, false
 
 test_vm """
-  ("abc" .not_empty?)
+  ("abc" .not_empty)
 """, true
 
 test_vm """
-  ("" .not_empty?)
+  ("" .not_empty)
 """, false
 
 test_vm """
-  ("abc" .start_with? "ab")
+  ("abc" .starts_with "ab")
 """, true
 
 test_vm """
-  ("abc" .end_with? "bc")
+  ("abc" .ends_with "bc")
 """, true
 
 test_vm """
-  ("a你b" .include? "你")
+  ("a你b" .contains "你")
 """, true
 
 test_vm """
-  ("a你b" .include? #/你/)
+  ("a你b" .contains #/你/)
 """, true
 
 test_vm """

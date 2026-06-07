@@ -157,9 +157,9 @@ This change intentionally does not require every Ruby string or regexp method.
 
 ## Open Questions
 
-- Should the boolean predicate be spelled `match?`, `matches?`, or documented as
+- Should the boolean predicate be spelled `matches` or documented as
   an alias set?
-  - Recommendation: prefer `match?` and allow compatibility aliases if needed.
+  - Recommendation: prefer `matches` and avoid compatibility aliases.
   A: just use `match`. We will not use `?` in function/method names until we have a better understanding of the needs.
 - Should the existing `substr` name remain as an alias after adding `slice`?
   - Recommendation: yes, at least through migration.

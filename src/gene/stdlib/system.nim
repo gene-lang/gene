@@ -877,7 +877,7 @@ proc init_process_class*(): Class =
   result.def_native_method("close_stdin", process_close_stdin)
   result.def_native_method("wait", process_wait)
   result.def_native_method("shutdown", process_shutdown)
-  result.def_native_method("alive?", process_alive)
+  result.def_native_method("alive", process_alive)
 
 # Register all system functions in a namespace
 proc init_system_namespace*(global_ns: Namespace) =

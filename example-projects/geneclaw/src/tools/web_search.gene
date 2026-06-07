@@ -13,7 +13,7 @@
      ^required ["query"]}
     (fn [args]
       (var query args/query)
-      (if query/.empty?
+      (if query/.empty
         (return {^error "Missing query"})
       )
 

@@ -168,7 +168,7 @@ Division between integers produces a float: `(10 / 2)` => `5.0`.
 (println #"selected=#{selected}")  # prints selected=1 by default
 ```
 
-`$env` is a synonym for `get_env` with the same `(name, default?)` behavior.
+`$env` is a synonym for `get_env` with the same optional default behavior.
 
 ### Quoting
 

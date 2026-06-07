@@ -38,4 +38,4 @@ The parser currently routes `#[...]` through `read_stream`, producing `VkStream`
 ## Open Questions
 
 - Should immutable arrays print distinctly from mutable arrays?
-- Do we want a runtime predicate such as `.immutable?` in the same change, or later?
+- Do we want a runtime predicate such as `.immutable` in the same change, or later?

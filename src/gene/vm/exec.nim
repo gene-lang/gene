@@ -3118,7 +3118,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
                 # Process arguments if matcher exists
                 when DEBUG_VM:
-                  vm_log(LlDebug, VmExecLogger, "  Matcher empty? " & $f.matcher.is_empty() &
+                  vm_log(LlDebug, VmExecLogger, "  Matcher empty " & $f.matcher.is_empty() &
                          ", matcher.children.len = " & $f.matcher.children.len)
                   if not f.matcher.is_empty():
                     vm_log(LlDebug, VmExecLogger, "  frame.args = " & $frame.args)

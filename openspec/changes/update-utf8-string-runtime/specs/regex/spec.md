@@ -4,8 +4,8 @@
 
 The system SHALL provide both object-returning match APIs and boolean predicate
 APIs. `Regexp.match` and `String.match` SHALL return a `RegexpMatch` on success
-or `nil` on failure. `Regexp.match?` and `String.match?` SHALL return a boolean
-indicating whether any match exists. `String.match` and `String.match?` SHALL
+or `nil` on failure. `Regexp.matches` and `String.matches` SHALL return a boolean
+indicating whether any match exists. `String.match` and `String.matches` SHALL
 require a `Regexp` instance.
 
 #### Scenario: Regexp.match returns match data
@@ -14,9 +14,9 @@ require a `Regexp` instance.
   `(var m (#/(a)(b)/ .match "zabz"))`
 - **THEN** `(m/captures/0)` SHALL be `"a"`.
 
-#### Scenario: Regexp.match? returns boolean
+#### Scenario: Regexp.matches returns boolean
 
-- **WHEN** a program evaluates `(#/ab/ .match? "zabz")`
+- **WHEN** a program evaluates `(#/ab/ .matches "zabz")`
 - **THEN** it SHALL return `true`.
 
 #### Scenario: String.match requires Regexp

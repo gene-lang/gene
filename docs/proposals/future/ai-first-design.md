@@ -63,7 +63,7 @@ Int Float Bool String Symbol Char Nil
 (fn double [x] (x * 2))      # (Fn [Int] Int) (inferred from *)
 
 (fn first [arr]              # (Fn [(Array T)] (Option T))
-  (if (arr .empty?) None (Some arr/0)))
+  (if (arr .empty) None (Some arr/0)))
 ```
 
 ### Explicit Annotations

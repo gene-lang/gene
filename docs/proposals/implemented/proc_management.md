@@ -73,7 +73,7 @@ Only available when `^stderr_to_stdout` is false (the default).
 
 ```gene
 # Check if process is still running
-(proc .alive?)         # returns true/false (this is a method, not a property)
+(proc .alive)         # returns true/false (this is a method, not a property)
 
 # Send signal (Unix only)
 (proc .signal "INT")      # SIGINT (Ctrl-C)
@@ -92,7 +92,7 @@ Only available when `^stderr_to_stdout` is false (the default).
 #       ↓
 #   wait(timeout / 2)
 #       ↓
-#   alive? ──no──→ return exit_code
+#   alive ──no──→ return exit_code
 #       │
 #      yes
 #       ↓
@@ -100,7 +100,7 @@ Only available when `^stderr_to_stdout` is false (the default).
 #       ↓
 #   wait(timeout / 2)
 #       ↓
-#   alive? ──no──→ return exit_code
+#   alive ──no──→ return exit_code
 #       │
 #      yes
 #       ↓
@@ -142,7 +142,7 @@ proc/exit_code    # Exit code (int after exit, nil if still running)
 - Fill out the existing `init_process_class()` stub in `system.nim`
 - Process handle stored as native data on the class instance (similar to how HTTP/WebSocket handles work)
 - `start` registered as a static method via `def_static_method` on the Process class (accessed as `system/Process/start`)
-- Instance methods (dot-call): `.write`, `.write_line`, `.read_line`, `.read_until`, `.read_available`, `.read_stderr`, `.signal`, `.close_stdin`, `.wait`, `.shutdown`, `.alive?`
+- Instance methods (dot-call): `.write`, `.write_line`, `.read_line`, `.read_until`, `.read_available`, `.read_stderr`, `.signal`, `.close_stdin`, `.wait`, `.shutdown`, `.alive`
 - Properties (slash-access): `proc/pid`, `proc/exit_code`
 
 ### VM interaction

@@ -7,8 +7,8 @@
 (assert ((build_session_id "ws" "chan" "1741553030.123456") == "ws:chan:1741553030.123456"))
 
 (var followup_text (build_tool_followup_text "Test Project"))
-(assert (followup_text .include? "Context:\nTest Project"))
-(assert (followup_text .include? "Current round:\nContinue based on the tool results above. Complete the current request."))
+(assert (followup_text .contains "Context:\nTest Project"))
+(assert (followup_text .contains "Current round:\nContinue based on the tool results above. Complete the current request."))
 
 (assert ((tool_call_signature "write_file" "{\"path\":\"csv-parser/csv_parser.py\"}") == "write_file|{\"path\":\"csv-parser/csv_parser.py\"}"))
 

@@ -10,13 +10,13 @@
      ^required ["path"]}
     (fn [args]
       (var path ((args/path || "") .to_s))
-      (if path/.empty?
+      (if path/.empty
         (return {^error "Missing path"})
       )
       (if ((path .starts_with "/") || (path .starts_with "~"))
         (return {^error "Path must be relative to the current workspace"})
       )
-      (if (path .include? "..")
+      (if (path .contains "..")
         (return {^error "Path traversal not allowed"})
       )
 

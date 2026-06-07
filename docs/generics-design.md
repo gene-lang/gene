@@ -64,7 +64,7 @@
     (items .push val))
 
   (method pop [] -> (Option T)
-    (if (items .empty?)
+    (if (items .empty)
       None
     else
       (Some (items .pop)))))

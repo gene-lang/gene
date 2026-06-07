@@ -27,7 +27,7 @@
       )
 
       (var reason ((args .get "reason" "") .to_s))
-      (if reason/.empty?
+      (if reason/.empty
         (return {^ok false ^error "Missing reason"})
       )
 
@@ -44,7 +44,7 @@
         (register_and_check "git rev-parse --is-inside-work-tree >/dev/null 2>&1")
         (var branch_res (register_and_check "git branch --show-current"))
         (current_branch = branch_res/output/.trim)
-        (if current_branch/.empty?
+        (if current_branch/.empty
           (throw "Could not determine current git branch")
         )
 
@@ -108,7 +108,7 @@
           nil
         )
         (try
-          (if current_branch/.not_empty?
+          (if current_branch/.not_empty
             (system/shell #"git checkout #{current_branch}")
           )
         catch *

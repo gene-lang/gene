@@ -70,7 +70,7 @@
 
   (for part in (((path || "") .to_s) .split "/")
     (var key (part .trim))
-    (if key/.not_empty?
+    (if key/.not_empty
       (parts .append key)
     )
   )
@@ -236,7 +236,7 @@
         (has_cfg = true)
       )
     else
-      (var child_path (ifel current_path/.empty?  #"/#{key}" #"#{current_path}/#{key}"))
+      (var child_path (ifel current_path/.empty  #"/#{key}" #"#{current_path}/#{key}"))
       (if (collect_bootstrap_separate_paths (ensure_map node) child_path paths)
         (has_cfg = true)
       )
@@ -244,7 +244,7 @@
   ))
 
   (if has_cfg
-    (paths .append (ifel current_path/.empty? "/*" #"#{current_path}/*"))
+    (paths .append (ifel current_path/.empty "/*" #"#{current_path}/*"))
   )
 
   has_cfg
@@ -259,7 +259,7 @@
 ($ns/HIDDEN_SECRET = "hidden")
 
 (fn $ns/secret_configured [value]
-  value/.not_empty?
+  value/.not_empty
 )
 
 (fn $ns/redact_secret [_value]

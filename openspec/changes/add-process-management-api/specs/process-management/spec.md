@@ -100,7 +100,7 @@ The system SHALL provide methods and properties to inspect and control child pro
 #### Scenario: Check liveness
 
 - **GIVEN** a running child process
-- **WHEN** `(proc .alive?)` is called
+- **WHEN** `(proc .alive)` is called
 - **THEN** `true` is returned
 
 #### Scenario: Wait for process exit

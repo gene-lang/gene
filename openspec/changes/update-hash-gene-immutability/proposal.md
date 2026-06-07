@@ -6,7 +6,7 @@ The value-vs-entity proposal reserves `#(...)` for immutable gene values, but th
 
 - Add `#(...)` as immutable gene literal syntax, compiling as a literal value rather than an executable call form.
 - Add immutable-gene runtime semantics so prop, child, and genetype mutations fail clearly instead of mutating in place.
-- Add a `Gene.immutable?` predicate so code can inspect frozen state.
+- Add a `Gene.immutable` predicate so code can inspect frozen state.
 - Preserve immutable genes through compiler, VM, GIR, serdes, and textual rendering paths.
 - Keep existing `#"` string interpolation semantics unchanged.
 

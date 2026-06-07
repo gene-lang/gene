@@ -15,7 +15,7 @@
   (gene/json/parse "{\"url\":\"https://httpbin.org/post\",\"body\":\"{\\\"test\\\":true}\"}")))
 (assert post_result/ok)
 (assert (post_result/result/method == "POST"))
-(assert (post_result/result/body .include? "test"))
+(assert (post_result/result/body .contains "test"))
 (println "PASS: POST request succeeded")
 
 # Test 3: PUT method

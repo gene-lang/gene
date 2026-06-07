@@ -11,7 +11,7 @@
      ^required ["command"]}
     (fn [args]
       (var cmd args/command)
-      (if cmd/.empty?
+      (if cmd/.empty
         (return {^error "Missing command"})
       )
 
