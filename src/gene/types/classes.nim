@@ -476,9 +476,53 @@ proc native_signatures_match(existing, incoming: NativeSignature): bool =
     return existing == incoming
   native_signature_key(existing) == native_signature_key(incoming)
 
+proc native_signature_type_contains_var(sig: NativeSignature, type_id: TypeId,
+                                        depth = 0): bool =
+  if sig == nil or type_id == NO_TYPE_ID or depth > 64:
+    return false
+  let descs =
+    if sig.type_descriptors.len > 0: sig.type_descriptors
+    else: builtin_type_descs()
+  if type_id < 0 or type_id.int >= descs.len:
+    return false
+  let desc = descs[type_id.int]
+  case desc.kind
+  of TdkVar:
+    true
+  of TdkApplied:
+    for arg in desc.args:
+      if native_signature_type_contains_var(sig, arg, depth + 1):
+        return true
+    false
+  of TdkUnion:
+    for member in desc.members:
+      if native_signature_type_contains_var(sig, member, depth + 1):
+        return true
+    false
+  of TdkFn:
+    for param in desc.params:
+      if native_signature_type_contains_var(sig, param.type_id, depth + 1):
+        return true
+    native_signature_type_contains_var(sig, desc.ret, depth + 1)
+  else:
+    false
+
+proc native_signature_contains_type_vars(sig: NativeSignature): bool =
+  if sig == nil:
+    return false
+  for param in sig.params:
+    if native_signature_type_contains_var(sig, param.type_id):
+      return true
+  native_signature_type_contains_var(sig, sig.return_type_id)
+
+proc ensure_native_signature_supported(sig: NativeSignature, context: string) =
+  if native_signature_contains_type_vars(sig):
+    not_allowed(context & " does not support generic native signatures yet; use concrete types or Any")
+
 proc ensure_native_signature_assignment(existing, incoming: NativeSignature,
                                         context: string,
                                         allow_override: bool) =
+  ensure_native_signature_supported(incoming, context)
   if allow_override or existing == nil or not existing.has_type_annotations:
     return
   if native_signatures_match(existing, incoming):

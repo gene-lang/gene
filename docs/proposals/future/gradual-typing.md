@@ -193,15 +193,16 @@ results (positive blame) on each call:
   `Any`), no wrapper — the common fully-typed case is free.
 - **v1 default:** wrap at dynamic `Fn` boundaries for soundness. A documented
   `^shallow` opt-out (check only callability+arity, defer to inner casts) is
-  available for hot paths that accept the weaker guarantee. **This is the primary
-  open tension** (§11).
+  the explicit escape hatch for hot paths that accept the weaker guarantee.
 
 ### 3.2 Generics / type variables
 
-`(fn[T] [x: T] -> T ...)` type-checks structurally (existing `type_vars`,
+`(fn f:T [x: T] -> T ...)` type-checks structurally (existing `type_vars`,
 `matchers.nim:348`). At a dynamic boundary `T` behaves as `Any` (no runtime
-identity to check), so instantiations collapse to `Any` for cast purposes. AOT
-may **monomorphize** hot fully-typed instantiations (Future Work); JIT does not.
+identity to check), so instantiations collapse to `Any` for cast purposes.
+Generic native signatures are deferred and rejected at native binding sites; use
+concrete types or `Any` at native boundaries for now. AOT may **monomorphize**
+hot fully-typed instantiations (Future Work); JIT does not.
 
 ### 3.3 Mutable collections
 
@@ -359,24 +360,20 @@ cost by typing both sides of a boundary.
   defines the **boundary semantics** that enforce those signatures (the
   dynamic↔foreign boundary is always a checked cast).
 
-## 11. Open Questions
+## 11. Resolved Decisions
 
-- **Higher-order blame default (the main one).** Wrap every dynamic `Fn`
-  boundary for soundness (identity + per-call cost) vs `^shallow`
-  callability/arity checks by default (cheaper, unsound on results)? Proposal:
-  sound-by-default + `^shallow` opt-out. Needs a decision because it sets the
-  perf/identity profile of higher-order code.
-- **Collection soundness depth.** Is the transient element-check model (§3.3)
-  the permanent answer for mutable collections, or do we add an opt-in deep
-  boundary check for immutable/value collections?
-- **AOT closed-world vs `eval`/dynamic load.** A program that calls `eval` or
-  dynamically loads modules is not fully closed. Proposal: AOT treats values from
-  such sources as residual `Any` (checked boundaries remain), and warns that the
-  closed-world guarantee covers only statically-reachable code.
-- **Incremental AOT.** Whole-graph rebuilds are expensive. Can typed GIR +
-  per-module elision records support incremental AOT (recheck only changed
-  modules and their typed dependents)? Likely yes via the elision record; design
-  deferred.
+- **Higher-order blame default.** Sound by default. Dynamic `Fn` boundaries wrap
+  callables in a proxy that checks arguments and returns on every call. `^shallow`
+  is the explicit opt-out for hot paths that accept weaker result soundness.
+- **Collection soundness depth.** The transient element-check model (§3.3) is the
+  design for the foreseeable future. Deep boundary checks for immutable/value
+  collections are deferred.
+- **AOT closed-world vs `eval`/dynamic load.** AOT treats values from `eval` and
+  dynamically-loaded modules as residual `Any`. Checked boundaries remain, and
+  the closed-world guarantee covers only statically-reachable code.
+- **Incremental AOT.** Yes, typed GIR plus per-module elision records should
+  support incremental AOT. The first design can remain whole-graph; incremental
+  invalidation is a follow-on design target.
 
 ## 12. Future Work
 

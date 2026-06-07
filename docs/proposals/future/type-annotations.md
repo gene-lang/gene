@@ -432,32 +432,31 @@ type registry that the in-flight type-serialization design
   *runtime* error on call. This is a gradual-typing lint gate, not a new strict
   compile phase (none exists; see Static Type Checking).
 
-## Open Questions
+## Resolved Decisions
 
-- **Bootstrap ordering for retrofits.** When do `src/gene/stdlib/types/*.gene`
-  shims run? Candidate: at the end of `runtime.init`, after Nim registration and
-  before user code, so a stdlib callable is never observed unannotated-then-
-  annotated within one run. Lazy-on-first-use would start a callable as `Any` and
-  later gain a signature — harmless for gradual *checking*, but it makes *runtime*
-  enforcement non-deterministic across the boundary. Deterministic end-of-init
-  binding is preferred. This is purely a runtime-ordering choice; there is no
-  compile-time registry to populate (see Static Type Checking).
-- **Generic native functions.** Should `(fn[T] ...)`-shaped signatures
-  (`[x: T] -> T`) be supported? Straightforward for Gene-side declarations (the
-  existing `type_vars` mechanism applies, `matchers.nim:348`) but `T` collapses to
-  `CatValue` unconditionally in the JIT `abi` derivation.
-- **Conflict policy.** If a callable already has a non-`Any` `NativeSignature`
-  (e.g. set by the Nim shortcut, then re-set in Gene), is the second assignment an
-  error, an override, or required to match structurally? Default proposal:
-  match-or-error compared via the depth-guarded canonical key `type_desc_key`
-  (`descriptors.nim:111`) so the check stays cycle-safe (see
-  [Cyclic Typing Dependencies](#cyclic-typing-dependencies)), with `$assign-type!`
-  as the explicit-override form.
+- **Bootstrap ordering for retrofits.** `src/gene/stdlib/types/*.gene` shims run at
+  the end of runtime/stdlib initialization, after Nim registration and before user
+  code. A stdlib callable is therefore never observed unannotated-then-annotated
+  within one run. Lazy-on-first-use is rejected because it would make runtime
+  enforcement non-deterministic across the native boundary.
+- **Generic native functions.** Deferred. Generic Gene definitions use the
+  existing definition-name syntax (`(fn f:T [a: T] -> T ...)`,
+  `(method m:T [a: T] -> T ...)`, and future `(interface X:T ...)` forms), not
+  `(fn[T] ...)`. Native signatures containing type variables are rejected for now;
+  use concrete types or `Any` at native boundaries until the generic-native
+  contract is designed.
+- **Conflict policy.** Match-or-error. If a callable already has a non-`Any`
+  `NativeSignature`, a later assignment must match structurally using the
+  depth-guarded canonical key `type_desc_key` (`descriptors.nim:111`); otherwise
+  it fails. The bang forms (`$assign-type!`, `$assign-method-type!`,
+  `$assign-ctor-type!`) are the explicit override escape hatch.
 
 ## Future Work
 
 - Auto-derive `NativeSignature` from Nim type signatures via a `{.nativeFn.}`
   macro, once enough call sites use the typed API to justify the macro surface.
+- Generic native signatures, after the erased-generic runtime contract and any JIT
+  specialization story are designed.
 - Effect annotations (`!throws`, `!async`) for native callables, in line with the
   `!` effects syntax already parsed for method declarations
   (`src/gene/compiler/functions.nim:296-299`, inside `compile_method_definition`).

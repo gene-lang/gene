@@ -332,6 +332,23 @@ suite "Native signatures":
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
 
+  test "generic native signatures are rejected until native generics are designed":
+    init_all()
+    let fn = NativeFn(native_identity)
+    App.app.global_ns.ref.ns["genericNativeDeclImpl".to_key()] = fn.to_value()
+    defer:
+      invalidate_native_signature(fn)
+
+    let message = expect_error(proc() =
+      discard VM.exec("""
+        (fn genericNativeDecl:T [value: T] -> T
+          ^native genericNativeDeclImpl)
+      """, "native_decl_generic_rejected.gene")
+    )
+    check message.contains("does not support generic native signatures yet")
+    check message.contains("concrete types or Any")
+    check lookup_native_signature(fn) == nil
+
   test "Function reflection exposes user and standalone native signatures uniformly":
     init_all()
     let fn = NativeFn(native_identity)
