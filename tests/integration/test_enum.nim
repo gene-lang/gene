@@ -397,6 +397,7 @@ proc enum_payload_guard_parts(): seq[string] = @[
   "got String",
   "field Metric/Counter.value",
   "phase=enum-payload",
+  "blame=negative",
   "producer=enum-constructor",
   "consumer=enum-variant",
   "site=",
@@ -404,6 +405,7 @@ proc enum_payload_guard_parts(): seq[string] = @[
 
 proc enum_payload_guard_field_parts(): seq[string] = @[
   "phase=enum-payload",
+  "blame=negative",
   "producer=enum-constructor",
   "consumer=enum-variant",
   "site=",
@@ -692,4 +694,3 @@ test_vm """
   [(accept_result (Ok 5)) (accept_option (Some 4))]
 """, proc(r: Value) =
   check r == @[5, 4].to_value()
-

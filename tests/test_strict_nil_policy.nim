@@ -89,6 +89,7 @@ proc property_guard_parts(got_text = "got String"): seq[string] = @[
   got_text,
   "property x",
   "phase=property",
+  "blame=negative",
   "producer=assignment",
   "consumer=property",
   "site=",
@@ -173,6 +174,7 @@ suite "Strict nil policy":
       "got String",
       "in x",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site="
@@ -187,6 +189,7 @@ suite "Strict nil policy":
       "got String",
       "in y",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site="
@@ -202,6 +205,7 @@ suite "Strict nil policy":
       "got String",
       "in limit",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site="
@@ -218,6 +222,7 @@ suite "Strict nil policy":
       "got String",
       "in value",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site="
@@ -236,6 +241,7 @@ suite "Strict nil policy":
       "got String",
       "in x",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site="
@@ -251,6 +257,7 @@ suite "Strict nil policy":
       "got String",
       "in x",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site=callable_argument_site.gene:3"
@@ -267,6 +274,7 @@ suite "Strict nil policy":
       "in x",
       "strict nil mode",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site=strict_nil_callable_site.gene:3"
@@ -293,6 +301,7 @@ suite "Strict nil policy":
       "got String",
       "return value of wrong_return",
       "phase=return",
+      "blame=positive",
       "producer=callee",
       "consumer=caller",
       "site="
@@ -307,6 +316,7 @@ suite "Strict nil policy":
       "got String",
       "in variable",
       "phase=local",
+      "blame=negative",
       "producer=assignment",
       "consumer=local",
       "site="
@@ -323,6 +333,7 @@ suite "Strict nil policy":
       "got String",
       "in variable",
       "phase=local",
+      "blame=negative",
       "producer=assignment",
       "consumer=local",
       "site="
@@ -341,6 +352,7 @@ suite "Strict nil policy":
       "got String",
       "in variable",
       "phase=local",
+      "blame=negative",
       "producer=assignment",
       "consumer=local",
       "site="
@@ -423,6 +435,7 @@ suite "Strict nil policy":
       "in x",
       "strict_nil_arg.gene",
       "phase=argument",
+      "blame=negative",
       "producer=caller",
       "consumer=function",
       "site="
@@ -435,6 +448,7 @@ suite "Strict nil policy":
       "expected Int",
       "return value of strict_return",
       "phase=return",
+      "blame=positive",
       "producer=callee",
       "consumer=caller",
       "site="
@@ -447,6 +461,7 @@ suite "Strict nil policy":
       "in variable",
       "strict_nil_local.gene",
       "phase=local",
+      "blame=negative",
       "producer=assignment",
       "consumer=local",
       "site="

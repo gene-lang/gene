@@ -364,6 +364,7 @@ proc enum_payload_guard_context(site: string): GuardContext {.inline.} =
   GuardContext(
     enabled: true,
     phase: GpEnumPayload,
+    party: BpNegative,
     producer: "enum-constructor",
     consumer: "enum-variant",
     site: site)
@@ -559,6 +560,7 @@ proc tuple_payload_guard_context(site: string): GuardContext {.inline.} =
   GuardContext(
     enabled: true,
     phase: GpTuplePayload,
+    party: BpNegative,
     producer: "tuple-constructor",
     consumer: "tuple-definition",
     site: site)

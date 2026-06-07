@@ -39,6 +39,7 @@ proc property_assignment_guard_context*(site: string): GuardContext {.inline.} =
   GuardContext(
     enabled: true,
     phase: GpProperty,
+    party: BpNegative,
     producer: "assignment",
     consumer: "property",
     site: site)
@@ -121,6 +122,7 @@ proc callable_argument_guard_context*(): GuardContext {.inline.} =
   GuardContext(
     enabled: true,
     phase: GpArgument,
+    party: BpNegative,
     producer: "caller",
     consumer: "function",
     site: current_type_error_location())

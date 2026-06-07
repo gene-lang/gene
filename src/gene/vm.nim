@@ -16,6 +16,8 @@ from ./types/runtime_types import
   GpLocal,
   GpEnumPayload,
   GpTuplePayload,
+  BpPositive,
+  BpNegative,
   emit_type_warning,
   is_compatible,
   runtime_type_name,
@@ -68,6 +70,7 @@ proc native_guard_context(phase: GuardPhase, producer: string, consumer: string,
   GuardContext(
     enabled: true,
     phase: phase,
+    party: if phase == GpReturn: BpPositive else: BpNegative,
     producer: producer,
     consumer: consumer,
     site: site)

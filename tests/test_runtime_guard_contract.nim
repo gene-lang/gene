@@ -28,6 +28,7 @@ suite "Runtime guard contract":
     let context = GuardContext(
       enabled: true,
       phase: GpArgument,
+      party: BpNegative,
       producer: "caller",
       consumer: "function",
       site: "unit-test:1")
@@ -38,8 +39,10 @@ suite "Runtime guard contract":
     check result.error.code == TYPE_DIAG_MISMATCH_CODE
     check result.error.expected == "Int"
     check result.error.got == "String"
+    check result.error.blame == "negative"
     check result.error.message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got String in argument x")
     check result.error.message.contains("phase=argument")
+    check result.error.message.contains("blame=negative")
     check result.error.message.contains("producer=caller")
     check result.error.message.contains("consumer=function")
     check result.error.message.contains("site=unit-test:1")
@@ -49,6 +52,7 @@ suite "Runtime guard contract":
     let context = GuardContext(
       enabled: true,
       phase: GpArgument,
+      party: BpNegative,
       producer: "caller",
       consumer: "function")
     let result = guard_runtime_type(NIL, BUILTIN_TYPE_INT_ID, descs,
@@ -61,6 +65,7 @@ suite "Runtime guard contract":
     check result.error.message.contains("strict nil mode")
     check result.error.message.contains("Any, Nil, Option[T], or unions containing Nil")
     check result.error.message.contains("phase=argument")
+    check result.error.message.contains("blame=negative")
     check result.error.message.contains("producer=caller")
     check result.error.message.contains("consumer=function")
     check result.error.message.contains("site=<unknown>")
@@ -102,6 +107,7 @@ suite "Runtime guard contract":
     check result.error.message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got String in argument x")
     check result.error.message.contains("guard_contract:2")
     check not result.error.message.contains("phase=")
+    check not result.error.message.contains("blame=")
     check not result.error.message.contains("producer=")
     check not result.error.message.contains("consumer=")
     check not result.error.message.contains("site=")
@@ -135,6 +141,7 @@ suite "Runtime guard contract":
     check result.error.message.contains("Result")
     check result.error.message.contains("enum-backed Result constructors")
     check not result.error.message.contains("phase=")
+    check not result.error.message.contains("blame=")
 
   test "validate_or_coerce_type preserves legacy no-context mismatch text":
     let descs = builtin_type_descs()
@@ -146,6 +153,7 @@ suite "Runtime guard contract":
     check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got String in argument x")
     check message.contains("wrapper_contract:1")
     check not message.contains("phase=")
+    check not message.contains("blame=")
     check not message.contains("producer=")
     check not message.contains("consumer=")
     check not message.contains("site=")
@@ -155,6 +163,7 @@ suite "Runtime guard contract":
     let context = GuardContext(
       enabled: true,
       phase: GpArgument,
+      party: BpNegative,
       producer: "caller",
       consumer: "function",
       site: "unit-test:1")
@@ -164,6 +173,7 @@ suite "Runtime guard contract":
 
     check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got String in argument x")
     check message.contains("phase=argument")
+    check message.contains("blame=negative")
     check message.contains("producer=caller")
     check message.contains("consumer=function")
     check message.contains("site=unit-test:1")
@@ -191,6 +201,7 @@ suite "Runtime guard contract":
     check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got Float in argument x")
     check message.contains("wrapper_contract:3")
     check not message.contains("phase=")
+    check not message.contains("blame=")
 
   test "wrapper strict nil rejects Int and admits Option Int":
     var descs = builtin_type_descs()
@@ -205,6 +216,7 @@ suite "Runtime guard contract":
     check message.contains("Type error [GENE_TYPE_MISMATCH]: expected Int, got Nil in argument x")
     check message.contains("strict nil mode")
     check not message.contains("phase=")
+    check not message.contains("blame=")
 
     nil_value = NIL
     let warning = validate_or_coerce_type(nil_value, option_int_id, descs,

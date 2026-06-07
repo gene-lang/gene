@@ -25,6 +25,7 @@ proc local_guard_context(site: string): GuardContext {.inline.} =
   GuardContext(
     enabled: true,
     phase: GpLocal,
+    party: BpNegative,
     producer: "assignment",
     consumer: "local",
     site: site)
@@ -59,6 +60,7 @@ proc validate_return_type_constraint(self: ptr VirtualMachine, value: var Value)
   let context = GuardContext(
     enabled: true,
     phase: GpReturn,
+    party: BpPositive,
     producer: "callee",
     consumer: "caller",
     site: self.runtime_type_error_location())

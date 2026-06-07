@@ -20,9 +20,15 @@ type
     GpEnumPayload,
     GpTuplePayload
 
+  GuardParty* = enum
+    BpUnknown,
+    BpPositive,
+    BpNegative
+
   GuardContext* = object
     enabled*: bool
     phase*: GuardPhase
+    party*: GuardParty
     producer*: string
     consumer*: string
     site*: string
@@ -33,6 +39,7 @@ type
     expected*: string
     got*: string
     phase*: string
+    blame*: string
     producer*: string
     consumer*: string
     site*: string
@@ -805,6 +812,15 @@ proc guard_phase_name*(phase: GuardPhase): string =
   of GpTuplePayload:
     "tuple-payload"
 
+proc guard_party_name*(party: GuardParty): string =
+  case party
+  of BpUnknown:
+    "unknown"
+  of BpPositive:
+    "positive"
+  of BpNegative:
+    "negative"
+
 proc guard_field_value(value: string, fallback: string): string =
   if value.len == 0:
     return fallback
@@ -820,6 +836,7 @@ proc append_guard_fields*(message: string, context: GuardContext): string =
   if not context.enabled:
     return message
   message & "; phase=" & guard_phase_name(context.phase) &
+    "; blame=" & guard_party_name(context.party) &
     "; producer=" & guard_field_value(context.producer, "<unknown>") &
     "; consumer=" & guard_field_value(context.consumer, "<unknown>") &
     "; site=" & guard_field_value(context.site, "<unknown>")
@@ -833,6 +850,7 @@ proc make_guard_error(expected: string, actual: string, message: string,
     expected: expected,
     got: actual,
     phase: (if has_context: guard_phase_name(context.phase) else: ""),
+    blame: (if has_context: guard_party_name(context.party) else: ""),
     producer: (if has_context: guard_field_value(context.producer, "<unknown>") else: ""),
     consumer: (if has_context: guard_field_value(context.consumer, "<unknown>") else: ""),
     site: (if has_context: guard_field_value(context.site, "<unknown>") else: ""))

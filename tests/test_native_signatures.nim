@@ -152,6 +152,7 @@ suite "Native signatures":
     )
     check message.contains("expected Int, got String")
     check message.contains("phase=argument")
+    check message.contains("blame=negative")
     check message.contains("producer=caller")
     check message.contains("consumer=native")
 
@@ -174,6 +175,7 @@ suite "Native signatures":
     )
     check message.contains("expected Int, got String")
     check message.contains("phase=return")
+    check message.contains("blame=positive")
     check message.contains("producer=native")
     check message.contains("consumer=caller")
 
