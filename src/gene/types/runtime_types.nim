@@ -496,20 +496,75 @@ proc type_expr_compatible(actual: RtType, expected: RtType): bool =
     return true
   return false
 
-proc function_value_compatible(value: Value, expected: RtType): bool =
+proc lookup_native_signature_for_guard(fn: NativeFn): NativeSignature {.gcsafe.} =
+  {.cast(gcsafe).}:
+    result = lookup_native_signature(fn)
+
+proc native_signature_for_fn_value(value: Value): NativeSignature {.gcsafe.} =
+  case value.kind
+  of VkNativeFn:
+    if value.ref == nil:
+      return nil
+    lookup_native_signature_for_guard(value.ref.native_fn)
+  of VkNativeMethod:
+    if value.ref == nil:
+      return nil
+    lookup_native_signature_for_guard(value.ref.native_method)
+  of VkBoundMethod:
+    if value.ref == nil:
+      return nil
+    let meth = value.ref.bound_method.`method`
+    if meth == nil:
+      return nil
+    if meth.native_signature != nil:
+      return meth.native_signature
+    if meth.callable.kind == VkNativeFn and meth.callable.ref != nil:
+      return lookup_native_signature_for_guard(meth.callable.ref.native_fn)
+    nil
+  else:
+    nil
+
+proc native_signature_compatible(sig: NativeSignature, expected: RtType): bool {.gcsafe.} =
   if expected.kind != RtFn:
     return false
-  if value.kind in {VkNativeFn, VkNativeMethod, VkBoundMethod}:
+  if sig == nil:
+    # Unknown native callables are still dynamic at this boundary. A later
+    # higher-order cast proxy can enforce argument/result casts per call.
     return true
-  let matcher =
-    if value.kind == VkFunction: value.ref.fn.matcher
-    elif value.kind == VkBlock: value.ref.block.matcher
-    else: nil
+  if sig.params.len != expected.params.len:
+    return false
+  let type_descs =
+    if sig.type_descriptors.len > 0: sig.type_descriptors
+    else: builtin_type_descs()
+  for i, param in sig.params:
+    if param.kind != expected.params[i].kind:
+      return false
+    if param.keyword_name != expected.params[i].keyword_name:
+      return false
+    let actual_type =
+      if param.type_id != NO_TYPE_ID:
+        type_desc_to_rt(type_descs, param.type_id)
+      else:
+        RtType(kind: RtAny)
+    if not type_expr_compatible(actual_type, expected.params[i].typ):
+      return false
+  let actual_return =
+    if sig.return_type_id != NO_TYPE_ID:
+      type_desc_to_rt(type_descs, sig.return_type_id)
+    else:
+      RtType(kind: RtAny)
+  type_expr_compatible(actual_return, expected.ret) and
+    effects_compatible(expected.effects, @[])
+
+proc matcher_value_compatible(matcher: RootMatcher, expected: RtType,
+                              skip_self = false): bool {.gcsafe.} =
   if matcher.is_nil:
     return true
-  if matcher.children.len != expected.params.len:
+  let start = if skip_self and matcher.children.len > 0: 1 else: 0
+  if matcher.children.len - start != expected.params.len:
     return false
-  for i, param in matcher.children:
+  for i, expected_param in expected.params:
+    let param = matcher.children[start + i]
     let actual_type =
       if param.type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
         type_desc_to_rt(matcher.type_descriptors, param.type_id)
@@ -535,11 +590,11 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
         else:
           actual_type
     )
-    if actual_param.kind != expected.params[i].kind:
+    if actual_param.kind != expected_param.kind:
       return false
-    if actual_param.keyword_name != expected.params[i].keyword_name:
+    if actual_param.keyword_name != expected_param.keyword_name:
       return false
-    if not type_expr_compatible(actual_param.typ, expected.params[i].typ):
+    if not type_expr_compatible(actual_param.typ, expected_param.typ):
       return false
   let actual_return =
     if matcher.return_type_id != NO_TYPE_ID and matcher.type_descriptors.len > 0:
@@ -549,6 +604,35 @@ proc function_value_compatible(value: Value, expected: RtType): bool =
   if not type_expr_compatible(actual_return, expected.ret):
     return false
   effects_compatible(expected.effects, matcher.effects)
+
+proc function_value_compatible(value: Value, expected: RtType): bool {.gcsafe.} =
+  if expected.kind != RtFn:
+    return false
+  case value.kind
+  of VkNativeFn, VkNativeMethod:
+    return native_signature_compatible(native_signature_for_fn_value(value), expected)
+  of VkFunction:
+    if value.ref == nil or value.ref.fn == nil:
+      return true
+    return matcher_value_compatible(value.ref.fn.matcher, expected)
+  of VkBlock:
+    if value.ref == nil or value.ref.block == nil:
+      return true
+    return matcher_value_compatible(value.ref.block.matcher, expected)
+  of VkBoundMethod:
+    if value.ref == nil:
+      return true
+    let meth = value.ref.bound_method.`method`
+    if meth == nil:
+      return true
+    if meth.callable.kind == VkNativeFn:
+      return native_signature_compatible(native_signature_for_fn_value(value), expected)
+    if meth.callable.kind == VkFunction and meth.callable.ref != nil and meth.callable.ref.fn != nil:
+      return matcher_value_compatible(meth.callable.ref.fn.matcher, expected,
+        skip_self = true)
+    return true
+  else:
+    return false
 
 proc is_compatible_rt(value: Value, expected: RtType): bool =
   case expected.kind
