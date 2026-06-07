@@ -691,6 +691,12 @@ type
     abi_arg_types*: seq[CallArgType]
     abi_return_type*: CallReturnType
 
+  DynamicNativeBindingLifetimeRelease* = proc(scope: Scope) {.gcsafe, raises: [].}
+
+  DynamicNativeBindingLifetime* = object
+    target_scope*: Scope
+    release_scope*: DynamicNativeBindingLifetimeRelease
+
   DynamicNativeBinding* = ref object
     handle*: LibHandle
     handle_value*: Value
@@ -700,6 +706,7 @@ type
     abi*: string
     sig*: NativeSignature
     fn*: NativeFn
+    lifetime*: DynamicNativeBindingLifetime
     result_class*: Class
     target_expr*: Value
     target_ns*: Namespace

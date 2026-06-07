@@ -123,6 +123,15 @@ proc ensure_dyn_classes(): Namespace =
     dyn_symbol_class.parent = object_class
     result["Symbol".to_key()] = dyn_class_value(dyn_symbol_class)
 
+proc release_dyn_binding_scope(scope: Scope) {.gcsafe, raises: [].} =
+  if scope == nil:
+    return
+  {.cast(gcsafe).}:
+    try:
+      scope.free()
+    except CatchableError:
+      discard
+
 proc dyn_has_library_extension(path: string): bool =
   path.endsWith(".so") or path.endsWith(".dylib") or path.endsWith(".dll")
 
@@ -644,6 +653,10 @@ proc make_dynamic_native_value_from_target*(target_expr: Value, sig: NativeSigna
   let binding = DynamicNativeBinding(
     abi: normalized_abi,
     sig: sig,
+    lifetime: DynamicNativeBindingLifetime(
+      target_scope: target_scope,
+      release_scope: release_dyn_binding_scope
+    ),
     target_expr: target_expr,
     target_ns: target_ns,
     target_scope: target_scope,

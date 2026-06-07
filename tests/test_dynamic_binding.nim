@@ -50,6 +50,15 @@ proc expect_error(action: proc() {.closure.}): string =
   except CatchableError as e:
     result = e.msg
 
+proc release_all_refs(value: var Value) =
+  let ref_obj = value.ref
+  while ref_obj.ref_count > 0:
+    let before = ref_obj.ref_count
+    release(value)
+    if before == 1:
+      break
+  value.raw = 0
+
 suite "Dynamic Library Binding":
   setup:
     init_app_and_vm()
@@ -108,6 +117,27 @@ suite "Dynamic Library Binding":
         ^abi "cdecl")
       (dyn-add 9 33)
     """).to_int() == 42
+
+  test "escaped lazy dynamic binding releases captured local scope":
+    var captured_scope: Scope = nil
+    var captured_scope_refs = 0
+    block:
+      var escaped = exec_dyn("""
+        (do
+          (var lib ($dyn/load """ & gene_string_literal(fixture_base_path()) & """))
+          (fn [a: Int b: Int] -> Int
+            ^native ($dyn/find lib "gene_dyn_add")
+            ^abi "cdecl"))
+      """)
+      check escaped.kind == VkNativeFn
+      check escaped.ref.native_binding != nil
+      check escaped.ref.native_binding.target_scope != nil
+      captured_scope = escaped.ref.native_binding.target_scope
+      captured_scope_refs = captured_scope.ref_count
+      check call_native_value(escaped, VM, @[20.to_value(), 22.to_value()]).to_int() == 42
+      release_all_refs(escaped)
+    check captured_scope != nil
+    check captured_scope.ref_count == captured_scope_refs - 1
 
   test "dynamic cdecl bindings marshal Void and Pointer":
     let result = exec_dyn("""

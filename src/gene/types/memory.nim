@@ -67,6 +67,8 @@ template destroyAndDealloc[T](p: ptr T) =
     reset(p[])   # Run Nim destructors on all fields
     dealloc(p)   # Free memory
 
+proc destroy_reference(ref_obj: ptr Reference) {.gcsafe, raises: [].}
+
 proc destroy_string(s: ptr String) =
   destroyAndDealloc(s)
 
@@ -82,13 +84,27 @@ proc destroy_gene(g: ptr Gene) =
 proc destroy_instance(inst: ptr InstanceObj) =
   destroyAndDealloc(inst)
 
-proc destroy_reference(ref_obj: ptr Reference) =
-  if ref_obj != nil and ref_obj.kind == VkCustom and
-      ref_obj.custom_data != nil and
-      ref_obj.custom_data.finalize_hook != nil:
-    ref_obj.custom_data.finalize_hook(ref_obj.custom_data)
-    ref_obj.custom_data.finalize_hook = nil
-  destroyAndDealloc(ref_obj)
+proc `=destroy`*(lifetime: var DynamicNativeBindingLifetime) =
+  if lifetime.target_scope != nil and lifetime.release_scope != nil:
+    lifetime.release_scope(lifetime.target_scope)
+  lifetime.target_scope = nil
+  lifetime.release_scope = nil
+
+proc `=copy`*(dest: var DynamicNativeBindingLifetime;
+              src: DynamicNativeBindingLifetime) =
+  if dest.target_scope != nil and dest.release_scope != nil:
+    dest.release_scope(dest.target_scope)
+  dest.target_scope = src.target_scope
+  dest.release_scope = src.release_scope
+  if dest.target_scope != nil:
+    dest.target_scope.ref_count.inc()
+
+proc `=sink`*(dest: var DynamicNativeBindingLifetime;
+              src: DynamicNativeBindingLifetime) =
+  if dest.target_scope != nil and dest.release_scope != nil:
+    dest.release_scope(dest.target_scope)
+  dest.target_scope = src.target_scope
+  dest.release_scope = src.release_scope
 
 when defined(phase1_rc_branch_probe):
   type RcBranchOp* = enum
@@ -231,6 +247,31 @@ proc releaseManaged*(raw: uint64) {.gcsafe.} =
         destroy_string(s)
     else:
       discard
+
+proc release_dynamic_binding_value(value: var Value) {.gcsafe, raises: [].} =
+  if isManaged(value):
+    releaseManaged(value.raw)
+  value.raw = 0
+
+proc release_dynamic_native_binding(binding: DynamicNativeBinding) {.gcsafe, raises: [].} =
+  if binding == nil:
+    return
+  if binding.lifetime.target_scope != nil and binding.lifetime.release_scope != nil:
+    binding.lifetime.release_scope(binding.lifetime.target_scope)
+  binding.lifetime.target_scope = nil
+  binding.lifetime.release_scope = nil
+  release_dynamic_binding_value(binding.handle_value)
+  release_dynamic_binding_value(binding.target_expr)
+
+proc destroy_reference(ref_obj: ptr Reference) {.gcsafe, raises: [].} =
+  if ref_obj != nil and ref_obj.kind == VkCustom and
+      ref_obj.custom_data != nil and
+      ref_obj.custom_data.finalize_hook != nil:
+    ref_obj.custom_data.finalize_hook(ref_obj.custom_data)
+    ref_obj.custom_data.finalize_hook = nil
+  if ref_obj != nil and ref_obj.kind == VkNativeFn:
+    release_dynamic_native_binding(ref_obj.native_binding)
+  destroyAndDealloc(ref_obj)
 
 # Lifecycle hooks for automatic GC
 
