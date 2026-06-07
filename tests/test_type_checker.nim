@@ -142,6 +142,20 @@ suite "Static type checking":
   """
 
   test_vm_error """
+    (fn f [a: Int] -> Int
+      a
+    )
+    (f "x")
+  """
+
+  test_vm """
+    (fn f [a: Int] -> Int
+      a
+    )
+    (f 1.0)
+  """, 1.to_value()
+
+  test_vm_error """
     (fn add [a: Int b: Int] -> Int
       (+ a b)
     )

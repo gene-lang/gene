@@ -2,20 +2,63 @@
 
 # Usage:
 # benchme|copy
+#
+# Environment:
+#   GENE_BENCH_MODE=native|vm   (default: native)
+#   NIM=/path/to/nim            (default: nim, or ~/.nimble/bin/nim)
 
 echo "=== Gene Benchmark ==="
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S %A')"
 echo "Git commit: $(git rev-parse HEAD)"
-echo "Nim version: $(nim --version 2>&1 | head -1)"
+
+NIM_BIN="${NIM:-nim}"
+if ! command -v "$NIM_BIN" >/dev/null 2>&1; then
+  if [ -x "$HOME/.nimble/bin/nim" ]; then
+    NIM_BIN="$HOME/.nimble/bin/nim"
+  else
+    echo "Error: nim not found. Set NIM=/path/to/nim or add nim to PATH." >&2
+    exit 1
+  fi
+fi
+
+MODE="${GENE_BENCH_MODE:-native}"
+case "$MODE" in
+  native)
+    SOURCE="benchmarks/computation/fibonacci_native.nim"
+    LABEL="typed native Fibonacci benchmark"
+    ;;
+  vm)
+    SOURCE="benchmarks/computation/fibonacci.nim"
+    LABEL="VM interpreter Fibonacci benchmark"
+    ;;
+  *)
+    echo "Error: GENE_BENCH_MODE must be 'native' or 'vm'." >&2
+    exit 1
+    ;;
+esac
+
+echo "Nim version: $("$NIM_BIN" --version 2>&1 | head -1)"
+echo "Mode: $MODE"
 echo ""
 
-# Clean up old binary
+CACHE_DIR="build/nimcache/fibonacci-$MODE"
+BUILD_LOG="$CACHE_DIR/build.log"
+mkdir -p bin "$CACHE_DIR"
 rm -f bin/fibonacci 2>/dev/null
 
 # Compile with modern memory management and suppress warnings
-echo "Compiling fibonacci benchmark..."
-CMD="nim c --hints:off --mm:orc -d:release -d:danger -d:ssl --out:bin/fibonacci benchmarks/computation/fibonacci.nim"
-$CMD 2>&1 | grep -v "Warning:" | grep -v "ignoring duplicate libraries" || true
+echo "Compiling $LABEL..."
+CMD=("$NIM_BIN" c --hints:off --mm:orc -d:release -d:danger -d:ssl --nimcache:"$CACHE_DIR" --out:bin/fibonacci "$SOURCE")
+if ! "${CMD[@]}" >"$BUILD_LOG" 2>&1; then
+  grep -v "Warning:" "$BUILD_LOG" | grep -v "ignoring duplicate libraries" || true
+  exit 1
+fi
+grep -v "Warning:" "$BUILD_LOG" | grep -v "ignoring duplicate libraries" || true
+
+if [ ! -x "./bin/fibonacci" ]; then
+  echo "Error: bin/fibonacci was not produced" >&2
+  exit 1
+fi
 
 # Run benchmark
 echo ""

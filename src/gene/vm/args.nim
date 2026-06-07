@@ -108,12 +108,48 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope,
 template is_simple_positional(matcher: RootMatcher, arg_count: int): bool =
   matcher.hint_mode == MhSimpleData and matcher.children.len == arg_count
 
+proc is_simple_positional_shape(matcher: RootMatcher, arg_count: int): bool {.inline.} =
+  if matcher.children.len != arg_count:
+    return false
+  for param in matcher.children:
+    if param.kind != MatchData or param.is_splat or param.is_prop or
+       param.children.len != 0 or not param.required():
+      return false
+  true
+
 template ensure_scope_capacity(scope: Scope, count: int) =
   if scope.members.len < count:
     let old_len = scope.members.len
     scope.members.setLen(count)
     for idx in old_len..<count:
       scope.members[idx] = NIL
+
+proc fast_builtin_type_match(value: Value, type_id: TypeId): bool {.inline.} =
+  case type_id
+  of NO_TYPE_ID, BUILTIN_TYPE_ANY_ID:
+    true
+  of BUILTIN_TYPE_INT_ID:
+    value.kind == VkInt
+  of BUILTIN_TYPE_FLOAT_ID:
+    value.kind == VkFloat
+  of BUILTIN_TYPE_STRING_ID:
+    value.kind == VkString
+  of BUILTIN_TYPE_BOOL_ID:
+    value.kind == VkBool
+  of BUILTIN_TYPE_NIL_ID:
+    value.kind == VkNil
+  of BUILTIN_TYPE_SYMBOL_ID:
+    value.kind == VkSymbol
+  of BUILTIN_TYPE_CHAR_ID:
+    value.kind == VkChar
+  of BUILTIN_TYPE_ARRAY_ID:
+    value.kind == VkArray
+  of BUILTIN_TYPE_MAP_ID:
+    value.kind == VkMap
+  of BUILTIN_TYPE_POINTER_ID:
+    value.kind == VkPointer
+  else:
+    false
 
 proc callable_argument_guard_context*(): GuardContext {.inline.} =
   ## Build the explicit guard context used for function-call argument validation.
@@ -126,6 +162,42 @@ proc callable_argument_guard_context*(): GuardContext {.inline.} =
     producer: "caller",
     consumer: "function",
     site: current_type_error_location())
+
+proc validate_bound_arg_fast(matcher: RootMatcher, param: Matcher, value: var Value,
+                             context: GuardContext) {.inline.} =
+  if not (matcher.type_check and matcher.has_type_annotations):
+    return
+  if param.type_id == NO_TYPE_ID or matcher.type_descriptors.len == 0:
+    return
+
+  let strict_nil = current_strict_nil()
+  if value == NIL and not strict_nil:
+    return
+  if fast_builtin_type_match(value, param.type_id):
+    return
+
+  let location = if strict_nil: current_type_error_location() else: ""
+  let warning = validate_or_coerce_type(value, param.type_id, matcher.type_descriptors,
+    key_to_name(param.name_key), location = location, strict_nil = strict_nil,
+    context = context)
+  emit_type_warning(warning)
+
+proc bind_simple_typed_positional_args(matcher: RootMatcher, args: ptr UncheckedArray[Value],
+                                      arg_count: int, scope: Scope,
+                                      context: GuardContext = GuardContext()): bool {.inline.} =
+  if not matcher.has_type_annotations or not matcher.is_simple_positional_shape(arg_count):
+    return false
+
+  ensure_scope_capacity(scope, arg_count)
+  {.push checks: off.}
+  var i = 0
+  while i < arg_count:
+    var value = args[i]
+    validate_bound_arg_fast(matcher, matcher.children[i], value, context)
+    scope.members[i] = value
+    inc i
+  {.pop.}
+  true
 
 proc process_args_core(matcher: RootMatcher, positional: ptr UncheckedArray[Value],
                       pos_count: int, keywords: seq[(Key, Value)],
@@ -256,7 +328,8 @@ template validate_fast_path_types(matcher: RootMatcher, scope: Scope,
 proc process_args_zero*(matcher: RootMatcher, scope: Scope,
                         context: GuardContext = GuardContext()) {.inline.} =
   ## Ultra-fast path for zero-argument functions
-  if matcher.is_simple_positional(0):
+  if matcher.is_simple_positional(0) or
+     (matcher.has_type_annotations and matcher.is_simple_positional_shape(0)):
     return
   process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope, context)
 
@@ -268,6 +341,12 @@ proc process_args_one*(matcher: RootMatcher, arg: Value, scope: Scope,
     ensure_scope_capacity(scope, 1)
     scope.members[0] = arg
     return
+  if matcher.has_type_annotations and matcher.is_simple_positional_shape(1):
+    var value = arg
+    ensure_scope_capacity(scope, 1)
+    validate_bound_arg_fast(matcher, matcher.children[0], value, context)
+    scope.members[0] = value
+    return
   var arr = [arg]
   process_args_core(matcher, cast[ptr UncheckedArray[Value]](arr[0].addr), 1, @[], scope, context)
 
@@ -276,15 +355,19 @@ proc process_args_direct*(matcher: RootMatcher, args: ptr UncheckedArray[Value],
                          context: GuardContext = GuardContext()) {.inline.} =
   ## Process arguments directly from stack to scope
   ## Supports positional arguments only (keywords handled by process_args_direct_kw).
-  if (not has_keyword_args) and matcher.is_simple_positional(arg_count) and not matcher.has_type_annotations:
-    ensure_scope_capacity(scope, arg_count)
-    {.push checks: off.}
-    var i = 0
-    while i < arg_count:
-      scope.members[i] = args[i]
-      inc i
-    {.pop.}
-    return
+  if not has_keyword_args:
+    if matcher.is_simple_positional(arg_count) and not matcher.has_type_annotations:
+      ensure_scope_capacity(scope, arg_count)
+      {.push checks: off.}
+      var i = 0
+      while i < arg_count:
+        scope.members[i] = args[i]
+        inc i
+      {.pop.}
+      return
+    if matcher.has_type_annotations and
+       bind_simple_typed_positional_args(matcher, args, arg_count, scope, context):
+      return
 
   process_args_core(matcher, args, arg_count, @[], scope, context)
 
@@ -300,15 +383,23 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope,
   ## Handles both positional and named arguments
 
   if args.kind == VkGene:
-    if args.gene.props.len == 0 and matcher.is_simple_positional(args.gene.children.len) and not matcher.has_type_annotations:
-      ensure_scope_capacity(scope, args.gene.children.len)
-      {.push checks: off.}
-      var i = 0
-      while i < args.gene.children.len:
-        scope.members[i] = args.gene.children[i]
-        inc i
-      {.pop.}
-      return
+    if args.gene.props.len == 0:
+      if matcher.is_simple_positional(args.gene.children.len) and not matcher.has_type_annotations:
+        ensure_scope_capacity(scope, args.gene.children.len)
+        {.push checks: off.}
+        var i = 0
+        while i < args.gene.children.len:
+          scope.members[i] = args.gene.children[i]
+          inc i
+        {.pop.}
+        return
+      if matcher.has_type_annotations:
+        let pos_ptr = if args.gene.children.len > 0:
+                        cast[ptr UncheckedArray[Value]](args.gene.children[0].addr)
+                      else:
+                        cast[ptr UncheckedArray[Value]](nil)
+        if bind_simple_typed_positional_args(matcher, pos_ptr, args.gene.children.len, scope, context):
+          return
 
     var positional: seq[Value] = @[]
     var keywords: seq[(Key, Value)] = @[]
@@ -317,9 +408,9 @@ proc process_args*(matcher: RootMatcher, args: Value, scope: Scope,
     for k, v in args.gene.props:
       keywords.add((k, v))
 
-    let pos_ptr = if positional.len > 0: cast[ptr UncheckedArray[Value]](positional[0].addr)
-                  else: cast[ptr UncheckedArray[Value]](nil)
-    process_args_core(matcher, pos_ptr, positional.len, keywords, scope, context)
+    let positional_ptr = if positional.len > 0: cast[ptr UncheckedArray[Value]](positional[0].addr)
+                         else: cast[ptr UncheckedArray[Value]](nil)
+    process_args_core(matcher, positional_ptr, positional.len, keywords, scope, context)
   else:
     process_args_core(matcher, cast[ptr UncheckedArray[Value]](nil), 0, @[], scope, context)
 
