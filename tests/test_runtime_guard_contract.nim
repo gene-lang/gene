@@ -249,6 +249,69 @@ suite "Runtime guard contract":
     check message.contains("producer=fn-proxy-target")
     check message.contains("consumer=caller")
 
+  test "typed Array element access validates elements transiently":
+    init_all()
+
+    let first = VM.exec("""
+      (var xs: (Array Int) [1 "bad"])
+      xs/0
+    """, "typed_array_element_access_ok.gene")
+    check first.to_int() == 1
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (var xs: (Array Int) [1 "bad"])
+        xs/1
+      """, "typed_array_element_access_bad.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("array element")
+    check message.contains("phase=element")
+    check message.contains("blame=positive")
+    check message.contains("producer=collection")
+    check message.contains("consumer=typed element access")
+
+  test "typed Array declaration without initializer preserves element access guard":
+    init_all()
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (var xs: (Array Int))
+        (xs = [1 "bad"])
+        xs/1
+      """, "typed_array_deferred_initializer_bad.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("array element")
+    check message.contains("phase=element")
+    check message.contains("producer=collection")
+    check message.contains("consumer=typed element access")
+
+  test "typed Map element access validates values transiently":
+    init_all()
+
+    let good = VM.exec("""
+      (var m: (Map Symbol Int) {^good 7 ^bad "oops"})
+      m/good
+    """, "typed_map_element_access_ok.gene")
+    check good.to_int() == 7
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (var m: (Map Symbol Int) {^good 7 ^bad "oops"})
+        m/bad
+      """, "typed_map_element_access_bad.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("map value")
+    check message.contains("phase=element")
+    check message.contains("blame=positive")
+    check message.contains("producer=collection")
+    check message.contains("consumer=typed element access")
+
   test "guard consults native method signatures for bound Fn-typed values":
     var descs = builtin_type_descs()
     let expected_fn_id = fn_type_id(descs, BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID)

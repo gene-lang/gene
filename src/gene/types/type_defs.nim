@@ -1315,6 +1315,7 @@ type
     target*: Value  # target of the invocation
     args*: Value
     stack*: array[256, Value]
+    stack_type_ids*: array[256, TypeId]
     stack_index*: uint16
     stack_max*: uint16  # Track highest stack position for GC cleanup
     call_bases*: CallBaseStack

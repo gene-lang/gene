@@ -48,6 +48,8 @@ proc reset_frame*(self: Frame) {.inline.} =
   {.push boundChecks: off.}
   if self.stack_max > 0:
     zeroMem(addr self.stack[0], int(self.stack_max) * sizeof(Value))
+    for i in 0..<int(self.stack_max):
+      self.stack_type_ids[i] = NO_TYPE_ID
   {.pop.}
 
   self.stack_index = 0
@@ -116,9 +118,19 @@ proc update*(self: var Frame, f: Frame) {.inline.} =
 template current*(self: Frame): Value =
   self.stack[self.stack_index - 1]
 
+template current_type_id*(self: Frame): TypeId =
+  self.stack_type_ids[self.stack_index - 1]
+
 proc replace*(self: var Frame, v: Value) {.inline.} =
   {.push boundChecks: off, overflowChecks: off.}
   self.stack[self.stack_index - 1] = v
+  self.stack_type_ids[self.stack_index - 1] = NO_TYPE_ID
+  {.pop.}
+
+proc set_current_type_id*(self: var Frame, type_id: TypeId) {.inline.} =
+  {.push boundChecks: off, overflowChecks: off.}
+  if self.stack_index > 0:
+    self.stack_type_ids[self.stack_index - 1] = type_id
   {.pop.}
 
 template push*(self: var Frame, value: sink Value) =
@@ -132,6 +144,7 @@ template push*(self: var Frame, value: sink Value) =
         detail &= " (" & $VM.cu.instructions[pc].kind & ")"
     raise new_exception(type_defs.Exception, "Stack overflow: frame stack exceeded " & $self.stack.len & detail)
   self.stack[self.stack_index] = value
+  self.stack_type_ids[self.stack_index] = NO_TYPE_ID
   self.stack_index.inc()
   # Track maximum stack position for GC cleanup
   if self.stack_index > self.stack_max:
@@ -145,6 +158,7 @@ proc pop*(self: var Frame): Value {.inline.} =
   copyMem(addr result, addr self.stack[self.stack_index], sizeof(Value))
   # Clear the slot using raw memory write to avoid =copy hook (no double-release)
   cast[ptr uint64](addr self.stack[self.stack_index])[] = 0
+  self.stack_type_ids[self.stack_index] = NO_TYPE_ID
   {.pop.}
 
 template pop2*(self: var Frame, to: var Value) =
@@ -157,6 +171,7 @@ template pop2*(self: var Frame, to: var Value) =
   copyMem(addr to, addr self.stack[self.stack_index], sizeof(Value))
   # Clear the slot using raw memory write to avoid =copy hook
   cast[ptr uint64](addr self.stack[self.stack_index])[] = 0
+  self.stack_type_ids[self.stack_index] = NO_TYPE_ID
   {.pop.}
 
 proc push_call_base*(self: Frame) {.inline.} =

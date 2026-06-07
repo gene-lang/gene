@@ -4,6 +4,8 @@
 ## enter_function, exit_function.
 ## Included from vm.nim — shares its scope.
 
+proc current_runtime_type_descs(self: ptr VirtualMachine): seq[TypeDesc]
+
 proc expected_type_id_for(tracker: ScopeTracker, index: int): TypeId {.inline.} =
   if tracker == nil:
     return NO_TYPE_ID
@@ -44,6 +46,59 @@ proc validate_local_type_constraint(self: ptr VirtualMachine, tracker: ScopeTrac
   let location = self.runtime_type_error_location()
   validate_type(value, expected_id, self.cu.type_descriptors, context,
     location, strict_nil = self.strict_nil, context = local_guard_context(location))
+
+proc element_guard_context(site: string): GuardContext {.inline.} =
+  GuardContext(
+    enabled: true,
+    phase: GpElement,
+    party: BpPositive,
+    producer: "collection",
+    consumer: "typed element access",
+    site: site)
+
+proc collection_element_type_id(self: ptr VirtualMachine, collection_type_id: TypeId,
+                                collection_kind: ValueKind): TypeId {.inline.} =
+  if self == nil or collection_type_id == NO_TYPE_ID:
+    return NO_TYPE_ID
+  let type_descs = self.current_runtime_type_descs()
+  if collection_type_id < 0 or collection_type_id.int >= type_descs.len:
+    return NO_TYPE_ID
+  let desc = type_descs[collection_type_id.int]
+  if desc.kind != TdkApplied:
+    return NO_TYPE_ID
+  case collection_kind
+  of VkArray:
+    if desc.ctor == "Array" and desc.args.len >= 1:
+      return desc.args[0]
+  of VkMap:
+    if desc.ctor == "Map":
+      if desc.args.len >= 2:
+        return desc.args[1]
+      if desc.args.len == 1:
+        return desc.args[0]
+  else:
+    discard
+  NO_TYPE_ID
+
+proc validate_collection_element_read(self: ptr VirtualMachine, element: var Value,
+                                      collection_type_id: TypeId,
+                                      collection_kind: ValueKind,
+                                      label: string): TypeId {.inline.} =
+  result = self.collection_element_type_id(collection_type_id, collection_kind)
+  if self == nil or not self.type_check:
+    return NO_TYPE_ID
+  if result == NO_TYPE_ID or result == BUILTIN_TYPE_ANY_ID:
+    return result
+  let type_descs = self.current_runtime_type_descs()
+  if result < 0 or result.int >= type_descs.len:
+    return NO_TYPE_ID
+  if element == NIL and not self.strict_nil:
+    return result
+  let location = self.runtime_type_error_location()
+  let warning = validate_or_coerce_type(element, result, type_descs, label,
+    location, strict_nil = self.strict_nil,
+    context = element_guard_context(location))
+  emit_type_warning(warning)
 
 proc validate_return_type_constraint(self: ptr VirtualMachine, value: var Value) {.inline.} =
   if self == nil or not self.type_check:

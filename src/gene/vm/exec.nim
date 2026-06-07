@@ -897,6 +897,8 @@ proc exec*(self: ptr VirtualMachine): Value =
             location, strict_nil = self.strict_nil, context = local_guard_context(location))
         else:
           self.validate_local_type_constraint(self.frame.scope.tracker, index, value)
+        if inst.arg1 != NO_TYPE_ID:
+          set_expected_type_id(self.frame.scope.tracker, index.int16, inst.arg1.TypeId)
         # Ensure the scope has enough space for the index
         while self.frame.scope.members.len <= index:
           self.frame.scope.members.add(NIL)
@@ -907,6 +909,12 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         # Push the value as the result of var
         self.frame.push(value)
+        let declared_type_id =
+          if inst.arg1 != NO_TYPE_ID:
+            inst.arg1.TypeId
+          else:
+            expected_type_id_for(self.frame.scope.tracker, index)
+        self.frame.set_current_type_id(declared_type_id)
         {.pop.}
 
       of IkVarValue:
@@ -924,6 +932,7 @@ proc exec*(self: ptr VirtualMachine): Value =
 
         # Also push the value to the stack (like IkVar)
         self.frame.push(value)
+        self.frame.set_current_type_id(expected_type_id_for(self.frame.scope.tracker, index))
         {.pop.}
 
       of IkVarDestructure:
@@ -958,6 +967,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         if index >= self.frame.scope.members.len:
           raise new_exception(types.Exception, fmt"IkVarResolve: index {index} >= scope.members.len {self.frame.scope.members.len}")
         self.frame.push(self.frame.scope.members[index])
+        self.frame.set_current_type_id(expected_type_id_for(self.frame.scope.tracker, index))
         {.pop.}
 
       of IkVarResolveInherited:
@@ -975,6 +985,7 @@ proc exec*(self: ptr VirtualMachine): Value =
           raise new_exception(types.Exception, fmt"IkVarResolveInherited: index {index} >= scope.members.len {scope.members.len}")
         {.push checks: off}
         self.frame.push(scope.members[index])
+        self.frame.set_current_type_id(expected_type_id_for(scope.tracker, index))
         {.pop.}
 
       of IkVarAssign:
@@ -1452,6 +1463,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         let symbol_value = inst.arg0
         let name = cast[Key](symbol_value)
         var value: Value
+        let value_type_id = self.frame.current_type_id()
         self.frame.pop2(value)
 
         # Check for NIL first to give better error message
@@ -1472,9 +1484,12 @@ proc exec*(self: ptr VirtualMachine): Value =
             # Already handled above, but needed for exhaustive case
             discard
           of VkMap:
-            let member = map_data(value)[name]
+            var member = map_data(value)[name]
+            let member_type_id = self.validate_collection_element_read(member,
+              value_type_id, VkMap, "map value")
             retain(member)
             self.frame.push(member)
+            self.frame.set_current_type_id(member_type_id)
           of VkGene:
             let member = value.gene.props[name]
             retain(member)
@@ -1580,6 +1595,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         var prop: Value
         self.frame.pop2(prop)
         var target: Value
+        let target_type_id = self.frame.current_type_id()
         self.frame.pop2(target)
 
         # Not found returns VOID by default. Use /! (IkAssertValue) to throw.
@@ -1614,8 +1630,13 @@ proc exec*(self: ptr VirtualMachine): Value =
                     else:
                       "".to_key()
                   member = map_data(target).getOrDefault(dynamic_key, VOID)
+              var member_type_id = NO_TYPE_ID
+              if member != VOID:
+                member_type_id = self.validate_collection_element_read(member,
+                  target_type_id, VkMap, "map value")
               retain(member)
               self.frame.push(member)
+              self.frame.set_current_type_id(member_type_id)
             of VkGene:
               if prop.kind == VkInt:
                 let idx64 = prop.int64
@@ -1772,9 +1793,12 @@ proc exec*(self: ptr VirtualMachine): Value =
                 if resolved < 0:
                   resolved = arr_len + resolved
                 if resolved >= 0 and resolved < arr_len:
-                  let member = arr[resolved.int]
+                  var member = arr[resolved.int]
+                  let member_type_id = self.validate_collection_element_read(member,
+                    target_type_id, VkArray, "array element")
                   retain(member)
                   self.frame.push(member)
+                  self.frame.set_current_type_id(member_type_id)
                 else:
                   self.frame.push(VOID)
               else:
@@ -2035,6 +2059,7 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkGetChild:
         let i = inst.arg0.int64
         var value: Value
+        let value_type_id = self.frame.current_type_id()
         self.frame.pop2(value)
         if has_custom_materializer(value):
           value = materialize_custom(value)
@@ -2043,9 +2068,12 @@ proc exec*(self: ptr VirtualMachine): Value =
             let arr_len = array_data(value).len.int64
             if i < 0 or i >= arr_len:
               not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
-            let child = array_data(value)[i]
+            var child = array_data(value)[i]
+            let child_type_id = self.validate_collection_element_read(child,
+              value_type_id, VkArray, "array element")
             retain(child)
             self.frame.push(child)
+            self.frame.set_current_type_id(child_type_id)
           of VkGene:
             let children_len = value.gene.children.len.int64
             if i < 0 or i >= children_len:
@@ -2064,6 +2092,7 @@ proc exec*(self: ptr VirtualMachine): Value =
         var index: Value
         self.frame.pop2(index)
         var collection: Value
+        let collection_type_id = self.frame.current_type_id()
         self.frame.pop2(collection)
         if has_custom_materializer(collection):
           collection = materialize_custom(collection)
@@ -2076,9 +2105,12 @@ proc exec*(self: ptr VirtualMachine): Value =
             let arr_len = array_data(collection).len
             if i < 0 or i >= arr_len:
               not_allowed("Array index out of bounds: " & $i & " (len=" & $arr_len & ")")
-            let child = array_data(collection)[i]
+            var child = array_data(collection)[i]
+            let child_type_id = self.validate_collection_element_read(child,
+              collection_type_id, VkArray, "array element")
             retain(child)
             self.frame.push(child)
+            self.frame.set_current_type_id(child_type_id)
           of VkGene:
             let children_len = collection.gene.children.len
             if i < 0 or i >= children_len:
@@ -5538,7 +5570,9 @@ proc exec*(self: ptr VirtualMachine): Value =
       of IkGetLocal:
         # Optimized local variable access
         {.push checks: off.}
-        self.frame.push(self.frame.scope.members[inst.arg0.int64.int])
+        let local_idx = inst.arg0.int64.int
+        self.frame.push(self.frame.scope.members[local_idx])
+        self.frame.set_current_type_id(expected_type_id_for(self.frame.scope.tracker, local_idx))
         {.pop.}
 
       of IkSetLocal:

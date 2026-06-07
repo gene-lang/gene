@@ -18,7 +18,8 @@ type
     GpLocal,
     GpProperty,
     GpEnumPayload,
-    GpTuplePayload
+    GpTuplePayload,
+    GpElement
 
   GuardParty* = enum
     BpUnknown,
@@ -965,6 +966,8 @@ proc guard_phase_name*(phase: GuardPhase): string =
     "enum-payload"
   of GpTuplePayload:
     "tuple-payload"
+  of GpElement:
+    "element"
 
 proc guard_party_name*(party: GuardParty): string =
   case party

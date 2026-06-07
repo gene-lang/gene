@@ -878,7 +878,11 @@ proc compile_var(self: Compiler, gene: ptr Gene, immutable: bool = false) =
       self.scope_tracker.next_index = old_next_index + 1
     self.add_scope_start()
     set_expected_type_id(self.scope_tracker, index, binding_type_id)
-    self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
+    if binding_type_id != NO_TYPE_ID:
+      self.emit(Instruction(kind: IkPushNil))
+      self.emit(Instruction(kind: IkVar, arg0: index.to_value(), arg1: binding_type_id))
+    else:
+      self.emit(Instruction(kind: IkVarValue, arg0: NIL, arg1: index))
 
   if not new_binding:
     self.scope_tracker.next_index = old_next_index
