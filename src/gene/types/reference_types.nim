@@ -173,6 +173,8 @@ type
       of VkTupleValue:
         tv_def*: Value            # → VkTupleDef
         tv_data*: seq[Value]      # payload values, positional
+      of VkFnProxy:
+        fn_proxy*: FnProxy
       of VkInterface:
         gene_interface*: GeneInterface
       of VkAdapter:

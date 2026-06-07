@@ -296,6 +296,7 @@ type
     # Nominal product types (append-only to preserve existing ordinals)
     VkTupleDef
     VkTupleValue
+    VkFnProxy
 
   Key* = distinct int64
 
@@ -686,6 +687,16 @@ type
     arity_max*: int
     abi_arg_types*: seq[CallArgType]
     abi_return_type*: CallReturnType
+
+  FnProxy* = ref object
+    target*: Value
+    params*: seq[CallableParamDesc]
+    param_names*: seq[string]
+    return_type_id*: TypeId
+    expected_type_id*: TypeId
+    type_descriptors*: seq[TypeDesc]
+    effects*: seq[string]
+    site*: string
 
   CallDescriptor* = object
     callable*: Value

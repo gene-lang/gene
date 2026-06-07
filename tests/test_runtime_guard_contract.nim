@@ -1,14 +1,22 @@
 import unittest, strutils
 
+import ./helpers
 import gene/parser
 import gene/types except Exception
 import gene/types/runtime_types
+import gene/vm
 
 proc runtime_guard_native_identity(vm: ptr VirtualMachine,
                                    args: ptr UncheckedArray[Value],
                                    arg_count: int,
                                    has_keyword_args: bool): Value {.gcsafe.} =
   get_positional_arg(args, 0, has_keyword_args)
+
+proc runtime_guard_native_bad_return(vm: ptr VirtualMachine,
+                                     args: ptr UncheckedArray[Value],
+                                     arg_count: int,
+                                     has_keyword_args: bool): Value {.gcsafe.} =
+  "bad".to_value()
 
 proc expect_runtime_error(action: proc() {.closure.}): string =
   var raised = false
@@ -184,6 +192,62 @@ suite "Runtime guard contract":
     check rejected.error.expected == "(Fn [Int] -> Int)"
     check rejected.error.got == "Function"
     check rejected.error.message.contains("expected (Fn [Int] -> Int), got Function")
+
+  test "validate_or_coerce_type wraps compatible Fn values in runtime proxies":
+    var descs = builtin_type_descs()
+    let expected_fn_id = fn_type_id(descs, BUILTIN_TYPE_INT_ID, BUILTIN_TYPE_INT_ID)
+    var callback = NativeFn(runtime_guard_native_identity).to_value()
+
+    let warning = validate_or_coerce_type(callback, expected_fn_id, descs,
+      param_name = "callback")
+
+    check warning == ""
+    check callback.kind == VkFnProxy
+    check runtime_type_name(callback) == "Function"
+    check callback.ref.fn_proxy.target.kind == VkNativeFn
+
+  test "Fn proxy rejects caller arguments with negative blame":
+    init_all()
+    let native_fn = NativeFn(runtime_guard_native_identity)
+    App.app.global_ns.ref.ns["runtimeGuardIdentity".to_key()] = native_fn.to_value()
+    defer:
+      invalidate_native_signature(native_fn)
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (fn callBad [f: (Fn [Int] -> Int)] -> Int
+          (f "bad"))
+        (callBad runtimeGuardIdentity)
+      """, "fn_proxy_arg_blame.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("phase=argument")
+    check message.contains("blame=negative")
+    check message.contains("producer=caller")
+    check message.contains("consumer=fn-proxy")
+
+  test "Fn proxy rejects target returns with positive blame":
+    init_all()
+    let native_fn = NativeFn(runtime_guard_native_bad_return)
+    App.app.global_ns.ref.ns["runtimeGuardBadReturn".to_key()] = native_fn.to_value()
+    defer:
+      invalidate_native_signature(native_fn)
+
+    let message = expect_runtime_error(proc() =
+      discard VM.exec("""
+        (fn callInt [f: (Fn [Int] -> Int)] -> Int
+          (f 1))
+        (callInt runtimeGuardBadReturn)
+      """, "fn_proxy_return_blame.gene")
+    )
+
+    check message.contains("expected Int, got String")
+    check message.contains("return value of fn proxy")
+    check message.contains("phase=return")
+    check message.contains("blame=positive")
+    check message.contains("producer=fn-proxy-target")
+    check message.contains("consumer=caller")
 
   test "guard consults native method signatures for bound Fn-typed values":
     var descs = builtin_type_descs()

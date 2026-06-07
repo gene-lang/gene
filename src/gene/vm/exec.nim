@@ -5666,6 +5666,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         let target = self.frame.pop()
 
         case target.kind:
+        of VkFnProxy:
+          self.frame.push(self.exec_callable(target, @[]))
+
         of VkFunction:
           let f = target.ref.fn
           if f.is_generator:
@@ -5862,6 +5865,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         let target = self.frame.pop()
 
         case target.kind:
+        of VkFnProxy:
+          self.frame.push(self.exec_callable(target, @[arg]))
+
         of VkFunction:
           let f = target.ref.fn
           if f.is_generator:
@@ -6082,6 +6088,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         let target = self.frame.pop()
 
         case target.kind:
+        of VkFnProxy:
+          self.frame.push(self.exec_callable(target, args))
+
         of VkFunction:
           let f = target.ref.fn
           if f.is_generator:
@@ -6244,6 +6253,11 @@ proc exec*(self: ptr VirtualMachine): Value =
         let target = self.frame.pop()
 
         case target.kind:
+        of VkFnProxy:
+          if kw_pairs.len > 0:
+            not_allowed("Fn proxy keyword calls are not supported")
+          self.frame.push(self.exec_callable(target, args))
+
         of VkFunction:
           let f = target.ref.fn
           if f.is_generator:
@@ -6507,6 +6521,9 @@ proc exec*(self: ptr VirtualMachine): Value =
         let target = self.frame.pop()
 
         case target.kind:
+        of VkFnProxy:
+          self.frame.push(self.exec_callable(target, args))
+
         of VkFunction:
           let f = target.ref.fn
           if f.is_generator:

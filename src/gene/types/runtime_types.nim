@@ -327,6 +327,7 @@ proc runtime_type_name*(v: Value): string =
   of VkActor: "Actor"
   of VkActorContext: "ActorContext"
   of VkFunction: "Function"
+  of VkFnProxy: "Function"
   of VkBlock: "Block"
   of VkNativeFn: "Function"
   of VkInterceptor: "Interceptor"
@@ -404,7 +405,7 @@ proc is_named_compatible(value: Value, expected_type: string): bool =
     return actual in ["Array", "Map", "HashMap", "HashSet"]
   of "Function":
     return value.kind in {VkFunction, VkBlock, VkNativeFn, VkNativeMethod,
-      VkBoundMethod}
+      VkBoundMethod, VkFnProxy}
   else:
     discard
   if value.kind == VkClass:
@@ -556,6 +557,36 @@ proc native_signature_compatible(sig: NativeSignature, expected: RtType): bool {
   type_expr_compatible(actual_return, expected.ret) and
     effects_compatible(expected.effects, @[])
 
+proc fn_proxy_compatible(proxy: FnProxy, expected: RtType): bool {.gcsafe.} =
+  if expected.kind != RtFn:
+    return false
+  if proxy == nil:
+    return true
+  if proxy.params.len != expected.params.len:
+    return false
+  let type_descs =
+    if proxy.type_descriptors.len > 0: proxy.type_descriptors
+    else: builtin_type_descs()
+  for i, param in proxy.params:
+    if param.kind != expected.params[i].kind:
+      return false
+    if param.keyword_name != expected.params[i].keyword_name:
+      return false
+    let actual_type =
+      if param.type_id != NO_TYPE_ID:
+        type_desc_to_rt(type_descs, param.type_id)
+      else:
+        RtType(kind: RtAny)
+    if not type_expr_compatible(actual_type, expected.params[i].typ):
+      return false
+  let actual_return =
+    if proxy.return_type_id != NO_TYPE_ID:
+      type_desc_to_rt(type_descs, proxy.return_type_id)
+    else:
+      RtType(kind: RtAny)
+  type_expr_compatible(actual_return, expected.ret) and
+    effects_compatible(expected.effects, proxy.effects)
+
 proc matcher_value_compatible(matcher: RootMatcher, expected: RtType,
                               skip_self = false): bool {.gcsafe.} =
   if matcher.is_nil:
@@ -609,6 +640,10 @@ proc function_value_compatible(value: Value, expected: RtType): bool {.gcsafe.} 
   if expected.kind != RtFn:
     return false
   case value.kind
+  of VkFnProxy:
+    if value.ref == nil:
+      return true
+    return fn_proxy_compatible(value.ref.fn_proxy, expected)
   of VkNativeFn, VkNativeMethod:
     return native_signature_compatible(native_signature_for_fn_value(value), expected)
   of VkFunction:
@@ -711,6 +746,29 @@ proc types_equivalent*(left_type_id: TypeId, left_descs: seq[TypeDesc],
   let left = type_desc_to_rt(left_source, left_type_id)
   let right = type_desc_to_rt(right_source, right_type_id)
   return type_expr_compatible(left, right) and type_expr_compatible(right, left)
+
+proc new_fn_proxy_value*(target: Value, expected_type_id: TypeId,
+                         type_descs: seq[TypeDesc], site: string = ""): Value =
+  ## Create a higher-order cast proxy for a value guarded as a concrete Fn type.
+  let desc =
+    if descriptor_id_in_range(expected_type_id, type_descs):
+      type_descs[expected_type_id.int]
+    else:
+      TypeDesc(kind: TdkAny)
+  if desc.kind != TdkFn:
+    return target
+
+  let r = new_ref(VkFnProxy)
+  r.fn_proxy = FnProxy(
+    target: target,
+    params: desc.params,
+    param_names: @[],
+    return_type_id: desc.ret,
+    expected_type_id: expected_type_id,
+    type_descriptors: type_descs,
+    effects: desc.effects,
+    site: site)
+  r.to_ref_value()
 
 proc normalize_numeric_type_name(expected_type: string): string =
   case expected_type.toLowerAscii()
@@ -816,6 +874,18 @@ proc coerce_value_to_type*(value: Value, expected_type_id: TypeId, type_descs: s
     converted = value
     warning = ""
     return true
+  if descriptor_id_in_range(expected_type_id, type_descs) and
+      type_descs[expected_type_id.int].kind == TdkFn:
+    let parsed = type_desc_to_rt(type_descs, expected_type_id)
+    if function_value_compatible(value, parsed):
+      converted =
+        if value.kind == VkFnProxy:
+          value
+        else:
+          new_fn_proxy_value(value, expected_type_id, type_descs, param_name)
+      warning = ""
+      return true
+    return false
   let parsed = type_desc_to_rt(type_descs, expected_type_id)
   return try_convert_to_rt(value, parsed, param_name, converted, warning)
 

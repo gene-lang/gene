@@ -32,7 +32,7 @@ proc init_selector_class*(object_class: Class) =
     var entries_stream: seq[(Key, Value)] = @[]
 
     proc is_selector_callable(seg: Value): bool {.inline.} =
-      seg.kind in {VkFunction, VkNativeFn, VkBlock, VkBoundMethod, VkNativeMethod}
+      seg.kind in {VkFunction, VkNativeFn, VkBlock, VkFnProxy, VkBoundMethod, VkNativeMethod}
 
     proc key_to_symbol_value(k: Key): Value {.inline.} =
       cast[Value](k)

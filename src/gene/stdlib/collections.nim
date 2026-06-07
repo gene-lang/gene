@@ -487,7 +487,7 @@ proc init_collection_classes*(object_class: Class) =
       not_allowed("find must be called on an array")
     let predicate = get_positional_arg(args, 1, has_keyword_args)
     case predicate.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         var matched: Value
         {.cast(gcsafe).}:
@@ -508,7 +508,7 @@ proc init_collection_classes*(object_class: Class) =
       not_allowed("any must be called on an array")
     let predicate = get_positional_arg(args, 1, has_keyword_args)
     case predicate.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         var matched: Value
         {.cast(gcsafe).}:
@@ -529,7 +529,7 @@ proc init_collection_classes*(object_class: Class) =
       not_allowed("all must be called on an array")
     let predicate = get_positional_arg(args, 1, has_keyword_args)
     case predicate.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         var matched: Value
         {.cast(gcsafe).}:
@@ -650,14 +650,10 @@ proc init_collection_classes*(object_class: Class) =
       not_allowed("each must be called on an array")
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
-    of VkFunction:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         {.cast(gcsafe).}:
           discard vm_exec_callable(vm, callback, @[item])
-    of VkNativeFn:
-      for item in array_data(arr):
-        {.cast(gcsafe).}:
-          discard call_native_fn(callback.ref.native_fn, vm, [item])
     else:
       not_allowed("each callback must be a function")
     arr
@@ -673,7 +669,7 @@ proc init_collection_classes*(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var mapped: seq[Value] = @[]
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         var mapped_value: Value
         {.cast(gcsafe).}:
@@ -696,7 +692,7 @@ proc init_collection_classes*(object_class: Class) =
     let predicate = get_positional_arg(args, 1, has_keyword_args)
     var filtered_result = new_array_value()
     case predicate.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         var keep: Value
         {.cast(gcsafe).}:
@@ -718,7 +714,7 @@ proc init_collection_classes*(object_class: Class) =
     var accumulator = get_positional_arg(args, 1, has_keyword_args)
     let reducer = get_positional_arg(args, 2, has_keyword_args)
     case reducer.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         {.cast(gcsafe).}:
           accumulator = vm_exec_callable(vm, reducer, @[accumulator, item])
@@ -1028,7 +1024,7 @@ proc init_collection_classes*(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var result_ref = new_map_value()
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in map_data(map_val):
         let key_val = cast[Value](key).str.to_value()
         var mapped: Value
@@ -1050,7 +1046,7 @@ proc init_collection_classes*(object_class: Class) =
     let predicate = get_positional_arg(args, 1, has_keyword_args)
     var result_ref = new_map_value()
     case predicate.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in map_data(map_val):
         let key_val = cast[Value](key).str.to_value()
         var keep: Value
@@ -1073,7 +1069,7 @@ proc init_collection_classes*(object_class: Class) =
     var accumulator = get_positional_arg(args, 1, has_keyword_args)
     let reducer = get_positional_arg(args, 2, has_keyword_args)
     case reducer.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in map_data(map_val):
         let key_val = cast[Value](key).str.to_value()
         {.cast(gcsafe).}:
@@ -1092,16 +1088,11 @@ proc init_collection_classes*(object_class: Class) =
       not_allowed("each must be called on a map")
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
-    of VkFunction:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in map_data(map_val):
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           discard vm_exec_callable(vm, callback, @[key_val.str.to_value(), value])
-    of VkNativeFn:
-      for key, value in map_data(map_val):
-        let key_val = cast[Value](key)
-        {.cast(gcsafe).}:
-          discard call_native_fn(callback.ref.native_fn, vm, [key_val.str.to_value(), value])
     else:
       not_allowed("each callback must be a function")
     map_val

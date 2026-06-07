@@ -467,7 +467,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
     if get_positional_count(arg_count, has_keyword_args) < 1:
       not_allowed("Function." & method_name & " requires self")
     let fn_val = get_positional_arg(args, 0, has_keyword_args)
-    if fn_val.kind notin {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkMethod}:
+    if fn_val.kind notin {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy, VkMethod}:
       not_allowed("Function." & method_name & " must be called on a callable")
     fn_val
 
@@ -518,7 +518,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
     if pos_count < 1:
       not_allowed("Function.call requires self")
     let fn_val = get_positional_arg(args, 0, has_keyword_args)
-    if fn_val.kind notin {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock}:
+    if fn_val.kind notin {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy}:
       not_allowed("Function.call must be called on a callable")
     var call_args = newSeq[Value]()
     for i in 1..<pos_count:
@@ -852,7 +852,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
       not_allowed("Namespace.each must be called on a namespace")
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in ns_val.ref.ns.members:
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
@@ -872,7 +872,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var result_ref = new_map_value()
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in ns_val.ref.ns.members:
         let key_val = cast[Value](key).str.to_value()
         var mapped: Value
@@ -894,7 +894,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
     var accumulator = get_positional_arg(args, 1, has_keyword_args)
     let reducer = get_positional_arg(args, 2, has_keyword_args)
     case reducer.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in ns_val.ref.ns.members:
         let key_val = cast[Value](key).str.to_value()
         {.cast(gcsafe).}:
@@ -913,7 +913,7 @@ proc init_gene_and_meta_classes*(object_class: Class) =
       not_allowed("on_member_missing must be called on a namespace")
     let handler = get_positional_arg(args, 1, has_keyword_args)
     case handler.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       ns_val.ref.ns.on_member_missing.add(handler)
     else:
       not_allowed("on_member_missing handler must be callable, got " & $handler.kind)

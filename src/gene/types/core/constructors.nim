@@ -392,7 +392,7 @@ proc new_selector_value*(segments: openArray[Value]): Value =
       of VkInt:
         pattern_parts.add($seg.int64)
         r.selector_path.add(seg)
-      of VkFunction, VkNativeFn, VkBlock, VkBoundMethod, VkNativeMethod:
+      of VkFunction, VkNativeFn, VkBlock, VkFnProxy, VkBoundMethod, VkNativeMethod:
         pattern_parts.add("<" & $seg.kind & ">")
         r.selector_path.add(seg)
       else:

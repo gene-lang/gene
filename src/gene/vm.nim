@@ -11,6 +11,7 @@ from ./types/runtime_types import
   validate_or_coerce_type,
   GuardContext,
   GuardPhase,
+  GuardParty,
   GpArgument,
   GpReturn,
   GpLocal,
@@ -92,6 +93,27 @@ proc validate_native_value(vm: ptr VirtualMachine, value: Value, type_id: TypeId
     strict_nil = vm != nil and vm.strict_nil,
     context = context)
 
+proc coerce_native_arg_value(vm: ptr VirtualMachine, value: Value, type_id: TypeId,
+                             type_descs: seq[TypeDesc], param_name: string,
+                             context: GuardContext): Value {.inline.} =
+  result = value
+  if type_id == NO_TYPE_ID or type_id == BUILTIN_TYPE_ANY_ID:
+    return
+  if value == NIL and (vm == nil or not vm.strict_nil):
+    return
+  let is_fn_boundary = type_id >= 0 and type_id.int < type_descs.len and
+    type_descs[type_id.int].kind == TdkFn
+  if not is_fn_boundary:
+    validate_native_value(vm, value, type_id, type_descs, param_name, context)
+    return
+  var checked = value
+  let warning = validate_or_coerce_type(checked, type_id, type_descs, param_name,
+    if vm == nil: "" else: vm.runtime_type_error_location(),
+    strict_nil = vm != nil and vm.strict_nil,
+    context = context)
+  emit_type_warning(warning)
+  result = checked
+
 proc validate_native_call_args(vm: ptr VirtualMachine, sig: NativeSignature,
                                args: ptr UncheckedArray[Value], arg_count: int,
                                has_keyword_args: bool) =
@@ -128,23 +150,28 @@ proc validate_native_call_args(vm: ptr VirtualMachine, sig: NativeSignature,
     case param.kind
     of CpkPositional:
       if pos_index < positional_count:
-        validate_native_value(vm, args[start + pos_index], param.type_id,
+        args[start + pos_index] = coerce_native_arg_value(vm, args[start + pos_index], param.type_id,
           sig.type_descriptors, native_param_name(sig, param_index), context)
       pos_index.inc()
     of CpkPositionalRest:
       while pos_index < positional_count:
-        validate_native_value(vm, args[start + pos_index], param.type_id,
+        args[start + pos_index] = coerce_native_arg_value(vm, args[start + pos_index], param.type_id,
           sig.type_descriptors, native_param_name(sig, param_index), context)
         pos_index.inc()
     of CpkKeyword:
-      if has_keyword_args and map_data(args[0]).hasKey(param.keyword_name.to_key()):
-        validate_native_value(vm, map_data(args[0])[param.keyword_name.to_key()], param.type_id,
-          sig.type_descriptors, param.keyword_name, context)
+      if has_keyword_args:
+        let key = param.keyword_name.to_key()
+        if map_data(args[0]).hasKey(key):
+          var kw_value = map_data(args[0])[key]
+          kw_value = coerce_native_arg_value(vm, kw_value, param.type_id,
+            sig.type_descriptors, param.keyword_name, context)
+          map_data(args[0])[key] = kw_value
     of CpkKeywordRest:
       if has_keyword_args:
-        for _, kw_value in map_data(args[0]):
-          validate_native_value(vm, kw_value, param.type_id,
+        for key, kw_value in map_data(args[0]):
+          var checked = coerce_native_arg_value(vm, kw_value, param.type_id,
             sig.type_descriptors, "keyword argument", context)
+          map_data(args[0])[key] = checked
 
 proc strict_native_types_enabled(vm: ptr VirtualMachine): bool {.inline.} =
   if vm != nil and vm.strict_native_types:

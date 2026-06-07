@@ -210,7 +210,7 @@ when not defined(gene_wasm):
               THREAD_DATA[msg.from_thread_id].channel.send(reply)
 
           of MtRegisterCallback:
-            if msg.payload.kind in {VkFunction, VkNativeFn, VkBlock}:
+            if msg.payload.kind in {VkFunction, VkNativeFn, VkBlock, VkFnProxy}:
               VM.message_callbacks.add(msg.payload)
 
           of MtReply:

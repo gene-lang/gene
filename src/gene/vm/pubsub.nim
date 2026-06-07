@@ -156,7 +156,7 @@ proc subscription_handle_unsub(vm: ptr VirtualMachine, args: ptr UncheckedArray[
   NIL
 
 proc pubsub_callback_supported(callback: Value): bool {.inline.} =
-  callback.kind in {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock}
+  callback.kind in {VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy}
 
 proc genex_sub(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int,
                has_keyword_args: bool): Value {.gcsafe.} =

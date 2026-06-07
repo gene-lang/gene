@@ -1296,14 +1296,10 @@ proc init_collection_classes(object_class: Class) =
       not_allowed("each must be called on an array")
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
-    of VkFunction:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         {.cast(gcsafe).}:
           discard vm_exec_callable(vm, callback, @[item])
-    of VkNativeFn:
-      for item in array_data(arr):
-        {.cast(gcsafe).}:
-          discard call_native_fn(callback.ref.native_fn, vm, [item])
     else:
       not_allowed("each callback must be a function")
     arr
@@ -1319,7 +1315,7 @@ proc init_collection_classes(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var mapped: seq[Value] = @[]
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for item in array_data(arr):
         var mapped_value: Value
         {.cast(gcsafe).}:
@@ -1488,17 +1484,11 @@ proc init_collection_classes(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var result_ref = new_array_value()
     case callback.kind
-    of VkFunction:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in map_data(map_val):
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           let mapped = vm_exec_callable(vm, callback, @[key_val, value])
-          array_data(result_ref).add(mapped)
-    of VkNativeFn:
-      for key, value in map_data(map_val):
-        let key_val = cast[Value](key)
-        {.cast(gcsafe).}:
-          let mapped = call_native_fn(callback.ref.native_fn, vm, [key_val, value])
           array_data(result_ref).add(mapped)
     else:
       not_allowed("map callback must be a function")
@@ -1514,16 +1504,11 @@ proc init_collection_classes(object_class: Class) =
       not_allowed("each must be called on a map")
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
-    of VkFunction:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in map_data(map_val):
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
           discard vm_exec_callable(vm, callback, @[key_val.str.to_value(), value])
-    of VkNativeFn:
-      for key, value in map_data(map_val):
-        let key_val = cast[Value](key)
-        {.cast(gcsafe).}:
-          discard call_native_fn(callback.ref.native_fn, vm, [key_val.str.to_value(), value])
     else:
       not_allowed("each callback must be a function")
     map_val
@@ -2264,7 +2249,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
       not_allowed("Namespace.each must be called on a namespace")
     let callback = get_positional_arg(args, 1, has_keyword_args)
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in ns_val.ref.ns.members:
         let key_val = cast[Value](key)
         {.cast(gcsafe).}:
@@ -2284,7 +2269,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
     let callback = get_positional_arg(args, 1, has_keyword_args)
     var result_ref = new_map_value()
     case callback.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in ns_val.ref.ns.members:
         let key_val = cast[Value](key).str.to_value()
         var mapped: Value
@@ -2306,7 +2291,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
     var accumulator = get_positional_arg(args, 1, has_keyword_args)
     let reducer = get_positional_arg(args, 2, has_keyword_args)
     case reducer.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       for key, value in ns_val.ref.ns.members:
         let key_val = cast[Value](key).str.to_value()
         {.cast(gcsafe).}:
@@ -2325,7 +2310,7 @@ proc init_gene_and_meta_classes(object_class: Class) =
       not_allowed("on_member_missing must be called on a namespace")
     let handler = get_positional_arg(args, 1, has_keyword_args)
     case handler.kind
-    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+    of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
       ns_val.ref.ns.on_member_missing.add(handler)
     else:
       not_allowed("on_member_missing handler must be callable, got " & $handler.kind)
@@ -2393,7 +2378,7 @@ proc core_on_signal(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg
 
   let handler = get_positional_arg(args, 1, has_keyword_args)
   case handler.kind
-  of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock:
+  of VkFunction, VkNativeFn, VkNativeMethod, VkBoundMethod, VkBlock, VkFnProxy:
     discard
   else:
     raise new_exception(types.Exception, "on_signal handler must be callable")
@@ -3575,7 +3560,7 @@ proc gene_sleep(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
             if future_obj.state == FsSuccess:
               for callback in future_obj.success_callbacks:
                 case callback.kind:
-                  of VkFunction, VkBlock:
+                  of VkFunction, VkBlock, VkFnProxy:
                     discard vm_exec_callable(vm, callback, @[future_obj.value])
                   of VkNativeFn:
                     var args_arr = [future_obj.value]
@@ -3585,7 +3570,7 @@ proc gene_sleep(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_cou
             elif future_obj.state in {FsFailure, FsCancelled}:
               for callback in future_obj.failure_callbacks:
                 case callback.kind:
-                  of VkFunction, VkBlock:
+                  of VkFunction, VkBlock, VkFnProxy:
                     discard vm_exec_callable(vm, callback, @[future_obj.value])
                   of VkNativeFn:
                     var args_arr = [future_obj.value]

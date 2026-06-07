@@ -262,10 +262,90 @@ proc exec_method_kw*(self: ptr VirtualMachine, fn: Value, instance: Value, args:
                      kw_pairs: seq[(Key, Value)]): Value {.exportc.} =
   return self.exec_method_kw_impl(fn, instance, args, kw_pairs, self.frame)
 
+proc fn_proxy_param_name(proxy: FnProxy, index: int): string {.inline.} =
+  if proxy != nil and index >= 0 and index < proxy.param_names.len and
+      proxy.param_names[index].len > 0:
+    return proxy.param_names[index]
+  "argument " & $(index + 1)
+
+proc fn_proxy_guard_context(proxy: FnProxy, phase: GuardPhase,
+                            party: GuardParty): GuardContext {.inline.} =
+  GuardContext(
+    enabled: true,
+    phase: phase,
+    party: party,
+    producer: if phase == GpReturn: "fn-proxy-target" else: "caller",
+    consumer: if phase == GpReturn: "caller" else: "fn-proxy",
+    site: if proxy == nil: "" else: proxy.site)
+
+proc validate_fn_proxy_value(self: ptr VirtualMachine, proxy: FnProxy, value: Value,
+                             type_id: TypeId, param_name: string,
+                             context: GuardContext): Value {.inline.} =
+  result = value
+  if proxy == nil or type_id == NO_TYPE_ID or type_id == BUILTIN_TYPE_ANY_ID:
+    return
+  if value == NIL and not self.strict_nil:
+    return
+  validate_type(value, type_id, proxy.type_descriptors, param_name,
+    self.runtime_type_error_location(), strict_nil = self.strict_nil,
+    context = context)
+
+proc fn_proxy_suffix_positional(params: seq[CallableParamDesc], start: int): int {.inline.} =
+  for i in start..<params.len:
+    if params[i].kind == CpkPositional:
+      result.inc()
+
+proc validate_fn_proxy_args(self: ptr VirtualMachine, proxy: FnProxy,
+                            args: seq[Value]): seq[Value] =
+  if proxy == nil:
+    return args
+  result = @[]
+  let context = fn_proxy_guard_context(proxy, GpArgument, BpNegative)
+  var pos_index = 0
+  for param_index, param in proxy.params:
+    case param.kind
+    of CpkPositional:
+      if pos_index >= args.len:
+        not_allowed("Fn proxy expected " & $(pos_index + 1) & " arguments, got " & $args.len)
+      result.add(self.validate_fn_proxy_value(proxy, args[pos_index], param.type_id,
+        fn_proxy_param_name(proxy, param_index), context))
+      pos_index.inc()
+    of CpkPositionalRest:
+      let suffix_slots = fn_proxy_suffix_positional(proxy.params, param_index + 1)
+      var rest_count = args.len - pos_index - suffix_slots
+      if rest_count < 0:
+        rest_count = 0
+      while rest_count > 0:
+        result.add(self.validate_fn_proxy_value(proxy, args[pos_index], param.type_id,
+          fn_proxy_param_name(proxy, param_index), context))
+        pos_index.inc()
+        rest_count.dec()
+    of CpkKeyword, CpkKeywordRest:
+      not_allowed("Fn proxy keyword parameters are not supported by positional calls")
+  if pos_index < args.len:
+    not_allowed("Fn proxy expected " & $pos_index & " arguments, got " & $args.len)
+
+proc exec_fn_proxy(self: ptr VirtualMachine, callable: Value, args: seq[Value],
+                   self_value: Value = NIL, with_self = false): Value =
+  if callable.ref == nil or callable.ref.fn_proxy == nil:
+    not_allowed("Fn proxy is missing target")
+  let proxy = callable.ref.fn_proxy
+  let checked_args = self.validate_fn_proxy_args(proxy, args)
+  result =
+    if with_self:
+      self.exec_callable_with_self(proxy.target, self_value, checked_args)
+    else:
+      self.exec_callable(proxy.target, checked_args)
+  let context = fn_proxy_guard_context(proxy, GpReturn, BpPositive)
+  result = self.validate_fn_proxy_value(proxy, result, proxy.return_type_id,
+    "return value of fn proxy", context)
+
 proc exec_callable*(self: ptr VirtualMachine, callable: Value, args: seq[Value]): Value {.exportc.} =
   ## Execute a callable from native code while preserving VM state.
   ## This is safe to call from native functions/methods that need to invoke Gene callables.
   case callable.kind:
+  of VkFnProxy:
+    return self.exec_fn_proxy(callable, args)
   of VkFunction:
     return self.exec_function(callable, args)
   of VkNativeFn:
@@ -384,6 +464,8 @@ proc exec_function_with_self*(self: ptr VirtualMachine, fn: Value, self_value: V
 proc exec_callable_with_self*(self: ptr VirtualMachine, callable: Value, self_value: Value, args: seq[Value]): Value {.exportc.} =
   ## Like exec_callable but sets self_value for IkSelf without passing it to the matcher.
   case callable.kind:
+  of VkFnProxy:
+    return self.exec_fn_proxy(callable, args, self_value, with_self = true)
   of VkFunction:
     return self.exec_function_with_self(callable, self_value, args)
   of VkNativeFn:

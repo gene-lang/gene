@@ -594,7 +594,7 @@ proc register_extension_port_runtime*(name: string, kind: ExtensionPortKind,
                                       pool_size = 1, mailbox_limit = 0): Value =
   if name.len == 0:
     raise new_exception(types.Exception, "extension port name cannot be empty")
-  if handler.kind notin {VkFunction, VkNativeFn, VkBlock}:
+  if handler.kind notin {VkFunction, VkNativeFn, VkBlock, VkFnProxy}:
     raise new_exception(types.Exception, "extension port handler must be callable")
   if mailbox_limit < 0:
     raise new_exception(types.Exception, "extension port queue_limit must be positive")

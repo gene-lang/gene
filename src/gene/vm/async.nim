@@ -107,7 +107,7 @@ proc future_on_success(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
     raise new_exception(types.Exception, "on_success can only be called on a Future")
 
   # Validate callback is callable
-  if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock}:
+  if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock, VkFnProxy}:
     raise new_exception(types.Exception, "on_success callback must be a function or block")
 
   let future_obj = future_arg.ref.future
@@ -137,7 +137,7 @@ proc future_on_failure(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], 
     raise new_exception(types.Exception, "on_failure can only be called on a Future")
 
   # Validate callback is callable
-  if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock}:
+  if callback_arg.kind notin {VkFunction, VkNativeFn, VkBlock, VkFnProxy}:
     raise new_exception(types.Exception, "on_failure callback must be a function or block")
 
   let future_obj = future_arg.ref.future
