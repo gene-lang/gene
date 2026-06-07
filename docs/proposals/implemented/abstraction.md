@@ -1,8 +1,9 @@
 # Interface Abstraction Proposal
 
-Status: implemented for Gene's Beta interface and adapter system. The remaining
-deferred edge is more precise cycle diagnostics if Gene later allows forward
-interface references.
+Status: implemented design-era record for Gene's Beta interface and adapter
+system. The current reference is [`docs/adapter-design.md`](../../adapter-design.md).
+The remaining deferred edge is more precise cycle diagnostics if Gene later
+allows forward interface references.
 
 This document is for implementers working on Gene's abstraction model. It
 describes where interfaces and adapters are today, then proposes the next

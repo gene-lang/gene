@@ -1,5 +1,10 @@
 # Type Annotations for Native Functions, Constructors, and Methods
 
+> Status: implemented v1 design-era record. The current user-facing reference is
+> [`docs/native-signatures.md`](../../native-signatures.md). The text below
+> preserves pre-implementation motivation and design wording; future work in this
+> file remains roadmap material.
+
 ## Motivation
 
 Gene programs can already declare parameter and return types for user-level
@@ -256,7 +261,7 @@ existing arity check.
 
 These are the **dynamic↔foreign boundary casts** of the gradual type model — the
 one place a native signature is always a checked boundary, since the foreign side
-is opaque. See [`gradual-typing.md`](gradual-typing.md) for the consistency
+is opaque. See [`gradual-typing.md`](../future/gradual-typing.md) for the consistency
 relation, cast-insertion/elision rule, and blame semantics these checks
 implement.
 

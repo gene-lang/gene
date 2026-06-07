@@ -1,5 +1,11 @@
 # Gradual Typing: A Concrete Model for JIT and AOT
 
+> Status: future roadmap design. Current implemented gradual-typing behavior is
+> documented in [`docs/gradual-typing.md`](../../gradual-typing.md) and
+> [`docs/type-system-mvp.md`](../../type-system-mvp.md). The AOT gate, explicit
+> cast-insertion pass, structured blame model, higher-order proxies, and deep
+> collection boundary work described here are not complete current behavior.
+
 ## Summary
 
 Gene is a dynamically-typed language with optional type annotations on variables,
@@ -354,9 +360,9 @@ cost by typing both sides of a boundary.
 - Defaults: JIT permissive (dev/REPL), AOT strict (release). `strict_nil` on in
   sound mode.
 - `--no-type-check` retained as the soundness-off escape hatch.
-- Native callables and FFI are typed via their sibling proposals
-  ([`type-annotations.md`](type-annotations.md),
-  [`dynamic-library-binding.md`](dynamic-library-binding.md)); this document
+- Native callables and FFI are typed via their sibling implemented design records
+  ([`type-annotations.md`](../implemented/type-annotations.md),
+  [`dynamic-library-binding.md`](../implemented/dynamic-library-binding.md)); this document
   defines the **boundary semantics** that enforce those signatures (the
   dynamic↔foreign boundary is always a checked cast).
 

@@ -1,5 +1,10 @@
 # Dynamic Library Binding
 
+> Status: implemented v1 design-era record. The current user-facing reference is
+> [`docs/dynamic-library-binding.md`](../../dynamic-library-binding.md). The text
+> below preserves pre-implementation motivation and design wording; future work
+> in this file remains roadmap material.
+
 ## Motivation
 
 Gene's native callables today are registered exclusively from Nim

@@ -38,6 +38,8 @@ These are current and useful, but they are not yet covered by `spec/`.
 - [wasm.md](wasm.md) — wasm build target and ABI contract
 - [http_server_and_client.md](http_server_and_client.md) — HTTP extension surface
 - [c_extensions.md](c_extensions.md) — native extension API and build flow
+- [native-signatures.md](native-signatures.md) — typed `NativeSignature`, `^native`, `$assign-*`, reflection, and strict native-callable checks
+- [dynamic-library-binding.md](dynamic-library-binding.md) — `$dyn/load`, `$dyn/find`, `^abi`, `Pointer`, and cdecl FFI limits
 - [lsp.md](lsp.md) — current LSP implementation status
 
 ## Performance And Ops

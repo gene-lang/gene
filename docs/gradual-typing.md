@@ -16,7 +16,7 @@ M006 adds the coherence layer around that existing pipeline:
 - default nil compatibility remains permissive for gradual programs; and
 - `--strict-nil` is available as an opt-in scaffold for rejecting implicit `nil` at typed boundaries.
 
-The feature remains Beta. This foundation makes metadata coherence testable and fail-closed; it does not deliver broad runtime guard unification, structured blame diagnostics, broad flow typing, native typed facts, generic classes, bounds, monomorphization, deep collection checks, wrappers, proxies, or a static-first language mode.
+The feature remains Beta. This foundation makes metadata coherence testable and fail-closed; it does not deliver broad runtime guard unification, structured blame diagnostics beyond current native boundary metadata, broad flow typing, native typed-fact lowering beyond the separate `NativeSignature` checks, generic classes, bounds, monomorphization, deep collection checks, wrappers, proxies, or a static-first language mode.
 
 ## Current Snapshot
 

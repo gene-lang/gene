@@ -15,6 +15,8 @@ Gene already ships a real gradual typing pipeline:
 - Runtime validation uses descriptor metadata (`TypeId` / `TypeDesc`)
 - GIR persists typing metadata, including descriptor tables and type aliases
 - Returns, locals, arguments, and typed properties are enforced at runtime when type checking is enabled
+- Native function, method, and constructor signatures can carry the same
+  descriptor-backed metadata, with runtime guards and advisory static checks
 - Source compilation and GIR loading now verify descriptor metadata fail-closed instead of silently accepting invalid `TypeId` references
 - Source/GIR parity is covered by deterministic source and loaded descriptor metadata summary tests for typed fixtures
 - Default nil compatibility remains permissive today; `--strict-nil` is an opt-in scaffold that rejects implicit `nil` unless the expected type is `Any`, `Nil`, `Option[T]`, or a union containing `Nil`
@@ -34,6 +36,8 @@ Gene already ships a real gradual typing pipeline:
 - Local/assignment validation in `src/gene/vm/exec.nim`
 - Return-value validation in `src/gene/vm/core_helpers.nim`
 - Typed property validation for class fields
+- Typed native callable signatures for standalone functions, methods, and
+  constructors through `NativeSignature`, `^native`, and `$assign-*` forms
 - Opt-in strict nil diagnostics through `GENE_TYPE_MISMATCH`
 
 ### Persistence
@@ -65,7 +69,8 @@ Gene already ships a real gradual typing pipeline:
 ### Deferred
 - Structured blame diagnostics
 - Broad runtime guard unification
-- Native typed facts
+- Native typed-fact lowering for optimization/AOT beyond current
+  `NativeSignature` boundary checks
 - Generic classes
 - Bounds / constraints (`^where`)
 - Reified runtime generic class instances
@@ -86,6 +91,7 @@ Gene already ships a real gradual typing pipeline:
 
 - `docs/gradual-typing.md`
 - `docs/compiler.md`
+- `docs/native-signatures.md`
 - `docs/proposals/implemented/gradual-typing-architecture-review.md`
 - `docs/how-types-work.md`
 - `src/gene/type_checker.nim`
