@@ -163,6 +163,14 @@ suite "Dynamic Library Binding":
     """)
     check pointer_round_trip == TRUE
 
+  test "dynamic cdecl Bool returns ignore high register bits":
+    check exec_dyn("""
+      (fn dyn-bool-high-bits [] -> Bool
+        ^native """ & dyn_find("gene_dyn_bool_high_bits") & """
+        ^abi "cdecl")
+      (dyn-bool-high-bits)
+    """) == FALSE
+
   test "dynamic cdecl constructors wrap Pointer returns for methods":
     let method_result = exec_dyn("""
       (class DynHandle
@@ -209,3 +217,13 @@ suite "Dynamic Library Binding":
       """)
     )
     check message.contains("Float") or message.contains("unsupported")
+
+  test "^abi without ^native is rejected":
+    let message = expect_error(proc() =
+      discard exec_dyn("""
+        (fn abi-only [] -> Int
+          ^abi "cdecl")
+      """)
+    )
+    check message.contains("^abi")
+    check message.contains("^native")

@@ -24,7 +24,8 @@ function, constructor, or method.
   returns an opaque dynamic symbol value. The symbol is not callable by itself.
 - `^native ($dyn/find ...)` turns the symbol into a Gene-compatible native
   callable for the surrounding `fn`, `ctor`, or `method` declaration.
-- `^abi` defaults to `"cdecl"`; v1 rejects other ABI names.
+- `^abi` defaults to `"cdecl"`; v1 rejects other ABI names and rejects `^abi`
+  without a matching `^native` declaration.
 - WASM builds reject dynamic loading with the documented unsupported-feature
   error rather than attempting host library access.
 
@@ -35,8 +36,8 @@ The v1 cdecl trampoline supports a deliberately small manual FFI subset:
 | Gene type | C ABI role |
 |-----------|------------|
 | `Int` | integer-sized argument or return |
-| `Bool` | zero/non-zero boolean argument or return |
-| `String` | temporary NUL-terminated `const char*` argument, copied `cstring` return |
+| `Bool` | `0`/`1` argument, low-byte zero/non-zero return |
+| `String` | temporary NUL-terminated `const char*` argument, borrowed NUL-terminated `const char*` return copied into Gene |
 | `Pointer` | opaque `void*` argument or return |
 | `Void` | return only |
 
@@ -50,6 +51,15 @@ compare pointer values, but cannot dereference, offset, or mutate pointed memory
 directly. A dynamic constructor that returns `Pointer` is wrapped as a
 class-backed opaque value so dynamic methods can receive it as their C `void*`
 receiver.
+
+Dynamic methods always pass the receiver as the first C `void*` argument. In v1,
+that means dynamic methods are for Pointer-backed wrapper values, usually values
+created by a dynamic constructor returning `Pointer`; ordinary Gene instances are
+not marshalable as dynamic method receivers.
+
+Returned `String` values are copied from borrowed NUL-terminated C strings. Gene
+does not take ownership of the original pointer and does not call a free
+function for it.
 
 ## Lifetime And Safety
 

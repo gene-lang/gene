@@ -4523,7 +4523,9 @@ proc exec*(self: ptr VirtualMachine): Value =
               "native function " & f.name)
           else:
             native_declaration_abi(f.body, 0, "native function " & f.name)
-        if native_target != NIL:
+        if native_target == NIL and native_abi.len > 0:
+          not_allowed("native function " & f.name & " ^abi requires ^native")
+        elif native_target != NIL:
           let sig = build_native_signature_from_matcher(f.matcher, receives_self = false)
           if sig != nil and self.cu != nil:
             sig.module_path = self.cu.module_path

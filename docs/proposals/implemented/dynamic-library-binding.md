@@ -103,7 +103,8 @@ semantics, and compiler-specific ABI differences.
   symbol pointer. It is not Gene-callable by itself.
 - `fn`, `ctor`, and `method` declarations provide the Gene-facing name and
   signature. `^native` supplies the implementation pointer and `^abi` tells the
-  compiler/runtime how to call it. `^abi` defaults to `"cdecl"` in v1.
+  compiler/runtime how to call it. `^abi` defaults to `"cdecl"` in v1 and is
+  rejected when no matching `^native` declaration is present.
 - The signature grammar remains the normal Gene declaration grammar. There is
   no separate dynamic-binding signature syntax.
 
@@ -221,8 +222,8 @@ value kind at `type_defs.nim:193`). Adding this slot also bumps
 | Gene `TypeId` | C ABI | Marshalling |
 |---|---|---|
 | `Int` | `int64_t` | direct (Gene Ints are tagged 64-bit) |
-| `Bool` | `bool` (zero-extended `int32`) | `0` / `1` |
-| `String` | `const char*` | NUL-terminated copy; freed after call |
+| `Bool` | `_Bool`/`bool` | `0` / `1` argument; return uses low-byte zero/non-zero |
+| `String` | `const char*` | argument uses NUL-terminated copy freed after call; return is borrowed NUL-terminated pointer copied into Gene |
 | `Pointer` | `void*` | raw `VkPointer` payload |
 | `Void` (return only) | `void` | discard return register |
 | `Any` | `void*` | rejected — must be made concrete in v1 |
@@ -282,6 +283,10 @@ v1 treats the returned pointer as borrowed/static or owned by the callee. APIs
 that return caller-owned strings must expose a native helper that frees the
 original, or wait for future ownership annotations.
 
+For `Bool` returns, only the low byte of the integer return slot is interpreted.
+This preserves the C boolean ABI contract without letting stale high register
+bits turn a false result into true.
+
 ## Lifetime and Safety
 
 - `$dyn/load` handles are refcounted Values. A `^native` callable retains its
@@ -313,6 +318,10 @@ original, or wait for future ownership annotations.
 - **Pointer policy:** `Pointer` is opaque in v1. Gene code can pass pointer
   values between dynamic bindings, but it cannot add offsets, dereference
   memory, or read/write through the pointer directly.
+- **Dynamic method receiver policy:** dynamic methods pass `self` as the first C
+  `void*` argument. v1 therefore supports dynamic methods on Pointer-backed
+  wrapper values, usually produced by a dynamic constructor returning `Pointer`;
+  ordinary Gene instances are not marshalled as C receivers.
 
 Libraries that need pointer arithmetic or struct field access should expose
 typed C or Nim helper functions and bind those helpers into Gene. This keeps the

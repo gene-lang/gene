@@ -542,7 +542,7 @@ proc dynamic_return_value(binding: DynamicNativeBinding, sig: NativeSignature,
   of BUILTIN_TYPE_INT_ID:
     raw.to_value()
   of BUILTIN_TYPE_BOOL_ID:
-    (raw != 0).to_value()
+    ((raw and 0xFF'i64) != 0'i64).to_value()
   of BUILTIN_TYPE_STRING_ID:
     let p = cast[cstring](raw)
     if p == nil: NIL else: ($p).to_value()

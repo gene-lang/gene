@@ -30,6 +30,7 @@ proc native_declaration_target*(children: seq[Value], body_start = 0,
     return NIL
 
   var target = NIL
+  var has_abi = false
   var i = body_start
   while i < children.len:
     let marker = children[i]
@@ -43,10 +44,12 @@ proc native_declaration_target*(children: seq[Value], body_start = 0,
         not_allowed(context & " has duplicate ^native metadata")
       target = children[i + 1]
     of "^abi":
-      discard
+      has_abi = true
     else:
       discard
     i += 2
+  if target == NIL and has_abi:
+    not_allowed(context & " ^abi requires ^native")
   target
 
 proc native_declaration_target*(gene: ptr Gene, children: seq[Value],
@@ -58,6 +61,11 @@ proc native_declaration_target*(gene: ptr Gene, children: seq[Value],
       if body_start < children.len:
         not_allowed(context & " cannot combine ^native with a Gene body")
       return gene.props[native_key]
+    let abi_key = "abi".to_key()
+    result = native_declaration_target(children, body_start, context)
+    if result == NIL and gene.props.has_key(abi_key):
+      not_allowed(context & " ^abi requires ^native")
+    return
   native_declaration_target(children, body_start, context)
 
 proc native_declaration_target*(gene: ptr Gene, body: seq[Value],
@@ -68,6 +76,11 @@ proc native_declaration_target*(gene: ptr Gene, body: seq[Value],
       if body.len > 0:
         not_allowed(context & " cannot combine ^native with a Gene body")
       return gene.props[native_key]
+    let abi_key = "abi".to_key()
+    result = native_declaration_target(body, 0, context)
+    if result == NIL and gene.props.has_key(abi_key):
+      not_allowed(context & " ^abi requires ^native")
+    return
   native_declaration_target(body, 0, context)
 
 proc native_abi_from_value(value: Value, context: string): string =

@@ -13,6 +13,10 @@ bool gene_dyn_is_even(int64_t n) {
   return (n % 2) == 0;
 }
 
+int64_t gene_dyn_bool_high_bits(void) {
+  return 0x100;
+}
+
 int64_t gene_dyn_strlen(const char *s) {
   if (s == NULL) {
     return -1;
