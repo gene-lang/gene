@@ -1,0 +1,138 @@
+# Eval and release-quality harness for GeneClaw.
+
+(import events_for has_event_type from "kernel/events")
+(import run_agent_with_options from "agent_loop")
+
+($ns/DEFAULT_EVAL_ROOT = "evals")
+($ns/EVAL_ROOT = ($env .get "GENECLAW_EVAL_ROOT" DEFAULT_EVAL_ROOT))
+
+(fn $ns/set_eval_root [path]
+  (EVAL_ROOT = (((path || DEFAULT_EVAL_ROOT) .to_s) .trim))
+  EVAL_ROOT
+)
+
+(fn eval_path [name]
+  #"#{EVAL_ROOT}/#{name}.gene"
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn $ns/load_eval [name]
+  (try
+    (gene/serdes/read (eval_path name))
+   catch *
+    nil
+  )
+)
+
+(fn assertion_passed [assertion summary events]
+  (var kind ((assertion/kind || "") .to_s))
+  (var value ((assertion/value || "") .to_s))
+  (if (kind == "state_is")
+    (return (summary/state == value))
+  )
+  (if (kind == "final_contains")
+    (return (summary/final .contains value))
+  )
+  (if (kind == "event_exists")
+    (return (has_event_type events value))
+  )
+  false
+)
+
+(fn run_assertions [assertions summary events]
+  (var results [])
+  (var passed true)
+  (var index 0)
+  (while (index < assertions/.size)
+    (var assertion (assertions .get index))
+    (var ok (assertion_passed assertion summary events))
+    (if (ok == false)
+      (passed = false)
+    )
+    (results .append {^assertion assertion ^ok ok})
+    (index += 1)
+  )
+  {^ok passed ^results results}
+)
+
+(fn $ns/performance_summary [summary events started_at_ms ended_at_ms]
+  {
+    ^run_id summary/id
+    ^state summary/state
+    ^event_count events/.size
+    ^duration_ms (ended_at_ms - started_at_ms)
+  }
+)
+
+(fn $ns/run_eval [eval_def]
+  (var source (if (eval_def is Map) eval_def else {}))
+  (var started_at gene/now/.call/.to_i)
+  (var summary (run_agent_with_options
+    (source/input || "")
+    (source/session || #"eval:#{(source/name || "unnamed")}")
+    {}
+    {^skill (source/skill || "")}))
+  (var ended_at gene/now/.call/.to_i)
+  (var events (events_for summary/id))
+  (var assertions (run_assertions (ensure_array (source/assertions || [])) summary events))
+  {
+    ^name (source/name || "")
+    ^ok assertions/ok
+    ^run summary
+    ^assertions assertions/results
+    ^performance (performance_summary summary events started_at ended_at)
+  }
+)
+
+(fn $ns/run_eval_by_name [name]
+  (var eval_def (load_eval name))
+  (if (eval_def == nil)
+    (return {^name name ^ok false ^error #"Eval not found: #{name}"})
+  )
+  (run_eval eval_def)
+)
+
+(fn $ns/replay_assertions [eval_def run_id]
+  (var summary {^id run_id ^state "" ^final ""})
+  (var events (events_for run_id))
+  (var index 0)
+  (while (index < events/.size)
+    (var event (events .get index))
+    (if (event/type == "run.completed")
+      (summary .set "state" "completed")
+      (summary .set "final" (event/data/detail/final || ""))
+    )
+    (if (event/type == "run.failed")
+      (summary .set "state" "failed")
+      (summary .set "final" (event/data/detail/reason || ""))
+    )
+    (index += 1)
+  )
+  (run_assertions (ensure_array (eval_def/assertions || [])) summary events)
+)
+
+(fn $ns/release_checklist []
+  [
+    {^name "run kernel" ^command "../../bin/gene run tests/test_run_kernel.gene"}
+    {^name "agent slice" ^command "../../bin/gene run tests/test_agent_slice.gene"}
+    {^name "event replay" ^command "../../bin/gene run tests/test_event_replay.gene"}
+    {^name "tool codecs" ^command "../../bin/gene run tests/test_tool_codecs.gene"}
+    {^name "tool runtime" ^command "../../bin/gene run tests/test_tool_runtime.gene"}
+    {^name "limits" ^command "../../bin/gene run tests/test_limits.gene"}
+    {^name "storage index" ^command "../../bin/gene run tests/test_storage_index.gene"}
+    {^name "model gateway" ^command "../../bin/gene run tests/test_model_gateway.gene"}
+    {^name "workflows" ^command "../../bin/gene run tests/test_workflows.gene"}
+    {^name "skills" ^command "../../bin/gene run tests/test_skills.gene"}
+    {^name "skill compiler" ^command "../../bin/gene run tests/test_skill_compiler.gene"}
+    {^name "actor runtime" ^command "../../bin/gene run tests/test_actor_runtime.gene"}
+    {^name "memory" ^command "../../bin/gene run tests/test_memory.gene"}
+    {^name "channels" ^command "../../bin/gene run tests/test_channels.gene"}
+    {^name "rest daemon" ^command "../../bin/gene run tests/test_rest_daemon.gene"}
+    {^name "tui" ^command "../../bin/gene run tests/test_tui.gene"}
+    {^name "scheduler" ^command "../../bin/gene run tests/test_scheduler.gene"}
+    {^name "evals" ^command "../../bin/gene run tests/test_evals.gene"}
+  ]
+)

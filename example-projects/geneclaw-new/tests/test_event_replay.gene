@@ -1,0 +1,35 @@
+#!/usr/bin/env gene run
+
+(import reset_runs reset_run_cache replay_run from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import run_agent from "agent_loop")
+
+(set_store_root "/tmp/geneclaw-new-test-event-replay")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var summary (run_agent "persist this run" "cli" {^steps 4 ^tool_calls 2}))
+(assert (summary/state == "completed"))
+
+(reset_run_cache)
+
+(var replayed_events (events_for summary/id))
+(assert (replayed_events/.size == summary/event_count))
+(assert (has_event_type replayed_events "run.started"))
+(assert (has_event_type replayed_events "tool.result"))
+(assert (has_event_type replayed_events "run.completed"))
+
+(var replayed_summary (replay_run summary/id))
+(assert (replayed_summary/id == summary/id))
+(assert (replayed_summary/state == "completed"))
+(assert (replayed_summary/final == "Done: echo: persist this run"))
+(assert (replayed_summary/event_count == summary/event_count))
+
+(var completed (last_event_of_type replayed_events "run.completed"))
+(assert (completed/data/detail/final == "Done: echo: persist this run"))
+
+(println "ok")

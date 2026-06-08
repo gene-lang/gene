@@ -1,0 +1,222 @@
+# Skill compiler and manifest validation.
+
+(import normalize_skill load_skill provider_tool_specs_for_skill from "skills/loader")
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn text_field [source key fallback = ""]
+  (var item (ensure_map source))
+  (var value (item .get key nil))
+  (if (value == nil)
+    (return fallback)
+  )
+  (var text (value .to_s))
+  (if text/.empty fallback else text)
+)
+
+(fn append_issue [issues code message path]
+  (issues .append {^code code ^message message ^path path})
+)
+
+(fn array_contains_text [items value]
+  (var target ((value || "") .to_s))
+  (var index 0)
+  (while (index < items/.size)
+    (if (((items .get index) .to_s) == target)
+      (return true)
+    )
+    (index += 1)
+  )
+  false
+)
+
+(fn collect_tool_names [tools errors]
+  (var names [])
+  (var index 0)
+  (while (index < tools/.size)
+    (var tool (ensure_map (tools .get index)))
+    (var name (text_field tool "name" ""))
+    (if name/.empty
+      (append_issue errors "skill.tool.name_missing" "Tool declaration is missing a name." #"tools[#{index}]")
+     elif (array_contains_text names name)
+      (append_issue errors "skill.tool.duplicate" #"Duplicate tool declaration: #{name}" #"tools[#{index}]")
+     else
+      (names .append name)
+    )
+    (index += 1)
+  )
+  names
+)
+
+(fn compile_steps [workflow_name steps errors]
+  (var compiled [])
+  (var names [])
+  (var items (ensure_array steps))
+  (var index 0)
+  (while (index < items/.size)
+    (var step (ensure_map (items .get index)))
+    (var name (text_field step "name" #"step-#{index}"))
+    (var kind (text_field step "kind" ""))
+    (if name/.empty
+      (append_issue errors "skill.workflow.step.name_missing" "Workflow step is missing a name." #"workflows.#{workflow_name}.steps[#{index}]")
+     elif (array_contains_text names name)
+      (append_issue errors "skill.workflow.step.duplicate" #"Duplicate workflow step: #{name}" #"workflows.#{workflow_name}.steps[#{index}]")
+     else
+      (names .append name)
+    )
+    (compiled .append {
+      ^name name
+      ^kind kind
+      ^model (text_field step "model" "")
+      ^uses (ensure_array (step .get "uses" []))
+      ^index index
+    })
+    (index += 1)
+  )
+  {^steps compiled ^names names}
+)
+
+(fn linear_edges [steps]
+  (var edges [])
+  (var index 0)
+  (while (index < (steps/.size - 1))
+    (var from_step (steps .get index))
+    (var to_step (steps .get (index + 1)))
+    (edges .append {^from from_step/name ^to to_step/name ^when "" ^index index ^generated true})
+    (index += 1)
+  )
+  edges
+)
+
+(fn compile_edges [workflow_name edge_defs step_names steps errors]
+  (var compiled [])
+  (var items (ensure_array edge_defs))
+  (if (items/.size == 0)
+    (return (linear_edges steps))
+  )
+  (var index 0)
+  (while (index < items/.size)
+    (var edge (ensure_map (items .get index)))
+    (var from_name (text_field edge "from" ""))
+    (var to_name (text_field edge "to" ""))
+    (var when_text (text_field edge "when" ""))
+    (if from_name/.empty
+      (append_issue errors "skill.workflow.edge.from_missing" "Workflow edge is missing a from step." #"workflows.#{workflow_name}.edges[#{index}]")
+     elif ((array_contains_text step_names from_name) == false)
+      (append_issue errors "skill.workflow.edge.from_unknown" #"Workflow edge references unknown from step: #{from_name}" #"workflows.#{workflow_name}.edges[#{index}]")
+    )
+    (if to_name/.empty
+      (append_issue errors "skill.workflow.edge.to_missing" "Workflow edge is missing a to step." #"workflows.#{workflow_name}.edges[#{index}]")
+     elif ((to_name != "done") && ((array_contains_text step_names to_name) == false))
+      (append_issue errors "skill.workflow.edge.to_unknown" #"Workflow edge references unknown to step: #{to_name}" #"workflows.#{workflow_name}.edges[#{index}]")
+    )
+    (compiled .append {^from from_name ^to to_name ^when when_text ^index index ^generated false})
+    (index += 1)
+  )
+  compiled
+)
+
+(fn compile_workflow [workflow_def errors warnings]
+  (var workflow (ensure_map workflow_def))
+  (var name (text_field workflow "name" "default"))
+  (var step_result (compile_steps name (workflow .get "steps" []) errors))
+  (var steps (ensure_array (step_result .get "steps" [])))
+  (var step_names (ensure_array (step_result .get "names" [])))
+  (if (steps/.size == 0)
+    (append_issue warnings "skill.workflow.steps_empty" #"Workflow has no steps: #{name}" #"workflows.#{name}.steps")
+  )
+  {
+    ^name name
+    ^steps steps
+    ^step_names step_names
+    ^edges (compile_edges name (workflow .get "edges" []) step_names steps errors)
+  }
+)
+
+(fn compile_workflows [workflows errors warnings]
+  (var compiled [])
+  (var names [])
+  (var items (ensure_array workflows))
+  (var index 0)
+  (while (index < items/.size)
+    (var compiled_workflow (compile_workflow (items .get index) errors warnings))
+    (if (array_contains_text names compiled_workflow/name)
+      (append_issue errors "skill.workflow.duplicate" #"Duplicate workflow declaration: #{compiled_workflow/name}" #"workflows[#{index}]")
+     else
+      (names .append compiled_workflow/name)
+    )
+    (compiled .append compiled_workflow)
+    (index += 1)
+  )
+  compiled
+)
+
+(fn compile_examples [examples warnings]
+  (var compiled [])
+  (var items (ensure_array examples))
+  (var index 0)
+  (while (index < items/.size)
+    (var example (ensure_map (items .get index)))
+    (var input (text_field example "input" ""))
+    (if input/.empty
+      (append_issue warnings "skill.example.input_missing" "Example is missing input text." #"examples[#{index}]")
+    )
+    (compiled .append {
+      ^input input
+      ^expect_events (ensure_array (example .get "expect_events" []))
+      ^index index
+    })
+    (index += 1)
+  )
+  compiled
+)
+
+(fn docs_snippet [skill]
+  #"#{skill/name} #{skill/version}: #{skill/description}"
+)
+
+(fn cache_key [skill]
+  #"#{skill/name}:#{skill/version}:#{skill/tools/.size}:#{skill/workflows/.size}:#{skill/examples/.size}"
+)
+
+(fn $ns/compile_skill [skill_def tool_defs = []]
+  (var skill (normalize_skill skill_def))
+  (var errors [])
+  (var warnings [])
+  (if skill/name/.empty
+    (append_issue errors "skill.name_missing" "Skill is missing a name." "name")
+  )
+  (var tool_names (collect_tool_names skill/tools errors))
+  (var workflows (compile_workflows skill/workflows errors warnings))
+  (var examples (compile_examples skill/examples warnings))
+  {
+    ^ok (errors/.size == 0)
+    ^skill skill
+    ^tool_names tool_names
+    ^provider_tools {
+      ^openai (provider_tool_specs_for_skill "openai" skill tool_defs)
+      ^anthropic (provider_tool_specs_for_skill "anthropic" skill tool_defs)
+    }
+    ^workflows workflows
+    ^examples examples
+    ^docs {^summary (docs_snippet skill)}
+    ^eval_fixtures examples
+    ^cache_key (cache_key skill)
+    ^errors errors
+    ^warnings warnings
+  }
+)
+
+(fn $ns/compile_loaded_skill [name tool_defs = []]
+  (var skill (load_skill name))
+  (if (skill == nil)
+    (return {^ok false ^skill nil ^tool_names [] ^provider_tools {^openai [] ^anthropic []} ^workflows [] ^examples [] ^docs {^summary ""} ^eval_fixtures [] ^cache_key "" ^errors [{^code "skill.not_found" ^message #"Skill not found: #{name}" ^path name}] ^warnings []})
+  )
+  (compile_skill skill tool_defs)
+)

@@ -1,0 +1,40 @@
+# Fake tools for the first vertical slice and deterministic tests.
+
+(import register_tool from "tools/registry")
+
+(fn fake_echo [args]
+  (var text ((args/text || "") .to_s))
+  {^status "ok" ^summary #"echo: #{text}" ^value text}
+)
+
+(fn fake_fail [args]
+  {^status "failed" ^error ((args/error || "fake failure") .to_s)}
+)
+
+(fn $ns/register_fake_tools []
+  (register_tool
+    "fake.echo"
+    "Echo text back as a structured tool result."
+    {^type "object"
+     ^required ["text"]
+     ^properties {^text {^type "string"}}}
+    {^type "object"
+     ^properties {
+       ^status {^type "string"}
+       ^summary {^type "string"}
+       ^value {^type "string"}
+     }}
+    fake_echo)
+  (register_tool
+    "fake.fail"
+    "Return a deterministic failure."
+    {^type "object"
+     ^properties {^error {^type "string"}}}
+    {^type "object"
+     ^properties {
+       ^status {^type "string"}
+       ^error {^type "string"}
+     }}
+    fake_fail)
+  true
+)

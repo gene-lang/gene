@@ -1,0 +1,112 @@
+# File-backed append-only storage for run events.
+
+(import index_event_record from "storage/sqlite_index")
+
+($ns/DEFAULT_STORE_ROOT = "/tmp/geneclaw-new")
+($ns/STORE_ROOT = ($env .get "GENECLAW_NEW_HOME" DEFAULT_STORE_ROOT))
+
+(fn normalize_path [path fallback]
+  (var text (((path || "") .to_s) .trim))
+  (if text/.empty fallback else text)
+)
+
+(fn file_exists [path]
+  (var target (normalize_path path ""))
+  (if target/.empty
+    false
+  else
+    (try
+      (var probe (system/shell #"test -f '#{target}'"))
+      (probe/exit_code == 0)
+    catch *
+      false
+    )
+  )
+)
+
+(fn ensure_dir [path]
+  (var target (normalize_path path ""))
+  (if target/.not_empty
+    (system/shell #"mkdir -p '#{target}'")
+  )
+)
+
+(fn run_dir [run_id]
+  #"#{STORE_ROOT}/runs/#{run_id}"
+)
+
+(fn event_log_path [run_id]
+  #"#{(run_dir run_id)}/events.gene.log"
+)
+
+(fn safe_name [value fallback]
+  (var text (normalize_path value fallback))
+  (text = (text .replace_all "/" "_"))
+  (text = (text .replace_all "\\" "_"))
+  (text = (text .replace_all ":" "_"))
+  (text = (text .replace_all " " "_"))
+  text
+)
+
+(fn tool_output_dir [run_id]
+  #"#{(run_dir run_id)}/tool_outputs"
+)
+
+(fn $ns/set_store_root [path]
+  (STORE_ROOT = (normalize_path path DEFAULT_STORE_ROOT))
+  STORE_ROOT
+)
+
+(fn $ns/store_root []
+  STORE_ROOT
+)
+
+(fn $ns/clear_store []
+  (var root (normalize_path STORE_ROOT ""))
+  (if ((root == "/") || (root == ".") || (root == ".."))
+    (throw #"Refusing to clear unsafe store root: #{root}")
+  )
+  (if root/.not_empty
+    (system/shell #"rm -rf '#{root}'")
+  )
+  true
+)
+
+(fn $ns/append_event_record [run_id event]
+  (var dir (run_dir run_id))
+  (ensure_dir dir)
+  (var path (event_log_path run_id))
+  (var existing (if (file_exists path) (gene/io/read path) else ""))
+  (gene/io/write path #"#{existing}#{(gene/serdes/serialize event)}\n")
+  (index_event_record STORE_ROOT run_id event)
+  event
+)
+
+(fn $ns/read_event_records [run_id]
+  (var path (event_log_path run_id))
+  (var records [])
+  (if_not (file_exists path)
+    (return records)
+  )
+  (var lines ((gene/io/read path) .split "\n"))
+  (var index 0)
+  (while (index < lines/.size)
+    (var line ((lines .get index) .trim))
+    (if line/.not_empty
+      (records .append (gene/serdes/deserialize line))
+    )
+    (index += 1)
+  )
+  records
+)
+
+(fn $ns/write_tool_output [run_id tool_name content]
+  (var dir (tool_output_dir run_id))
+  (ensure_dir dir)
+  (var name (safe_name tool_name "tool"))
+  (var stamp gene/now/.call/.to_i)
+  (var text ((content || "") .to_s))
+  (var path #"#{dir}/#{name}-#{stamp}-#{text/.size}.txt")
+  (gene/io/write path text)
+  {^ref path ^bytes text/.size}
+)

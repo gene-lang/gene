@@ -1,0 +1,520 @@
+# Provider-neutral model gateway for GeneClaw runs.
+
+(import fake_model_step from "models/fake")
+(import provider_config provider_has_credentials client_options provider_status from "models/config")
+(import resolve_model_profile from "models/profiles")
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn normalize_kind [content tool_calls]
+  (if tool_calls/.not_empty "tool_calls" else "final")
+)
+
+(fn canonical_tool_call [id name args]
+  {^id ((id || "") .to_s) ^name ((name || "") .to_s) ^args (ensure_map args)}
+)
+
+(fn parse_json_map [text]
+  (var parsed (try (gene/json/parse (text || "{}")) catch * {}))
+  (ensure_map parsed)
+)
+
+(fn openai_tool_spec [tool_def]
+  {
+    ^type "function"
+    ^function {
+      ^name tool_def/name
+      ^description (tool_def/description || "")
+      ^parameters (tool_def/input || {^type "object" ^properties {} ^required []})
+    }
+  }
+)
+
+(fn anthropic_tool_spec [tool_def]
+  {
+    ^name tool_def/name
+    ^description (tool_def/description || "")
+    ^input_schema (tool_def/input || {^type "object" ^properties {} ^required []})
+  }
+)
+
+(fn response_tool_calls [response]
+  (ensure_array (response/tool_calls || []))
+)
+
+(fn normalize_gateway_response [provider raw_response]
+  (var content ((raw_response/content || "") .to_s))
+  (var calls (response_tool_calls raw_response))
+  {
+    ^provider provider
+    ^kind (raw_response/kind || (normalize_kind content calls))
+    ^content content
+    ^tool_calls calls
+    ^raw raw_response
+  }
+)
+
+(fn openai_calls_from_chat [tool_calls]
+  (var result [])
+  (var index 0)
+  (while (index < tool_calls/.size)
+    (var call (tool_calls .get index))
+    (var fn_info (ensure_map (call/function || {})))
+    (result .append (canonical_tool_call
+      (call/id || "")
+      (fn_info/name || "")
+      (parse_json_map (fn_info/arguments || "{}"))))
+    (index += 1)
+  )
+  result
+)
+
+(fn text_parts_from_openai_output [output]
+  (var parts [])
+  (var index 0)
+  (while (index < output/.size)
+    (var item (output .get index))
+    (var item_type (item/type || ""))
+    (if (item_type == "message")
+      (var content (item/content || []))
+      (if (content is String)
+        (if content/.not_empty
+          (parts .append content)
+        )
+       else
+        (var part_index 0)
+        (var content_parts (ensure_array content))
+        (while (part_index < content_parts/.size)
+          (var part (content_parts .get part_index))
+          (var part_type (part/type || ""))
+          (if (((part_type == "output_text") || (part_type == "text") || (part_type == "input_text")) && ((part/text || "") .not_empty))
+            (parts .append part/text/.to_s)
+          )
+          (part_index += 1)
+        )
+      )
+    )
+    (if ((((item_type == "output_text") || (item_type == "text") || (item_type == "input_text"))) && ((item/text || "") .not_empty))
+      (parts .append item/text/.to_s)
+    )
+    (index += 1)
+  )
+  parts
+)
+
+(fn openai_calls_from_output [output]
+  (var calls [])
+  (var index 0)
+  (while (index < output/.size)
+    (var item (output .get index))
+    (if (item/type == "function_call")
+      (calls .append (canonical_tool_call
+        (item/call_id || item/id || "")
+        (item/name || "")
+        (parse_json_map (item/arguments || "{}"))))
+    )
+    (index += 1)
+  )
+  calls
+)
+
+(fn $ns/normalize_openai_response [response]
+  (var choices (ensure_array (try (response .get "choices" []) catch * [])))
+  (if choices/.not_empty
+    (var first_choice (choices .get 0))
+    (var msg (ensure_map first_choice/message))
+    (var content ((msg/content || "") .to_s))
+    (var calls (openai_calls_from_chat (ensure_array (msg/tool_calls || []))))
+    (return {^kind (normalize_kind content calls) ^content content ^tool_calls calls})
+  )
+
+  (var output (ensure_array (try (response .get "output" []) catch * [])))
+  (if output/.not_empty
+    (var text_parts (text_parts_from_openai_output output))
+    (var calls (openai_calls_from_output output))
+    (var content (text_parts .join "\n\n"))
+    (if content/.empty
+      (content = ((try (response .get "output_text" "") catch * "") .to_s))
+    )
+    (if (content/.empty && calls/.empty)
+      (content = "I could not generate a response.")
+    )
+    (return {^kind (normalize_kind content calls) ^content content ^tool_calls calls})
+  )
+
+  (var output_text ((try (response .get "output_text" "") catch * "") .to_s))
+  (if output_text/.not_empty
+    {^kind "final" ^content output_text ^tool_calls []}
+   else
+    {^kind "final" ^content "I could not generate a response." ^tool_calls []}
+  )
+)
+
+(fn $ns/normalize_anthropic_response [response]
+  (var blocks (ensure_array (try (response .get "content" []) catch * [])))
+  (var text_parts [])
+  (var calls [])
+  (var index 0)
+  (while (index < blocks/.size)
+    (var block (blocks .get index))
+    (var block_type (block/type || ""))
+    (if ((block_type == "text") && ((block/text || "") .not_empty))
+      (text_parts .append block/text/.to_s)
+    )
+    (if (block_type == "tool_use")
+      (calls .append (canonical_tool_call
+        (block/id || "")
+        (block/name || "")
+        (ensure_map (block/input || {}))))
+    )
+    (index += 1)
+  )
+  (var content (text_parts .join "\n\n"))
+  {^kind (normalize_kind content calls) ^content content ^tool_calls calls}
+)
+
+(fn response_error_body [response]
+  (var raw ((try (response .get "raw_body" "") catch * "") .to_s))
+  (if raw/.not_empty
+    (return raw)
+  )
+  (var metadata (try (response .get "metadata" nil) catch * nil))
+  (if metadata
+    metadata/.to_json
+   else
+    ""
+  )
+)
+
+(fn $ns/error_message_from_response [response]
+  (if_not (response is Map)
+    (return "")
+  )
+  (var response_type ((try (response .get "type" "") catch * "") .to_s))
+  (var status_text ((try (response .get "status" "") catch * "") .to_s))
+  (var error_value (try (response .get "error" nil) catch * nil))
+  (var message "")
+  (var has_error false)
+
+  (if (error_value is Map)
+    (has_error = true)
+    (message = ((error_value .get "message" "") .to_s))
+  )
+  (if (message/.empty && ((response_type == "error") || (response_type == "failed")))
+    (message = ((response .get "message" "") .to_s))
+  )
+  (if ((response_type == "error") || (response_type == "failed"))
+    (has_error = true)
+  )
+  (if (["failed" "incomplete" "cancelled" "expired"] .contains status_text)
+    (has_error = true)
+    (if message/.empty
+      (message = #"model response status=#{status_text}")
+    )
+  )
+
+  (var status_code 0)
+  (try
+    (status_code = ((response .get "status" 0) .to_i))
+   catch *
+    nil
+  )
+  (if (status_code >= 400)
+    (has_error = true)
+    (if status_text/.empty
+      (status_text = status_code/.to_s)
+    )
+  )
+
+  (if_not has_error
+    (return "")
+  )
+
+  (var parts [])
+  (if message/.not_empty
+    (parts .append message)
+  )
+  (if status_text/.not_empty
+    (parts .append #"status=#{status_text}")
+  )
+  (var body (response_error_body response))
+  (if body/.not_empty
+    (parts .append #"body=#{body}")
+  )
+  (parts .join " | ")
+)
+
+(fn status_code_from_response [response]
+  (if_not (response is Map)
+    (return 0)
+  )
+  (var status_raw (try (response .get "status" nil) catch * nil))
+  (if (status_raw is Int)
+    (return status_raw)
+  )
+  (if status_raw
+    (try
+      (return status_raw/.to_i)
+     catch *
+      (return 0)
+    )
+  )
+  0
+)
+
+(fn response_state_text [response]
+  (if_not (response is Map)
+    (return "")
+  )
+  (var state ((try (response .get "status" "") catch * "") .to_s))
+  (if state/.empty
+    (state = ((try (response .get "type" "") catch * "") .to_s))
+  )
+  state
+)
+
+(fn $ns/classify_model_error [provider response = {} message = ""]
+  (var status_code (status_code_from_response response))
+  (var state (response_state_text response))
+  (var text ((message || "") .to_s))
+  (var lower text/.to_lower)
+  (var category "provider_error")
+  (var retryable false)
+
+  (if (lower .contains "geneclaw_model_live")
+    (category = "config_error")
+   elif ((lower .contains "credential") || (lower .contains "api_key") || (lower .contains "auth"))
+    (category = "auth_error")
+   elif ((status_code == 401) || (status_code == 403))
+    (category = "auth_error")
+   elif (status_code == 429)
+    (category = "rate_limited")
+    (retryable = true)
+   elif ((status_code == 408) || (lower .contains "timeout"))
+    (category = "timeout")
+    (retryable = true)
+   elif (status_code >= 500)
+    (category = "provider_unavailable")
+    (retryable = true)
+   elif (status_code >= 400)
+    (category = "provider_rejected")
+   elif (["failed" "incomplete" "expired"] .contains state)
+    (category = state)
+    (retryable = true)
+  )
+
+  {^provider provider
+    ^category category
+    ^retryable retryable
+    ^status_code status_code
+    ^state state
+    ^message text}
+)
+
+(fn $ns/tool_specs_for_provider [tool_defs provider = "openai"]
+  (var specs [])
+  (var index 0)
+  (while (index < tool_defs/.size)
+    (var tool_def (tool_defs .get index))
+    (if (provider == "anthropic")
+      (specs .append (anthropic_tool_spec tool_def))
+     else
+      (specs .append (openai_tool_spec tool_def))
+    )
+    (index += 1)
+  )
+  specs
+)
+
+(fn $ns/build_model_request [provider run events tool_defs options = {}]
+  (var profile_info (resolve_model_profile provider options))
+  (var resolved_provider profile_info/provider)
+  (var tools (tool_specs_for_provider tool_defs resolved_provider))
+  (var names [])
+  (var index 0)
+  (while (index < tool_defs/.size)
+    (var tool_def (tool_defs .get index))
+    (names .append tool_def/name)
+    (index += 1)
+  )
+  {
+    ^provider resolved_provider
+    ^profile profile_info/profile
+    ^model profile_info/model
+    ^model_profile profile_info
+    ^skill (options/skill || "")
+    ^system (options/system || "")
+    ^memory_text (options/memory_text || "")
+    ^run run
+    ^goal run/goal
+    ^session run/session
+    ^events events
+    ^tools tools
+    ^tool_names names
+  }
+)
+
+(fn request_user_text [request]
+  (var memory_text ((request/memory_text || "") .to_s))
+  (if memory_text/.not_empty
+    #"Context:\n#{memory_text}\n\nCurrent request:\n#{request/goal}"
+   else
+    request/goal
+  )
+)
+
+(fn $ns/build_openai_payload [request]
+  (var cfg (provider_config "openai" request))
+  {
+    ^messages [
+      {^role "system" ^content (request/system || "You are GeneClaw.")}
+      {^role "user" ^content (request_user_text request)}
+    ]
+    ^tools request/tools
+    ^model cfg/model
+  }
+)
+
+(fn $ns/build_anthropic_payload [request]
+  (var cfg (provider_config "anthropic" request))
+  {
+    ^system (request/system || "You are GeneClaw.")
+    ^messages [
+      {^role "user" ^content [{^type "text" ^text (request_user_text request)}]}
+    ]
+    ^tools request/tools
+    ^model cfg/model
+  }
+)
+
+(fn $ns/build_provider_payload [provider request]
+  (if (provider == "anthropic")
+    (build_anthropic_payload request)
+   elif (provider == "openai")
+    (build_openai_payload request)
+   else
+    request
+  )
+)
+
+(fn $ns/stream_event_from_delta [provider delta]
+  (var content ((delta/content || delta/text || "") .to_s))
+  (var stop_reason ((delta/stop_reason || delta/finish_reason || "") .to_s))
+  {
+    ^provider provider
+    ^type (if stop_reason/.not_empty "model.stream.done" else "model.stream.delta")
+    ^content content
+    ^stop_reason stop_reason
+    ^raw delta
+  }
+)
+
+(fn duration_since [started_at]
+  (gene/now/.call/.to_i - started_at)
+)
+
+(fn live_not_configured [provider request payload started_at]
+  (var message #"#{provider} live adapter requires GENECLAW_MODEL_LIVE=true and #{(if (provider == "anthropic") "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN" else "OPENAI_API_KEY or OPENAI_AUTH_TOKEN")}.")
+  {^ok false
+    ^provider provider
+    ^payload payload
+    ^status (provider_status provider request)
+    ^error message
+    ^error_info (classify_model_error provider {} message)
+    ^duration_ms (duration_since started_at)}
+)
+
+(fn live_client_unavailable [provider request payload started_at]
+  (var message "genex/ai client classes are unavailable in this Gene runtime.")
+  {^ok false
+    ^provider provider
+    ^payload payload
+    ^status (provider_status provider request)
+    ^error message
+    ^error_info (classify_model_error provider {} message)
+    ^duration_ms (duration_since started_at)}
+)
+
+(fn normalize_live_success [provider request payload response normalized_response started_at]
+  (var normalized (normalize_gateway_response provider normalized_response))
+  (normalized .set "ok" true)
+  (normalized .set "duration_ms" (duration_since started_at))
+  (normalized .set "payload" payload)
+  (normalized .set "status" (provider_status provider request))
+  (normalized .set "raw_response" response)
+  normalized
+)
+
+(fn live_response_error [provider request payload response error_message started_at]
+  {^ok false
+    ^provider provider
+    ^payload payload
+    ^status (provider_status provider request)
+    ^error error_message
+    ^error_info (classify_model_error provider response error_message)
+    ^raw_response response
+    ^duration_ms (duration_since started_at)}
+)
+
+(fn call_openai_live [request started_at]
+  (var payload (build_openai_payload request))
+  (if_not (provider_has_credentials "openai" request)
+    (return (live_not_configured "openai" request payload started_at))
+  )
+  (if_not genex/ai
+    (return (live_client_unavailable "openai" request payload started_at))
+  )
+  (var client (new OpenAIClient (client_options "openai" request)))
+  (var response (client .chat payload))
+  (var error_message (error_message_from_response response))
+  (if error_message/.not_empty
+    (return (live_response_error "openai" request payload response error_message started_at))
+  )
+  (normalize_live_success "openai" request payload response (normalize_openai_response response) started_at)
+)
+
+(fn call_anthropic_live [request started_at]
+  (var payload (build_anthropic_payload request))
+  (if_not (provider_has_credentials "anthropic" request)
+    (return (live_not_configured "anthropic" request payload started_at))
+  )
+  (if_not genex/ai
+    (return (live_client_unavailable "anthropic" request payload started_at))
+  )
+  (var client (new AnthropicClient (client_options "anthropic" request)))
+  (var response (client .chat payload))
+  (var error_message (error_message_from_response response))
+  (if error_message/.not_empty
+    (return (live_response_error "anthropic" request payload response error_message started_at))
+  )
+  (normalize_live_success "anthropic" request payload response (normalize_anthropic_response response) started_at)
+)
+
+(fn $ns/call_model [provider request]
+  (var started_at gene/now/.call/.to_i)
+  (try
+    (var raw (if (provider == "fake")
+      (fake_model_step request/run request/events request/tool_names)
+     elif (provider == "openai")
+      (return (call_openai_live request started_at))
+     elif (provider == "anthropic")
+      (return (call_anthropic_live request started_at))
+     else
+      (var message #"Unknown model provider: #{provider}")
+      (return {^ok false ^provider provider ^error message ^error_info {^provider provider ^category "config_error" ^retryable false ^status_code 0 ^state "" ^message message} ^duration_ms 0})
+    ))
+    (var normalized (normalize_gateway_response provider raw))
+    (var duration_ms (gene/now/.call/.to_i - started_at))
+    (normalized .set "duration_ms" duration_ms)
+    (normalized .set "ok" true)
+    normalized
+   catch *
+    {^ok false ^provider provider ^error $ex/message ^error_info (classify_model_error provider {} $ex/message) ^duration_ms (gene/now/.call/.to_i - started_at)}
+  )
+)

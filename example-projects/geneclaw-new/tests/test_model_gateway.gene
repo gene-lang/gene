@@ -1,0 +1,157 @@
+#!/usr/bin/env gene run
+
+(import reset_runs create_run from "kernel/runs")
+(import events_for has_event_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools tool_defs from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import build_model_request build_provider_payload call_model normalize_openai_response normalize_anthropic_response error_message_from_response classify_model_error stream_event_from_delta from "models/gateway")
+(import model_live_enabled provider_status provider_has_credentials from "models/config")
+(import resolve_model_profile from "models/profiles")
+
+($env .set "GENECLAW_MODEL_LIVE" "")
+
+(set_store_root "/tmp/geneclaw-new-test-model-gateway")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var run (create_run "gateway should call tools" "test"))
+(var request (build_model_request "fake" run (events_for run/id) (tool_defs) {^profile "fake"}))
+(assert (request/provider == "fake"))
+(assert (request/profile == "fake"))
+(assert (request/model == "fake"))
+(assert (request/tool_names/.size == 2))
+(assert (request/tools/.size == 2))
+(assert (request/tools/0/type == "function"))
+
+(var fast_profile (resolve_model_profile "" {^profile "fast"}))
+(assert (fast_profile/profile == "fast"))
+(assert (fast_profile/provider == "openai"))
+(assert (fast_profile/model .not_empty))
+(assert (fast_profile/capabilities/tools == true))
+
+(var frontier_request (build_model_request "" run (events_for run/id) (tool_defs) {^profile "frontier"}))
+(assert (frontier_request/provider == "openai"))
+(assert (frontier_request/profile == "frontier"))
+(assert (frontier_request/model .not_empty))
+
+(var anthropic_profile_request (build_model_request "anthropic" run (events_for run/id) (tool_defs) {^profile "frontier"}))
+(assert (anthropic_profile_request/provider == "anthropic"))
+(assert (anthropic_profile_request/profile == "frontier"))
+(assert (anthropic_profile_request/model .not_empty))
+
+(var fake_response (call_model "fake" request))
+(assert (fake_response/ok == true))
+(assert (fake_response/provider == "fake"))
+(assert (fake_response/kind == "tool_calls"))
+(assert (fake_response/tool_calls/0/name == "fake.echo"))
+(assert (fake_response/tool_calls/0/args/text == "gateway should call tools"))
+
+(var openai_request (build_model_request "openai" run (events_for run/id) (tool_defs) {^model "gpt-test"}))
+(var openai_payload (build_provider_payload "openai" openai_request))
+(assert (openai_payload/model == "gpt-test"))
+(assert (openai_payload/messages/0/role == "system"))
+(assert (openai_payload/messages/1/content == "gateway should call tools"))
+(assert (openai_payload/tools/0/type == "function"))
+(assert (openai_payload/tools/0/function/name .contains "fake."))
+
+(var openai_status (provider_status "openai" openai_request))
+(assert ((model_live_enabled) == false))
+(assert (openai_status/live_enabled == false))
+(assert (openai_status/configured == false))
+(assert (openai_status/model == "gpt-test"))
+(assert ((provider_has_credentials "openai" openai_request) == false))
+
+(var openai_result (call_model "openai" openai_request))
+(assert (openai_result/ok == false))
+(assert (openai_result/payload/messages/1/content == "gateway should call tools"))
+(assert (openai_result/status/live_enabled == false))
+(assert (openai_result/error .contains "GENECLAW_MODEL_LIVE"))
+(assert (openai_result/error_info/category == "config_error"))
+(assert (openai_result/error_info/retryable == false))
+
+(var anthropic_payload (build_provider_payload "anthropic" (build_model_request "anthropic" run (events_for run/id) (tool_defs) {^model "claude-test"})))
+(assert (anthropic_payload/model == "claude-test"))
+(assert (anthropic_payload/messages/0/role == "user"))
+(assert (anthropic_payload/messages/0/content/0/type == "text"))
+(assert (anthropic_payload/tools/0/name .contains "fake."))
+(assert (anthropic_payload/tools/0/input_schema/type == "object"))
+
+(var anthropic_result (call_model "anthropic" (build_model_request "anthropic" run (events_for run/id) (tool_defs) {^model "claude-test"})))
+(assert (anthropic_result/ok == false))
+(assert (anthropic_result/status/configured == false))
+(assert (anthropic_result/payload/messages/0/content/0/text == "gateway should call tools"))
+(assert (anthropic_result/error .contains "GENECLAW_MODEL_LIVE"))
+(assert (anthropic_result/error_info/category == "config_error"))
+
+(var normalized_openai_chat (normalize_openai_response {
+  ^choices [
+    {^message {
+      ^content "Need a tool."
+      ^tool_calls [
+        {^id "call-1" ^function {^name "fake.echo" ^arguments "{\"text\":\"hello\"}"}}
+      ]
+    }}
+  ]
+}))
+(assert (normalized_openai_chat/kind == "tool_calls"))
+(assert (normalized_openai_chat/content == "Need a tool."))
+(assert (normalized_openai_chat/tool_calls/0/id == "call-1"))
+(assert (normalized_openai_chat/tool_calls/0/name == "fake.echo"))
+(assert (normalized_openai_chat/tool_calls/0/args/text == "hello"))
+
+(var normalized_openai_responses (normalize_openai_response {
+  ^output [
+    {^type "message" ^content [{^type "output_text" ^text "Created file."}]}
+    {^type "function_call" ^call_id "call-2" ^name "file.read" ^arguments "{\"path\":\"README.md\"}"}
+  ]
+}))
+(assert (normalized_openai_responses/kind == "tool_calls"))
+(assert (normalized_openai_responses/content == "Created file."))
+(assert (normalized_openai_responses/tool_calls/0/name == "file.read"))
+(assert (normalized_openai_responses/tool_calls/0/args/path == "README.md"))
+
+(var normalized_anthropic (normalize_anthropic_response {
+  ^content [
+    {^type "text" ^text "Reading file."}
+    {^type "tool_use" ^id "toolu-1" ^name "file.read" ^input {^path "README.md"}}
+  ]
+}))
+(assert (normalized_anthropic/kind == "tool_calls"))
+(assert (normalized_anthropic/content == "Reading file."))
+(assert (normalized_anthropic/tool_calls/0/id == "toolu-1"))
+(assert (normalized_anthropic/tool_calls/0/name == "file.read"))
+(assert (normalized_anthropic/tool_calls/0/args/path == "README.md"))
+
+(var error_message (error_message_from_response {
+  ^type "error"
+  ^message "Bad credentials"
+  ^status 401
+  ^raw_body "{\"error\":\"invalid\"}"
+}))
+(assert (error_message .contains "Bad credentials"))
+(assert (error_message .contains "status=401"))
+(assert (error_message .contains "body={\"error\""))
+
+(var auth_error (classify_model_error "openai" {^status 401} error_message))
+(assert (auth_error/category == "auth_error"))
+(assert (auth_error/retryable == false))
+(var rate_error (classify_model_error "openai" {^status 429} "rate limited"))
+(assert (rate_error/category == "rate_limited"))
+(assert (rate_error/retryable == true))
+(var server_error (classify_model_error "anthropic" {^status 503} "service unavailable"))
+(assert (server_error/category == "provider_unavailable"))
+(assert (server_error/retryable == true))
+
+(var stream_delta (stream_event_from_delta "openai" {^content "hello"}))
+(assert (stream_delta/type == "model.stream.delta"))
+(assert (stream_delta/content == "hello"))
+(var stream_done (stream_event_from_delta "anthropic" {^stop_reason "end_turn"}))
+(assert (stream_done/type == "model.stream.done"))
+(assert (stream_done/stop_reason == "end_turn"))
+
+(var events (events_for run/id))
+(assert (has_event_type events "run.started"))
+
+(println "ok")

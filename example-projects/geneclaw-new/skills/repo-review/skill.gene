@@ -1,0 +1,29 @@
+(gene/serialization {
+  ^name "repo-review"
+  ^version "0.1.0"
+  ^description "Review repository changes, inspect relevant files, and report findings with verification."
+  ^system "You are GeneClaw running the repo-review skill. Inspect evidence before concluding, prefer concise findings, and record tool activity through the run kernel."
+  ^tools [
+    {^name "fake.echo" ^reason "Deterministic test adapter for the current gateway slice."}
+    {^name "search.rg" ^reason "Find symbols, files, and references."}
+    {^name "file.read" ^reason "Read exact file context."}
+    {^name "shell.run" ^reason "Run trusted-local verification commands."}
+  ]
+  ^workflows [
+    {
+      ^name "default"
+      ^steps [
+        {^name "understand" ^kind "model"}
+        {^name "inspect" ^kind "tools"}
+        {^name "verify" ^kind "tools"}
+        {^name "report" ^kind "model"}
+      ]
+    }
+  ]
+  ^examples [
+    {
+      ^input "review the current diff"
+      ^expect_events ["model.request" "model.response" "run.completed"]
+    }
+  ]
+})

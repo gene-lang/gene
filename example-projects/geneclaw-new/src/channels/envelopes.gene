@@ -1,0 +1,38 @@
+# Channel-normalized command envelopes.
+
+(fn $ns/command_envelope [channel text session = "local" user = "local-operator" options = {}]
+  {
+    ^id #"cmd-#{gene/now/.call/.to_i}"
+    ^channel ((channel || "cli") .to_s)
+    ^session ((session || "local") .to_s)
+    ^user ((user || "local-operator") .to_s)
+    ^text ((text || "") .to_s)
+    ^attachments (if (options/attachments is Array) options/attachments else [])
+    ^skill ((options/skill || "") .to_s)
+    ^workflow ((options/workflow || "") .to_s)
+    ^provider ((options/provider || "") .to_s)
+    ^profile ((options/profile || "") .to_s)
+    ^model ((options/model || "") .to_s)
+    ^received_at_ms gene/now/.call/.to_i
+  }
+)
+
+(fn $ns/envelope_run_options [envelope]
+  (var options {})
+  (if ((envelope/skill || "") .not_empty)
+    (options .set "skill" envelope/skill)
+  )
+  (if ((envelope/workflow || "") .not_empty)
+    (options .set "workflow" envelope/workflow)
+  )
+  (if ((envelope/provider || "") .not_empty)
+    (options .set "provider" envelope/provider)
+  )
+  (if ((envelope/profile || "") .not_empty)
+    (options .set "profile" envelope/profile)
+  )
+  (if ((envelope/model || "") .not_empty)
+    (options .set "model" envelope/model)
+  )
+  options
+)

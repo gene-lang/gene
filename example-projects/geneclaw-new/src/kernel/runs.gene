@@ -1,0 +1,203 @@
+# Run state machine for GeneClaw's event-sourced kernel.
+
+(import append_event events_for reset_events reset_event_cache from "kernel/events")
+(import normalize_budgets deadline_at_ms from "kernel/limits")
+
+(var RUNS {})
+(var RUN_SEQ 0)
+
+(fn next_run_id []
+  (loop
+    (RUN_SEQ += 1)
+    (var run_id #"run-#{RUN_SEQ}")
+    (var events (events_for run_id))
+    (if (((RUNS .contains run_id) == false) && (events/.size == 0))
+      (return run_id)
+    )
+  )
+)
+
+(fn $ns/valid_run_state [state]
+  (["queued" "running" "waiting_tool" "waiting_model" "waiting_user" "completed" "failed" "cancelled" "timed_out"] .contains state)
+)
+
+(fn $ns/terminal_run_state [state]
+  (["completed" "failed" "cancelled" "timed_out"] .contains state)
+)
+
+(fn run_from_events [run_id events]
+  (if (events/.size == 0)
+    (return nil)
+  )
+  (var run {
+    ^id run_id
+    ^state "queued"
+    ^session "local"
+    ^goal ""
+    ^budgets (normalize_budgets {})
+    ^deadline_ms 600000
+    ^deadline_at_ms 0
+    ^final ""
+  })
+  (var index 0)
+  (while (index < events/.size)
+    (var entry (events .get index))
+    (var data (if (entry/data is Map) entry/data else {}))
+    (if (entry/type == "run.started")
+      (run .set "state" (data/state || "queued"))
+      (run .set "session" (data/session || run/session))
+      (run .set "goal" (data/goal || run/goal))
+      (run .set "budgets" (normalize_budgets (data/budgets || run/budgets)))
+      (run .set "deadline_ms" (data/deadline_ms || run/deadline_ms))
+      (run .set "deadline_at_ms" (data/deadline_at_ms || run/deadline_at_ms))
+    )
+    (if (entry/type == "run.running")
+      (run .set "state" "running")
+    )
+    (if (entry/type == "run.waiting_tool")
+      (run .set "state" "waiting_tool")
+    )
+    (if (entry/type == "run.waiting_model")
+      (run .set "state" "waiting_model")
+    )
+    (if (entry/type == "run.waiting_user")
+      (run .set "state" "waiting_user")
+    )
+    (if (entry/type == "run.completed")
+      (run .set "state" "completed")
+      (run .set "final" (data/detail/final || run/final))
+    )
+    (if (entry/type == "run.failed")
+      (run .set "state" "failed")
+      (run .set "final" (data/detail/reason || run/final))
+    )
+    (if (entry/type == "run.cancelled")
+      (run .set "state" "cancelled")
+      (run .set "final" (data/detail/reason || run/final))
+    )
+    (if (entry/type == "run.timed_out")
+      (run .set "state" "timed_out")
+      (run .set "final" (data/detail/reason || run/final))
+    )
+    (index += 1)
+  )
+  run
+)
+
+(fn $ns/reset_runs []
+  (RUNS = {})
+  (RUN_SEQ = 0)
+  (reset_events)
+  true
+)
+
+(fn $ns/reset_run_cache []
+  (RUNS = {})
+  (RUN_SEQ = 0)
+  (reset_event_cache)
+  true
+)
+
+(fn $ns/create_run [goal session = "local" budgets = {}]
+  (var run_id (next_run_id))
+  (var normalized_budgets (normalize_budgets budgets))
+  (var started_at gene/now/.call/.to_i)
+  (var run {
+    ^id run_id
+    ^state "queued"
+    ^session session
+    ^goal ((goal || "") .to_s)
+    ^budgets normalized_budgets
+    ^deadline_ms normalized_budgets/deadline_ms
+    ^deadline_at_ms (deadline_at_ms started_at normalized_budgets)
+    ^final ""
+  })
+  (RUNS .set run_id run)
+  (append_event run_id "run.started" {
+    ^state "queued"
+    ^goal run/goal
+    ^session session
+    ^budgets run/budgets
+    ^deadline_ms run/deadline_ms
+    ^deadline_at_ms run/deadline_at_ms
+  })
+  run
+)
+
+(fn $ns/get_run [run_id]
+  (var run (RUNS .get run_id nil))
+  (if (run == nil)
+    (var events (events_for run_id))
+    (run = (run_from_events run_id events))
+    (if (run != nil)
+      (RUNS .set run_id run)
+    )
+  )
+  run
+)
+
+(fn $ns/transition_run [run_id new_state data = {}]
+  (if ((valid_run_state new_state) == false)
+    (throw #"Invalid run state: #{new_state}")
+  )
+  (var run (get_run run_id))
+  (if (run == nil)
+    (throw #"Unknown run: #{run_id}")
+  )
+  (if (terminal_run_state run/state)
+    (throw #"Run #{run_id} is already #{run/state}")
+  )
+  (run .set "state" new_state)
+  (append_event run_id #"run.#{new_state}" {
+    ^state new_state
+    ^detail (if (data is Map) data else {})
+  })
+  run
+)
+
+(fn $ns/complete_run [run_id final_text]
+  (var run (get_run run_id))
+  (if (run == nil)
+    (throw #"Unknown run: #{run_id}")
+  )
+  (run .set "final" ((final_text || "") .to_s))
+  (transition_run run_id "completed" {^final run/final})
+)
+
+(fn $ns/fail_run [run_id reason]
+  (var run (get_run run_id))
+  (if (run == nil)
+    (throw #"Unknown run: #{run_id}")
+  )
+  (run .set "final" ((reason || "") .to_s))
+  (transition_run run_id "failed" {^reason run/final})
+)
+
+(fn $ns/cancel_run [run_id reason = "cancelled"]
+  (var run (get_run run_id))
+  (if (run == nil)
+    (throw #"Unknown run: #{run_id}")
+  )
+  (run .set "final" ((reason || "") .to_s))
+  (transition_run run_id "cancelled" {^reason run/final})
+)
+
+(fn $ns/run_summary [run_id]
+  (var run (get_run run_id))
+  (if (run == nil)
+    (return nil)
+  )
+  (var events (events_for run_id))
+  {
+    ^id run/id
+    ^state run/state
+    ^session run/session
+    ^goal run/goal
+    ^final run/final
+    ^event_count events/.size
+  }
+)
+
+(fn $ns/replay_run [run_id]
+  (run_summary run_id)
+)

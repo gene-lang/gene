@@ -1,0 +1,189 @@
+# Durable scheduled jobs and dispatcher.
+
+(import store_root from "kernel/storage")
+(import run_agent_with_options from "agent_loop")
+
+(fn scheduler_dir []
+  #"#{(store_root)}/scheduler"
+)
+
+(fn jobs_path []
+  #"#{(scheduler_dir)}/jobs.gene"
+)
+
+(fn ensure_scheduler_dir []
+  (system/shell #"mkdir -p '#{(scheduler_dir)}'")
+)
+
+(fn file_exists [path]
+  (try
+    (var result (system/shell #"test -f '#{path}'"))
+    (result/exit_code == 0)
+  catch *
+    false
+  )
+)
+
+(fn read_jobs []
+  (var path (jobs_path))
+  (if (file_exists path)
+    (var loaded (try (gene/serdes/read path) catch * []))
+    (if (loaded is Array) loaded else [])
+  else
+    []
+  )
+)
+
+(fn write_jobs [jobs]
+  (ensure_scheduler_dir)
+  (var path (jobs_path))
+  (gene/serdes/write path jobs)
+  jobs
+)
+
+(fn next_job_id [jobs]
+  #"job-#{(jobs/.size + 1)}"
+)
+
+(fn normalize_job [job]
+  (var source (if (job is Map) job else {}))
+  {
+    ^id ((source/id || "") .to_s)
+    ^text ((source/text || "") .to_s)
+    ^session ((source/session || "scheduler") .to_s)
+    ^skill ((source/skill || "") .to_s)
+    ^provider ((source/provider || "fake") .to_s)
+    ^state ((source/state || "active") .to_s)
+    ^schedule_type ((source/schedule_type || "once") .to_s)
+    ^next_run_ms (source .get "next_run_ms" 0)
+    ^interval_ms (source .get "interval_ms" 0)
+    ^retry_count (source .get "retry_count" 0)
+    ^max_retries (source .get "max_retries" 3)
+    ^backoff_ms (source .get "backoff_ms" 1000)
+    ^last_run_id ((source/last_run_id || "") .to_s)
+    ^last_error ((source/last_error || "") .to_s)
+  }
+)
+
+(fn update_job_in [jobs updated]
+  (var changed false)
+  (var index 0)
+  (while (index < jobs/.size)
+    (var job (jobs .get index))
+    (if (job/id == updated/id)
+      (jobs .set index updated)
+      (changed = true)
+    )
+    (index += 1)
+  )
+  (if (changed == false)
+    (jobs .append updated)
+  )
+  jobs
+)
+
+(fn $ns/reset_scheduler []
+  (system/shell #"rm -rf '#{(scheduler_dir)}'")
+  true
+)
+
+(fn $ns/schedule_job [text options = {}]
+  (var jobs (read_jobs))
+  (var job (normalize_job {
+    ^id (next_job_id jobs)
+    ^text text
+    ^session (options/session || "scheduler")
+    ^skill (options/skill || "")
+    ^provider (options/provider || "fake")
+    ^state "active"
+    ^schedule_type (if ((options .get "interval_ms" 0) > 0) "interval" else "once")
+    ^next_run_ms (options .get "next_run_ms" gene/now/.call/.to_i)
+    ^interval_ms (options .get "interval_ms" 0)
+    ^max_retries (options .get "max_retries" 3)
+    ^backoff_ms (options .get "backoff_ms" 1000)
+  }))
+  (jobs .append job)
+  (write_jobs jobs)
+  job
+)
+
+(fn $ns/scheduler_jobs []
+  (read_jobs)
+)
+
+(fn $ns/due_jobs [now_ms = nil]
+  (var now (if (now_ms == nil) gene/now/.call/.to_i else now_ms))
+  (var jobs (read_jobs))
+  (var due [])
+  (var index 0)
+  (while (index < jobs/.size)
+    (var job (normalize_job (jobs .get index)))
+    (if ((job/state == "active") && (job/next_run_ms <= now))
+      (due .append job)
+    )
+    (index += 1)
+  )
+  due
+)
+
+(fn job_options [job]
+  (var options {^provider job/provider})
+  (if job/skill/.not_empty
+    (options .set "skill" job/skill)
+  )
+  options
+)
+
+(fn mark_success [job summary now]
+  (var updated (normalize_job job))
+  (updated .set "last_run_id" summary/id)
+  (updated .set "last_error" "")
+  (updated .set "retry_count" 0)
+  (if (updated/interval_ms > 0)
+    (updated .set "state" "active")
+    (updated .set "next_run_ms" (now + updated/interval_ms))
+  else
+    (updated .set "state" "completed")
+  )
+  updated
+)
+
+(fn mark_failure [job summary now]
+  (var updated (normalize_job job))
+  (updated .set "last_run_id" (summary/id || ""))
+  (updated .set "last_error" (summary/final || "job failed"))
+  (updated .set "retry_count" (updated/retry_count + 1))
+  (if (updated/retry_count >= updated/max_retries)
+    (updated .set "state" "dead_letter")
+  else
+    (updated .set "state" "active")
+    (updated .set "next_run_ms" (now + updated/backoff_ms))
+  )
+  updated
+)
+
+(fn $ns/run_due_jobs [now_ms = nil]
+  (var now (if (now_ms == nil) gene/now/.call/.to_i else now_ms))
+  (var jobs (read_jobs))
+  (var due (due_jobs now))
+  (var results [])
+  (var index 0)
+  (while (index < due/.size)
+    (var job (due .get index))
+    (var summary (try
+      (run_agent_with_options job/text job/session {} (job_options job))
+    catch *
+      {^id "" ^state "failed" ^final $ex/message}
+    ))
+    (var updated (if (summary/state == "completed")
+      (mark_success job summary now)
+    else
+      (mark_failure job summary now)
+    ))
+    (jobs = (update_job_in jobs updated))
+    (results .append {^job updated ^run summary})
+    (index += 1)
+  )
+  (write_jobs jobs)
+  results
+)

@@ -1,0 +1,200 @@
+# First vertical agent loop: run kernel + fake model + tool registry.
+
+(import append_event events_for from "kernel/events")
+(import create_run transition_run complete_run fail_run run_summary terminal_run_state from "kernel/runs")
+(import deadline_exceeded from "kernel/limits")
+(import invoke_tool tool_defs from "tools/registry")
+(import build_model_request call_model from "models/gateway")
+(import load_skill filter_tool_defs_for_skill from "skills/loader")
+(import memory_context extract_memory_from_run from "memory/store")
+(import select_workflow start_workflow complete_workflow fail_workflow start_workflow_step complete_workflow_step fail_workflow_step from "workflows/engine")
+
+(fn response_tool_calls [response]
+  (if (response/tool_calls is Array)
+    response/tool_calls
+   else
+    []
+  )
+)
+
+(fn run_failed_tool [tool_result]
+  ((tool_result/status || "ok") != "ok")
+)
+
+(fn text_or [value fallback]
+  (if (value == nil)
+    (return fallback)
+  )
+  (var text (value .to_s))
+  (if text/.empty fallback else text)
+)
+
+(fn $ns/run_agent_with_options [goal session budgets options]
+  (var run_options (if (options is Map) options else {}))
+  (var run (create_run goal session budgets))
+  (transition_run run/id "running")
+  (var step_count 0)
+  (var tool_call_count 0)
+  (var stop_loop false)
+  (var provider (((run_options .get "provider" "") || "") .to_s))
+  (var requested_profile (((run_options .get "profile" "") || "") .to_s))
+  (if provider/.empty
+    (if requested_profile/.empty
+      (provider = "fake")
+    )
+  )
+  (var skill (if ((run_options/skill || "") .not_empty) (load_skill run_options/skill) else nil))
+  (var workflow (select_workflow skill (run_options/workflow || "")))
+  (var workflow_state (start_workflow run/id workflow))
+
+  (if (skill != nil)
+    (append_event run/id "skill.loaded" {
+      ^name skill/name
+      ^version skill/version
+      ^workflow_count skill/workflows/.size
+      ^tool_count skill/tools/.size
+    })
+  )
+  (start_workflow_step run/id workflow_state "memory" "memory" {^limit 5})
+  (var retrieved_memory (memory_context run/goal run/session 5))
+  (append_event run/id "memory.retrieved" {
+    ^count retrieved_memory/count
+    ^text retrieved_memory/text
+  })
+  (complete_workflow_step run/id workflow_state {^count retrieved_memory/count})
+
+  (loop
+    (if (stop_loop || (terminal_run_state run/state))
+      (break)
+    )
+    (if (step_count >= run/budgets/steps)
+      (fail_workflow run/id workflow_state "step budget exceeded")
+      (transition_run run/id "timed_out" {^reason "step budget exceeded"})
+      (break)
+    )
+    (if (deadline_exceeded run/deadline_at_ms)
+      (fail_workflow run/id workflow_state "deadline exceeded")
+      (transition_run run/id "timed_out" {^reason "deadline exceeded"})
+      (break)
+    )
+
+    (step_count += 1)
+    (var available_tools (filter_tool_defs_for_skill (tool_defs) skill))
+    (start_workflow_step run/id workflow_state "model" "model" {^step step_count ^provider provider})
+    (var request (build_model_request provider run (events_for run/id) available_tools {
+      ^profile (run_options/profile || "fake")
+      ^model (run_options/model || provider)
+      ^skill (if (skill == nil) "" else skill/name)
+      ^system (if (skill == nil) "" else skill/system)
+      ^memory_text retrieved_memory/text
+    }))
+    (append_event run/id "model.request" {
+      ^step step_count
+      ^provider request/provider
+      ^profile request/profile
+      ^model request/model
+      ^skill request/skill
+      ^tool_count request/tools/.size
+    })
+    (var response (call_model request/provider request))
+    (if (response/ok == false)
+      (var error_info (response .get "error_info" {}))
+      (var raw_model_error (response .get "error" nil))
+      (var model_error (if (raw_model_error == nil) "" else raw_model_error/.to_s))
+      (if model_error/.empty
+        (var info_message (if (error_info is Map) ((error_info .get "message" "") .to_s) else ""))
+        (if info_message/.not_empty
+          (model_error = info_message)
+         else
+          (model_error = "model failed")
+        )
+      )
+      (fail_workflow_step run/id workflow_state model_error)
+      (fail_workflow run/id workflow_state model_error)
+      (append_event run/id "model.error" {
+        ^step step_count
+        ^provider provider
+        ^error model_error
+        ^error_info error_info
+      })
+      (fail_run run/id model_error)
+      (break)
+    )
+    (append_event run/id "model.response" {
+      ^step step_count
+      ^provider request/provider
+      ^kind (response .get "kind")
+      ^content (response .get "content")
+      ^tool_calls (response_tool_calls response)
+      ^duration_ms (response .get "duration_ms" 0)
+    })
+    (var response_kind ((response .get "kind" "") .to_s))
+    (var response_content ((response .get "content" "") .to_s))
+    (var response_duration (response .get "duration_ms" 0))
+    (complete_workflow_step run/id workflow_state {^kind response_kind ^duration_ms response_duration})
+
+    (if (response_kind == "final")
+      (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count})
+      (complete_run run/id response_content)
+      (var completed_summary (run_summary run/id))
+      (var memory_fact (extract_memory_from_run run completed_summary response_content))
+      (append_event run/id "memory.written" {
+        ^fact_id (memory_fact .get "id")
+        ^kind (memory_fact .get "kind")
+        ^text (memory_fact .get "text")
+      })
+      (complete_workflow_step run/id workflow_state {^state "completed"})
+      (complete_workflow run/id workflow_state {^state "completed"})
+      (break)
+    )
+
+    (if (response_kind != "tool_calls")
+      (var reason #"Unknown model response kind: #{response_kind}")
+      (fail_workflow run/id workflow_state reason)
+      (fail_run run/id reason)
+      (break)
+    )
+
+    (var requested_tool_calls (response_tool_calls response))
+    (var tool_index 0)
+    (var tool_batch_failed false)
+    (var tool_batch_error "")
+    (start_workflow_step run/id workflow_state "tool_batch" "tools" {^step step_count ^tool_call_count requested_tool_calls/.size})
+    (while (tool_index < requested_tool_calls/.size)
+      (var tool_call (requested_tool_calls .get tool_index))
+      (if (tool_call_count >= run/budgets/tool_calls)
+        (tool_batch_failed = true)
+        (tool_batch_error = "tool call budget exceeded")
+        (fail_run run/id tool_batch_error)
+        (stop_loop = true)
+        (break)
+      )
+      (tool_call_count += 1)
+      (var result (invoke_tool run/id tool_call/name tool_call/args))
+      (if (run_failed_tool result)
+        (tool_batch_failed = true)
+        (tool_batch_error = (text_or result/error "tool failed"))
+        (fail_run run/id tool_batch_error)
+        (stop_loop = true)
+        (break)
+      )
+      (tool_index += 1)
+    )
+    (if tool_batch_failed
+      (fail_workflow_step run/id workflow_state tool_batch_error)
+      (fail_workflow run/id workflow_state tool_batch_error)
+     else
+      (complete_workflow_step run/id workflow_state {^executed tool_index})
+    )
+
+    (if stop_loop
+      (break)
+    )
+  )
+
+  (run_summary run/id)
+)
+
+(fn $ns/run_agent [goal session = "local" budgets = {}]
+  (run_agent_with_options goal session budgets {})
+)

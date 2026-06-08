@@ -1,0 +1,81 @@
+# Event model and in-memory event store for the first GeneClaw vertical slice.
+
+(import append_event_record read_event_records clear_store from "kernel/storage")
+
+(var EVENT_STREAMS {})
+
+(fn normalize_event_data [data]
+  (if (data is Map)
+    data
+  else
+    {}
+  )
+)
+
+(fn event_stream_for [run_id]
+  (if_not (EVENT_STREAMS .contains run_id)
+    (EVENT_STREAMS .set run_id (read_event_records run_id))
+  )
+  (EVENT_STREAMS .get run_id)
+)
+
+(fn $ns/reset_events []
+  (EVENT_STREAMS = {})
+  (clear_store)
+  true
+)
+
+(fn $ns/reset_event_cache []
+  (EVENT_STREAMS = {})
+  true
+)
+
+(fn $ns/append_event [run_id event_type data = {}]
+  (var events (event_stream_for run_id))
+  (var event {
+    ^run_id run_id
+    ^index events/.size
+    ^type event_type
+    ^at_ms gene/now/.call/.to_i
+    ^data (normalize_event_data data)
+  })
+  (events .append event)
+  (append_event_record run_id event)
+  event
+)
+
+(fn $ns/events_for [run_id]
+  (event_stream_for run_id)
+)
+
+(fn $ns/event_count [run_id]
+  (var events (events_for run_id))
+  events/.size
+)
+
+(fn $ns/has_event_type [events event_type]
+  (var found false)
+  (var index 0)
+  (while (index < events/.size)
+    (var entry (events .get index))
+    (if (entry/type == event_type)
+      (found = true)
+      (break)
+    )
+    (index += 1)
+  )
+  found
+)
+
+(fn $ns/last_event_of_type [events event_type]
+  (var found nil)
+  (var index 0)
+  (while (index < events/.size)
+    (var entry (events .get index))
+    (if (entry/type == event_type)
+      (found = entry)
+    )
+    (index += 1)
+  )
+  found
+)

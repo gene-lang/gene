@@ -1,0 +1,49 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import memory_search memory_recent memory_context rebuild_memory_index from "memory/store")
+(import search_memory_index from "storage/sqlite_index")
+(import run_agent from "agent_loop")
+
+(set_store_root "/tmp/geneclaw-new-test-memory-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var first (run_agent "remember bananas" "cli" {^steps 4 ^tool_calls 2}))
+(assert (first/state == "completed"))
+(var first_events (events_for first/id))
+(assert (has_event_type first_events "memory.retrieved"))
+(assert (has_event_type first_events "memory.written"))
+
+(var facts (memory_search "bananas" "cli" 5))
+(assert (facts/.size == 1))
+(assert (facts/0/text .contains "remember bananas"))
+(assert (facts/0/final .contains "echo: remember bananas"))
+
+(assert ((rebuild_memory_index) >= 1))
+(var indexed (search_memory_index (store_root) "bananas" "cli" 5))
+(assert (indexed/ok == true))
+(assert (indexed/facts/.size == 1))
+(assert (indexed/facts/0/text .contains "remember bananas"))
+
+(var recent (memory_recent "cli" 5))
+(assert (recent/.size == 1))
+
+(var context (memory_context "bananas" "cli" 5))
+(assert (context/count == 1))
+(assert (context/text .contains "remember bananas"))
+
+(var second (run_agent "bananas followup" "cli" {^steps 4 ^tool_calls 2}))
+(assert (second/state == "completed"))
+(var second_events (events_for second/id))
+(var retrieved (last_event_of_type second_events "memory.retrieved"))
+(var retrieved_data (retrieved .get "data"))
+(assert ((retrieved_data .get "count") >= 1))
+(assert ((retrieved_data .get "text") .contains "remember bananas"))
+
+(println "ok")

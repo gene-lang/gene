@@ -1,0 +1,188 @@
+# REST-style channel adapter functions.
+
+(import command_envelope envelope_run_options from "channels/envelopes")
+(import run_agent_with_options from "agent_loop")
+(import replay_run cancel_run from "kernel/runs")
+(import events_for from "kernel/events")
+(import memory_search from "memory/store")
+(import schedule_job scheduler_jobs run_due_jobs from "scheduler/jobs")
+(import tool_defs from "tools/registry")
+(import compile_loaded_skill from "skills/compiler")
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn parse_body [body]
+  (if (body is Map)
+    body
+   elif (body is String)
+    (ensure_map (try (gene/json/parse body) catch * {}))
+   else
+    {}
+  )
+)
+
+(fn response [status body]
+  {^status status ^body body}
+)
+
+(fn path_parts [path]
+  (var parts [])
+  (var raw (((path || "") .to_s) .split "/"))
+  (var index 0)
+  (while (index < raw/.size)
+    (var part ((raw .get index) .trim))
+    (if part/.not_empty
+      (parts .append part)
+    )
+    (index += 1)
+  )
+  parts
+)
+
+(fn create_run_response [body]
+  (var envelope (command_envelope
+    "rest"
+    (body/text || body/goal || "")
+    (body/session || "rest")
+    (body/user || "local-operator")
+    {^skill (body/skill || "")
+      ^workflow (body/workflow || "")
+      ^provider (body/provider || "")
+      ^profile (body/profile || "")
+      ^model (body/model || "")
+      ^attachments (body/attachments || [])}))
+  (var summary (run_agent_with_options envelope/text envelope/session {} (envelope_run_options envelope)))
+  (response 200 {^command envelope ^run summary})
+)
+
+(fn run_events_response [run_id]
+  (response 200 {^run_id run_id ^events (events_for run_id)})
+)
+
+(fn run_status_response [run_id]
+  (var summary (replay_run run_id))
+  (if (summary == nil)
+    (response 404 {^error #"Run not found: #{run_id}"})
+   else
+    (response 200 summary)
+  )
+)
+
+(fn cancel_response [run_id]
+  (try
+    (var run (cancel_run run_id "cancelled from rest"))
+    (response 200 (replay_run run/id))
+   catch *
+    (response 400 {^error $ex/message})
+  )
+)
+
+(fn memory_search_response [body]
+  (var query ((body/query || "") .to_s))
+  (var session ((body/session || "") .to_s))
+  (response 200 {^query query ^session session ^facts (memory_search query session 10)})
+)
+
+(fn $ns/rest_create_run [body]
+  (create_run_response (parse_body body))
+)
+
+(fn $ns/rest_run_status [run_id]
+  (run_status_response run_id)
+)
+
+(fn $ns/rest_run_events [run_id]
+  (run_events_response run_id)
+)
+
+(fn $ns/rest_cancel_run [run_id]
+  (cancel_response run_id)
+)
+
+(fn $ns/rest_memory_search [body]
+  (memory_search_response (parse_body body))
+)
+
+(fn $ns/rest_schedule_job [body]
+  (var parsed (parse_body body))
+  (response 200 (schedule_job (parsed/text || "") parsed))
+)
+
+(fn $ns/rest_scheduler_jobs []
+  (response 200 {^jobs (scheduler_jobs)})
+)
+
+(fn $ns/rest_run_due_jobs [body = {}]
+  (var parsed (parse_body body))
+  (response 200 {^results (run_due_jobs (parsed/now_ms || nil))})
+)
+
+(fn $ns/rest_skills []
+  (response 200 {^skills [(compile_loaded_skill "repo-review" (tool_defs))]})
+)
+
+(fn $ns/handle_rest [method path body = {}]
+  (var method_text (((method || "GET") .to_s) .to_upper))
+  (var path_text ((path || "") .to_s))
+  (var parts (path_parts path))
+  (var parsed_body (parse_body body))
+
+  (if (parts/.size == 1)
+    (if (parts/0 == "skills")
+      (if (method_text == "GET")
+        (return (rest_skills))
+      )
+    )
+    (if (parts/0 == "runs")
+      (if (method_text == "POST")
+        (return (create_run_response parsed_body))
+      )
+    )
+    (if (parts/0 == "schedules")
+      (if (method_text == "GET")
+        (return (rest_scheduler_jobs))
+      )
+      (if (method_text == "POST")
+        (return (rest_schedule_job parsed_body))
+      )
+    )
+  )
+
+  (if (parts/.size == 3)
+    (if (parts/0 == "runs")
+      (var run_id parts/1)
+      (if (path_text .contains "/cancel")
+        (return (cancel_response run_id))
+       elif (path_text .contains "/events")
+        (return (run_events_response run_id))
+      )
+    )
+  )
+
+  (if (parts/.size == 2)
+    (if (parts/0 == "schedules")
+      (if (parts/1 == "run-due")
+        (return (rest_run_due_jobs parsed_body))
+      )
+    )
+  )
+
+  (if (parts/.size == 2)
+    (if (parts/0 == "runs")
+      (if (method_text == "GET")
+        (return (run_status_response parts/1))
+      )
+    )
+    (if (parts/0 == "memory")
+      (if (parts/1 == "search")
+        (if (method_text == "GET")
+          (return (memory_search_response parsed_body))
+        )
+      )
+    )
+  )
+
+  (response 404 {^error #"No route for #{method_text} #{path}"})
+)

@@ -1,0 +1,182 @@
+# Tool input/output codecs and schema validation.
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn normalize_args [args]
+  (ensure_map args)
+)
+
+(fn normalize_result [value]
+  (var result (if (value is Map) value else {^value value}))
+  (if ((result/status || "") == "")
+    (if ((result/error || "") == "")
+      (result .set "status" "ok")
+     else
+      (result .set "status" "failed")
+    )
+  )
+  result
+)
+
+(fn schema_required [schema]
+  (var source (ensure_map schema))
+  (ensure_array (source .get "required" []))
+)
+
+(fn schema_properties [schema]
+  (var source (ensure_map schema))
+  (ensure_map (source .get "properties" {}))
+)
+
+(fn schema_type [schema]
+  (var source (ensure_map schema))
+  ((source .get "type" "") .to_s)
+)
+
+(fn arg_value [tool_args key]
+  (var source (ensure_map tool_args))
+  (source .get key nil)
+)
+
+(fn value_type_name [value]
+  (if (value is String)
+    "string"
+   elif (value is Bool)
+    "boolean"
+   elif (value is Int)
+    "integer"
+   elif (value is Float)
+    "number"
+   elif (value is Map)
+    "object"
+   elif (value is Array)
+    "array"
+   elif (value == nil)
+    "nil"
+   else
+    "value"
+  )
+)
+
+(fn value_matches_type [value expected]
+  (var expected_type ((expected || "") .to_s))
+  (if expected_type/.empty
+    (return true)
+  )
+  (if (expected_type == "string")
+    (return (value is String))
+  )
+  (if (expected_type == "integer")
+    (return (value is Int))
+  )
+  (if (expected_type == "number")
+    (if (value is Int)
+      (return true)
+    )
+    (return (value is Float))
+  )
+  (if (expected_type == "boolean")
+    (return (value is Bool))
+  )
+  (if (expected_type == "object")
+    (return (value is Map))
+  )
+  (if (expected_type == "array")
+    (return (value is Array))
+  )
+  true
+)
+
+(fn validate_required [tool_name args required]
+  (var missing [])
+  (var index 0)
+  (while (index < required/.size)
+    (var key (((required .get index) || "") .to_s))
+    (if key/.not_empty
+      (if ((args .get key nil) == nil)
+        (missing .append key)
+      )
+    )
+    (index += 1)
+  )
+  (if missing/.not_empty
+    {^ok false ^status "failed" ^missing missing ^invalid [] ^error #"Missing required arguments for #{tool_name}: #{(missing .join ", ")}"}
+   else
+    {^ok true ^missing [] ^invalid []}
+  )
+)
+
+(fn invalid_property [tool_args properties key]
+  (var key_name ((key || "") .to_s))
+  (var value (arg_value tool_args key_name))
+  (if (value == nil)
+    (return nil)
+  )
+  (var property_schema (ensure_map (properties .get key {})))
+  (if (property_schema .empty)
+    (property_schema = (ensure_map (properties .get key_name {})))
+  )
+  (var expected (schema_type property_schema))
+  (if (expected .empty)
+    (return nil)
+  )
+  (if (value_matches_type value expected)
+    (return nil)
+  )
+  {^field key_name ^expected expected ^actual (value_type_name value)}
+)
+
+(fn validate_property_types [tool_args properties]
+  (var invalid [])
+  (var keys properties/.keys)
+  (var index 0)
+  (while (index < keys/.size)
+    (var key (keys .get index))
+    (var item (invalid_property tool_args properties key))
+    (if (item != nil)
+      (invalid .append item)
+    )
+    (index += 1)
+  )
+  invalid
+)
+
+(fn invalid_message [tool_name invalid]
+  (var parts [])
+  (var index 0)
+  (while (index < invalid/.size)
+    (var item (invalid .get index))
+    (parts .append #"#{item/field} expected #{item/expected}, got #{item/actual}")
+    (index += 1)
+  )
+  #"Invalid argument types for #{tool_name}: #{(parts .join ", ")}"
+)
+
+(fn $ns/validate_tool_args [tool_name schema args]
+  (var tool_args (normalize_args args))
+  (var required_result (validate_required tool_name tool_args (schema_required schema)))
+  (if (required_result/ok == false)
+    (return required_result)
+  )
+
+  (var invalid (validate_property_types tool_args (schema_properties schema)))
+  (if invalid/.not_empty
+    {^ok false ^status "failed" ^missing [] ^invalid invalid ^error (invalid_message tool_name invalid)}
+   else
+    {^ok true ^status "ok" ^missing [] ^invalid []}
+  )
+)
+
+(fn $ns/normalize_tool_args [args]
+  (normalize_args args)
+)
+
+(fn $ns/normalize_tool_result [value]
+  (normalize_result value)
+)

@@ -1,0 +1,41 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import run_agent from "agent_loop")
+(import tui_run_view tui_dashboard render_tui_run_view render_tui_dashboard from "channels/tui")
+
+(set_store_root "/tmp/geneclaw-new-test-tui-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var summary (run_agent "review tui path" "tui-session" {^steps 4 ^tool_calls 2}))
+(assert (summary/state == "completed"))
+
+(var run_view (tui_run_view summary/id 5))
+(assert (run_view/ok == true))
+(assert (run_view/summary/id == summary/id))
+(assert (run_view/events/.size <= 5))
+(assert (run_view/events/.size > 0))
+(var rendered_run (render_tui_run_view run_view))
+(assert (rendered_run .contains summary/id))
+(assert (rendered_run .contains "Events"))
+
+(var missing_view (tui_run_view "missing-run" 5))
+(assert (missing_view/ok == false))
+(assert ((render_tui_run_view missing_view) .contains "Run not found"))
+
+(var dashboard (tui_dashboard [summary/id] "tui"))
+(assert (dashboard/runs/.size == 1))
+(assert (dashboard/runs/0/id == summary/id))
+(assert (dashboard/runs/0/event_count > 0))
+(assert (dashboard/memory/.size == 1))
+(var rendered_dashboard (render_tui_dashboard dashboard))
+(assert (rendered_dashboard .contains "Runs"))
+(assert (rendered_dashboard .contains summary/id))
+(assert (rendered_dashboard .contains "Memory: 1"))
+
+(println "ok")

@@ -1,0 +1,89 @@
+#!/usr/bin/env gene run
+
+(import reset_runs create_run from "kernel/runs")
+(import set_store_root from "kernel/storage")
+(import reset_tools register_tool invoke_tool from "tools/registry")
+(import register_builtin_tools set_workspace_root from "tools/builtin")
+(import validate_tool_args normalize_tool_args normalize_tool_result from "tools/codecs")
+
+(set_store_root "/tmp/geneclaw-new-test-tool-codecs-store")
+(reset_runs)
+(reset_tools)
+
+(var schema {
+  ^type "object"
+  ^required ["name"]
+  ^properties {
+    ^name {^type "string"}
+    ^count {^type "integer"}
+    ^active {^type "boolean"}
+    ^labels {^type "array"}
+    ^metadata {^type "object"}
+  }
+})
+
+(var missing (validate_tool_args "custom.echo" schema {}))
+(assert (missing/ok == false))
+(assert (missing/status == "failed"))
+(assert (missing/error .contains "Missing required arguments"))
+(assert (missing/missing/0 == "name"))
+
+(var invalid (validate_tool_args "custom.echo" schema {^name "ok" ^count "3" ^active "yes" ^labels "a" ^metadata []}))
+(assert (invalid/ok == false))
+(assert (invalid/status == "failed"))
+(assert (invalid/error .contains "Invalid argument types"))
+(assert (invalid/error .contains "count expected integer"))
+(assert (invalid/error .contains "active expected boolean"))
+(assert (invalid/error .contains "labels expected array"))
+(assert (invalid/error .contains "metadata expected object"))
+
+(var valid (validate_tool_args "custom.echo" schema {^name "ok" ^count 3 ^active false ^labels ["a"] ^metadata {^source "test"}}))
+(assert (valid/ok == true))
+(assert (valid/status == "ok"))
+
+(var normalized_args (normalize_tool_args "not-a-map"))
+(assert (normalized_args .empty))
+
+(var normalized_result (normalize_tool_result "plain"))
+(assert (normalized_result/status == "ok"))
+(assert (normalized_result/value == "plain"))
+
+(var errored_result (normalize_tool_result {^error "failed inline"}))
+(assert (errored_result/status == "failed"))
+
+(fn should_not_run [args]
+  {^status "ok" ^output "handler ran"}
+)
+
+(register_tool
+  "custom.echo"
+  "Echo with a typed schema."
+  schema
+  {^status "String" ^output "String"}
+  should_not_run)
+
+(var run (create_run "tool codec validation" "test"))
+(var registry_invalid (invoke_tool run/id "custom.echo" {^name 123 ^count "bad"}))
+(assert (registry_invalid/status == "failed"))
+(assert (registry_invalid/error .contains "Invalid argument types"))
+(assert ((registry_invalid/error .contains "handler ran") == false))
+
+(var workspace "/tmp/geneclaw-new-test-tool-codecs-workspace")
+(system/shell #"rm -rf '#{workspace}' && mkdir -p '#{workspace}'")
+(gene/io/write #"#{workspace}/sample.txt" "codec")
+(set_workspace_root workspace)
+(register_builtin_tools)
+
+(var bad_read (invoke_tool run/id "file.read" {^path 123}))
+(assert (bad_read/status == "failed"))
+(assert (bad_read/error .contains "path expected string"))
+
+(var bad_shell (invoke_tool run/id "shell.run" {^cmd "printf bad" ^timeout_ms "soon"}))
+(assert (bad_shell/status == "failed"))
+(assert (bad_shell/error .contains "timeout_ms expected integer"))
+
+(var good_shell (invoke_tool run/id "shell.run" {^cmd "printf ok" ^timeout_ms 10}))
+(assert (good_shell/status == "ok"))
+(assert (good_shell/output .contains "ok"))
+
+(println "ok")

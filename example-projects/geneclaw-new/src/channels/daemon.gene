@@ -1,0 +1,102 @@
+# Host-agnostic REST daemon state wrapper.
+
+(import handle_rest from "channels/rest")
+
+(var NEXT_DAEMON_ID 1)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn option_text [options key fallback]
+  (var source (ensure_map options))
+  (var value (source .get key nil))
+  (if (value == nil)
+    (return fallback)
+  )
+  (var text (value .to_s))
+  (if text/.empty fallback else text)
+)
+
+(fn option_int [options key fallback]
+  (var source (ensure_map options))
+  (var value (source .get key nil))
+  (if (value == nil)
+    (return fallback)
+  )
+  (try value/.to_i catch * fallback)
+)
+
+(fn response_status [response]
+  (if (response is Map)
+    (response .get "status" 0)
+   else
+    0
+  )
+)
+
+(fn daemon_snapshot [daemon]
+  (if (daemon == nil)
+    (return nil)
+  )
+  (var requests (ensure_array (daemon .get "requests" [])))
+  {
+    ^id daemon/id
+    ^state daemon/state
+    ^host daemon/host
+    ^port daemon/port
+    ^request_count requests/.size
+    ^started_at_ms daemon/started_at_ms
+    ^stopped_at_ms (daemon .get "stopped_at_ms" 0)
+  }
+)
+
+(fn $ns/start_rest_daemon [options = {}]
+  (var daemon_id #"rest-daemon-#{NEXT_DAEMON_ID}")
+  (NEXT_DAEMON_ID += 1)
+  {
+    ^id daemon_id
+    ^state "running"
+    ^host (option_text options "host" "127.0.0.1")
+    ^port (option_int options "port" 8765)
+    ^started_at_ms gene/now/.call/.to_i
+    ^stopped_at_ms 0
+    ^requests []
+  }
+)
+
+(fn $ns/stop_rest_daemon [daemon]
+  (if (daemon == nil)
+    (return nil)
+  )
+  (daemon .set "state" "stopped")
+  (daemon .set "stopped_at_ms" gene/now/.call/.to_i)
+  (daemon_snapshot daemon)
+)
+
+(fn $ns/rest_daemon_status [daemon]
+  (daemon_snapshot daemon)
+)
+
+(fn $ns/rest_daemon_handle [daemon method path body = {}]
+  (if (daemon == nil)
+    (return {^status 503 ^body {^error "REST daemon is not started"}})
+  )
+  (if (daemon/state != "running")
+    (return {^status 503 ^body {^error #"REST daemon is #{daemon/state}"}})
+  )
+  (var response (handle_rest method path body))
+  (var requests (ensure_array (daemon .get "requests" [])))
+  (requests .append {
+    ^method ((method || "GET") .to_s)
+    ^path ((path || "") .to_s)
+    ^status (response_status response)
+    ^at_ms gene/now/.call/.to_i
+  })
+  (daemon .set "requests" requests)
+  response
+)

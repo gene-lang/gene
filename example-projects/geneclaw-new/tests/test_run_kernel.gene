@@ -1,0 +1,33 @@
+#!/usr/bin/env gene run
+
+(import reset_runs create_run transition_run complete_run run_summary from "kernel/runs")
+(import events_for event_count has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+
+(set_store_root "/tmp/geneclaw-new-test-run-kernel")
+(reset_runs)
+
+(var run (create_run "inspect repo" "cli"))
+(assert (run/id == "run-1"))
+(assert (run/state == "queued"))
+(assert ((event_count run/id) == 1))
+(assert (has_event_type (events_for run/id) "run.started"))
+
+(transition_run run/id "running")
+(assert (run/state == "running"))
+(assert ((event_count run/id) == 2))
+(assert (has_event_type (events_for run/id) "run.running"))
+
+(complete_run run/id "done")
+(assert (run/state == "completed"))
+(assert (run/final == "done"))
+(assert (has_event_type (events_for run/id) "run.completed"))
+
+(var completed (last_event_of_type (events_for run/id) "run.completed"))
+(assert (completed/data/detail/final == "done"))
+
+(var summary (run_summary run/id))
+(assert (summary/state == "completed"))
+(assert (summary/event_count == 3))
+
+(println "ok")

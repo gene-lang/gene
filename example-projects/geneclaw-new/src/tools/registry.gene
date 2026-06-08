@@ -1,0 +1,109 @@
+# Tool registry with bounded execution contracts.
+
+(import append_event from "kernel/events")
+(import write_tool_output from "kernel/storage")
+(import output_limit_from_args from "kernel/limits")
+(import normalize_tool_args normalize_tool_result validate_tool_args from "tools/codecs")
+
+(var TOOLS {})
+
+(fn bound_text_field [run_id tool_name result key max_output_bytes]
+  (var value (result .get key nil))
+  (if (value is String)
+    (if (value/.size > max_output_bytes)
+      (var end_index (max_output_bytes - 1))
+      (var stored (write_tool_output run_id tool_name value))
+      (result .set key #"#{(value .substr 0 end_index)}...[truncated]")
+      (result .set #"#{key}_ref" stored/ref)
+      (result .set #"#{key}_bytes" stored/bytes)
+      (result .set #"#{key}_limit" max_output_bytes)
+      (result .set #"#{key}_truncated" true)
+    )
+  )
+  result
+)
+
+(fn bound_tool_result [run_id tool_name result args]
+  (var max_output_bytes (output_limit_from_args args))
+  (bound_text_field run_id tool_name result "output" max_output_bytes)
+  (bound_text_field run_id tool_name result "content" max_output_bytes)
+  result
+)
+
+(fn $ns/reset_tools []
+  (TOOLS = {})
+  true
+)
+
+(fn $ns/register_tool [name description input_schema output_schema handler]
+  (TOOLS .set name {
+    ^name name
+    ^description description
+    ^input input_schema
+    ^output output_schema
+    ^handler handler
+  })
+  true
+)
+
+(fn $ns/tool_names []
+  (var names [])
+  (var keys TOOLS/.keys)
+  (var index 0)
+  (while (index < keys/.size)
+    (names .append (keys .get index))
+    (index += 1)
+  )
+  names
+)
+
+(fn $ns/tool_def [name]
+  (TOOLS .get name nil)
+)
+
+(fn $ns/tool_defs []
+  (var defs [])
+  (var keys TOOLS/.keys)
+  (var index 0)
+  (while (index < keys/.size)
+    (var name (keys .get index))
+    (defs .append (TOOLS .get name))
+    (index += 1)
+  )
+  defs
+)
+
+(fn $ns/invoke_tool [run_id tool_name args = {}]
+  (var tool (tool_def tool_name))
+  (var tool_args (normalize_tool_args args))
+  (append_event run_id "tool.call" {^tool tool_name ^args tool_args})
+  (if (tool == nil)
+    (var missing {^status "failed" ^error #"Unknown tool: #{tool_name}"})
+    (append_event run_id "tool.result" {^tool tool_name ^status "failed" ^result missing})
+    (return missing)
+  )
+
+  (var validation (validate_tool_args tool_name tool/input tool_args))
+  (if (validation/ok == false)
+    (append_event run_id "tool.result" {^tool tool_name ^status "failed" ^result validation})
+    (return validation)
+  )
+
+  (var started_at gene/now/.call/.to_i)
+  (try
+    (var result (bound_tool_result run_id tool_name (normalize_tool_result (tool/handler tool_args)) tool_args))
+    (var duration_ms (gene/now/.call/.to_i - started_at))
+    (result .set "duration_ms" duration_ms)
+    (append_event run_id "tool.result" {
+      ^tool tool_name
+      ^status result/status
+      ^result result
+      ^duration_ms duration_ms
+    })
+    result
+  catch *
+    (var failed {^status "failed" ^error $ex/message})
+    (append_event run_id "tool.result" {^tool tool_name ^status "failed" ^result failed})
+    failed
+  )
+)

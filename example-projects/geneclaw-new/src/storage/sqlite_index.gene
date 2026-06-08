@@ -1,0 +1,195 @@
+# SQLite-backed query index for event logs and memory facts.
+
+(fn ensure_dir [path]
+  (system/shell #"mkdir -p '#{path}'")
+)
+
+(fn db_dir [root]
+  #"#{root}/index"
+)
+
+(fn db_path [root]
+  #"#{(db_dir root)}/geneclaw.sqlite"
+)
+
+(fn open_db [root]
+  (ensure_dir (db_dir root))
+  (genex/sqlite/open (db_path root))
+)
+
+(fn serialize_value [value]
+  (gene/serdes/serialize value)
+)
+
+(fn deserialize_value [text]
+  (gene/serdes/deserialize text)
+)
+
+(fn ensure_schema [db]
+  (db .exec "create table if not exists run_events (run_id text not null, event_index integer not null, event_type text not null, at_ms integer not null, data_gene text not null, event_gene text not null, primary key (run_id, event_index))")
+  (db .exec "create index if not exists idx_run_events_type on run_events (event_type)")
+  (db .exec "create table if not exists memory_facts (id text primary key, session text not null, run_id text not null, kind text not null, goal text not null, final text not null, text text not null, created_at_ms integer not null, fact_gene text not null)")
+  (db .exec "create index if not exists idx_memory_facts_session on memory_facts (session)")
+  (db .exec "create virtual table if not exists memory_facts_fts using fts5(id unindexed, session unindexed, text, goal, final)")
+  true
+)
+
+(fn fts_query [query]
+  (var terms [])
+  (var raw ((((query || "") .to_s) .to_lower) .split " "))
+  (var index 0)
+  (while (index < raw/.size)
+    (var term ((raw .get index) .trim))
+    (term = (term .replace_all "\"" ""))
+    (term = (term .replace_all "'" ""))
+    (term = (term .replace_all ":" ""))
+    (term = (term .replace_all "*" ""))
+    (if (term/.size > 1)
+      (terms .append #"#{term}*")
+    )
+    (index += 1)
+  )
+  (terms .join " OR ")
+)
+
+(fn rows_to_events [rows]
+  (var events [])
+  (var index 0)
+  (while (index < rows/.size)
+    (var row (rows .get index))
+    (events .append (deserialize_value (row .get 0)))
+    (index += 1)
+  )
+  events
+)
+
+(fn rows_to_facts [rows]
+  (var facts [])
+  (var index 0)
+  (while (index < rows/.size)
+    (var row (rows .get index))
+    (facts .append (deserialize_value (row .get 0)))
+    (index += 1)
+  )
+  facts
+)
+
+(fn $ns/sqlite_index_path [root]
+  (db_path root)
+)
+
+(fn $ns/index_event_record [root run_id event]
+  (try
+    (var db (open_db root))
+    (ensure_schema db)
+    (db .exec
+      "insert or replace into run_events (run_id, event_index, event_type, at_ms, data_gene, event_gene) values (?, ?, ?, ?, ?, ?)"
+      run_id
+      event/index
+      event/type
+      (event/at_ms || 0)
+      (serialize_value event/data)
+      (serialize_value event))
+    (db .close)
+    true
+  catch *
+    false
+  )
+)
+
+(fn $ns/index_memory_fact [root fact]
+  (try
+    (var source (if (fact is Map) fact else {}))
+    (var fact_id ((source .get "id" "") .to_s))
+    (var fact_session ((source .get "session" "") .to_s))
+    (var fact_run_id ((source .get "run_id" "") .to_s))
+    (var fact_kind ((source .get "kind" "") .to_s))
+    (var fact_goal ((source .get "goal" "") .to_s))
+    (var fact_final ((source .get "final" "") .to_s))
+    (var fact_text ((source .get "text" "") .to_s))
+    (var fact_created_at (source .get "created_at_ms" 0))
+    (var fact_gene (serialize_value fact))
+    (var db (open_db root))
+    (ensure_schema db)
+    (db .exec
+      "insert or replace into memory_facts (id, session, run_id, kind, goal, final, text, created_at_ms, fact_gene) values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      fact_id
+      fact_session
+      fact_run_id
+      fact_kind
+      fact_goal
+      fact_final
+      fact_text
+      fact_created_at
+      fact_gene)
+    (db .exec "delete from memory_facts_fts where id = ?" fact_id)
+    (db .exec
+      "insert into memory_facts_fts (id, session, text, goal, final) values (?, ?, ?, ?, ?)"
+      fact_id
+      fact_session
+      fact_text
+      fact_goal
+      fact_final)
+    (db .close)
+    true
+  catch *
+    false
+  )
+)
+
+(fn $ns/indexed_events [root run_id event_type = ""]
+  (try
+    (var db (open_db root))
+    (ensure_schema db)
+    (var event_type_text ((event_type || "") .to_s))
+    (var rows [])
+    (if event_type_text/.empty
+      (rows = (db .query "select event_gene from run_events where run_id = ? order by event_index" run_id))
+    else
+      (rows = (db .query "select event_gene from run_events where run_id = ? and event_type = ? order by event_index" run_id event_type_text))
+    )
+    (var events (rows_to_events rows))
+    (db .close)
+    events
+  catch *
+    []
+  )
+)
+
+(fn $ns/search_memory_index [root query session = "" limit = 5]
+  (try
+    (var db (open_db root))
+    (ensure_schema db)
+    (var session_filter (((session || "") .to_s) .trim))
+    (var query_text (((query || "") .to_s) .trim))
+    (var rows [])
+
+    (if query_text/.empty
+      (if session_filter/.empty
+        (rows = (db .query "select fact_gene from memory_facts order by created_at_ms desc limit ?" limit))
+      else
+        (rows = (db .query "select fact_gene from memory_facts where session = ? order by created_at_ms desc limit ?" session_filter limit))
+      )
+      (var facts (rows_to_facts rows))
+      (db .close)
+      (return {^ok true ^facts facts})
+    )
+
+    (var match_query (fts_query query_text))
+    (if match_query/.empty
+      (db .close)
+      (return {^ok true ^facts []})
+    )
+
+    (if session_filter/.empty
+      (rows = (db .query "select m.fact_gene from memory_facts m join memory_facts_fts f on m.id = f.id where memory_facts_fts match ? order by m.created_at_ms desc limit ?" match_query limit))
+    else
+      (rows = (db .query "select m.fact_gene from memory_facts m join memory_facts_fts f on m.id = f.id where m.session = ? and memory_facts_fts match ? order by m.created_at_ms desc limit ?" session_filter match_query limit))
+    )
+    (var facts (rows_to_facts rows))
+    (db .close)
+    {^ok true ^facts facts}
+  catch *
+    {^ok false ^facts [] ^error $ex/message}
+  )
+)

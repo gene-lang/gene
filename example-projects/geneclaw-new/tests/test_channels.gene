@@ -1,0 +1,102 @@
+#!/usr/bin/env gene run
+
+(import reset_runs create_run from "kernel/runs")
+(import has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import register_builtin_tools from "tools/builtin")
+(import handle_rest rest_cancel_run rest_run_events rest_memory_search from "channels/rest")
+(import slack_command_envelope slack_status_payload slack_final_payload from "channels/slack")
+
+(set_store_root "/tmp/geneclaw-new-test-channels-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+
+(var queued (create_run "cancel through rest" "rest-session"))
+(var cancelled (rest_cancel_run queued/id))
+(assert (cancelled/status == 200))
+(assert ((gene/serdes/serialize cancelled) .contains "cancelled"))
+
+(var created (handle_rest "POST" "/runs" {
+  ^text "review channel path"
+  ^session "rest-session"
+  ^skill "repo-review"
+  ^workflow "default"
+  ^provider "fake"
+  ^profile "fast"
+  ^model "fake"
+}))
+(assert (created/status == 200))
+(var created_body (created .get "body"))
+(var created_run (created_body .get "run"))
+(var created_command (created_body .get "command"))
+(assert (created_run/state == "completed"))
+(assert (created_run/final .contains "echo: review channel path"))
+(assert (created_command/channel == "rest"))
+(assert (created_command/skill == "repo-review"))
+(assert (created_command/workflow == "default"))
+(assert (created_command/provider == "fake"))
+(assert (created_command/profile == "fast"))
+(assert (created_command/model == "fake"))
+
+(var run_id created_run/id)
+(var status (handle_rest "GET" #"/runs/#{run_id}" {}))
+(assert (status/status == 200))
+(var status_body (status .get "body"))
+(assert (status_body/id == run_id))
+(assert (status_body/state == "completed"))
+
+(var events_response (rest_run_events run_id))
+(assert (events_response/status == 200))
+(var event_body (events_response .get "body"))
+(var event_items event_body/events)
+(assert (event_items/.size >= 1))
+(assert (has_event_type event_items "skill.loaded"))
+(assert (has_event_type event_items "memory.written"))
+(var request_event (last_event_of_type event_items "model.request"))
+(assert (request_event/data/provider == "fake"))
+(assert (request_event/data/profile == "fast"))
+(assert (request_event/data/model == "fake"))
+(var workflow_started (last_event_of_type event_items "workflow.started"))
+(assert (workflow_started/data/workflow == "default"))
+
+(var memory_response (rest_memory_search {^query "channel" ^session "rest-session"}))
+(assert (memory_response/status == 200))
+(var memory_body (memory_response .get "body"))
+(var memory_facts memory_body/facts)
+(assert (memory_facts/.size == 1))
+
+(var slack_envelope (slack_command_envelope {
+  ^text "review slack path"
+  ^channel_id "C123"
+  ^thread_ts "T456"
+  ^user_id "U789"
+  ^skill "repo-review"
+  ^workflow "default"
+  ^provider "fake"
+  ^profile "fast"
+  ^model "fake"
+}))
+(assert (slack_envelope/channel == "slack"))
+(assert (slack_envelope/session == "slack:C123:T456"))
+(assert (slack_envelope/user == "U789"))
+(assert (slack_envelope/skill == "repo-review"))
+(assert (slack_envelope/workflow == "default"))
+(assert (slack_envelope/provider == "fake"))
+(assert (slack_envelope/profile == "fast"))
+(assert (slack_envelope/model == "fake"))
+
+(var status_payload (slack_status_payload slack_envelope created_run))
+(assert (status_payload/text .contains run_id))
+(var status_metadata status_payload/metadata)
+(assert ((status_metadata .get "run_id") == run_id))
+
+(var final_payload (slack_final_payload slack_envelope created_run))
+(assert (final_payload/text .contains "review channel path"))
+(var final_metadata final_payload/metadata)
+(assert ((final_metadata .get "state") == "completed"))
+
+(println "ok")

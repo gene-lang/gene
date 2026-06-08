@@ -1,0 +1,28 @@
+# Deterministic model adapter used before real providers exist.
+
+(import has_event_type last_event_of_type from "kernel/events")
+
+(fn $ns/fake_model_step [run events tool_names]
+  (if ((has_event_type events "tool.result") == false)
+    {
+      ^kind "tool_calls"
+      ^content "I will call the echo tool."
+      ^tool_calls [
+        {
+          ^id "fake-tool-call-1"
+          ^name "fake.echo"
+          ^args {^text run/goal}
+        }
+      ]
+    }
+  else
+    (var last_result_event (last_event_of_type events "tool.result"))
+    (var summary (last_result_event/data/result/summary || last_result_event/data/result/error || "tool completed"))
+    {
+      ^kind "final"
+      ^content #"Done: #{summary}"
+      ^tool_calls []
+    }
+  )
+)
+

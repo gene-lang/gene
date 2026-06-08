@@ -1,0 +1,41 @@
+# Slack channel adapter helpers for trusted-local GeneClaw.
+
+(import command_envelope from "channels/envelopes")
+
+(fn $ns/slack_command_envelope [payload]
+  (command_envelope
+    "slack"
+    (payload/text || "")
+    #"slack:#{(payload/channel_id || payload/channel || "unknown")}:#{(payload/thread_ts || payload/ts || "root")}"
+    (payload/user_id || payload/user || "local-operator")
+    {^skill (payload/skill || "")
+     ^workflow (payload/workflow || "")
+     ^provider (payload/provider || "")
+     ^profile (payload/profile || "")
+     ^model (payload/model || "")
+     ^attachments (payload/files || [])})
+)
+
+(fn $ns/slack_status_payload [envelope run_summary]
+  {
+    ^channel envelope/session
+    ^text #"GeneClaw #{run_summary/id}: #{run_summary/state}"
+    ^metadata {
+      ^command_id envelope/id
+      ^run_id run_summary/id
+      ^state run_summary/state
+    }
+  }
+)
+
+(fn $ns/slack_final_payload [envelope run_summary]
+  {
+    ^channel envelope/session
+    ^text #"#{run_summary/final}"
+    ^metadata {
+      ^command_id envelope/id
+      ^run_id run_summary/id
+      ^state run_summary/state
+    }
+  }
+)

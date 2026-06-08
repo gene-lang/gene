@@ -1,0 +1,427 @@
+# Workflow checkpoint engine for the default agent loop.
+
+(import append_event from "kernel/events")
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn runtime_steps []
+  [
+    {^name "memory" ^kind "memory" ^repeatable false}
+    {^name "model" ^kind "model" ^repeatable true}
+    {^name "tool_batch" ^kind "tools" ^repeatable true}
+    {^name "finalize" ^kind "final" ^repeatable false}
+  ]
+)
+
+(fn normalize_step [step index]
+  (var source (ensure_map step))
+  (var raw_name (source .get "name" #"step-#{index}"))
+  (var name ((raw_name || #"step-#{index}") .to_s))
+  (if name/.empty
+    (name = #"step-#{index}")
+  )
+  {
+    ^name name
+    ^kind (((source .get "kind" "") || "") .to_s)
+    ^uses (ensure_array (source .get "uses" []))
+    ^model (((source .get "model" "") || "") .to_s)
+    ^repeatable (if ((source .get "repeatable" nil) == nil) false else (source .get "repeatable"))
+    ^index index
+  }
+)
+
+(fn normalize_steps [steps]
+  (var normalized [])
+  (var items (ensure_array steps))
+  (var index 0)
+  (while (index < items/.size)
+    (normalized .append (normalize_step (items .get index) index))
+    (index += 1)
+  )
+  normalized
+)
+
+(fn normalize_edge [edge index]
+  (var source (ensure_map edge))
+  {
+    ^from (((source .get "from" "") || "") .to_s)
+    ^to (((source .get "to" "") || "") .to_s)
+    ^when (((source .get "when" "") || "") .to_s)
+    ^index index
+  }
+)
+
+(fn linear_edges [steps]
+  (var edges [])
+  (var index 0)
+  (while (index < (steps/.size - 1))
+    (var from_step (steps .get index))
+    (var to_step (steps .get (index + 1)))
+    (edges .append {^from from_step/name ^to to_step/name ^when "" ^index index})
+    (index += 1)
+  )
+  edges
+)
+
+(fn normalize_edges [edges steps]
+  (var normalized [])
+  (var items (ensure_array edges))
+  (if (items/.size == 0)
+    (return (linear_edges steps))
+  )
+  (var index 0)
+  (while (index < items/.size)
+    (var edge (normalize_edge (items .get index) index))
+    (if ((edge/from .not_empty) && (edge/to .not_empty))
+      (normalized .append edge)
+    )
+    (index += 1)
+  )
+  normalized
+)
+
+(fn normalize_declared_workflow [workflow]
+  (var source (ensure_map workflow))
+  (var name (((source .get "name" "default") || "default") .to_s))
+  (var steps (normalize_steps (source .get "steps" [])))
+  {
+    ^name name
+    ^steps steps
+    ^edges (normalize_edges (source .get "edges" []) steps)
+  }
+)
+
+(fn workflow_def_name [workflow_def]
+  (var source (ensure_map workflow_def))
+  (((source .get "name" "default") || "default") .to_s)
+)
+
+(fn workflow_index_by_name [workflow_defs target_name]
+  (var target ((target_name || "") .to_s))
+  (var index 0)
+  (while (index < workflow_defs/.size)
+    (if ((workflow_def_name (workflow_defs .get index)) == target)
+      (return index)
+    )
+    (index += 1)
+  )
+  -1
+)
+
+(fn find_declared_workflow [skill_def requested_name]
+  (if (skill_def == nil)
+    (return nil)
+  )
+  (var workflows (ensure_array (skill_def .get "workflows" [])))
+  (if workflows/.empty
+    (return nil)
+  )
+  (var requested_text ((requested_name || "") .to_s))
+  (var selected_index -1)
+
+  (if requested_text/.not_empty
+    (selected_index = (workflow_index_by_name workflows requested_text))
+  )
+
+  (if (selected_index < 0)
+    (selected_index = (workflow_index_by_name workflows "default"))
+  )
+
+  (if (selected_index < 0)
+    (selected_index = 0)
+  )
+
+  (normalize_declared_workflow (workflows .get selected_index))
+)
+
+(fn workflow_step_by_name [workflow name]
+  (var steps (ensure_array (workflow/steps || [])))
+  (var index 0)
+  (while (index < steps/.size)
+    (var step (steps .get index))
+    (if (step/name == name)
+      (return step)
+    )
+    (index += 1)
+  )
+  nil
+)
+
+(fn edge_condition_matches [edge detail]
+  (var condition ((edge/when || "") .to_s))
+  (if condition/.empty
+    (return true)
+  )
+  (var source (ensure_map detail))
+  (var outcome ((source/outcome || source/status || source/result || "") .to_s))
+  (outcome == condition)
+)
+
+(fn has_incoming_edge [workflow step_name]
+  (var edges (ensure_array (workflow/edges || [])))
+  (var index 0)
+  (while (index < edges/.size)
+    (var edge (edges .get index))
+    (if (edge/to == step_name)
+      (return true)
+    )
+    (index += 1)
+  )
+  false
+)
+
+(fn first_workflow_step [workflow]
+  (var steps (ensure_array (workflow/steps || [])))
+  (if (steps/.size == 0)
+    (return nil)
+  )
+  (var index 0)
+  (while (index < steps/.size)
+    (var step (steps .get index))
+    (if ((has_incoming_edge workflow step/name) == false)
+      (return step)
+    )
+    (index += 1)
+  )
+  (steps .get 0)
+)
+
+(fn next_step_from_edges [workflow completed_name detail]
+  (var edges (ensure_array (workflow/edges || [])))
+  (var index 0)
+  (while (index < edges/.size)
+    (var edge (edges .get index))
+    (if (edge/from == completed_name)
+      (if (edge_condition_matches edge detail)
+        (if (edge/to == "done")
+          (return nil)
+        )
+        (return (workflow_step_by_name workflow edge/to))
+      )
+    )
+    (index += 1)
+  )
+  nil
+)
+
+(fn step_after_index [workflow completed_name]
+  (var steps (ensure_array (workflow/steps || [])))
+  (var index 0)
+  (while (index < steps/.size)
+    (var step (steps .get index))
+    (if (step/name == completed_name)
+      (var next_index (index + 1))
+      (if (next_index < steps/.size)
+        (return (steps .get next_index))
+      )
+      (return nil)
+    )
+    (index += 1)
+  )
+  nil
+)
+
+(fn $ns/workflow_next_step [workflow completed_step_names detail = {}]
+  (var names (ensure_array completed_step_names))
+  (if (names/.size == 0)
+    (return (first_workflow_step workflow))
+  )
+  (var completed_name ((names .get (names/.size - 1)) .to_s))
+  (var next_step (next_step_from_edges workflow completed_name detail))
+  (if (next_step != nil)
+    (return next_step)
+  )
+  (step_after_index workflow completed_name)
+)
+
+(fn $ns/select_workflow [skill_def requested_name = ""]
+  (var declared (find_declared_workflow skill_def requested_name))
+  (var workflow {
+    ^name "agent-loop"
+    ^source "runtime"
+    ^skill ""
+    ^requested ((requested_name || "") .to_s)
+    ^declared nil
+    ^declared_step_count 0
+    ^edges []
+    ^steps (normalize_steps (runtime_steps))
+  })
+
+  (if (declared != nil)
+    (workflow .set "name" declared/name)
+    (workflow .set "source" "skill")
+    (workflow .set "skill" (((skill_def .get "name" "") || "") .to_s))
+    (workflow .set "declared" declared)
+    (workflow .set "declared_step_count" declared/steps/.size)
+    (workflow .set "steps" declared/steps)
+    (workflow .set "edges" declared/edges)
+  )
+
+  (var existing_edges (ensure_array (workflow .get "edges" [])))
+  (if (existing_edges/.size == 0)
+    (workflow .set "edges" (linear_edges workflow/steps))
+  )
+
+  workflow
+)
+
+(fn $ns/start_workflow [run_id workflow]
+  (if (workflow == nil)
+    (return nil)
+  )
+  (append_event run_id "workflow.started" {
+    ^workflow workflow/name
+    ^source workflow/source
+    ^skill workflow/skill
+    ^step_count workflow/steps/.size
+    ^declared_step_count workflow/declared_step_count
+    ^edge_count workflow/edges/.size
+  })
+  {^workflow workflow ^current_step nil ^completed false ^completed_steps [] ^completed_step_names [] ^last_detail {}}
+)
+
+(fn $ns/start_workflow_step [run_id state name kind detail]
+  (if (state == nil)
+    (return nil)
+  )
+  (var workflow state/workflow)
+  (var step {^name name ^kind kind ^uses [] ^model "" ^repeatable true ^index -1})
+  (var declared_step (workflow_step_by_name workflow name))
+  (if (declared_step != nil)
+    (step = declared_step)
+  )
+  (var step_kind (if ((kind || "") .not_empty) kind else step/kind))
+  (var event_data {
+    ^workflow workflow/name
+    ^step step/name
+    ^kind step_kind
+    ^index step/index
+    ^detail (ensure_map detail)
+  })
+  (state .set "current_step" event_data)
+  (append_event run_id "workflow.step.started" event_data)
+  event_data
+)
+
+(fn $ns/complete_workflow_step [run_id state detail]
+  (if (state == nil)
+    (return nil)
+  )
+  (var current (ensure_map (state/current_step || {})))
+  (if current/.empty
+    (return nil)
+  )
+  (var event_data {
+    ^workflow current/workflow
+    ^step current/step
+    ^kind current/kind
+    ^index current/index
+    ^detail (ensure_map detail)
+  })
+  (append_event run_id "workflow.step.completed" event_data)
+  (var completed_steps (ensure_array (state/completed_steps || [])))
+  (var completed_names (ensure_array (state/completed_step_names || [])))
+  (completed_steps .append event_data)
+  (completed_names .append current/step)
+  (state .set "completed_steps" completed_steps)
+  (state .set "completed_step_names" completed_names)
+  (state .set "last_detail" event_data/detail)
+  (state .set "current_step" nil)
+  event_data
+)
+
+(fn $ns/start_next_workflow_step [run_id state detail = {}]
+  (if (state == nil)
+    (return nil)
+  )
+  (var current (ensure_map (state/current_step || {})))
+  (if current/.not_empty
+    (return current)
+  )
+  (var step (workflow_next_step state/workflow (state/completed_step_names || []) (state/last_detail || {})))
+  (if (step == nil)
+    (return nil)
+  )
+  (start_workflow_step run_id state step/name step/kind detail)
+)
+
+(fn $ns/workflow_status [state]
+  (if (state == nil)
+    (return {^completed true ^current_step "" ^next_step "" ^completed_count 0 ^workflow ""})
+  )
+  (var current (ensure_map (state/current_step || {})))
+  (var current_name ((current/step || "") .to_s))
+  (var next_name "")
+  (var completed_names (ensure_array (state/completed_step_names || [])))
+  (var next_step (workflow_next_step state/workflow (state/completed_step_names || []) (state/last_detail || {})))
+  (if (next_step != nil)
+    (next_name = next_step/name)
+  )
+  {
+    ^workflow state/workflow/name
+    ^completed state/completed
+    ^current_step current_name
+    ^next_step next_name
+    ^completed_count completed_names/.size
+  }
+)
+
+(fn $ns/fail_workflow_step [run_id state reason]
+  (if (state == nil)
+    (return nil)
+  )
+  (var current (ensure_map (state/current_step || {})))
+  (if current/.empty
+    (return nil)
+  )
+  (var event_data {
+    ^workflow current/workflow
+    ^step current/step
+    ^kind current/kind
+    ^index current/index
+    ^reason ((reason || "") .to_s)
+  })
+  (append_event run_id "workflow.step.failed" event_data)
+  (state .set "current_step" nil)
+  event_data
+)
+
+(fn $ns/complete_workflow [run_id state detail]
+  (if (state == nil)
+    (return nil)
+  )
+  (if state/completed
+    (return nil)
+  )
+  (var workflow state/workflow)
+  (state .set "completed" true)
+  (append_event run_id "workflow.completed" {
+    ^workflow workflow/name
+    ^source workflow/source
+    ^skill workflow/skill
+    ^detail (ensure_map detail)
+  })
+)
+
+(fn $ns/fail_workflow [run_id state reason]
+  (if (state == nil)
+    (return nil)
+  )
+  (if state/completed
+    (return nil)
+  )
+  (var workflow state/workflow)
+  (state .set "completed" true)
+  (append_event run_id "workflow.failed" {
+    ^workflow workflow/name
+    ^source workflow/source
+    ^skill workflow/skill
+    ^reason ((reason || "") .to_s)
+  })
+)

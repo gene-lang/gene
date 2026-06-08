@@ -1,0 +1,151 @@
+# Trusted-local built-in tools for the GeneClaw tool runtime slice.
+
+(import register_tool from "tools/registry")
+
+($ns/WORKSPACE_ROOT = ($env .get "GENECLAW_WORKSPACE_ROOT" ($env .get "PWD" ".")))
+
+(fn $ns/set_workspace_root [path]
+  (WORKSPACE_ROOT = (((path || ".") .to_s) .trim))
+  WORKSPACE_ROOT
+)
+
+(fn relative_path_error [path]
+  (var text ((path || "") .to_s))
+  (if text/.empty
+    "Missing path"
+  elif ((text .starts_with "/") || (text .starts_with "~"))
+    "Path must be relative to the workspace"
+  elif (text .contains "..")
+    "Path traversal not allowed"
+  else
+    ""
+  )
+)
+
+(fn full_path [path]
+  #"#{WORKSPACE_ROOT}/#{path}"
+)
+
+(fn shell_run [args]
+  (var cmd (((args/cmd || "") .to_s) .trim))
+  (if cmd/.empty
+    (return {^status "failed" ^error "Missing cmd"})
+  )
+  (var cwd (((args/cwd || ".") .to_s) .trim))
+  (var cwd_error (relative_path_error cwd))
+  (if cwd_error/.not_empty
+    (return {^status "failed" ^error cwd_error})
+  )
+  (var timeout_ms (try ((args/timeout_ms || 0) .to_i) catch * 0))
+  (try
+    (var cwd_path (full_path cwd))
+    (var result (if (timeout_ms > 0)
+      (system/run "sh" "-lc" cmd ^cwd cwd_path ^timeout (timeout_ms / 1000.0) ^stderr_to_stdout true)
+    else
+      (system/run "sh" "-lc" cmd ^cwd cwd_path ^stderr_to_stdout true)
+    ))
+    {
+      ^status (if ((result/timed_out == true) || (result/exit_code != 0)) "failed" else "ok")
+      ^exit_code result/exit_code
+      ^cwd cwd
+      ^timeout_ms timeout_ms
+      ^timeout_enforced (timeout_ms > 0)
+      ^timed_out (result/timed_out == true)
+      ^stderr (result/stderr || "")
+      ^output (result/output || "")
+    }
+  catch *
+    {^status "failed" ^error #"shell failed: #{$ex/message}"}
+  )
+)
+
+(fn file_read [args]
+  (var path ((args/path || "") .to_s))
+  (var path_error (relative_path_error path))
+  (if path_error/.not_empty
+    (return {^status "failed" ^error path_error})
+  )
+  (try
+    {^status "ok" ^path path ^content (gene/io/read (full_path path))}
+  catch *
+    {^status "failed" ^error #"Cannot read: #{$ex/message}"}
+  )
+)
+
+(fn search_rg [args]
+  (var pattern (((args/pattern || "") .to_s) .trim))
+  (var path (((args/path || ".") .to_s) .trim))
+  (if pattern/.empty
+    (return {^status "failed" ^error "Missing pattern"})
+  )
+  (var path_error (relative_path_error path))
+  (if path_error/.not_empty
+    (return {^status "failed" ^error path_error})
+  )
+  (try
+    (var result (system/shell #"rg '#{pattern}' '#{(full_path path)}' --max-count 50 2>&1 || true"))
+    {^status "ok" ^pattern pattern ^path path ^output (result/output || "")}
+  catch *
+    {^status "failed" ^error #"search failed: #{$ex/message}"}
+  )
+)
+
+(fn file_patch [args]
+  (var path ((args/path || "") .to_s))
+  (var diff ((args/diff || "") .to_s))
+  (var path_error (relative_path_error path))
+  (if path_error/.not_empty
+    (return {^status "failed" ^error path_error})
+  )
+  (if diff/.empty
+    (return {^status "failed" ^error "Missing diff"})
+  )
+  (try
+    (var tmp_path #"/tmp/geneclaw-new-patch-#{gene/now/.call/.to_i}.diff")
+    (gene/io/write tmp_path diff)
+    (var result (system/shell #"cd '#{WORKSPACE_ROOT}' && patch -p0 '#{path}' < '#{tmp_path}'"))
+    (system/shell #"rm -f '#{tmp_path}'")
+    (if (result/exit_code != 0)
+      {^status "failed" ^error #"patch failed: #{result/output}" ^output (result/output || "")}
+    else
+      {^status "ok" ^path path ^output (result/output || "")}
+    )
+  catch *
+    {^status "failed" ^error #"patch failed: #{$ex/message}"}
+  )
+)
+
+(fn $ns/register_builtin_tools []
+  (register_tool
+    "shell.run"
+    "Run a local shell command in the trusted operator environment."
+    {^type "object"
+     ^required ["cmd"]
+     ^properties {
+       ^cmd {^type "string"}
+       ^cwd {^type "string"}
+       ^timeout_ms {^type "integer"}
+       ^max_output_bytes {^type "integer"}
+     }}
+    {^status "String" ^exit_code "Int" ^cwd "String" ^timeout_ms "Int" ^timeout_enforced "Bool" ^output "String"}
+    shell_run)
+  (register_tool
+    "file.read"
+    "Read a workspace-relative file."
+    {^type "object" ^required ["path"] ^properties {^path {^type "string"} ^max_output_bytes {^type "integer"}}}
+    {^status "String" ^path "String" ^content "String"}
+    file_read)
+  (register_tool
+    "search.rg"
+    "Search workspace files with ripgrep."
+    {^type "object" ^required ["pattern"] ^properties {^pattern {^type "string"} ^path {^type "string"} ^max_output_bytes {^type "integer"}}}
+    {^status "String" ^pattern "String" ^path "String" ^output "String"}
+    search_rg)
+  (register_tool
+    "file.patch"
+    "Apply a unified diff to a workspace-relative file."
+    {^type "object" ^required ["path" "diff"] ^properties {^path {^type "string"} ^diff {^type "string"} ^max_output_bytes {^type "integer"}}}
+    {^status "String" ^path "String" ^output "String"}
+    file_patch)
+  true
+)

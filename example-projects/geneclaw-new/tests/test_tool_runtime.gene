@@ -1,0 +1,66 @@
+#!/usr/bin/env gene run
+
+(import reset_runs create_run from "kernel/runs")
+(import events_for has_event_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools invoke_tool from "tools/registry")
+(import register_builtin_tools set_workspace_root from "tools/builtin")
+
+(var workspace "/tmp/geneclaw-new-test-tool-runtime-workspace")
+(set_store_root "/tmp/geneclaw-new-test-tool-runtime-store")
+(reset_runs)
+(reset_tools)
+(system/shell #"rm -rf '#{workspace}' && mkdir -p '#{workspace}'")
+(gene/io/write #"#{workspace}/sample.txt" "alpha\nbeta\n")
+(set_workspace_root workspace)
+(register_builtin_tools)
+
+(var run (create_run "exercise tool runtime" "test"))
+
+(var missing (invoke_tool run/id "file.read" {}))
+(assert (missing/status == "failed"))
+(assert (missing/error .contains "Missing required arguments"))
+
+(var read_result (invoke_tool run/id "file.read" {^path "sample.txt"}))
+(assert (read_result/status == "ok"))
+(assert (read_result/content == "alpha\nbeta\n"))
+
+(var search_result (invoke_tool run/id "search.rg" {^pattern "beta" ^path "."}))
+(assert (search_result/status == "ok"))
+(assert (search_result/output .contains "beta"))
+
+(var shell_result (invoke_tool run/id "shell.run" {^cmd "printf shell-ok" ^cwd "." ^timeout_ms 10}))
+(assert (shell_result/status == "ok"))
+(assert (shell_result/cwd == "."))
+(assert (shell_result/timeout_ms == 10))
+(assert (shell_result/timeout_enforced == true))
+(assert (shell_result/timed_out == false))
+(assert (shell_result/output .contains "shell-ok"))
+
+(var diff "--- sample.txt\n+++ sample.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n")
+(var patch_result (invoke_tool run/id "file.patch" {^path "sample.txt" ^diff diff}))
+(assert (patch_result/status == "ok"))
+(assert ((gene/io/read #"#{workspace}/sample.txt") == "alpha\ngamma\n"))
+
+(var big "")
+(var index 0)
+(while (index < 4100)
+  (big = #"#{big}x")
+  (index += 1)
+)
+(gene/io/write #"#{workspace}/big.txt" big)
+(var big_read (invoke_tool run/id "file.read" {^path "big.txt"}))
+(assert (big_read/status == "ok"))
+(assert ((big_read .get "content_truncated") == true))
+(assert ((big_read/content_ref || "") .contains "/tool_outputs/"))
+(assert ((big_read .get "content_bytes") == 4100))
+
+(var small_limit_read (invoke_tool run/id "file.read" {^path "big.txt" ^max_output_bytes 16}))
+(assert ((small_limit_read .get "content_truncated") == true))
+(assert ((small_limit_read .get "content_limit") == 16))
+
+(var events (events_for run/id))
+(assert (has_event_type events "tool.call"))
+(assert (has_event_type events "tool.result"))
+
+(println "ok")

@@ -1,0 +1,135 @@
+#!/usr/bin/env gene run
+
+(import reset_runs replay_run cancel_run from "kernel/runs")
+(import events_for from "kernel/events")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import register_builtin_tools from "tools/builtin")
+(import run_agent_with_options from "agent_loop")
+(import memory_search from "memory/store")
+(import schedule_job scheduler_jobs run_due_jobs from "scheduler/jobs")
+
+(fn arg_at [index fallback = ""]
+  (if (index < $args/.size)
+    ($args .get index)
+  else
+    fallback
+  )
+)
+
+(fn parse_run_options [start]
+  (var options {})
+  (var budgets {})
+  (var parts [])
+  (var index start)
+  (while (index < $args/.size)
+    (var arg ($args .get index))
+    (if (((arg == "--skill") || (arg == "skill")) && ((index + 1) < $args/.size))
+      (options .set "skill" ($args .get (index + 1)))
+      (index += 2)
+    elif (((arg == "--workflow") || (arg == "workflow")) && ((index + 1) < $args/.size))
+      (options .set "workflow" ($args .get (index + 1)))
+      (index += 2)
+    elif (((arg == "--provider") || (arg == "provider")) && ((index + 1) < $args/.size))
+      (options .set "provider" ($args .get (index + 1)))
+      (index += 2)
+    elif (((arg == "--profile") || (arg == "profile")) && ((index + 1) < $args/.size))
+      (options .set "profile" ($args .get (index + 1)))
+      (index += 2)
+    elif (((arg == "--model") || (arg == "model")) && ((index + 1) < $args/.size))
+      (options .set "model" ($args .get (index + 1)))
+      (index += 2)
+    elif (((arg == "--steps") || (arg == "steps")) && ((index + 1) < $args/.size))
+      (budgets .set "steps" (($args .get (index + 1)) .to_i))
+      (index += 2)
+    elif (((arg == "--tool-calls") || (arg == "tool-calls")) && ((index + 1) < $args/.size))
+      (budgets .set "tool_calls" (($args .get (index + 1)) .to_i))
+      (index += 2)
+    else
+      (parts .append arg)
+      (index += 1)
+    )
+  )
+  {
+    ^goal (if parts/.empty "review the current diff" else (parts .join " "))
+    ^options options
+    ^budgets budgets
+  }
+)
+
+(fn print_summary [summary]
+  (if (summary == nil)
+    (println "run not found")
+  else
+    (println #"#{summary/id} #{summary/state}: #{summary/final}")
+  )
+)
+
+(fn print_events [run_id]
+  (var events (events_for run_id))
+  (var index 0)
+  (while (index < events/.size)
+    (println (gene/serdes/serialize (events .get index)))
+    (index += 1)
+  )
+)
+
+(fn print_memory_search [query]
+  (var facts (memory_search query "" 10))
+  (var index 0)
+  (while (index < facts/.size)
+    (println (gene/serdes/serialize (facts .get index)))
+    (index += 1)
+  )
+)
+
+(fn print_values [values]
+  (var index 0)
+  (while (index < values/.size)
+    (println (gene/serdes/serialize (values .get index)))
+    (index += 1)
+  )
+)
+
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+
+(var command (arg_at 0 "run"))
+(var goal_start 1)
+
+(if ((["run" "status" "events" "cancel" "reset" "memory" "schedule"] .contains command) == false)
+  (command = "run")
+  (goal_start = 0)
+)
+
+(if (command == "reset")
+  (reset_runs)
+  (println "reset")
+elif (command == "status")
+  (print_summary (replay_run (arg_at 1 "")))
+elif (command == "events")
+  (print_events (arg_at 1 ""))
+elif (command == "cancel")
+  (var run (cancel_run (arg_at 1 "") "cancelled from cli"))
+  (print_summary (replay_run run/id))
+elif (command == "memory")
+  (if ((arg_at 1 "") == "search")
+    (print_memory_search (if ($args/.size > 2) (($args .slice 2) .join " ") else ""))
+  else
+    (println "usage: memory search <query>")
+  )
+elif (command == "schedule")
+  (var subcommand (arg_at 1 "list"))
+  (if (subcommand == "add")
+    (println (gene/serdes/serialize (schedule_job (if ($args/.size > 2) (($args .slice 2) .join " ") else "scheduled run"))))
+  elif (subcommand == "run-due")
+    (print_values (run_due_jobs))
+  else
+    (print_values (scheduler_jobs))
+  )
+else
+  (var parsed (parse_run_options goal_start))
+  (var summary (run_agent_with_options parsed/goal "local" parsed/budgets parsed/options))
+  (print_summary summary)
+)

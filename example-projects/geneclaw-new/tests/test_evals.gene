@@ -1,0 +1,44 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import register_builtin_tools from "tools/builtin")
+(import load_eval run_eval replay_assertions release_checklist from "evals/harness")
+
+(set_store_root "/tmp/geneclaw-new-test-evals-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+
+(var eval_def (load_eval "repo-review-basic"))
+(assert (eval_def/name == "repo-review-basic"))
+(assert (eval_def/skill == "repo-review"))
+(assert (eval_def/assertions/.size > 0))
+
+(var result (run_eval eval_def))
+(assert (result/name == "repo-review-basic"))
+(assert (result/ok == true))
+(assert (result/run/state == "completed"))
+(assert (result/performance/event_count > 0))
+
+(var replayed (replay_assertions eval_def result/run/id))
+(assert (replayed/ok == true))
+(assert (replayed/results/.size == eval_def/assertions/.size))
+
+(var checklist (release_checklist))
+(assert (checklist/.size >= 18))
+(assert (checklist/0/command .contains "test_run_kernel"))
+(assert ((gene/serdes/serialize checklist) .contains "test_tool_codecs"))
+(assert ((gene/serdes/serialize checklist) .contains "test_limits"))
+(assert ((gene/serdes/serialize checklist) .contains "test_storage_index"))
+(assert ((gene/serdes/serialize checklist) .contains "test_workflows"))
+(assert ((gene/serdes/serialize checklist) .contains "test_skill_compiler"))
+(assert ((gene/serdes/serialize checklist) .contains "test_actor_runtime"))
+(assert ((gene/serdes/serialize checklist) .contains "test_rest_daemon"))
+(assert ((gene/serdes/serialize checklist) .contains "test_tui"))
+(assert ((gene/serdes/serialize checklist) .contains "test_evals"))
+
+(println "ok")

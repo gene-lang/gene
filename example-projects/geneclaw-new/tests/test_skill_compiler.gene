@@ -1,0 +1,73 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import set_store_root from "kernel/storage")
+(import reset_tools tool_defs from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import register_builtin_tools from "tools/builtin")
+(import compile_loaded_skill compile_skill from "skills/compiler")
+
+(set_store_root "/tmp/geneclaw-new-test-skill-compiler-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+
+(var compiled (compile_loaded_skill "repo-review" (tool_defs)))
+(assert (compiled/ok == true))
+(assert (compiled/skill/name == "repo-review"))
+(assert (compiled/tool_names/.size == 4))
+(assert (compiled/tool_names .contains "fake.echo"))
+(assert (compiled/provider_tools/openai/.size == 4))
+(assert (compiled/provider_tools/anthropic/.size == 4))
+(assert (compiled/workflows/.size == 1))
+(assert (compiled/workflows/0/name == "default"))
+(assert (compiled/workflows/0/steps/.size == 4))
+(assert (compiled/workflows/0/edges/.size == 3))
+(assert (compiled/workflows/0/edges/0/generated == true))
+(assert (compiled/examples/.size == 1))
+(assert (compiled/eval_fixtures/0/input == "review the current diff"))
+(assert (compiled/docs/summary .contains "repo-review"))
+(assert (compiled/cache_key .contains "repo-review:0.1.0"))
+(assert (compiled/errors/.size == 0))
+
+(var invalid_skill {
+  ^name ""
+  ^version "0.0.1"
+  ^tools [
+    {^name "fake.echo"}
+    {^name "fake.echo"}
+  ]
+  ^workflows [
+    {
+      ^name "bad"
+      ^steps [
+        {^name "inspect"}
+        {^name "inspect"}
+      ]
+      ^edges [
+        {^from "inspect" ^to "missing"}
+        {^from "ghost" ^to "done"}
+      ]
+    }
+  ]
+  ^examples [
+    {^expect_events ["run.completed"]}
+  ]
+})
+
+(var invalid (compile_skill invalid_skill (tool_defs)))
+(assert (invalid/ok == false))
+(var serialized_errors (gene/serdes/serialize invalid/errors))
+(assert (serialized_errors .contains "skill.name_missing"))
+(assert (serialized_errors .contains "skill.tool.duplicate"))
+(assert (serialized_errors .contains "skill.workflow.step.duplicate"))
+(assert (serialized_errors .contains "skill.workflow.edge.to_unknown"))
+(assert (serialized_errors .contains "skill.workflow.edge.from_unknown"))
+(assert ((gene/serdes/serialize invalid/warnings) .contains "skill.example.input_missing"))
+
+(var missing (compile_loaded_skill "does-not-exist" (tool_defs)))
+(assert (missing/ok == false))
+(assert (missing/errors/0/code == "skill.not_found"))
+
+(println "ok")

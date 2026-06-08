@@ -1,0 +1,59 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import register_builtin_tools from "tools/builtin")
+(import start_rest_daemon rest_daemon_handle rest_daemon_status stop_rest_daemon from "channels/daemon")
+
+(set_store_root "/tmp/geneclaw-new-test-rest-daemon-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+
+(var daemon (start_rest_daemon {^host "127.0.0.1" ^port 9001}))
+(var started (rest_daemon_status daemon))
+(assert (started/state == "running"))
+(assert (started/host == "127.0.0.1"))
+(assert (started/port == 9001))
+(assert (started/request_count == 0))
+
+(var skills_response (rest_daemon_handle daemon "GET" "/skills" {}))
+(assert (skills_response/status == 200))
+(var skills_body (skills_response .get "body"))
+(assert (skills_body/skills/.size == 1))
+(assert (skills_body/skills/0/ok == true))
+(assert (skills_body/skills/0/skill/name == "repo-review"))
+
+(var run_response (rest_daemon_handle daemon "POST" "/runs" {
+  ^text "review daemon path"
+  ^session "daemon-session"
+  ^skill "repo-review"
+  ^workflow "default"
+  ^provider "fake"
+  ^profile "fast"
+  ^model "fake"
+}))
+(assert (run_response/status == 200))
+(var run_body (run_response .get "body"))
+(var run_summary (run_body .get "run"))
+(assert (run_summary/state == "completed"))
+(assert (run_summary/final .contains "review daemon path"))
+
+(var status_response (rest_daemon_handle daemon "GET" #"/runs/#{run_summary/id}" {}))
+(assert (status_response/status == 200))
+(var status_body (status_response .get "body"))
+(assert (status_body/id == run_summary/id))
+
+(var history_status (rest_daemon_status daemon))
+(assert (history_status/request_count == 3))
+
+(var stopped (stop_rest_daemon daemon))
+(assert (stopped/state == "stopped"))
+(var stopped_response (rest_daemon_handle daemon "GET" "/skills" {}))
+(assert (stopped_response/status == 503))
+(assert ((gene/serdes/serialize stopped_response) .contains "stopped"))
+
+(println "ok")

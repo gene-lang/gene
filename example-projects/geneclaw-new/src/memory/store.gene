@@ -1,0 +1,164 @@
+# Durable local memory for completed runs and retrieved context.
+
+(import store_root from "kernel/storage")
+(import index_memory_fact from "storage/sqlite_index")
+
+(fn memory_dir []
+  #"#{(store_root)}/memory"
+)
+
+(fn facts_path []
+  #"#{(memory_dir)}/facts.gene.log"
+)
+
+(fn ensure_memory_dir []
+  (system/shell #"mkdir -p '#{(memory_dir)}'")
+)
+
+(fn file_exists [path]
+  (try
+    (var result (system/shell #"test -f '#{path}'"))
+    (result/exit_code == 0)
+   catch *
+    false
+  )
+)
+
+(fn read_facts []
+  (var facts [])
+  (var path (facts_path))
+  (if_not (file_exists path)
+    (return facts)
+  )
+  (var lines ((gene/io/read path) .split "\n"))
+  (var index 0)
+  (while (index < lines/.size)
+    (var line ((lines .get index) .trim))
+    (if line/.not_empty
+      (facts .append (gene/serdes/deserialize line))
+    )
+    (index += 1)
+  )
+  facts
+)
+
+(fn text_matches [text query]
+  (var haystack (((text || "") .to_s) .to_lower))
+  (var needle (((query || "") .to_s) .to_lower))
+  (if needle/.empty
+    (return true)
+  )
+  (if (haystack .contains needle)
+    (return true)
+  )
+  (var terms (needle .split " "))
+  (var index 0)
+  (while (index < terms/.size)
+    (var term ((terms .get index) .trim))
+    (if ((term/.size > 2) && (haystack .contains term))
+      (return true)
+    )
+    (index += 1)
+  )
+  false
+)
+
+(fn fact_matches [fact query session]
+  (var session_filter (((session || "") .to_s) .trim))
+  (if session_filter/.not_empty
+    (if (fact/session != session_filter)
+      (return false)
+    )
+  )
+  (text_matches #"#{fact/text}\n#{fact/goal}\n#{fact/final}" query)
+)
+
+(fn $ns/reset_memory []
+  (system/shell #"rm -rf '#{(memory_dir)}'")
+  true
+)
+
+(fn $ns/memory_append_fact [fact]
+  (ensure_memory_dir)
+  (var source (if (fact is Map) fact else {}))
+  (var fact_id ((source .get "id" #"mem-#{gene/now/.call/.to_i}") .to_s))
+  (var fact_session ((source .get "session" "local") .to_s))
+  (var fact_run_id ((source .get "run_id" "") .to_s))
+  (var fact_kind ((source .get "kind" "run_summary") .to_s))
+  (var fact_goal ((source .get "goal" "") .to_s))
+  (var fact_final ((source .get "final" "") .to_s))
+  (var fact_text ((source .get "text" "") .to_s))
+  (var created_at gene/now/.call/.to_i)
+  (var normalized {
+    ^id fact_id
+    ^session fact_session
+    ^run_id fact_run_id
+    ^kind fact_kind
+    ^goal fact_goal
+    ^final fact_final
+    ^text fact_text
+    ^created_at_ms created_at
+  })
+  (var path (facts_path))
+  (var existing (if (file_exists path) (gene/io/read path) else ""))
+  (gene/io/write path #"#{existing}#{(gene/serdes/serialize normalized)}\n")
+  normalized
+)
+
+(fn $ns/memory_all_facts []
+  (read_facts)
+)
+
+(fn $ns/rebuild_memory_index []
+  (var facts (read_facts))
+  (var index 0)
+  (while (index < facts/.size)
+    (index_memory_fact (store_root) (facts .get index))
+    (index += 1)
+  )
+  facts/.size
+)
+
+(fn $ns/memory_search [query session = "" limit = 5]
+  (var facts (read_facts))
+  (var results [])
+  (var index 0)
+  (while ((index < facts/.size) && (results/.size < limit))
+    (var fact (facts .get index))
+    (if (fact_matches fact query session)
+      (results .append fact)
+    )
+    (index += 1)
+  )
+  results
+)
+
+(fn $ns/memory_recent [session = "" limit = 5]
+  (memory_search "" session limit)
+)
+
+(fn $ns/memory_context [query session = "" limit = 5]
+  (var facts (memory_search query session limit))
+  (var lines [])
+  (var index 0)
+  (while (index < facts/.size)
+    (var fact (facts .get index))
+    (lines .append #"- #{fact/text}")
+    (index += 1)
+  )
+  {^facts facts ^text (lines .join "\n") ^count facts/.size}
+)
+
+(fn $ns/extract_memory_from_run [run summary final_text]
+  (var text #"Run #{run/id}: #{run/goal} => #{final_text}")
+  (var fact {
+    ^id #"#{run/id}:summary"
+    ^session run/session
+    ^run_id run/id
+    ^kind "run_summary"
+    ^goal run/goal
+    ^final ((final_text || "") .to_s)
+    ^text text
+  })
+  (memory_append_fact fact)
+)

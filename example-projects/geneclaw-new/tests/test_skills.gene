@@ -1,0 +1,62 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools tool_defs from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import register_builtin_tools from "tools/builtin")
+(import load_skill skill_tool_names filter_tool_defs_for_skill provider_tool_specs_for_skill from "skills/loader")
+(import run_agent_with_options from "agent_loop")
+
+(set_store_root "/tmp/geneclaw-new-test-skills-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+
+(var skill (load_skill "repo-review"))
+(assert (skill/name == "repo-review"))
+(assert (skill/version == "0.1.0"))
+(assert (skill/tools/.size == 4))
+(assert (skill/workflows/0/name == "default"))
+(assert (skill/examples/0/input == "review the current diff"))
+
+(var names (skill_tool_names skill))
+(assert (names/.size == 4))
+(assert (names .contains "fake.echo"))
+(assert (names .contains "search.rg"))
+
+(var filtered (filter_tool_defs_for_skill (tool_defs) skill))
+(assert (filtered/.size == 4))
+
+(var openai_specs (provider_tool_specs_for_skill "openai" skill (tool_defs)))
+(assert (openai_specs/.size == 4))
+(assert (openai_specs/0/type == "function"))
+
+(var anthropic_specs (provider_tool_specs_for_skill "anthropic" skill (tool_defs)))
+(assert (anthropic_specs/.size == 4))
+(assert ((anthropic_specs/0/name || "") .not_empty))
+(assert (anthropic_specs/0/input_schema/type == "object"))
+
+(var summary (run_agent_with_options "review the current diff" "cli" {^steps 4 ^tool_calls 2} {^skill "repo-review"}))
+(assert (summary/state == "completed"))
+(assert (summary/final .contains "echo: review the current diff"))
+
+(var events (events_for summary/id))
+(assert (has_event_type events "skill.loaded"))
+(assert (has_event_type events "model.request"))
+(assert (has_event_type events "workflow.started"))
+(assert (has_event_type events "workflow.completed"))
+(var skill_loaded (last_event_of_type events "skill.loaded"))
+(assert (skill_loaded/data/name == "repo-review"))
+(var workflow_started (last_event_of_type events "workflow.started"))
+(assert (workflow_started/data/workflow == "default"))
+(assert (workflow_started/data/source == "skill"))
+(assert ((workflow_started/data .get "skill") == "repo-review"))
+(assert (workflow_started/data/declared_step_count == 4))
+(var request_event (last_event_of_type events "model.request"))
+(assert ((request_event/data .get "skill") == "repo-review"))
+(assert (request_event/data/tool_count == 4))
+
+(println "ok")

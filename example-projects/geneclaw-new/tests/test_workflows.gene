@@ -1,0 +1,126 @@
+#!/usr/bin/env gene run
+
+(import reset_runs create_run from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import load_skill from "skills/loader")
+(import run_agent_with_options from "agent_loop")
+(import select_workflow start_workflow start_workflow_step start_next_workflow_step complete_workflow_step complete_workflow workflow_next_step workflow_status from "workflows/engine")
+
+(set_store_root "/tmp/geneclaw-new-test-workflows-store")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var runtime_workflow (select_workflow nil))
+(assert (runtime_workflow/name == "agent-loop"))
+(assert (runtime_workflow/source == "runtime"))
+(assert (runtime_workflow/steps/.size == 4))
+
+(var repo_skill (load_skill "repo-review"))
+(var skill_workflow (select_workflow repo_skill "default"))
+(assert (skill_workflow/name == "default"))
+(assert (skill_workflow/source == "skill"))
+(assert ((skill_workflow .get "skill") == "repo-review"))
+(assert (skill_workflow/declared_step_count == 4))
+(assert (skill_workflow/declared/steps/0/name == "understand"))
+(assert (skill_workflow/edges/.size == 3))
+(assert (skill_workflow/edges/0/from == "understand"))
+(assert (skill_workflow/edges/0/to == "inspect"))
+
+(var graph_skill {
+  ^name "graph-skill"
+  ^workflows [
+    {
+      ^name "implement-and-verify"
+      ^steps [
+        {^name "understand" ^kind "model"}
+        {^name "edit" ^kind "tools"}
+        {^name "review" ^kind "model"}
+      ]
+      ^edges [
+        {^from "understand" ^to "edit"}
+        {^from "edit" ^to "review"}
+        {^from "review" ^to "edit" ^when "needs_changes"}
+        {^from "review" ^to "done" ^when "accepted"}
+      ]
+    }
+  ]
+})
+
+(var graph_workflow (select_workflow graph_skill "implement-and-verify"))
+(assert (graph_workflow/edges/.size == 4))
+(var graph_next_1 (workflow_next_step graph_workflow [] {}))
+(var graph_next_2 (workflow_next_step graph_workflow ["understand"] {}))
+(var graph_next_3 (workflow_next_step graph_workflow ["understand" "edit"] {}))
+(var graph_next_loop (workflow_next_step graph_workflow ["understand" "edit" "review"] {^outcome "needs_changes"}))
+(var graph_next_review (workflow_next_step graph_workflow ["understand" "edit" "review" "edit"] {}))
+(assert (graph_next_1/name == "understand"))
+(assert (graph_next_2/name == "edit"))
+(assert (graph_next_3/name == "review"))
+(assert (graph_next_loop/name == "edit"))
+(assert (graph_next_review/name == "review"))
+(assert ((workflow_next_step graph_workflow ["understand" "edit" "review"] {^outcome "accepted"}) == nil))
+
+(var run (create_run "checkpoint workflow" "workflow-test"))
+(var state (start_workflow run/id skill_workflow))
+(start_workflow_step run/id state "model" "model" {^step 1})
+(complete_workflow_step run/id state {^kind "tool_calls"})
+(complete_workflow run/id state {^state "completed"})
+
+(var checkpoint_events (events_for run/id))
+(assert (has_event_type checkpoint_events "workflow.started"))
+(assert (has_event_type checkpoint_events "workflow.step.started"))
+(assert (has_event_type checkpoint_events "workflow.step.completed"))
+(assert (has_event_type checkpoint_events "workflow.completed"))
+
+(var started (last_event_of_type checkpoint_events "workflow.started"))
+(assert (started/data/workflow == "default"))
+(assert (started/data/source == "skill"))
+(assert (started/data/declared_step_count == 4))
+(assert (started/data/edge_count == 3))
+
+(var graph_run (create_run "graph workflow" "workflow-test"))
+(var graph_state (start_workflow graph_run/id graph_workflow))
+(var graph_first (start_next_workflow_step graph_run/id graph_state {^source "test"}))
+(assert (graph_first/step == "understand"))
+(complete_workflow_step graph_run/id graph_state {^outcome "ready"})
+(var graph_second (start_next_workflow_step graph_run/id graph_state {^source "test"}))
+(assert (graph_second/step == "edit"))
+(complete_workflow_step graph_run/id graph_state {^outcome "edited"})
+(var graph_third (start_next_workflow_step graph_run/id graph_state {^source "test"}))
+(assert (graph_third/step == "review"))
+(complete_workflow_step graph_run/id graph_state {^outcome "needs_changes"})
+(var graph_fourth (start_next_workflow_step graph_run/id graph_state {^source "test"}))
+(assert (graph_fourth/step == "edit"))
+(complete_workflow_step graph_run/id graph_state {^outcome "edited"})
+(var graph_fifth (start_next_workflow_step graph_run/id graph_state {^source "test"}))
+(assert (graph_fifth/step == "review"))
+(complete_workflow_step graph_run/id graph_state {^outcome "accepted"})
+(assert ((start_next_workflow_step graph_run/id graph_state {^source "test"}) == nil))
+(var graph_status (workflow_status graph_state))
+(assert (graph_status/workflow == "implement-and-verify"))
+(assert (graph_status/next_step == ""))
+(assert (graph_status/completed_count == 5))
+
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var summary (run_agent_with_options "review workflow trace" "cli" {^steps 4 ^tool_calls 2} {^skill "repo-review" ^workflow "default"}))
+(assert (summary/state == "completed"))
+(var events (events_for summary/id))
+(assert (has_event_type events "workflow.started"))
+(assert (has_event_type events "workflow.step.started"))
+(assert (has_event_type events "workflow.step.completed"))
+(assert (has_event_type events "workflow.completed"))
+(var agent_workflow (last_event_of_type events "workflow.started"))
+(assert (agent_workflow/data/workflow == "default"))
+(assert ((agent_workflow/data .get "skill") == "repo-review"))
+(var completed (last_event_of_type events "workflow.completed"))
+(var completed_detail (completed/data .get "detail"))
+(assert ((completed_detail .get "state") == "completed"))
+
+(println "ok")

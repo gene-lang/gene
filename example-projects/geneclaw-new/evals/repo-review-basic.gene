@@ -1,0 +1,15 @@
+(gene/serialization {
+  ^name "repo-review-basic"
+  ^skill "repo-review"
+  ^input "review the current diff"
+  ^session "eval:repo-review-basic"
+  ^assertions [
+    {^kind "state_is" ^value "completed"}
+    {^kind "event_exists" ^value "skill.loaded"}
+    {^kind "event_exists" ^value "model.request"}
+    {^kind "event_exists" ^value "tool.call"}
+    {^kind "event_exists" ^value "tool.result"}
+    {^kind "event_exists" ^value "memory.written"}
+    {^kind "final_contains" ^value "echo: review the current diff"}
+  ]
+})

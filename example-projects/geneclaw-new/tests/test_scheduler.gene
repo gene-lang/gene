@@ -1,0 +1,46 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import schedule_job due_jobs run_due_jobs scheduler_jobs reset_scheduler from "scheduler/jobs")
+
+(set_store_root "/tmp/geneclaw-new-test-scheduler-store")
+(reset_runs)
+(reset_scheduler)
+(reset_tools)
+(register_fake_tools)
+
+(var once (schedule_job "scheduled once" {^session "sched" ^next_run_ms 1000}))
+(assert (once/id == "job-1"))
+(assert (once/state == "active"))
+
+(var due (due_jobs 1000))
+(assert (due/.size == 1))
+(assert (due/0/id == once/id))
+
+(var once_results (run_due_jobs 1000))
+(assert (once_results/.size == 1))
+(assert (once_results/0/run/state == "completed"))
+(assert (once_results/0/job/state == "completed"))
+(assert (once_results/0/job/last_run_id == "run-1"))
+
+(var interval (schedule_job "scheduled interval" {^session "sched" ^next_run_ms 2000 ^interval_ms 50}))
+(var failing (schedule_job "scheduled failure" {^session "sched" ^next_run_ms 2000 ^provider "missing-provider" ^max_retries 1}))
+(assert (interval/id == "job-2"))
+(assert (failing/id == "job-3"))
+
+(var interval_results (run_due_jobs 2000))
+(assert (interval_results/.size == 2))
+
+(var jobs (scheduler_jobs))
+(assert (jobs/.size == 3))
+(assert (jobs/0/state == "completed"))
+(assert (jobs/1/state == "active"))
+(assert (jobs/1/next_run_ms == 2050))
+(assert (jobs/2/state == "dead_letter"))
+(assert (jobs/2/retry_count == 1))
+(assert (jobs/2/last_error .contains "Unknown model provider"))
+
+(println "ok")

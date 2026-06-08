@@ -1,0 +1,11 @@
+^name "geneclaw-new"
+^version "0.1.0"
+^license "MIT"
+^author [
+  "Gene Team"
+]
+^gene-version "*"
+^main-module "main"
+^source-dir "src"
+^description "GeneClaw new architecture prototype - event-sourced Gene-native agent runtime"
+

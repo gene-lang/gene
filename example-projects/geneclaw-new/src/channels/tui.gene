@@ -1,0 +1,124 @@
+# Terminal UI view-model helpers.
+
+(import replay_run from "kernel/runs")
+(import events_for from "kernel/events")
+(import scheduler_jobs from "scheduler/jobs")
+(import memory_search from "memory/store")
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn recent_events [run_id limit]
+  (var events (events_for run_id))
+  (var max_count (try limit/.to_i catch * 20))
+  (if (max_count < 1)
+    (max_count = 1)
+  )
+  (var start_index (events/.size - max_count))
+  (if (start_index < 0)
+    (start_index = 0)
+  )
+  (var result [])
+  (var index start_index)
+  (while (index < events/.size)
+    (var event (events .get index))
+    (result .append {
+      ^id event/id
+      ^type event/type
+      ^run_id event/run_id
+      ^at_ms event/at_ms
+      ^data event/data
+    })
+    (index += 1)
+  )
+  result
+)
+
+(fn run_card [run_id]
+  (var summary (replay_run run_id))
+  (if (summary == nil)
+    (return {^id run_id ^state "missing" ^goal "" ^final ""})
+  )
+  (var run_events (events_for run_id))
+  {
+    ^id summary/id
+    ^state summary/state
+    ^goal summary/goal
+    ^session summary/session
+    ^final summary/final
+    ^event_count run_events/.size
+  }
+)
+
+(fn render_run_line [card]
+  #"#{card/id} #{card/state} #{card/goal}"
+)
+
+(fn render_event_line [event]
+  #"#{event/id} #{event/type}"
+)
+
+(fn render_lines [lines]
+  (lines .join "\n")
+)
+
+(fn $ns/tui_run_view [run_id limit = 20]
+  (var summary (replay_run run_id))
+  (if (summary == nil)
+    (return {^ok false ^error #"Run not found: #{run_id}" ^run_id run_id ^summary nil ^events []})
+  )
+  {^ok true ^run_id run_id ^summary summary ^events (recent_events run_id limit)}
+)
+
+(fn $ns/tui_dashboard [run_ids = [] query = ""]
+  (var ids (ensure_array run_ids))
+  (var query_text (((query || "") .to_s) .trim))
+  (var runs [])
+  (var index 0)
+  (while (index < ids/.size)
+    (runs .append (run_card (ids .get index)))
+    (index += 1)
+  )
+  {
+    ^runs runs
+    ^jobs (scheduler_jobs)
+    ^memory (if query_text/.empty [] else (memory_search query_text "" 5))
+  }
+)
+
+(fn $ns/render_tui_dashboard [view]
+  (var source (ensure_map view))
+  (var lines ["Runs"])
+  (var runs (ensure_array (source .get "runs" [])))
+  (var index 0)
+  (while (index < runs/.size)
+    (lines .append (render_run_line (runs .get index)))
+    (index += 1)
+  )
+  (var jobs (ensure_array (source .get "jobs" [])))
+  (var memory (ensure_array (source .get "memory" [])))
+  (lines .append #"Jobs: #{jobs/.size}")
+  (lines .append #"Memory: #{memory/.size}")
+  (render_lines lines)
+)
+
+(fn $ns/render_tui_run_view [view]
+  (var source (ensure_map view))
+  (if ((source .get "ok" false) == false)
+    (return ((source .get "error" "Run not found") .to_s))
+  )
+  (var summary (ensure_map (source .get "summary" {})))
+  (var lines [#"Run #{summary/id}" #"State: #{summary/state}" #"Goal: #{summary/goal}" "Events"])
+  (var events (ensure_array (source .get "events" [])))
+  (var index 0)
+  (while (index < events/.size)
+    (lines .append (render_event_line (events .get index)))
+    (index += 1)
+  )
+  (render_lines lines)
+)

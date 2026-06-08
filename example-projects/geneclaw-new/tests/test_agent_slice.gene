@@ -1,0 +1,36 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import run_agent from "agent_loop")
+
+(set_store_root "/tmp/geneclaw-new-test-agent-slice")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var summary (run_agent "review the current diff" "cli" {^steps 4 ^tool_calls 2}))
+(assert (summary/id == "run-1"))
+(assert (summary/state == "completed"))
+(assert (summary/final .contains "echo: review the current diff"))
+
+(var events (events_for summary/id))
+(assert (has_event_type events "run.started"))
+(assert (has_event_type events "model.request"))
+(assert (has_event_type events "model.response"))
+(assert (has_event_type events "tool.call"))
+(assert (has_event_type events "tool.result"))
+(assert (has_event_type events "workflow.started"))
+(assert (has_event_type events "workflow.step.started"))
+(assert (has_event_type events "workflow.step.completed"))
+(assert (has_event_type events "workflow.completed"))
+(assert (has_event_type events "run.completed"))
+
+(var tool_result (last_event_of_type events "tool.result"))
+(assert (tool_result/data/tool == "fake.echo"))
+(assert (tool_result/data/result/value == "review the current diff"))
+
+(println "ok")

@@ -1,0 +1,140 @@
+# Runtime model profile resolution.
+
+(fn env_string [name default = ""]
+  ((try ($env .get name default) catch * default) .to_s)
+)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn option_text [option_map key fallback = ""]
+  (var option_source (ensure_map option_map))
+  (var value (option_source .get key nil))
+  (if (value == nil)
+    (return fallback)
+  )
+  (var text (value .to_s))
+  (if text/.empty fallback else text)
+)
+
+(fn canonical_profile [profile]
+  (var name (((profile || "") .to_s) .trim))
+  (if name/.empty
+    (return "")
+  )
+  (name .to_lower)
+)
+
+(fn default_profile_for_provider [provider]
+  (var name (((provider || "") .to_s) .trim))
+  (if name/.empty
+    (return "fake")
+  )
+  (if (name == "fake")
+    "fake"
+   elif (name == "local")
+    "local"
+   else
+    "frontier"
+  )
+)
+
+(fn profile_default_provider [profile]
+  (if (profile == "fake")
+    "fake"
+   elif (profile == "local")
+    (env_string "GENECLAW_LOCAL_PROVIDER" "fake")
+   elif (profile == "fast")
+    (env_string "GENECLAW_FAST_PROVIDER" "openai")
+   elif (profile == "standard")
+    (env_string "GENECLAW_STANDARD_PROVIDER" "openai")
+   elif (profile == "frontier")
+    (env_string "GENECLAW_FRONTIER_PROVIDER" "openai")
+   elif (profile == "vision")
+    (env_string "GENECLAW_VISION_PROVIDER" "openai")
+   elif (profile == "code")
+    (env_string "GENECLAW_CODE_PROVIDER" "openai")
+   else
+    (env_string "GENECLAW_STANDARD_PROVIDER" "openai")
+  )
+)
+
+(fn openai_profile_model [profile]
+  (if (profile == "fast")
+    (env_string "GENECLAW_FAST_MODEL" (env_string "OPENAI_MODEL" "gpt-5-mini"))
+   elif (profile == "standard")
+    (env_string "GENECLAW_STANDARD_MODEL" (env_string "OPENAI_MODEL" "gpt-5-mini"))
+   elif (profile == "frontier")
+    (env_string "GENECLAW_FRONTIER_MODEL" (env_string "OPENAI_MODEL" "gpt-5"))
+   elif (profile == "vision")
+    (env_string "GENECLAW_VISION_MODEL" (env_string "OPENAI_MODEL" "gpt-5"))
+   elif (profile == "code")
+    (env_string "GENECLAW_CODE_MODEL" (env_string "OPENAI_MODEL" "gpt-5"))
+   else
+    (env_string "OPENAI_MODEL" "gpt-5-mini")
+  )
+)
+
+(fn anthropic_profile_model [profile]
+  (if (profile == "fast")
+    (env_string "GENECLAW_ANTHROPIC_FAST_MODEL" (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+   elif (profile == "standard")
+    (env_string "GENECLAW_ANTHROPIC_STANDARD_MODEL" (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+   elif (profile == "frontier")
+    (env_string "GENECLAW_ANTHROPIC_FRONTIER_MODEL" (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+   elif (profile == "vision")
+    (env_string "GENECLAW_ANTHROPIC_VISION_MODEL" (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+   elif (profile == "code")
+    (env_string "GENECLAW_ANTHROPIC_CODE_MODEL" (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+   else
+    (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6")
+  )
+)
+
+(fn profile_default_model [profile provider]
+  (if (provider == "fake")
+    "fake"
+   elif (provider == "local")
+    (env_string "GENECLAW_LOCAL_MODEL" "fake")
+   elif (provider == "anthropic")
+    (anthropic_profile_model profile)
+   else
+    (openai_profile_model profile)
+  )
+)
+
+(fn profile_capabilities [profile]
+  {
+    ^tools true
+    ^vision (profile == "vision")
+    ^code (profile == "code")
+    ^local (profile == "local")
+  }
+)
+
+(fn $ns/resolve_model_profile [requested_provider options = {}]
+  (var option_source (ensure_map options))
+  (var provider_text (((requested_provider || "") .to_s) .trim))
+  (var profile_text (canonical_profile (option_text option_source "profile" "")))
+  (if profile_text/.empty
+    (profile_text = (default_profile_for_provider provider_text))
+  )
+  (var provider (option_text option_source "provider" provider_text))
+  (if provider/.empty
+    (provider = (profile_default_provider profile_text))
+  )
+  (var model (option_text option_source "model" ""))
+  (if (model == provider)
+    (model = "")
+  )
+  (if model/.empty
+    (model = (profile_default_model profile_text provider))
+  )
+  {
+    ^profile profile_text
+    ^provider provider
+    ^model model
+    ^capabilities (profile_capabilities profile_text)
+  }
+)

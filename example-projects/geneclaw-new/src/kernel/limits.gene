@@ -1,0 +1,84 @@
+# Shared runtime limits for runs and tool outputs.
+
+($ns/DEFAULT_STEPS = 8)
+($ns/DEFAULT_TOOL_CALLS = 4)
+($ns/DEFAULT_TOKENS = 100000)
+($ns/DEFAULT_DEADLINE_MS = 600000)
+($ns/DEFAULT_MAX_OUTPUT_BYTES = 4000)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn int_value [value default]
+  (if (value is Int)
+    value
+  elif (value == nil)
+    default
+  else
+    (try
+      value/.to_i
+    catch *
+      default
+    )
+  )
+)
+
+(fn int_field [source key default]
+  (var value (source .get key nil))
+  (int_value value default)
+)
+
+(fn non_negative [value default]
+  (var normalized (int_value value default))
+  (if (normalized < 0) default else normalized)
+)
+
+(fn $ns/normalize_budgets [budgets = {}]
+  (var input (ensure_map budgets))
+  {
+    ^steps (non_negative (input .get "steps" nil) DEFAULT_STEPS)
+    ^tool_calls (non_negative (input .get "tool_calls" nil) DEFAULT_TOOL_CALLS)
+    ^tokens (non_negative (input .get "tokens" nil) DEFAULT_TOKENS)
+    ^deadline_ms (non_negative (input .get "deadline_ms" nil) DEFAULT_DEADLINE_MS)
+    ^max_output_bytes (non_negative (input .get "max_output_bytes" nil) DEFAULT_MAX_OUTPUT_BYTES)
+  }
+)
+
+(fn $ns/deadline_at_ms [started_at_ms budgets = {}]
+  (var normalized (normalize_budgets budgets))
+  (started_at_ms + normalized/deadline_ms)
+)
+
+(fn $ns/deadline_exceeded [deadline_at]
+  (gene/now/.call/.to_i >= (int_value deadline_at 0))
+)
+
+(fn $ns/output_limit_from_args [args = {} fallback = 4000]
+  (var source (ensure_map args))
+  (non_negative (source .get "max_output_bytes" nil) fallback)
+)
+
+(fn $ns/bound_inline_text [value max_bytes = 4000]
+  (var raw_text ((value || "") .to_s))
+  (var limit (non_negative max_bytes DEFAULT_MAX_OUTPUT_BYTES))
+  (if (limit == 0)
+    (limit = DEFAULT_MAX_OUTPUT_BYTES)
+  )
+  (if (raw_text/.size > limit)
+    (var end_index (limit - 1))
+    {
+      ^text #"#{(raw_text .substr 0 end_index)}...[truncated]"
+      ^bytes raw_text/.size
+      ^limit limit
+      ^truncated true
+    }
+  else
+    {
+      ^text raw_text
+      ^bytes raw_text/.size
+      ^limit limit
+      ^truncated false
+    }
+  )
+)

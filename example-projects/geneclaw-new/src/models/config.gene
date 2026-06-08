@@ -1,0 +1,125 @@
+# Model provider configuration helpers.
+
+(fn env_string [name default = ""]
+  ((try ($env .get name default) catch * default) .to_s)
+)
+
+(fn env_int [name default]
+  (var raw (env_string name ""))
+  (if raw/.empty
+    (return default)
+  )
+  (try
+    raw/.to_i
+  catch *
+    default
+  )
+)
+
+(fn truthy_env [name]
+  (var value (env_string name ""))
+  (value = value/.trim)
+  (value = value/.to_lower)
+  ((value == "1") || (value == "true") || (value == "yes") || (value == "on"))
+)
+
+(fn request_model [provider request default_model]
+  (var value "")
+  (if (request is Map)
+    (try
+      (value = ((request .get "model" "") .to_s))
+    catch *
+      (value = "")
+    )
+  )
+  (if value/.not_empty
+    (if (value != provider)
+      value
+    else
+      default_model
+    )
+  else
+    default_model
+  )
+)
+
+(fn openai_config [request]
+  {^provider "openai"
+   ^model (request_model "openai" request (env_string "OPENAI_MODEL" "gpt-5-mini"))
+   ^timeout_ms (env_int "OPENAI_TIMEOUT_MS" 60000)
+   ^api_key (env_string "OPENAI_API_KEY" "")
+   ^auth_token (env_string "OPENAI_AUTH_TOKEN" (env_string "OPENAI_OAUTH_TOKEN" ""))
+   ^account_id (env_string "OPENAI_ACCOUNT_ID" (env_string "CHATGPT_ACCOUNT_ID" ""))
+   ^base_url (env_string "OPENAI_BASE_URL" "")}
+)
+
+(fn anthropic_config [request]
+  {^provider "anthropic"
+   ^model (request_model "anthropic" request (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+   ^timeout_ms (env_int "ANTHROPIC_TIMEOUT_MS" 60000)
+   ^api_key (env_string "ANTHROPIC_API_KEY" "")
+   ^auth_token (env_string "ANTHROPIC_AUTH_TOKEN" (env_string "ANTHROPIC_OAUTH_TOKEN" ""))
+   ^account_id ""
+   ^base_url (env_string "ANTHROPIC_BASE_URL" "")}
+)
+
+(fn $ns/model_live_enabled []
+  (truthy_env "GENECLAW_MODEL_LIVE")
+)
+
+(fn $ns/provider_config [provider request = {}]
+  (if (provider == "anthropic")
+    (anthropic_config request)
+  else
+    (openai_config request)
+  )
+)
+
+(fn $ns/provider_has_credentials [provider request = {}]
+  (if_not (model_live_enabled)
+    (return false)
+  )
+  (var cfg (provider_config provider request))
+  (if cfg/api_key/.not_empty
+    true
+  elif cfg/auth_token/.not_empty
+    true
+  else
+    false
+  )
+)
+
+(fn $ns/client_options [provider request = {}]
+  (var cfg (provider_config provider request))
+  (var options {^model cfg/model ^timeout_ms cfg/timeout_ms})
+  (if cfg/api_key/.not_empty
+    (options .set "api_key" cfg/api_key)
+  )
+  (if cfg/auth_token/.not_empty
+    (options .set "auth_token" cfg/auth_token)
+  )
+  (if cfg/account_id/.not_empty
+    (options .set "account_id" cfg/account_id)
+  )
+  (if cfg/base_url/.not_empty
+    (options .set "base_url" cfg/base_url)
+  )
+  options
+)
+
+(fn $ns/provider_status [provider request = {}]
+  (var cfg (provider_config provider request))
+  (var auth_mode "none")
+  (if cfg/api_key/.not_empty
+    (auth_mode = "api_key")
+  elif cfg/auth_token/.not_empty
+    (auth_mode = "auth_token")
+  )
+  {^provider provider
+   ^live_enabled (model_live_enabled)
+   ^configured (provider_has_credentials provider request)
+   ^model cfg/model
+   ^auth_mode auth_mode
+   ^base_url_configured cfg/base_url/.not_empty
+   ^timeout_ms cfg/timeout_ms}
+)

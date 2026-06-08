@@ -1,0 +1,226 @@
+# Lightweight actor registry and pool runtime.
+
+(var ACTORS {})
+(var POOLS {})
+(var NEXT_ACTOR_ID 1)
+(var NEXT_MESSAGE_ID 1)
+
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn next_actor_id [kind]
+  (var id #"actor-#{NEXT_ACTOR_ID}")
+  (NEXT_ACTOR_ID += 1)
+  id
+)
+
+(fn next_message_id []
+  (var id #"msg-#{NEXT_MESSAGE_ID}")
+  (NEXT_MESSAGE_ID += 1)
+  id
+)
+
+(fn actor_snapshot [actor]
+  (if (actor == nil)
+    (return nil)
+  )
+  (var mailbox (ensure_array (actor .get "mailbox" [])))
+  {
+    ^id actor/id
+    ^kind actor/kind
+    ^name actor/name
+    ^mailbox_size mailbox/.size
+    ^processed actor/processed
+    ^failed actor/failed
+    ^online actor/online
+  }
+)
+
+(fn pool_snapshot [pool]
+  (if (pool == nil)
+    (return nil)
+  )
+  {
+    ^kind pool/kind
+    ^actor_ids pool/actor_ids
+    ^next_index pool/next_index
+  }
+)
+
+(fn actor_by_id [actor_id]
+  (ACTORS .get actor_id nil)
+)
+
+(fn call_handler [handler message]
+  (if (handler == nil)
+    (return {^status "ok" ^result message/body})
+  )
+  (handler message)
+)
+
+(fn handler_failed [result]
+  ((result/status || "ok") != "ok")
+)
+
+(fn dequeue_message [actor]
+  (var mailbox (ensure_array (actor .get "mailbox" [])))
+  (if (mailbox/.size == 0)
+    (return nil)
+  )
+  (var message (mailbox .get 0))
+  (actor .set "mailbox" (mailbox .slice 1))
+  message
+)
+
+(fn record_dead_letter [actor message result]
+  (var dead_letters (ensure_array (actor .get "dead_letters" [])))
+  (dead_letters .append {^message message ^result result})
+  (actor .set "dead_letters" dead_letters)
+)
+
+(fn $ns/reset_actor_runtime []
+  (ACTORS = {})
+  (POOLS = {})
+  (NEXT_ACTOR_ID = 1)
+  (NEXT_MESSAGE_ID = 1)
+  true
+)
+
+(fn $ns/start_actor [kind name handler = nil]
+  (var actor_id (next_actor_id kind))
+  (ACTORS .set actor_id {
+    ^id actor_id
+    ^kind ((kind || "") .to_s)
+    ^name ((name || actor_id) .to_s)
+    ^handler handler
+    ^mailbox []
+    ^processed 0
+    ^failed 0
+    ^online true
+  })
+  actor_id
+)
+
+(fn $ns/start_actor_pool [kind size handler = nil]
+  (var count (try size/.to_i catch * 1))
+  (if (count < 1)
+    (count = 1)
+  )
+  (var actor_ids [])
+  (var index 0)
+  (while (index < count)
+    (actor_ids .append (start_actor kind #"#{kind}-#{index}" handler))
+    (index += 1)
+  )
+  (POOLS .set kind {^kind kind ^actor_ids actor_ids ^next_index 0})
+  (pool_snapshot (POOLS .get kind))
+)
+
+(fn $ns/send_actor_message [from_actor to_actor message_type body = {}]
+  (var actor (actor_by_id to_actor))
+  (if (actor == nil)
+    (return {^ok false ^error #"Unknown actor: #{to_actor}"})
+  )
+  (if (actor/online == false)
+    (return {^ok false ^error #"Actor is offline: #{to_actor}"})
+  )
+  (var message {
+    ^id (next_message_id)
+    ^from ((from_actor || "") .to_s)
+    ^to to_actor
+    ^type ((message_type || "") .to_s)
+    ^body (ensure_map body)
+    ^attempts 0
+  })
+  (var mailbox (ensure_array (actor .get "mailbox" [])))
+  (mailbox .append message)
+  (actor .set "mailbox" mailbox)
+  {^ok true ^message message}
+)
+
+(fn $ns/send_pool_message [from_actor kind message_type body = {}]
+  (var pool (POOLS .get kind nil))
+  (if (pool == nil)
+    (return {^ok false ^error #"Unknown actor pool: #{kind}"})
+  )
+  (var actor_ids (ensure_array (pool .get "actor_ids" [])))
+  (if (actor_ids/.size == 0)
+    (return {^ok false ^error #"Actor pool is empty: #{kind}"})
+  )
+  (var index (pool .get "next_index" 0))
+  (if (index >= actor_ids/.size)
+    (index = 0)
+  )
+  (var actor_id (actor_ids .get index))
+  (pool .set "next_index" (if ((index + 1) >= actor_ids/.size) 0 else (index + 1)))
+  (send_actor_message from_actor actor_id message_type body)
+)
+
+(fn $ns/dispatch_actor [actor_id limit = 1]
+  (var actor (actor_by_id actor_id))
+  (if (actor == nil)
+    (return {^ok false ^error #"Unknown actor: #{actor_id}" ^processed 0 ^failed 0})
+  )
+  (var max_count (try limit/.to_i catch * 1))
+  (if (max_count < 1)
+    (max_count = 1)
+  )
+  (var processed [])
+  (var failed [])
+  (var count 0)
+  (while (count < max_count)
+    (var message (dequeue_message actor))
+    (if (message == nil)
+      (break)
+    )
+    (message .set "attempts" ((message .get "attempts" 0) + 1))
+    (var result (call_handler actor/handler message))
+    (if (handler_failed result)
+      (actor .set "failed" (actor/failed + 1))
+      (record_dead_letter actor message result)
+      (failed .append {^message message ^result result})
+     else
+      (actor .set "processed" (actor/processed + 1))
+      (processed .append {^message message ^result result})
+    )
+    (count += 1)
+  )
+  {^ok true ^actor (actor_snapshot actor) ^processed processed ^failed failed}
+)
+
+(fn $ns/dispatch_pool [kind limit_per_actor = 1]
+  (var pool (POOLS .get kind nil))
+  (if (pool == nil)
+    (return {^ok false ^error #"Unknown actor pool: #{kind}" ^results []})
+  )
+  (var results [])
+  (var actor_ids (ensure_array (pool .get "actor_ids" [])))
+  (var index 0)
+  (while (index < actor_ids/.size)
+    (results .append (dispatch_actor (actor_ids .get index) limit_per_actor))
+    (index += 1)
+  )
+  {^ok true ^pool (pool_snapshot pool) ^results results}
+)
+
+(fn $ns/actor_status [actor_id]
+  (actor_snapshot (actor_by_id actor_id))
+)
+
+(fn $ns/actor_pool_status [kind]
+  (pool_snapshot (POOLS .get kind nil))
+)
+
+(fn $ns/actor_dead_letters [actor_id]
+  (var actor (actor_by_id actor_id))
+  (if (actor == nil)
+    []
+   else
+    (ensure_array (actor .get "dead_letters" []))
+  )
+)

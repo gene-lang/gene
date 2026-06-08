@@ -1,0 +1,128 @@
+# Skill package loader for GeneClaw skill.gene files.
+
+(import tool_specs_for_provider from "models/gateway")
+
+($ns/DEFAULT_SKILL_ROOT = "skills")
+($ns/SKILL_ROOT = ($env .get "GENECLAW_SKILLS_ROOT" DEFAULT_SKILL_ROOT))
+
+(fn $ns/set_skill_root [path]
+  (SKILL_ROOT = (((path || DEFAULT_SKILL_ROOT) .to_s) .trim))
+  SKILL_ROOT
+)
+
+(fn safe_skill_name [name]
+  (var text (((name || "") .to_s) .trim))
+  (if (text .contains "/")
+    (return "")
+  )
+  (if (text .contains "..")
+    (return "")
+  )
+  text
+)
+
+(fn skill_path [name]
+  #"#{SKILL_ROOT}/#{name}/skill.gene"
+)
+
+(fn ensure_array [value]
+  (if (value is Array) value else [])
+)
+
+(fn normalize_skill_tool [tool]
+  (if (tool is Map)
+    {^name ((tool/name || "") .to_s) ^reason ((tool/reason || "") .to_s)}
+  else
+    {^name ((tool || "") .to_s) ^reason ""}
+  )
+)
+
+(fn normalize_skill_tools [tools]
+  (var normalized [])
+  (var items (ensure_array tools))
+  (var index 0)
+  (while (index < items/.size)
+    (var item (normalize_skill_tool (items .get index)))
+    (if item/name/.not_empty
+      (normalized .append item)
+    )
+    (index += 1)
+  )
+  normalized
+)
+
+(fn $ns/normalize_skill [skill]
+  (var source (if (skill is Map) skill else {}))
+  {
+    ^name ((source/name || "") .to_s)
+    ^version ((source/version || "0.0.0") .to_s)
+    ^description ((source/description || "") .to_s)
+    ^system ((source/system || "") .to_s)
+    ^tools (normalize_skill_tools (source/tools || []))
+    ^workflows (ensure_array (source/workflows || []))
+    ^examples (ensure_array (source/examples || []))
+  }
+)
+
+(fn $ns/load_skill [name]
+  (var safe_name (safe_skill_name name))
+  (if safe_name/.empty
+    (return nil)
+  )
+  (var path (skill_path safe_name))
+  (try
+    (var loaded (gene/serdes/read path))
+    (normalize_skill loaded)
+  catch *
+    nil
+  )
+)
+
+(fn $ns/skill_tool_names [skill]
+  (var names [])
+  (var tools (ensure_array (skill/tools || [])))
+  (var index 0)
+  (while (index < tools/.size)
+    (var tool (tools .get index))
+    (if ((tool/name || "") .not_empty)
+      (names .append tool/name)
+    )
+    (index += 1)
+  )
+  names
+)
+
+(fn name_allowed [name names]
+  (if names/.empty
+    (return true)
+  )
+  (var index 0)
+  (while (index < names/.size)
+    (if ((names .get index) == name)
+      (return true)
+    )
+    (index += 1)
+  )
+  false
+)
+
+(fn $ns/filter_tool_defs_for_skill [tool_defs skill]
+  (if (skill == nil)
+    (return tool_defs)
+  )
+  (var names (skill_tool_names skill))
+  (var filtered [])
+  (var index 0)
+  (while (index < tool_defs/.size)
+    (var tool_def (tool_defs .get index))
+    (if (name_allowed tool_def/name names)
+      (filtered .append tool_def)
+    )
+    (index += 1)
+  )
+  filtered
+)
+
+(fn $ns/provider_tool_specs_for_skill [provider skill tool_defs]
+  (tool_specs_for_provider (filter_tool_defs_for_skill tool_defs skill) provider)
+)

@@ -1,0 +1,40 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import set_store_root store_root from "kernel/storage")
+(import reset_tools from "tools/registry")
+(import register_fake_tools from "tools/fake")
+(import run_agent from "agent_loop")
+(import rebuild_memory_index from "memory/store")
+(import indexed_events search_memory_index sqlite_index_path from "storage/sqlite_index")
+
+(set_store_root "/tmp/geneclaw-new-test-storage-index")
+(reset_runs)
+(reset_tools)
+(register_fake_tools)
+
+(var summary (run_agent "index bananas" "cli" {^steps 4 ^tool_calls 2}))
+(assert (summary/state == "completed"))
+
+(var all_events (indexed_events (store_root) summary/id))
+(assert (all_events/.size == summary/event_count))
+(assert (all_events/0/type == "run.started"))
+
+(var tool_events (indexed_events (store_root) summary/id "tool.result"))
+(assert (tool_events/.size == 1))
+(assert (tool_events/0/data/tool == "fake.echo"))
+(assert (tool_events/0/at_ms > 0))
+
+(assert ((rebuild_memory_index) >= 1))
+(var found (search_memory_index (store_root) "bananas" "cli" 5))
+(assert (found/ok == true))
+(assert (found/facts/.size == 1))
+(assert (found/facts/0/text .contains "index bananas"))
+
+(var recent (search_memory_index (store_root) "" "cli" 5))
+(assert (recent/ok == true))
+(assert (recent/facts/.size >= 1))
+
+(assert ((sqlite_index_path (store_root)) .contains "geneclaw.sqlite"))
+
+(println "ok")

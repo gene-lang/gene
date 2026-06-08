@@ -1,0 +1,74 @@
+#!/usr/bin/env gene run
+
+(import reset_actor_runtime start_actor start_actor_pool send_actor_message send_pool_message dispatch_actor dispatch_pool actor_status actor_pool_status actor_dead_letters from "actors/runtime")
+
+(reset_actor_runtime)
+
+(fn echo_handler [message]
+  {^status "ok" ^summary #"#{message/type}:#{message/body/text}"}
+)
+
+(fn failing_handler [message]
+  {^status "failed" ^error #"failed #{message/body/text}"}
+)
+
+(var actor_id (start_actor "run" "run-actor" echo_handler))
+(var sent (send_actor_message "test" actor_id "run.start" {^text "hello"}))
+(assert (sent/ok == true))
+(assert (sent/message/to == actor_id))
+(var actor_status_after_send (actor_status actor_id))
+(assert (actor_status_after_send/mailbox_size == 1))
+
+(var dispatched (dispatch_actor actor_id 4))
+(assert (dispatched/ok == true))
+(assert (dispatched/processed/.size == 1))
+(assert (dispatched/processed/0/result/summary == "run.start:hello"))
+(var actor_status_after_dispatch (actor_status actor_id))
+(assert (actor_status_after_dispatch/processed == 1))
+(assert (actor_status_after_dispatch/mailbox_size == 0))
+
+(var pool (start_actor_pool "tool" 2 echo_handler))
+(assert (pool/actor_ids/.size == 2))
+(var pool_send_1 (send_pool_message "test" "tool" "tool.call" {^text "one"}))
+(var pool_send_2 (send_pool_message "test" "tool" "tool.call" {^text "two"}))
+(var pool_send_3 (send_pool_message "test" "tool" "tool.call" {^text "three"}))
+(assert (pool_send_1/ok == true))
+(assert (pool_send_2/ok == true))
+(assert (pool_send_3/ok == true))
+
+(var pool_status (actor_pool_status "tool"))
+(assert (pool_status/next_index == 1))
+(var pool_actor_0 (pool/actor_ids .get 0))
+(var pool_actor_1 (pool/actor_ids .get 1))
+(var pool_actor_0_status (actor_status pool_actor_0))
+(var pool_actor_1_status (actor_status pool_actor_1))
+(assert (pool_actor_0_status/mailbox_size == 2))
+(assert (pool_actor_1_status/mailbox_size == 1))
+
+(var pool_dispatch (dispatch_pool "tool" 8))
+(assert (pool_dispatch/ok == true))
+(var pool_actor_0_dispatched (actor_status pool_actor_0))
+(var pool_actor_1_dispatched (actor_status pool_actor_1))
+(assert (pool_actor_0_dispatched/processed == 2))
+(assert (pool_actor_1_dispatched/processed == 1))
+
+(var fail_id (start_actor "tool" "failing-tool" failing_handler))
+(send_actor_message "test" fail_id "tool.call" {^text "boom"})
+(var failed_dispatch (dispatch_actor fail_id 1))
+(assert (failed_dispatch/ok == true))
+(assert (failed_dispatch/failed/.size == 1))
+(var fail_status (actor_status fail_id))
+(var dead_letters (actor_dead_letters fail_id))
+(assert (fail_status/failed == 1))
+(assert (dead_letters/.size == 1))
+(assert (dead_letters/0/result/error .contains "boom"))
+
+(var unknown_actor (send_actor_message "test" "missing" "noop" {}))
+(assert (unknown_actor/ok == false))
+(assert (unknown_actor/error .contains "Unknown actor"))
+
+(var unknown_pool (send_pool_message "test" "missing" "noop" {}))
+(assert (unknown_pool/ok == false))
+(assert (unknown_pool/error .contains "Unknown actor pool"))
+
+(println "ok")
