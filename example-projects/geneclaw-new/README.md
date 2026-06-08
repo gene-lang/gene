@@ -13,7 +13,7 @@ This version starts with the smallest useful vertical slice:
 - typed tool registry shape
 - bounded fake tool execution
 - typed tool argument validation
-- trusted-local shell/read/search/patch built-in tools
+- trusted-local shell/read/search/patch and web search/fetch/read built-in tools
 - enforced shell command timeouts through Gene `system/run`
 - large tool output references
 - provider-neutral model gateway
@@ -87,6 +87,13 @@ Run the demo:
 ```
 
 Events are stored under `$GENECLAW_NEW_HOME` or `/tmp/geneclaw-new` by default.
+
+Web tools are available as normal GeneClaw tools:
+
+- `web.search` returns structured search results. It defaults to Mojeek HTML
+  search and can be configured with `GENECLAW_SEARCH_PROVIDER`.
+- `web.fetch` returns raw URL content and HTTP metadata.
+- `web.read` returns readable page text, title, and links.
 
 Live model calls are disabled by default so local tests and demos stay offline.
 Enable them explicitly by sourcing `.env` with `GENECLAW_MODEL_LIVE=true`

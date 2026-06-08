@@ -79,6 +79,8 @@
 (assert (openai_payload/messages/1/content == "gateway should call tools"))
 (assert (openai_payload/instructions .contains "You are GeneClaw."))
 (assert (openai_payload/instructions .contains "default shell cwd"))
+(assert (openai_payload/instructions .contains "workspace-relative paths"))
+(assert (openai_payload/instructions .contains "Resolve follow-up targets"))
 (assert (openai_payload/instructions .contains "do not answer from memory alone"))
 (assert (openai_payload/instructions .contains "macOS/POSIX"))
 (assert (openai_payload/instructions .contains "trailing slash"))
@@ -118,6 +120,16 @@
 (assert (tool_history_openai_payload/messages/1/content .contains "empty output"))
 (assert (tool_history_openai_payload/input/.size == 1))
 (assert (tool_history_openai_payload/input/0/content .contains "Previous tool results"))
+
+(var followup_run (create_run "summarize readme" "test"))
+(var followup_request (build_model_request "openai" followup_run (events_for followup_run/id) (tool_defs) {
+  ^model "gpt-test"
+  ^memory_text "- Run run-51: https://github.com/gene-lang/gene => The repository at that link is gene-lang/gene"
+}))
+(var followup_payload (build_provider_payload "openai" followup_request))
+(assert (followup_payload/messages/1/content .contains "Follow-up target hint"))
+(assert (followup_payload/messages/1/content .contains "repository README"))
+(assert (followup_payload/messages/1/content .contains "web.read"))
 
 (var long_output "")
 (var long_index 0)

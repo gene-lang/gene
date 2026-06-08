@@ -5,7 +5,7 @@
 (import set_store_root from "kernel/storage")
 (import reset_tools from "tools/registry")
 (import register_fake_tools from "tools/fake")
-(import already_completed_tool_calls deduped_final_content run_agent from "agent_loop")
+(import already_attempted_tool_calls already_completed_tool_calls deduped_final_content repeated_tool_call_fallback_content repeated_tool_call_final_content run_agent from "agent_loop")
 
 ($env .set "GENECLAW_MODEL_LIVE" "false")
 ($env .set "GENECLAW_PROVIDER" "")
@@ -65,5 +65,56 @@
 (assert (already_completed_tool_calls duplicate_run/id [{^id "call-dup" ^name "shell.run" ^args {}}]))
 (assert ((deduped_final_content duplicate_run/id "") == "listed tmp"))
 (assert ((deduped_final_content duplicate_run/id "I will answer") == "listed tmp"))
+
+(var repeat_run (create_run "dedupe repeated mixed tool calls" "cli"))
+(append_event repeat_run/id "tool.result" {
+  ^tool "search.rg"
+  ^call_id "call-failed"
+  ^status "failed"
+  ^result {^status "failed" ^error "Path must be relative to the workspace"}
+})
+(append_event repeat_run/id "tool.result" {
+  ^tool "web.search"
+  ^call_id "call-ok"
+  ^status "ok"
+  ^result {^status "ok" ^output "listed web"}
+})
+(var repeated_calls [
+  {^id "call-failed" ^name "search.rg" ^args {}}
+  {^id "call-ok" ^name "web.search" ^args {}}
+])
+(assert (already_attempted_tool_calls repeat_run/id repeated_calls))
+(assert ((already_completed_tool_calls repeat_run/id repeated_calls) == false))
+(assert ((repeated_tool_call_final_content repeat_run/id "model answer") == "model answer"))
+(assert ((repeated_tool_call_final_content repeat_run/id "") == "listed web"))
+
+(var content_run (create_run "dedupe repeated content tool call" "cli"))
+(append_event content_run/id "tool.result" {
+  ^tool "file.read"
+  ^call_id "call-content"
+  ^status "ok"
+  ^result {^status "ok" ^content "readme body"}
+})
+(assert ((deduped_final_content content_run/id "") == "readme body"))
+(assert ((repeated_tool_call_final_content content_run/id "") == "readme body"))
+
+(var empty_run (create_run "dedupe repeated empty tool calls" "cli"))
+(append_event empty_run/id "tool.result" {
+  ^tool "search.rg"
+  ^call_id "call-search-empty"
+  ^status "ok"
+  ^result {^status "ok" ^output ""}
+})
+(append_event empty_run/id "tool.result" {
+  ^tool "shell.run"
+  ^call_id "call-find-empty"
+  ^status "ok"
+  ^result {^status "ok" ^output ""}
+})
+(var empty_fallback (repeated_tool_call_fallback_content empty_run/id))
+(assert (empty_fallback .contains "did not return enough information"))
+(assert (empty_fallback .contains "search.rg returned no output"))
+(assert (empty_fallback .contains "shell.run returned no output"))
+(assert ((repeated_tool_call_final_content empty_run/id "") == empty_fallback))
 
 (println "ok")

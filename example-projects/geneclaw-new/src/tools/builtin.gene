@@ -42,6 +42,55 @@
   #"#{WORKSPACE_ROOT}/#{path}"
 )
 
+(fn workspace_relative_path [path]
+  (var text (((path || "") .to_s) .trim))
+  (if text/.empty
+    (return text)
+  )
+  (if (text == WORKSPACE_ROOT)
+    (return ".")
+  )
+  (var prefix #"#{WORKSPACE_ROOT}/")
+  (if (text .starts_with prefix)
+    (var rel (text .replace_all prefix ""))
+    (if rel/.empty "." else rel)
+   else
+    text
+  )
+)
+
+(fn web_helper_path []
+  ($env .get "GENECLAW_WEB_HELPER" "scripts/web_tools.py")
+)
+
+(fn int_text [value fallback]
+  (var source value)
+  (if (source == nil)
+    (source = fallback)
+  )
+  (var parsed (try (source/.to_s .to_i) catch * fallback))
+  parsed/.to_s
+)
+
+(fn parse_web_helper_result [process_result fallback_error]
+  (var output ((process_result/output || "") .to_s))
+  (if ((process_result/exit_code || 0) != 0)
+    (return {^status "failed" ^error #"#{fallback_error}: #{output}" ^output output})
+  )
+  (try
+    (var parsed (gene/json/parse output))
+    (if (parsed is Map)
+      (if (((parsed/status || "") .to_s) .empty)
+        (parsed .set "status" "ok")
+      )
+      (return parsed)
+    )
+    {^status "failed" ^error #"#{fallback_error}: helper returned non-object JSON" ^output output}
+   catch *
+    {^status "failed" ^error #"#{fallback_error}: #{$ex/message}" ^output output}
+  )
+)
+
 (fn shell_cwd_path [cwd]
   (var text (((cwd || ".") .to_s) .trim))
   (if text/.empty
@@ -97,8 +146,72 @@
   )
 )
 
+(fn web_search [args]
+  (var query (((args/query || "") .to_s) .trim))
+  (if query/.empty
+    (return {^status "failed" ^error "Missing query"})
+  )
+  (var provider ((((args .get "provider" ($env .get "GENECLAW_SEARCH_PROVIDER" "mojeek")) || "mojeek") .to_s) .trim))
+  (var limit_text (int_text (args .get "limit" 5) 5))
+  (var timeout_text (int_text (args .get "timeout_ms" 15000) 15000))
+  (try
+    (var result (system/run "python3" (web_helper_path) "search"
+      ^env {
+        ^GENECLAW_WEB_QUERY query
+        ^GENECLAW_SEARCH_PROVIDER provider
+        ^GENECLAW_WEB_LIMIT limit_text
+        ^GENECLAW_WEB_TIMEOUT_MS timeout_text
+        ^GENECLAW_WEB_SEARCH_FIXTURE ($env .get "GENECLAW_WEB_SEARCH_FIXTURE" "")
+      }
+      ^stderr_to_stdout true))
+    (parse_web_helper_result result "web search failed")
+   catch *
+    {^status "failed" ^error #"web search failed: #{$ex/message}"}
+  )
+)
+
+(fn web_fetch [args]
+  (var url (((args/url || "") .to_s) .trim))
+  (if url/.empty
+    (return {^status "failed" ^error "Missing url"})
+  )
+  (var timeout_text (int_text (args .get "timeout_ms" 15000) 15000))
+  (try
+    (var result (system/run "python3" (web_helper_path) "fetch"
+      ^env {
+        ^GENECLAW_WEB_URL url
+        ^GENECLAW_WEB_TIMEOUT_MS timeout_text
+        ^GENECLAW_WEB_FETCH_FIXTURE ($env .get "GENECLAW_WEB_FETCH_FIXTURE" "")
+      }
+      ^stderr_to_stdout true))
+    (parse_web_helper_result result "web fetch failed")
+   catch *
+    {^status "failed" ^error #"web fetch failed: #{$ex/message}"}
+  )
+)
+
+(fn web_read [args]
+  (var url (((args/url || "") .to_s) .trim))
+  (if url/.empty
+    (return {^status "failed" ^error "Missing url"})
+  )
+  (var timeout_text (int_text (args .get "timeout_ms" 15000) 15000))
+  (try
+    (var result (system/run "python3" (web_helper_path) "read"
+      ^env {
+        ^GENECLAW_WEB_URL url
+        ^GENECLAW_WEB_TIMEOUT_MS timeout_text
+        ^GENECLAW_WEB_FETCH_FIXTURE ($env .get "GENECLAW_WEB_FETCH_FIXTURE" "")
+      }
+      ^stderr_to_stdout true))
+    (parse_web_helper_result result "web read failed")
+   catch *
+    {^status "failed" ^error #"web read failed: #{$ex/message}"}
+  )
+)
+
 (fn file_read [args]
-  (var path ((args/path || "") .to_s))
+  (var path (workspace_relative_path (args/path || "")))
   (var path_error (relative_path_error path))
   (if path_error/.not_empty
     (return {^status "failed" ^error path_error})
@@ -112,7 +225,7 @@
 
 (fn search_rg [args]
   (var pattern (((args/pattern || "") .to_s) .trim))
-  (var path (((args/path || ".") .to_s) .trim))
+  (var path (workspace_relative_path (args/path || ".")))
   (if pattern/.empty
     (return {^status "failed" ^error "Missing pattern"})
   )
@@ -129,7 +242,7 @@
 )
 
 (fn file_patch [args]
-  (var path ((args/path || "") .to_s))
+  (var path (workspace_relative_path (args/path || "")))
   (var diff ((args/diff || "") .to_s))
   (var path_error (relative_path_error path))
   (if path_error/.not_empty
@@ -185,5 +298,43 @@
     {^type "object" ^required ["path" "diff"] ^properties {^path {^type "string"} ^diff {^type "string"} ^max_output_bytes {^type "integer"}}}
     {^status "String" ^path "String" ^output "String"}
     file_patch)
+  (register_tool
+    "web.search"
+    "Search the web and return structured results. Defaults to Mojeek HTML search unless GENECLAW_SEARCH_PROVIDER or a fixture is configured."
+    {^type "object"
+     ^required ["query"]
+     ^properties {
+       ^query {^type "string"}
+       ^provider {^type "string"}
+       ^limit {^type "integer"}
+       ^timeout_ms {^type "integer"}
+       ^max_output_bytes {^type "integer"}
+     }}
+    {^status "String" ^provider "String" ^query "String" ^results "Array" ^output "String"}
+    web_search)
+  (register_tool
+    "web.fetch"
+    "Fetch a URL and return raw content plus HTTP metadata."
+    {^type "object"
+     ^required ["url"]
+     ^properties {
+       ^url {^type "string"}
+       ^timeout_ms {^type "integer"}
+       ^max_output_bytes {^type "integer"}
+     }}
+    {^status "String" ^url "String" ^final_url "String" ^status_code "Int" ^content_type "String" ^content "String"}
+    web_fetch)
+  (register_tool
+    "web.read"
+    "Fetch a URL and return readable text, title, and links extracted from HTML."
+    {^type "object"
+     ^required ["url"]
+     ^properties {
+       ^url {^type "string"}
+       ^timeout_ms {^type "integer"}
+       ^max_output_bytes {^type "integer"}
+     }}
+    {^status "String" ^url "String" ^final_url "String" ^source_url "String" ^title "String" ^text "String" ^links "Array"}
+    web_read)
   true
 )

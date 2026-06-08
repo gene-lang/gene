@@ -108,7 +108,7 @@
 )
 
 (fn default_system_text []
-  #"You are GeneClaw. Use available tools to satisfy the current request. The default shell cwd and workspace root is #{(default_workspace_text)}. For questions about the current directory, current files, or fresh filesystem state, use this current workspace root or call a tool; do not answer from memory alone. The local shell runs in a trusted macOS/POSIX environment; prefer portable commands such as ls, pwd, cat, sed, and find -print, and avoid GNU-only flags such as find -printf. When listing a directory path that may be a symlink, use a trailing slash such as ls -la /tmp/ so the directory contents are listed. When tool output is available, answer from that output instead of asking the user to run the command."
+  #"You are GeneClaw. Use available tools to satisfy the current request. The default shell cwd and workspace root is #{(default_workspace_text)}. Workspace file tools use workspace-relative paths; use . for the workspace root instead of absolute paths. Resolve follow-up targets from provided context before assuming the local workspace. For questions about the current directory, current files, or fresh filesystem state, use this current workspace root or call a tool; do not answer from memory alone. The local shell runs in a trusted macOS/POSIX environment; prefer portable commands such as ls, pwd, cat, sed, and find -print, and avoid GNU-only flags such as find -printf. When listing a directory path that may be a symlink, use a trailing slash such as ls -la /tmp/ so the directory contents are listed. When tool output is available, answer from that output instead of asking the user to run the command."
 )
 
 (fn openai_responses_tool_specs [tools]
@@ -506,10 +506,21 @@
   #"#{clipped}...[truncated]"
 )
 
+(fn followup_context_hint [goal memory_text]
+  (var goal_text ((((goal || "") .to_s) .trim) .to_lower))
+  (var context_text ((((memory_text || "") .to_s) .trim) .to_lower))
+  (if ((goal_text .contains "readme") && (context_text .contains "github.com/"))
+    "Follow-up target hint: recent context contains a GitHub repository. Treat this README request as referring to that repository unless the user says local/current workspace; use web.read or web.fetch for the repository README before local workspace tools."
+   else
+    ""
+  )
+)
+
 (fn request_user_text [request]
   (var memory_text ((request/memory_text || "") .to_s))
   (var history_text (tool_history_text (ensure_array request/events)))
-  (if (memory_text/.empty && history_text/.empty)
+  (var hint_text (followup_context_hint request/goal memory_text))
+  (if (memory_text/.empty && history_text/.empty && hint_text/.empty)
     (return request/goal)
   )
   (var parts [])
@@ -517,6 +528,9 @@
     (parts .append #"Context:\n#{memory_text}")
   )
   (parts .append #"Current request:\n#{request/goal}")
+  (if hint_text/.not_empty
+    (parts .append hint_text)
+  )
   (if history_text/.not_empty
     (parts .append history_text)
   )

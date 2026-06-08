@@ -53,7 +53,62 @@
   true
 )
 
-(fn last_completed_tool_output [run_id]
+(fn $ns/already_attempted_tool_calls [run_id tool_calls]
+  (if tool_calls/.empty
+    (return false)
+  )
+  (var attempted {})
+  (var events (events_for run_id))
+  (var event_index 0)
+  (while (event_index < events/.size)
+    (var event (events .get event_index))
+    (if (event/type == "tool.result")
+      (var data (if (event/data is Map) event/data else {}))
+      (var call_id (((data .get "call_id" "") || "") .to_s))
+      (if call_id/.not_empty
+        (attempted .set call_id true)
+      )
+    )
+    (event_index += 1)
+  )
+
+  (var call_index 0)
+  (while (call_index < tool_calls/.size)
+    (var tool_call (tool_calls .get call_index))
+    (var call_id (((tool_call/id || "") || "") .to_s))
+    (if (call_id/.empty || ((attempted .contains call_id) == false))
+      (return false)
+    )
+    (call_index += 1)
+  )
+  true
+)
+
+(fn tool_result_text_value [result]
+  (var data (if (result is Map) result else {}))
+  (var keys ["output" "content" "text" "value"])
+  (var index 0)
+  (while (index < keys/.size)
+    (var key (keys .get index))
+    (var value (((data .get key "") || "") .to_s))
+    (if value/.not_empty
+      (return value)
+    )
+    (index += 1)
+  )
+  ""
+)
+
+(fn compact_line_text [text limit]
+  (var value ((text || "") .to_s))
+  (if (value/.size <= limit)
+    (return value)
+  )
+  (var end_index (limit - 1))
+  #"#{(value .substr 0 end_index)}...[truncated]"
+)
+
+(fn last_completed_tool_text [run_id]
   (var output "")
   (var events (events_for run_id))
   (var event_index 0)
@@ -63,7 +118,7 @@
       (var data (if (event/data is Map) event/data else {}))
       (var status (((data .get "status" "") || "") .to_s))
       (var result (if (data/result is Map) data/result else {}))
-      (var value (((result .get "output" "") || "") .to_s))
+      (var value (tool_result_text_value result))
       (if ((status == "ok") && value/.not_empty)
         (output = value)
       )
@@ -75,8 +130,92 @@
 
 (fn $ns/deduped_final_content [run_id content]
   (var text ((content || "") .to_s))
-  (var output (last_completed_tool_output run_id))
+  (var output (last_completed_tool_text run_id))
   (if output/.not_empty output else text)
+)
+
+(fn $ns/repeated_tool_call_fallback_content [run_id]
+  (var lines [])
+  (var events (events_for run_id))
+  (var event_index 0)
+  (while (event_index < events/.size)
+    (var event (events .get event_index))
+    (if (event/type == "tool.result")
+      (var data (if (event/data is Map) event/data else {}))
+      (var tool (((data .get "tool" "tool") || "tool") .to_s))
+      (var status (((data .get "status" "") || "") .to_s))
+      (var result (if (data/result is Map) data/result else {}))
+      (var value (tool_result_text_value result))
+      (if (status == "ok")
+        (if value/.not_empty
+          (lines .append #"#{tool} returned #{(compact_line_text value 240)}")
+         else
+          (lines .append #"#{tool} returned no output")
+        )
+       else
+        (var error_text (((result .get "error" "") || "") .to_s))
+        (if error_text/.empty
+          (error_text = (tool_result_text_value result))
+        )
+        (if error_text/.empty
+          (error_text = "failed")
+        )
+        (lines .append #"#{tool} failed: #{(compact_line_text error_text 240)}")
+      )
+    )
+    (event_index += 1)
+  )
+  (if lines/.empty
+    (return "Those tool calls already ran, but no final answer was generated.")
+  )
+  #"Those tool calls already ran and did not return enough information to answer.\n\nTool results:\n- #{(lines .join "\n- ")}"
+)
+
+(fn $ns/repeated_tool_call_final_content [run_id content]
+  (var text ((content || "") .to_s))
+  (if text/.not_empty
+    (return text)
+  )
+  (var fallback_lines [])
+  (var events (events_for run_id))
+  (var event_index 0)
+  (while (event_index < events/.size)
+    (var event (events .get event_index))
+    (if (event/type == "tool.result")
+      (var data (if (event/data is Map) event/data else {}))
+      (var tool (((data .get "tool" "tool") || "tool") .to_s))
+      (var status (((data .get "status" "") || "") .to_s))
+      (var result (if (data/result is Map) data/result else {}))
+      (var value (tool_result_text_value result))
+      (if (status == "ok")
+        (if value/.not_empty
+          (fallback_lines .append #"#{tool} returned #{(compact_line_text value 240)}")
+         else
+          (fallback_lines .append #"#{tool} returned no output")
+        )
+       else
+        (var error_text (((result .get "error" "") || "") .to_s))
+        (if error_text/.empty
+          (error_text = (tool_result_text_value result))
+        )
+        (if error_text/.empty
+          (error_text = "failed")
+        )
+        (fallback_lines .append #"#{tool} failed: #{(compact_line_text error_text 240)}")
+      )
+    )
+    (event_index += 1)
+  )
+  (var fallback_text (if fallback_lines/.empty
+    "Those tool calls already ran, but no final answer was generated."
+   else
+    #"Those tool calls already ran and did not return enough information to answer.\n\nTool results:\n- #{(fallback_lines .join "\n- ")}"
+  ))
+  (var final_text (deduped_final_content run_id text))
+  (if final_text/.not_empty
+    (return final_text)
+  )
+  fallback_text
 )
 
 (fn $ns/volatile_filesystem_goal [goal]
@@ -227,6 +366,92 @@
     )
 
     (var requested_tool_calls (response_tool_calls response))
+    (if (already_attempted_tool_calls run/id requested_tool_calls)
+      (var repeated_final response_content)
+      (if repeated_final/.empty
+        (var final_instruction "Produce a final answer from the previous tool results. Do not call tools; no tools are available for this finalization step.")
+        (var final_system (if (skill == nil)
+          final_instruction
+         else
+          #"#{skill/system}\n#{final_instruction}"
+        ))
+        (var final_request (build_model_request provider run (events_for run/id) [] {
+          ^profile (run_options/profile || "")
+          ^model (run_options/model || "")
+          ^skill (if (skill == nil) "" else skill/name)
+          ^system final_system
+          ^memory_text retrieved_memory/text
+        }))
+        (start_workflow_step run/id workflow_state "model_final" "model" {^step step_count ^provider final_request/provider ^deduped_tool_calls requested_tool_calls/.size})
+        (append_event run/id "model.request" {
+          ^step step_count
+          ^provider final_request/provider
+          ^profile final_request/profile
+          ^model final_request/model
+          ^skill final_request/skill
+          ^tool_count final_request/tools/.size
+          ^final_attempt true
+        })
+        (var final_response (call_model final_request/provider final_request))
+        (if (final_response/ok == false)
+          (var final_error_info (final_response .get "error_info" {}))
+          (var raw_final_error (final_response .get "error" nil))
+          (var final_error (if (raw_final_error == nil) "" else raw_final_error/.to_s))
+          (if final_error/.empty
+            (var final_info_message (if (final_error_info is Map) ((final_error_info .get "message" "") .to_s) else ""))
+            (if final_info_message/.not_empty
+              (final_error = final_info_message)
+             else
+              (final_error = "model failed")
+            )
+          )
+          (append_event run/id "model.error" {
+            ^step step_count
+            ^provider final_request/provider
+            ^error final_error
+            ^error_info final_error_info
+            ^started_at_ms (final_response .get "started_at_ms" 0)
+            ^completed_at_ms (final_response .get "completed_at_ms" 0)
+            ^duration_ms (final_response .get "duration_ms" 0)
+            ^final_attempt true
+          })
+          (complete_workflow_step run/id workflow_state {^kind "fallback" ^error final_error})
+         else
+          (append_event run/id "model.response" {
+            ^step step_count
+            ^provider final_request/provider
+            ^kind (final_response .get "kind")
+            ^content (final_response .get "content")
+            ^tool_calls (response_tool_calls final_response)
+            ^started_at_ms (final_response .get "started_at_ms" 0)
+            ^completed_at_ms (final_response .get "completed_at_ms" 0)
+            ^duration_ms (final_response .get "duration_ms" 0)
+            ^final_attempt true
+          })
+          (var final_response_kind ((final_response .get "kind" "") .to_s))
+          (var final_response_content ((final_response .get "content" "") .to_s))
+          (if final_response_content/.not_empty
+            (repeated_final = final_response_content)
+          )
+          (complete_workflow_step run/id workflow_state {^kind final_response_kind ^duration_ms (final_response .get "duration_ms" 0)})
+        )
+      )
+      (if repeated_final/.empty
+        (repeated_final = (repeated_tool_call_final_content run/id response_content))
+      )
+      (if repeated_final/.not_empty
+        (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count ^deduped_tool_calls requested_tool_calls/.size ^attempted true})
+        (complete_run run/id repeated_final)
+        (write_run_memory run repeated_final)
+        (complete_workflow_step run/id workflow_state {^state "completed" ^deduped_tool_calls requested_tool_calls/.size ^attempted true})
+        (complete_workflow run/id workflow_state {^state "completed"})
+       else
+        (var repeated_error "model repeated prior tool calls without final content")
+        (fail_workflow run/id workflow_state repeated_error)
+        (fail_run run/id repeated_error)
+      )
+      (break)
+    )
     (if (already_completed_tool_calls run/id requested_tool_calls)
       (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count ^deduped_tool_calls requested_tool_calls/.size})
       (var final_content (deduped_final_content run/id response_content))
