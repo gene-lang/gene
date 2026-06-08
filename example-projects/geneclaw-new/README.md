@@ -22,7 +22,7 @@ This version starts with the smallest useful vertical slice:
 - OpenAI/Anthropic payload builders, response normalizers, and opt-in live adapters
 - model stream delta normalization
 - `skill.gene` package loader
-- skill compiler manifests with validation, provider schemas, docs snippets, eval fixtures, and cache keys
+- skill compiler manifests with validation, provider schemas, docs snippets, and cache keys
 - `repo-review` skill with tool/workflow/example declarations
 - workflow graph/checkpoint engine with conditional edges and run-level step events
 - provider tool-spec generation from skill-allowed tools
@@ -35,7 +35,7 @@ This version starts with the smallest useful vertical slice:
 - TUI dashboard/run view-model and text rendering helpers
 - durable scheduled jobs with one-shot, interval, and dead-letter states
 - scheduler dispatcher that launches runs through the agent kernel
-- Gene-data eval fixtures
+- inline Gene-data eval definitions
 - eval assertion replay and performance summaries
 - release checklist commands
 - CLI entrypoint for run/status/events/cancel/reset
@@ -55,6 +55,7 @@ Run the smoke tests from this directory:
 ../../bin/gene run tests/test_tool_codecs.gene
 ../../bin/gene run tests/test_tool_runtime.gene
 ../../bin/gene run tests/test_code_eval.gene
+../../bin/gene run tests/test_shell_eval.gene
 ../../bin/gene run tests/test_limits.gene
 ../../bin/gene run tests/test_storage_index.gene
 ../../bin/gene run tests/test_model_gateway.gene
@@ -82,6 +83,7 @@ Run the demo:
 ../../bin/gene run src/main.gene run --provider openai --model gpt-5-mini "review the current diff"
 ../../bin/gene run src/main.gene run "(+ 1 2)"
 ../../bin/gene run src/main.gene run "= (+ 1 2)"
+../../bin/gene run src/main.gene run "! printf 'hello\nworld\n' | wc -l"
 ../../bin/gene run src/main.gene status run-1
 ../../bin/gene run src/main.gene events run-1
 ../../bin/gene run src/main.gene memory search diff
@@ -97,6 +99,10 @@ are evaluated as Gene code instead of being sent to the agent loop. The leading
 per-session scratch context with persistent vars/functions, GeneClaw metadata in
 `geneclaw`, and a `(tool "name" {...})` helper for calling registered tools.
 Session state is stored under `$GENECLAW_NEW_HOME/eval/sessions`.
+
+Inputs whose trimmed text starts with `!` run as trusted local shell commands
+through `bash -lc` in the GeneClaw workspace root. The leading `!` is stripped
+before creating the run, so history and events store the command itself.
 
 Web tools are available as normal GeneClaw tools:
 

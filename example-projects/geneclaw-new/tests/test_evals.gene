@@ -5,7 +5,7 @@
 (import reset_tools from "tools/registry")
 (import register_fake_tools from "tools/fake")
 (import register_builtin_tools from "tools/builtin")
-(import load_eval run_eval replay_assertions release_checklist from "evals/harness")
+(import run_eval replay_assertions release_checklist from "evals/harness")
 
 ($env .set "GENECLAW_MODEL_LIVE" "false")
 ($env .set "GENECLAW_PROVIDER" "")
@@ -21,7 +21,21 @@
 (register_fake_tools)
 (register_builtin_tools)
 
-(var eval_def (load_eval "repo-review-basic"))
+(var eval_def {
+  ^name "repo-review-basic"
+  ^skill "repo-review"
+  ^input "review the current diff"
+  ^session "eval:repo-review-basic"
+  ^assertions [
+    {^kind "state_is" ^value "completed"}
+    {^kind "event_exists" ^value "skill.loaded"}
+    {^kind "event_exists" ^value "model.request"}
+    {^kind "event_exists" ^value "tool.call"}
+    {^kind "event_exists" ^value "tool.result"}
+    {^kind "event_exists" ^value "memory.written"}
+    {^kind "final_contains" ^value "echo: review the current diff"}
+  ]
+})
 (assert (eval_def/name == "repo-review-basic"))
 (assert (eval_def/skill == "repo-review"))
 (assert (eval_def/assertions/.size > 0))
@@ -40,6 +54,7 @@
 (assert (checklist/.size >= 19))
 (assert (checklist/0/command .contains "test_run_kernel"))
 (assert ((gene/serdes/serialize checklist) .contains "test_tool_codecs"))
+(assert ((gene/serdes/serialize checklist) .contains "test_shell_eval"))
 (assert ((gene/serdes/serialize checklist) .contains "test_limits"))
 (assert ((gene/serdes/serialize checklist) .contains "test_storage_index"))
 (assert ((gene/serdes/serialize checklist) .contains "test_workflows"))

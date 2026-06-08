@@ -1,0 +1,130 @@
+# Trusted-local shell command execution for direct GeneClaw inputs.
+
+(import append_event from "kernel/events")
+(import create_run transition_run complete_run fail_run run_summary from "kernel/runs")
+(import normalize_budgets bound_inline_text from "kernel/limits")
+(import workspace_root from "tools/builtin")
+
+(fn $ns/shell_input [text]
+  (var value (((text || "") .to_s) .trim))
+  (value .starts_with "!")
+)
+
+(fn $ns/normalize_shell_input [text]
+  (var value (((text || "") .to_s) .trim))
+  (if (value .starts_with "!")
+    (return ((value .substr 1) .trim))
+  )
+  value
+)
+
+(fn run_shell_process [command budgets]
+  (var normalized (normalize_budgets budgets))
+  (var timeout_seconds (normalized/deadline_ms / 1000.0))
+  (system/run "bash" "-lc" command
+    ^cwd (workspace_root)
+    ^timeout timeout_seconds
+    ^stderr_to_stdout true)
+)
+
+(fn final_output [output exit_code]
+  (var text (((output || "") .to_s) .trim))
+  (if text/.empty
+    #"exit #{exit_code}"
+   else
+    text
+  )
+)
+
+(fn failure_output [output exit_code]
+  (var text (((output || "") .to_s) .trim))
+  (if text/.empty
+    #"exit #{exit_code}"
+   else
+    #"#{text}\n(exit #{exit_code})"
+  )
+)
+
+(fn bound_final [text budgets]
+  (var normalized (normalize_budgets budgets))
+  (bound_inline_text text normalized/max_output_bytes)
+)
+
+(fn $ns/run_shell_command_with_options [input session = "local" budgets = {} options = {}]
+  (var command (normalize_shell_input input))
+  (var run (create_run command session budgets))
+  (transition_run run/id "running")
+  (if command/.empty
+    (append_event run/id "shell.command.failed" {
+      ^cmd command
+      ^cwd (workspace_root)
+      ^shell "bash"
+      ^exit_code 2
+      ^output "Missing shell command"
+      ^duration_ms 0
+    })
+    (fail_run run/id "Missing shell command")
+    (return (run_summary run/id))
+  )
+
+  (append_event run/id "shell.command.started" {
+    ^cmd command
+    ^cwd (workspace_root)
+    ^shell "bash"
+    ^options options
+  })
+  (var started_at gene/now/.call/.to_i)
+  (var process (run_shell_process command budgets))
+  (var duration_ms (gene/now/.call/.to_i - started_at))
+  (var exit_code (process/exit_code || 0))
+  (var raw_output ((process/output || "") .to_s))
+  (var timed_out (process/timed_out == true))
+  (if timed_out
+    (var timeout_text (failure_output raw_output exit_code))
+    (var bounded_timeout (bound_final timeout_text budgets))
+    (append_event run/id "shell.command.failed" {
+      ^cmd command
+      ^cwd (workspace_root)
+      ^shell "bash"
+      ^exit_code exit_code
+      ^timed_out true
+      ^output bounded_timeout/text
+      ^output_truncated bounded_timeout/truncated
+      ^duration_ms duration_ms
+    })
+    (transition_run run/id "timed_out" {^reason bounded_timeout/text})
+   elif (exit_code == 0)
+    (var success_text (final_output raw_output exit_code))
+    (var bounded_success (bound_final success_text budgets))
+    (append_event run/id "shell.command.completed" {
+      ^cmd command
+      ^cwd (workspace_root)
+      ^shell "bash"
+      ^exit_code exit_code
+      ^timed_out false
+      ^output bounded_success/text
+      ^output_truncated bounded_success/truncated
+      ^duration_ms duration_ms
+    })
+    (complete_run run/id bounded_success/text)
+   else
+    (var failed_text (failure_output raw_output exit_code))
+    (var bounded_failed (bound_final failed_text budgets))
+    (append_event run/id "shell.command.failed" {
+      ^cmd command
+      ^cwd (workspace_root)
+      ^shell "bash"
+      ^exit_code exit_code
+      ^timed_out false
+      ^output bounded_failed/text
+      ^output_truncated bounded_failed/truncated
+      ^duration_ms duration_ms
+    })
+    (fail_run run/id bounded_failed/text)
+  )
+  (run_summary run/id)
+)
+
+(fn $ns/run_shell_command [input session = "local" budgets = {}]
+  (run_shell_command_with_options input session budgets {})
+)

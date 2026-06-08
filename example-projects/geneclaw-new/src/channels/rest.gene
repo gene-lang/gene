@@ -3,6 +3,7 @@
 (import command_envelope envelope_run_options from "channels/envelopes")
 (import run_agent_with_options from "agent_loop")
 (import code_input run_code_eval_with_options from "code_eval")
+(import shell_input run_shell_command_with_options from "shell_eval")
 (import replay_run cancel_run from "kernel/runs")
 (import events_for from "kernel/events")
 (import memory_search from "memory/store")
@@ -55,7 +56,9 @@
       ^model (body/model || "")
       ^attachments (body/attachments || [])}))
   (var run_options (envelope_run_options envelope))
-  (var summary (if (code_input envelope/text)
+  (var summary (if (shell_input envelope/text)
+    (run_shell_command_with_options envelope/text envelope/session {} run_options)
+   elif (code_input envelope/text)
     (run_code_eval_with_options envelope/text envelope/session {} run_options)
    else
     (run_agent_with_options envelope/text envelope/session {} run_options)

@@ -1,0 +1,50 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root from "kernel/storage")
+(import set_workspace_root from "tools/builtin")
+(import shell_input normalize_shell_input run_shell_command from "shell_eval")
+
+(var root "/tmp/geneclaw-new-test-shell-eval")
+(var workspace "/tmp/geneclaw-new-test-shell-eval-workspace")
+(system/shell #"rm -rf '#{root}' '#{workspace}' && mkdir -p '#{workspace}'")
+(set_store_root root)
+(set_workspace_root workspace)
+(reset_runs)
+
+(assert (shell_input "!pwd"))
+(assert (shell_input "  ! printf ok"))
+(assert ((shell_input "echo no-prefix") == false))
+(assert ((normalize_shell_input "! printf ok") == "printf ok"))
+(assert ((normalize_shell_input " !printf ok") == "printf ok"))
+
+(var pipe_run (run_shell_command "! printf 'a\nb\n' | wc -l" "shell-session"))
+(assert (pipe_run/state == "completed"))
+(assert (pipe_run/final == "2"))
+(var pipe_events (events_for pipe_run/id))
+(assert (has_event_type pipe_events "shell.command.started"))
+(assert (has_event_type pipe_events "shell.command.completed"))
+(var pipe_completed (last_event_of_type pipe_events "shell.command.completed"))
+(assert (pipe_completed/data/cmd .contains "wc -l"))
+(assert (pipe_completed/data/shell == "bash"))
+(assert (pipe_completed/data/cwd == workspace))
+
+(gene/io/write #"#{workspace}/sample.txt" "workspace shell")
+(var cwd_run (run_shell_command "! pwd && cat sample.txt" "shell-session"))
+(assert (cwd_run/state == "completed"))
+(assert (cwd_run/final .contains workspace))
+(assert (cwd_run/final .contains "workspace shell"))
+
+(var failed (run_shell_command "! printf bad && exit 7" "shell-session"))
+(assert (failed/state == "failed"))
+(assert (failed/final .contains "bad"))
+(assert (failed/final .contains "(exit 7)"))
+(var failed_event (last_event_of_type (events_for failed/id) "shell.command.failed"))
+(assert (failed_event/data/exit_code == 7))
+
+(var empty (run_shell_command "!" "shell-session"))
+(assert (empty/state == "failed"))
+(assert (empty/final == "Missing shell command"))
+
+(println "ok")

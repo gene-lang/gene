@@ -6,6 +6,8 @@
 (import stored_run_ids store_root from "kernel/storage")
 (import scheduler_jobs from "scheduler/jobs")
 (import memory_search from "memory/store")
+(import code_input from "code_eval")
+(import shell_input from "shell_eval")
 
 (fn ensure_array [value]
   (if (value is Array) value else [])
@@ -110,7 +112,7 @@
 )
 
 (fn $ns/tui_program_text [text]
-  (tui_colorize "2" text)
+  (tui_colorize "90" text)
 )
 
 (fn $ns/tui_child_output_text [text]
@@ -125,6 +127,33 @@
     (return (tui_warning_text value))
   )
   (tui_program_text value)
+)
+
+(fn run_summary_tail [line marker]
+  (var parts (((line || "") .to_s) .split marker))
+  (if (parts/.size < 2)
+    (return nil)
+  )
+  (var prefix ((parts .get 0) .trim))
+  (if ((prefix .starts_with "run-") == false)
+    (return nil)
+  )
+  ((parts .slice 1) .join marker)
+)
+
+(fn $ns/tui_child_display_text [goal line]
+  (var value ((line || "") .to_s))
+  (if ((shell_input goal) || (code_input goal))
+    (var completed (run_summary_tail value " completed: "))
+    (if (completed != nil)
+      (return (tui_program_text completed))
+    )
+    (var failed (run_summary_tail value " failed: "))
+    (if (failed != nil)
+      (return (tui_program_text failed))
+    )
+  )
+  (tui_child_output_text value)
 )
 
 (fn $ns/tui_exit_command [input]
@@ -201,6 +230,22 @@
   best
 )
 
+(fn pad_run_number [number]
+  (var text (try number/.to_s catch * "0"))
+  (while (text/.size < 3)
+    (text = #"0#{text}")
+  )
+  text
+)
+
+(fn $ns/tui_next_run_number []
+  ((run_number (newest_run_id (stored_run_ids))) + 1)
+)
+
+(fn $ns/tui_prompt []
+  #"geneclaw #{(pad_run_number (tui_next_run_number))}> "
+)
+
 (fn $ns/tui_new_run_id [before_ids after_ids]
   (var new_ids [])
   (var index 0)
@@ -230,10 +275,10 @@
   run_id
 )
 
-(fn drain_process_output [proc output_lines]
+(fn drain_process_output [goal proc output_lines]
   (var remaining (proc .read_available))
   (if ((remaining || "") .not_empty)
-    (stdout .write (tui_child_output_text remaining))
+    (stdout .write (tui_child_display_text goal remaining))
     (flush stdout)
     (output_lines .append remaining)
   )
@@ -252,7 +297,7 @@
   (loop
     (var line (proc .read_line ^timeout 0.05))
     (if (line != nil)
-      (println (tui_child_output_text line))
+      (println (tui_child_display_text goal line))
       (output_lines .append line)
     )
 
@@ -280,7 +325,7 @@
 
     (var proc_alive (proc .alive))
     (if (proc_alive == false)
-      (drain_process_output proc output_lines)
+      (drain_process_output goal proc output_lines)
       (var exit_code (proc .wait ^timeout 0))
       (final_status = (if (exit_code == 0) "completed" else "failed"))
       (final_exit_code = exit_code)
@@ -297,7 +342,7 @@
   (var reader (new genex/readline/Reader))
   (println (tui_response_text #"GeneClaw TUI (#{(reader .backend)}). Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history."))
   (loop
-    (var event (reader .read_event (tui_prompt_text "geneclaw> ")))
+    (var event (reader .read_event (tui_prompt_text (tui_prompt))))
     (if (event/status == "eof")
       (break)
     )

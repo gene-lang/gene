@@ -121,6 +121,7 @@
     {^name "event replay" ^command "../../bin/gene run tests/test_event_replay.gene"}
     {^name "tool codecs" ^command "../../bin/gene run tests/test_tool_codecs.gene"}
     {^name "tool runtime" ^command "../../bin/gene run tests/test_tool_runtime.gene"}
+    {^name "shell eval" ^command "../../bin/gene run tests/test_shell_eval.gene"}
     {^name "limits" ^command "../../bin/gene run tests/test_limits.gene"}
     {^name "storage index" ^command "../../bin/gene run tests/test_storage_index.gene"}
     {^name "model gateway" ^command "../../bin/gene run tests/test_model_gateway.gene"}

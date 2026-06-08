@@ -308,7 +308,7 @@ The skill compiler should generate:
 - provider tool schemas
 - runtime validators
 - docs snippets
-- eval fixtures
+- eval metadata
 - workflow graph metadata
 - cache keys for invalidation
 

@@ -86,6 +86,43 @@
 (assert (eval_events/output .contains "^goal \"(+ cli_eval_x 5)\""))
 (assert ((eval_events/output .contains "^goal \"= (+ cli_eval_x 5)\"") == false))
 
+(var shell_run (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "! printf shell-ok | tr a-z A-Z"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false"}
+  ^stderr_to_stdout true))
+(assert (shell_run/exit_code == 0))
+(assert (shell_run/output .contains "run-8 completed: SHELL-OK"))
+
+(var shell_events (system/run
+  "../../bin/gene" "run" "src/main.gene" "events" "run-8"
+  ^env {^GENECLAW_NEW_HOME store_root}
+  ^stderr_to_stdout true))
+(assert (shell_events/exit_code == 0))
+(assert (shell_events/output .contains "shell.command.started"))
+(assert (shell_events/output .contains "shell.command.completed"))
+(assert (shell_events/output .contains "^goal \"printf shell-ok | tr a-z A-Z\""))
+(assert ((shell_events/output .contains "^goal \"! printf shell-ok") == false))
+
+(var tui_shell (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "!printf daemon\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_shell/exit_code == 0))
+(assert (tui_shell/output .contains "geneclaw 009>"))
+(assert (tui_shell/output .contains "daemon"))
+(assert ((tui_shell/output .contains "completed: daemon") == false))
+
+(var tui_code (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "(var tui_code_a 1) (tui_code_a + 2)\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_code/exit_code == 0))
+(assert (tui_code/output .contains "geneclaw 010>"))
+(assert (tui_code/output .contains "3"))
+(assert ((tui_code/output .contains "completed: 3") == false))
+
 (var tui_exit (system/run
   "../../bin/gene" "run" "src/main.gene" "tui"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
@@ -93,7 +130,7 @@
   ^stderr_to_stdout true))
 (assert (tui_exit/exit_code == 0))
 (assert (tui_exit/output .contains "GeneClaw TUI"))
-(assert (tui_exit/output .contains "geneclaw>"))
+(assert (tui_exit/output .contains "geneclaw 011>"))
 (assert (tui_exit/output .contains "bye"))
 
 (println "ok")

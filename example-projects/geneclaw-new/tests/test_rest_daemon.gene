@@ -63,13 +63,23 @@
 (assert (equals_code_summary/state == "completed"))
 (assert (equals_code_summary/final == "43"))
 
+(var shell_response (rest_daemon_handle daemon "POST" "/runs" {
+  ^text "! printf rest-ok | tr a-z A-Z"
+  ^session "daemon-session"
+}))
+(assert (shell_response/status == 200))
+(var shell_body (shell_response .get "body"))
+(var shell_summary (shell_body .get "run"))
+(assert (shell_summary/state == "completed"))
+(assert (shell_summary/final == "REST-OK"))
+
 (var status_response (rest_daemon_handle daemon "GET" #"/runs/#{run_summary/id}" {}))
 (assert (status_response/status == 200))
 (var status_body (status_response .get "body"))
 (assert (status_body/id == run_summary/id))
 
 (var history_status (rest_daemon_status daemon))
-(assert (history_status/request_count == 5))
+(assert (history_status/request_count == 6))
 
 (var stopped (stop_rest_daemon daemon))
 (assert (stopped/state == "stopped"))
