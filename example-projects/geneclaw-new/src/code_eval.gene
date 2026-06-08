@@ -105,11 +105,17 @@
 "
 )
 
+(fn eval_output_marker [run]
+  #"__GENECLAW_EVAL_CURRENT_#{run/id}__"
+)
+
 (fn build_eval_source [run session prior code]
+  (var marker (gene_string (eval_output_marker run)))
   #"#{(eval_prelude run session)}
 #{prior}
 
 # Current GeneClaw eval input for #{run/id}
+(println #{marker})
 #{code}
 "
 )
@@ -124,6 +130,27 @@
 #{code}
 ")
   path
+)
+
+(fn output_after_marker [output marker]
+  (var lines (((output || "") .to_s) .split "\n"))
+  (var found false)
+  (var selected [])
+  (var index 0)
+  (while (index < lines/.size)
+    (var line (lines .get index))
+    (if found
+      (selected .append line)
+     elif ((line .trim) == marker)
+      (found = true)
+    )
+    (index += 1)
+  )
+  (if found
+    (selected .join "\n")
+   else
+    ((output || "") .to_s)
+  )
 )
 
 (fn split_eval_output [output]
@@ -181,6 +208,7 @@
   (var session_path (eval_session_path session))
   (var prior (read_file_or_empty session_path))
   (var source (build_eval_source run session prior text))
+  (var output_marker (eval_output_marker run))
   (var script_path (eval_run_script_path run/id))
   (gene/io/write script_path source)
   (append_event run/id "code.eval.started" {
@@ -196,14 +224,15 @@
   (var completed_at gene/now/.call/.to_i)
   (var duration_ms (completed_at - started_at))
   (var raw_output ((process/output || "") .to_s))
+  (var current_output (output_after_marker raw_output output_marker))
   (if (process/exit_code == 0)
-    (var parts (split_eval_output raw_output))
+    (var parts (split_eval_output current_output))
     (var final_text (eval_final_text parts))
     (var updated_session_path (append_session_code session run/id text))
     (append_event run/id "code.eval.completed" {
       ^result parts/result
       ^output parts/output
-      ^raw_output raw_output
+      ^raw_output current_output
       ^exit_code process/exit_code
       ^duration_ms duration_ms
       ^session_path updated_session_path
@@ -211,11 +240,11 @@
     (complete_run run/id final_text)
    else
     (append_event run/id "code.eval.failed" {
-      ^output raw_output
+      ^output current_output
       ^exit_code process/exit_code
       ^duration_ms duration_ms
     })
-    (fail_run run/id (if raw_output/.not_empty raw_output else #"eval failed with exit code #{process/exit_code}"))
+    (fail_run run/id (if current_output/.not_empty current_output else #"eval failed with exit code #{process/exit_code}"))
   )
   (run_summary run/id)
 )

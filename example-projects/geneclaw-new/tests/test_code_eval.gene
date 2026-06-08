@@ -59,6 +59,12 @@
 (assert (printed/final .contains "hello"))
 (assert (printed/final .contains "=> 5"))
 
+(var replay_after_print (run_code_eval "(var b 2)" "eval-session"))
+(assert (replay_after_print/state == "completed"))
+(assert (replay_after_print/final == "2"))
+(assert ((replay_after_print/final .contains "hello") == false))
+(assert ((replay_after_print/final .contains "=> 5") == false))
+
 (var tool_run (run_code_eval "(tool \"fake.echo\" {^text \"eval tool\"})" "tool-session"))
 (assert (tool_run/state == "completed"))
 (assert (tool_run/final .contains "eval tool"))
