@@ -68,6 +68,9 @@
 (assert (fake_response/kind == "tool_calls"))
 (assert (fake_response/tool_calls/0/name == "fake.echo"))
 (assert (fake_response/tool_calls/0/args/text == "gateway should call tools"))
+(assert (fake_response/started_at_ms > 0))
+(assert (fake_response/completed_at_ms >= fake_response/started_at_ms))
+(assert (fake_response/duration_ms == (fake_response/completed_at_ms - fake_response/started_at_ms)))
 
 (var openai_request (build_model_request "openai" run (events_for run/id) (tool_defs) {^model "gpt-test"}))
 (var openai_payload (build_provider_payload "openai" openai_request))
@@ -106,6 +109,9 @@
 (assert (openai_result/error .contains "GENECLAW_MODEL_LIVE"))
 (assert (openai_result/error_info/category == "config_error"))
 (assert (openai_result/error_info/retryable == false))
+(assert (openai_result/started_at_ms > 0))
+(assert (openai_result/completed_at_ms >= openai_result/started_at_ms))
+(assert (openai_result/duration_ms == (openai_result/completed_at_ms - openai_result/started_at_ms)))
 
 (var anthropic_payload (build_provider_payload "anthropic" (build_model_request "anthropic" run (events_for run/id) (tool_defs) {^model "claude-test"})))
 (assert (anthropic_payload/model == "claude-test"))
@@ -120,6 +126,9 @@
 (assert (anthropic_result/payload/messages/0/content/0/text == "gateway should call tools"))
 (assert (anthropic_result/error .contains "GENECLAW_MODEL_LIVE"))
 (assert (anthropic_result/error_info/category == "config_error"))
+(assert (anthropic_result/started_at_ms > 0))
+(assert (anthropic_result/completed_at_ms >= anthropic_result/started_at_ms))
+(assert (anthropic_result/duration_ms == (anthropic_result/completed_at_ms - anthropic_result/started_at_ms)))
 
 (var normalized_openai_chat (normalize_openai_response {
   ^choices [

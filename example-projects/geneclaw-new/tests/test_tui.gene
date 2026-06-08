@@ -5,7 +5,7 @@
 (import reset_tools from "tools/registry")
 (import register_fake_tools from "tools/fake")
 (import run_agent from "agent_loop")
-(import tui_run_view tui_dashboard render_tui_run_view render_tui_dashboard from "channels/tui")
+(import tui_exit_command tui_shell_quote tui_run_shell_command tui_new_run_id tui_run_goal tui_run_view tui_dashboard render_tui_run_view render_tui_dashboard from "channels/tui")
 
 ($env .set "GENECLAW_MODEL_LIVE" "false")
 ($env .set "GENECLAW_PROVIDER" "")
@@ -14,6 +14,8 @@
 ($env .set "GENECLAW_DEFAULT_PROVIDER" "")
 ($env .set "GENECLAW_DEFAULT_PROFILE" "")
 ($env .set "GENECLAW_DEFAULT_MODEL" "")
+($env .set "GENECLAW_NEW_HOME" "/tmp/geneclaw-new-test-tui-store")
+($env .set "GENECLAW_GENE_BIN" "../../bin/gene")
 
 (set_store_root "/tmp/geneclaw-new-test-tui-store")
 (reset_runs)
@@ -45,5 +47,27 @@
 (assert (rendered_dashboard .contains "Runs"))
 (assert (rendered_dashboard .contains summary/id))
 (assert (rendered_dashboard .contains "Memory: 1"))
+
+(assert (tui_exit_command "/quit"))
+(assert (tui_exit_command " /exit "))
+(assert ((tui_exit_command "quit") == false))
+(assert ((tui_shell_quote "hello world") == "'hello world'"))
+(assert ((tui_shell_quote "a'b") == "'a'\"'\"'b'"))
+(assert ((tui_shell_quote "$HOME") == "'$HOME'"))
+
+(var command (tui_run_shell_command "hello tui" {^steps 3 ^tool_calls 2} {^provider "fake" ^profile "fast"}))
+(assert (command .contains "'../../bin/gene' run src/main.gene run"))
+(assert (command .contains "--provider 'fake'"))
+(assert (command .contains "--profile 'fast'"))
+(assert (command .contains "--steps '3'"))
+(assert (command .contains "'hello tui'"))
+
+(assert ((tui_new_run_id ["run-1" "run-3"] ["run-1" "run-3" "run-4"]) == "run-4"))
+(assert ((tui_new_run_id ["run-1"] ["run-1"]) == ""))
+
+(var subprocess_result (tui_run_goal "review tui subprocess" {} {^provider "fake"}))
+(assert (subprocess_result/status == "completed"))
+(assert (subprocess_result/exit_code == 0))
+(assert (subprocess_result/run_id .not_empty))
 
 (println "ok")

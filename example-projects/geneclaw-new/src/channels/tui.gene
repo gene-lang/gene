@@ -1,7 +1,9 @@
 # Terminal UI view-model helpers.
 
-(import replay_run from "kernel/runs")
+(import genex/readline)
+(import replay_run cancel_run terminal_run_state from "kernel/runs")
 (import events_for from "kernel/events")
+(import stored_run_ids store_root from "kernel/storage")
 (import scheduler_jobs from "scheduler/jobs")
 (import memory_search from "memory/store")
 
@@ -65,6 +67,199 @@
 
 (fn render_lines [lines]
   (lines .join "\n")
+)
+
+(fn $ns/tui_exit_command [input]
+  (var text (((input || "") .to_s) .trim))
+  ((text == "/quit") || (text == "/exit"))
+)
+
+(fn $ns/tui_shell_quote [value]
+  (var text ((value || "") .to_s))
+  #"'#{(text .replace_all "'" "'\"'\"'")}'"
+)
+
+(fn option_text [options key]
+  ((((options .get key "") || "") .to_s) .trim)
+)
+
+(fn append_option_arg [parts flag value]
+  (var text (((value || "") .to_s) .trim))
+  (if text/.not_empty
+    (parts .append flag)
+    (parts .append (tui_shell_quote text))
+  )
+  parts
+)
+
+(fn append_budget_arg [parts budgets flag key]
+  (var value (budgets .get key nil))
+  (if (value != nil)
+    (parts .append flag)
+    (parts .append (tui_shell_quote value))
+  )
+  parts
+)
+
+(fn $ns/tui_gene_bin []
+  (var configured (($env .get "GENECLAW_GENE_BIN" "") .trim))
+  (if configured/.not_empty configured else "gene")
+)
+
+(fn $ns/tui_run_shell_command [goal budgets = {} options = {}]
+  (var parts [(tui_shell_quote (tui_gene_bin)) "run" "src/main.gene" "run"])
+  (append_option_arg parts "--skill" (option_text options "skill"))
+  (append_option_arg parts "--workflow" (option_text options "workflow"))
+  (append_option_arg parts "--provider" (option_text options "provider"))
+  (append_option_arg parts "--profile" (option_text options "profile"))
+  (append_option_arg parts "--model" (option_text options "model"))
+  (append_budget_arg parts budgets "--steps" "steps")
+  (append_budget_arg parts budgets "--tool-calls" "tool_calls")
+  (parts .append (tui_shell_quote goal))
+  (parts .join " ")
+)
+
+(fn run_number [run_id]
+  (try
+    (((run_id .replace_all "run-" "") .trim) .to_i)
+   catch *
+    0
+  )
+)
+
+(fn newest_run_id [run_ids]
+  (var best "")
+  (var best_number 0)
+  (var index 0)
+  (while (index < run_ids/.size)
+    (var id ((run_ids .get index) .to_s))
+    (var number (run_number id))
+    (if (number > best_number)
+      (best = id)
+      (best_number = number)
+    )
+    (index += 1)
+  )
+  best
+)
+
+(fn $ns/tui_new_run_id [before_ids after_ids]
+  (var new_ids [])
+  (var index 0)
+  (while (index < after_ids/.size)
+    (var id (after_ids .get index))
+    (if ((before_ids .contains id) == false)
+      (new_ids .append id)
+    )
+    (index += 1)
+  )
+  (newest_run_id new_ids)
+)
+
+(fn cancel_new_run_if_active [before_ids reason]
+  (var run_id (tui_new_run_id before_ids (stored_run_ids)))
+  (if run_id/.empty
+    (return "")
+  )
+  (var summary (replay_run run_id))
+  (if ((summary != nil) && ((terminal_run_state summary/state) == false))
+    (try
+      (cancel_run run_id reason)
+     catch *
+      nil
+    )
+  )
+  run_id
+)
+
+(fn drain_process_output [proc output_lines]
+  (var remaining (proc .read_available))
+  (if ((remaining || "") .not_empty)
+    (stdout .write remaining)
+    (flush stdout)
+    (output_lines .append remaining)
+  )
+)
+
+(fn $ns/tui_run_goal [goal budgets = {} options = {}]
+  (var command (tui_run_shell_command goal budgets options))
+  (var before_ids (stored_run_ids))
+  (var proc (system/Process/start "sh" "-lc" #"exec #{command}" ^stderr_to_stdout true ^env {^GENECLAW_NEW_HOME (store_root)}))
+  (var output_lines [])
+  (var base_sigint (genex/readline/sigint_count))
+  (var final_status "")
+  (var final_exit_code nil)
+  (var final_run_id "")
+
+  (loop
+    (var line (proc .read_line ^timeout 0.05))
+    (if (line != nil)
+      (println line)
+      (output_lines .append line)
+    )
+
+    (if ((genex/readline/sigint_count) > base_sigint)
+      (try (proc .signal "INT") catch * nil)
+      (var interrupted_code (proc .wait ^timeout 1))
+      (if (interrupted_code == nil)
+        (try (proc .signal "TERM") catch * nil)
+        (interrupted_code = (proc .wait ^timeout 1))
+      )
+      (if (interrupted_code == nil)
+        (try (proc .signal "KILL") catch * nil)
+        (interrupted_code = (proc .wait ^timeout 1))
+      )
+      (var cancelled_run_id ((((cancel_new_run_if_active before_ids "cancelled from tui") || "") .to_s) .trim))
+      (if ((run_number cancelled_run_id) <= 0)
+        (cancelled_run_id = "")
+      )
+      (println "run interrupted")
+      (final_status = "interrupted")
+      (final_exit_code = interrupted_code)
+      (final_run_id = cancelled_run_id)
+      (break)
+    )
+
+    (var proc_alive (proc .alive))
+    (if (proc_alive == false)
+      (drain_process_output proc output_lines)
+      (var exit_code (proc .wait ^timeout 0))
+      (final_status = (if (exit_code == 0) "completed" else "failed"))
+      (final_exit_code = exit_code)
+      (final_run_id = (tui_new_run_id before_ids (stored_run_ids)))
+      (break)
+    )
+  )
+  {^status final_status ^exit_code final_exit_code ^run_id final_run_id ^output output_lines}
+)
+
+(fn $ns/start_tui [budgets = {} options = {}]
+  (genex/readline/install_sigint_handler)
+  (genex/readline/clear_sigint)
+  (var reader (new genex/readline/Reader))
+  (println #"GeneClaw TUI (#{(reader .backend)}). Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history.")
+  (loop
+    (var event (reader .read_event "geneclaw> "))
+    (if (event/status == "eof")
+      (break)
+    )
+    (if (event/status == "interrupt")
+      (println "input cleared")
+      (genex/readline/clear_sigint)
+      (continue)
+    )
+    (var input (((event/line || "") .to_s) .trim))
+    (if input/.empty
+      (continue)
+    )
+    (if (tui_exit_command input)
+      (break)
+    )
+    (tui_run_goal input budgets options)
+  )
+  (reader .close)
+  (println "bye")
+  true
 )
 
 (fn $ns/tui_run_view [run_id limit = 20]

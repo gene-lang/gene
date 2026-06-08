@@ -8,6 +8,7 @@
 (import run_agent_with_options from "agent_loop")
 (import memory_search from "memory/store")
 (import schedule_job scheduler_jobs run_due_jobs from "scheduler/jobs")
+(import start_tui from "channels/tui")
 
 (fn arg_at [index fallback = ""]
   (if (index < $args/.size)
@@ -99,7 +100,7 @@
 (var command (arg_at 0 "run"))
 (var goal_start 1)
 
-(if ((["run" "status" "events" "cancel" "reset" "memory" "schedule"] .contains command) == false)
+(if ((["run" "status" "events" "cancel" "reset" "memory" "schedule" "tui"] .contains command) == false)
   (command = "run")
   (goal_start = 0)
 )
@@ -129,6 +130,9 @@
    else
     (print_values (scheduler_jobs))
   )
+ elif (command == "tui")
+  (var parsed (parse_run_options 1))
+  (start_tui parsed/budgets parsed/options)
  else
   (var parsed (parse_run_options goal_start))
   (var summary (run_agent_with_options parsed/goal "local" parsed/budgets parsed/options))

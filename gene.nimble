@@ -48,6 +48,7 @@ task buildext, "Build extension modules":
   exec "nim c --app:lib -d:release --mm:orc -o:build/libhtml" & libext & " src/genex/html.nim"
   exec "nim c --app:lib -d:release --mm:orc -o:build/liblogging" & libext & " src/genex/logging.nim"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libtest" & libext & " src/genex/test.nim"
+  exec "nim c --app:lib -d:release --mm:orc -o:build/libreadline" & libext & " src/genex/readline.nim"
   exec "nim c --app:lib -d:release --mm:orc -o:build/libai" & libext & " src/genex/ai/bindings.nim"
 
 task buildllmamacpp, "Build LLM runtime dependencies":

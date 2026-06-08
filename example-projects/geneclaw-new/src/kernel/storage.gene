@@ -14,11 +14,11 @@
   (var target (normalize_path path ""))
   (if target/.empty
     false
-  else
+   else
     (try
       (var probe (system/shell #"test -f '#{target}'"))
       (probe/exit_code == 0)
-    catch *
+     catch *
       false
     )
   )
@@ -37,6 +37,10 @@
 
 (fn event_log_path [run_id]
   #"#{(run_dir run_id)}/events.gene.log"
+)
+
+(fn runs_dir []
+  #"#{STORE_ROOT}/runs"
 )
 
 (fn safe_name [value fallback]
@@ -98,6 +102,22 @@
     (index += 1)
   )
   records
+)
+
+(fn $ns/stored_run_ids []
+  (var dir (runs_dir))
+  (var probe (system/shell #"if [ -d '#{dir}' ]; then for d in '#{dir}'/*; do [ -d \"$d\" ] && basename \"$d\"; done; fi"))
+  (var ids [])
+  (var lines ((probe/output || "") .split "\n"))
+  (var index 0)
+  (while (index < lines/.size)
+    (var line ((lines .get index) .trim))
+    (if line/.not_empty
+      (ids .append line)
+    )
+    (index += 1)
+  )
+  ids
 )
 
 (fn $ns/write_tool_output [run_id tool_name content]

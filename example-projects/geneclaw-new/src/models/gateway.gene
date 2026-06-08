@@ -499,51 +499,54 @@
   }
 )
 
-(fn duration_since [started_at]
-  (gene/now/.call/.to_i - started_at)
+(fn finish_model_timing [result started_at]
+  (var completed_at gene/now/.call/.to_i)
+  (result .set "started_at_ms" started_at)
+  (result .set "completed_at_ms" completed_at)
+  (result .set "duration_ms" (completed_at - started_at))
+  result
 )
 
 (fn live_not_configured [provider request payload started_at]
   (var message #"#{provider} live adapter requires GENECLAW_MODEL_LIVE=true and #{(if (provider == "anthropic") "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN" else "OPENAI_API_KEY or OPENAI_AUTH_TOKEN")}.")
-  {^ok false
+  (finish_model_timing {^ok false
     ^provider provider
     ^payload payload
     ^status (provider_status provider request)
     ^error message
-    ^error_info (classify_model_error provider {} message)
-    ^duration_ms (duration_since started_at)}
+    ^error_info (classify_model_error provider {} message)}
+  started_at)
 )
 
 (fn live_client_unavailable [provider request payload started_at]
   (var message "genex/ai client classes are unavailable in this Gene runtime.")
-  {^ok false
+  (finish_model_timing {^ok false
     ^provider provider
     ^payload payload
     ^status (provider_status provider request)
     ^error message
-    ^error_info (classify_model_error provider {} message)
-    ^duration_ms (duration_since started_at)}
+    ^error_info (classify_model_error provider {} message)}
+  started_at)
 )
 
 (fn normalize_live_success [provider request payload response normalized_response started_at]
   (var normalized (normalize_gateway_response provider normalized_response))
   (normalized .set "ok" true)
-  (normalized .set "duration_ms" (duration_since started_at))
   (normalized .set "payload" payload)
   (normalized .set "status" (provider_status provider request))
   (normalized .set "raw_response" response)
-  normalized
+  (finish_model_timing normalized started_at)
 )
 
 (fn live_response_error [provider request payload response error_message started_at]
-  {^ok false
+  (finish_model_timing {^ok false
     ^provider provider
     ^payload payload
     ^status (provider_status provider request)
     ^error error_message
     ^error_info (classify_model_error provider response error_message)
-    ^raw_response response
-    ^duration_ms (duration_since started_at)}
+    ^raw_response response}
+  started_at)
 )
 
 (fn call_openai_live [request started_at]
@@ -591,14 +594,12 @@
       (return (call_anthropic_live request started_at))
      else
       (var message #"Unknown model provider: #{provider}")
-      (return {^ok false ^provider provider ^error message ^error_info {^provider provider ^category "config_error" ^retryable false ^status_code 0 ^state "" ^message message} ^duration_ms 0})
+      (return (finish_model_timing {^ok false ^provider provider ^error message ^error_info {^provider provider ^category "config_error" ^retryable false ^status_code 0 ^state "" ^message message}} started_at))
     ))
     (var normalized (normalize_gateway_response provider raw))
-    (var duration_ms (gene/now/.call/.to_i - started_at))
-    (normalized .set "duration_ms" duration_ms)
     (normalized .set "ok" true)
-    normalized
+    (finish_model_timing normalized started_at)
    catch *
-    {^ok false ^provider provider ^error $ex/message ^error_info (classify_model_error provider {} $ex/message) ^duration_ms (gene/now/.call/.to_i - started_at)}
+    (finish_model_timing {^ok false ^provider provider ^error $ex/message ^error_info (classify_model_error provider {} $ex/message)} started_at)
   )
 )

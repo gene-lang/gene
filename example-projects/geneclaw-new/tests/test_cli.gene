@@ -48,4 +48,14 @@
 (assert (live_events/output .contains "^profile \"standard\""))
 (assert (live_events/output .contains "^model \"gpt-env-default\""))
 
+(var tui_exit (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_exit/exit_code == 0))
+(assert (tui_exit/output .contains "GeneClaw TUI"))
+(assert (tui_exit/output .contains "geneclaw>"))
+(assert (tui_exit/output .contains "bye"))
+
 (println "ok")

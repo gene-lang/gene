@@ -110,6 +110,9 @@
         ^provider request/provider
         ^error model_error
         ^error_info error_info
+        ^started_at_ms (response .get "started_at_ms" 0)
+        ^completed_at_ms (response .get "completed_at_ms" 0)
+        ^duration_ms (response .get "duration_ms" 0)
       })
       (fail_run run/id model_error)
       (break)
@@ -120,6 +123,8 @@
       ^kind (response .get "kind")
       ^content (response .get "content")
       ^tool_calls (response_tool_calls response)
+      ^started_at_ms (response .get "started_at_ms" 0)
+      ^completed_at_ms (response .get "completed_at_ms" 0)
       ^duration_ms (response .get "duration_ms" 0)
     })
     (var response_kind ((response .get "kind" "") .to_s))

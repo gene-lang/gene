@@ -41,4 +41,9 @@
 (assert (tool_result/data/tool == "fake.echo"))
 (assert (tool_result/data/result/value == "review the current diff"))
 
+(var model_response (last_event_of_type events "model.response"))
+(assert (model_response/data/started_at_ms > 0))
+(assert (model_response/data/completed_at_ms >= model_response/data/started_at_ms))
+(assert (model_response/data/duration_ms == (model_response/data/completed_at_ms - model_response/data/started_at_ms)))
+
 (println "ok")

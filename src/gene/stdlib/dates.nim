@@ -113,8 +113,8 @@ proc init_date_classes*(object_class: Class) =
       r.dt_hour.int, r.dt_minute.int, r.dt_second.int,
       zone = utc()
     )
-    let epoch_secs = dt.toTime().toUnix()
-    (epoch_secs * 1000).to_value()
+    let epoch_ms = (dt.toTime().toUnix() * 1000) + (r.dt_microsecond.int64 div 1000)
+    epoch_ms.to_value()
 
   proc datetime_microsecond(vm: ptr VirtualMachine, args: ptr UncheckedArray[Value], arg_count: int, has_keyword_args: bool): Value =
     if get_positional_count(arg_count, has_keyword_args) < 1:
