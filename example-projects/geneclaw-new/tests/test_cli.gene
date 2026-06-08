@@ -48,6 +48,44 @@
 (assert (live_events/output .contains "^profile \"standard\""))
 (assert (live_events/output .contains "^model \"gpt-env-default\""))
 
+(var eval_first (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "(+ 1 2)"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^stderr_to_stdout true))
+(assert (eval_first/exit_code == 0))
+(assert (eval_first/output .contains "run-4 completed: 3"))
+
+(var eval_define (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "(var cli_eval_x 8)"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^stderr_to_stdout true))
+(assert (eval_define/exit_code == 0))
+(assert (eval_define/output .contains "run-5 completed"))
+
+(var eval_second (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "(+ cli_eval_x 4)"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^stderr_to_stdout true))
+(assert (eval_second/exit_code == 0))
+(assert (eval_second/output .contains "run-6 completed: 12"))
+
+(var eval_equals (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "= (+ cli_eval_x 5)"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^stderr_to_stdout true))
+(assert (eval_equals/exit_code == 0))
+(assert (eval_equals/output .contains "run-7 completed: 13"))
+
+(var eval_events (system/run
+  "../../bin/gene" "run" "src/main.gene" "events" "run-7"
+  ^env {^GENECLAW_NEW_HOME store_root}
+  ^stderr_to_stdout true))
+(assert (eval_events/exit_code == 0))
+(assert (eval_events/output .contains "code.eval.started"))
+(assert (eval_events/output .contains "code.eval.completed"))
+(assert (eval_events/output .contains "^goal \"(+ cli_eval_x 5)\""))
+(assert ((eval_events/output .contains "^goal \"= (+ cli_eval_x 5)\"") == false))
+
 (var tui_exit (system/run
   "../../bin/gene" "run" "src/main.gene" "tui"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}

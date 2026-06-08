@@ -8,6 +8,7 @@
 (import start_rest_daemon rest_daemon_handle rest_daemon_status stop_rest_daemon from "channels/daemon")
 
 (set_store_root "/tmp/geneclaw-new-test-rest-daemon-store")
+($env .set "GENECLAW_GENE_BIN" "../../bin/gene")
 (reset_runs)
 (reset_tools)
 (register_fake_tools)
@@ -42,13 +43,33 @@
 (assert (run_summary/state == "completed"))
 (assert (run_summary/final .contains "review daemon path"))
 
+(var code_response (rest_daemon_handle daemon "POST" "/runs" {
+  ^text "(+ 20 22)"
+  ^session "daemon-session"
+}))
+(assert (code_response/status == 200))
+(var code_body (code_response .get "body"))
+(var code_summary (code_body .get "run"))
+(assert (code_summary/state == "completed"))
+(assert (code_summary/final == "42"))
+
+(var equals_code_response (rest_daemon_handle daemon "POST" "/runs" {
+  ^text "= (+ 20 23)"
+  ^session "daemon-session"
+}))
+(assert (equals_code_response/status == 200))
+(var equals_code_body (equals_code_response .get "body"))
+(var equals_code_summary (equals_code_body .get "run"))
+(assert (equals_code_summary/state == "completed"))
+(assert (equals_code_summary/final == "43"))
+
 (var status_response (rest_daemon_handle daemon "GET" #"/runs/#{run_summary/id}" {}))
 (assert (status_response/status == 200))
 (var status_body (status_response .get "body"))
 (assert (status_body/id == run_summary/id))
 
 (var history_status (rest_daemon_status daemon))
-(assert (history_status/request_count == 3))
+(assert (history_status/request_count == 5))
 
 (var stopped (stop_rest_daemon daemon))
 (assert (stopped/state == "stopped"))

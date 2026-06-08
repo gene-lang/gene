@@ -1,0 +1,81 @@
+#!/usr/bin/env gene run
+
+(import reset_runs from "kernel/runs")
+(import events_for has_event_type last_event_of_type from "kernel/events")
+(import set_store_root store_root from "kernel/storage")
+(import set_workspace_root from "tools/builtin")
+(import code_input normalize_code_input run_code_eval from "code_eval")
+
+($env .set "GENECLAW_MODEL_LIVE" "false")
+($env .set "GENECLAW_PROVIDER" "")
+($env .set "GENECLAW_PROFILE" "")
+($env .set "GENECLAW_MODEL" "")
+($env .set "GENECLAW_DEFAULT_PROVIDER" "")
+($env .set "GENECLAW_DEFAULT_PROFILE" "")
+($env .set "GENECLAW_DEFAULT_MODEL" "")
+($env .set "GENECLAW_GENE_BIN" "../../bin/gene")
+
+(var root "/tmp/geneclaw-new-test-code-eval")
+(var workspace "/tmp/geneclaw-new-test-code-eval-workspace")
+(system/shell #"rm -rf '#{root}' '#{workspace}' && mkdir -p '#{workspace}'")
+(set_store_root root)
+(set_workspace_root workspace)
+(reset_runs)
+
+(assert (code_input "(+ 1 2)"))
+(assert (code_input "  (println \"hi\")"))
+(assert (code_input "= (+ 3 4)"))
+(assert ((code_input "summarize readme") == false))
+(assert ((normalize_code_input "= (+ 3 4)") == "(+ 3 4)"))
+(assert ((normalize_code_input "=(+ 4 5)") == "(+ 4 5)"))
+(assert ((normalize_code_input "(+ 1 2)") == "(+ 1 2)"))
+
+(var first (run_code_eval "(+ 1 2)" "eval-session"))
+(assert (first/state == "completed"))
+(assert (first/final == "3"))
+(var first_events (events_for first/id))
+(assert (has_event_type first_events "code.eval.started"))
+(assert (has_event_type first_events "code.eval.completed"))
+(var first_completed (last_event_of_type first_events "code.eval.completed"))
+(assert (first_completed/data/result == "3"))
+(assert (first_completed/data/session_path .contains "/eval/sessions/eval-session.gene"))
+
+(var equals_run (run_code_eval "= (+ 3 4)" "eval-session"))
+(assert (equals_run/state == "completed"))
+(assert (equals_run/final == "7"))
+
+(var context_run (run_code_eval "geneclaw/session" "eval-session"))
+(assert (context_run/state == "completed"))
+(assert (context_run/final .contains "eval-session"))
+
+(var define (run_code_eval "(var x 41)" "eval-session"))
+(assert (define/state == "completed"))
+(var second (run_code_eval "(+ x 1)" "eval-session"))
+(assert (second/state == "completed"))
+(assert (second/final == "42"))
+
+(var printed (run_code_eval "(println \"hello\") (+ 2 3)" "eval-session"))
+(assert (printed/state == "completed"))
+(assert (printed/final .contains "hello"))
+(assert (printed/final .contains "=> 5"))
+
+(var tool_run (run_code_eval "(tool \"fake.echo\" {^text \"eval tool\"})" "tool-session"))
+(assert (tool_run/state == "completed"))
+(assert (tool_run/final .contains "eval tool"))
+(assert (has_event_type (events_for tool_run/id) "tool.result"))
+
+(gene/io/write #"#{workspace}/sample.txt" "workspace file")
+(var file_tool_run (run_code_eval "(tool \"file.read\" {^path \"sample.txt\"})" "tool-session"))
+(assert (file_tool_run/state == "completed"))
+(assert (file_tool_run/final .contains "workspace file"))
+
+(var failed (run_code_eval "(unknown_eval_symbol)" "eval-session"))
+(assert (failed/state == "failed"))
+(assert (failed/final .contains "unknown_eval_symbol"))
+
+(var session_source (gene/io/read #"#{(store_root)}/eval/sessions/eval-session.gene"))
+(assert (session_source .contains "(var x 41)"))
+(assert (session_source .contains "(+ 3 4)"))
+(assert ((session_source .contains "= (+ 3 4)") == false))
+
+(println "ok")

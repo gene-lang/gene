@@ -1,0 +1,225 @@
+# Session-scoped Gene code evaluation for trusted local GeneClaw use.
+
+(import append_event reset_event_cache from "kernel/events")
+(import create_run transition_run complete_run fail_run run_summary from "kernel/runs")
+(import store_root from "kernel/storage")
+(import workspace_root from "tools/builtin")
+
+(fn $ns/code_input [text]
+  (var value (((text || "") .to_s) .trim))
+  ((value .starts_with "(") || (value .starts_with "="))
+)
+
+(fn $ns/normalize_code_input [text]
+  (var value (((text || "") .to_s) .trim))
+  (if (value .starts_with "=")
+    (return ((value .substr 1) .trim))
+  )
+  value
+)
+
+(fn safe_segment [value fallback]
+  (var text (((value || "") .to_s) .trim))
+  (if text/.empty
+    (text = fallback)
+  )
+  (text = (text .replace_all "/" "_"))
+  (text = (text .replace_all "\\" "_"))
+  (text = (text .replace_all ":" "_"))
+  (text = (text .replace_all " " "_"))
+  text
+)
+
+(fn file_exists [path]
+  (var target (((path || "") .to_s) .trim))
+  (if target/.empty
+    (return false)
+  )
+  (try
+    (var probe (system/run "test" "-f" target))
+    (probe/exit_code == 0)
+   catch *
+    false
+  )
+)
+
+(fn read_file_or_empty [path]
+  (if (file_exists path)
+    (gene/io/read path)
+   else
+    ""
+  )
+)
+
+(fn ensure_dir [path]
+  (var target (((path || "") .to_s) .trim))
+  (if target/.not_empty
+    (system/run "mkdir" "-p" target)
+  )
+)
+
+(fn eval_root []
+  #"#{(store_root)}/eval"
+)
+
+(fn eval_session_dir []
+  #"#{(eval_root)}/sessions"
+)
+
+(fn eval_run_dir []
+  #"#{(eval_root)}/runs"
+)
+
+(fn eval_session_path [session]
+  #"#{(eval_session_dir)}/#{(safe_segment session "local")}.gene"
+)
+
+(fn eval_run_script_path [run_id]
+  #"#{(eval_run_dir)}/#{run_id}.gene"
+)
+
+(fn gene_string [value]
+  (var text ((value || "") .to_s))
+  (text = (text .replace_all "\\" "\\\\"))
+  (text = (text .replace_all "\"" "\\\""))
+  (text = (text .replace_all "\n" "\\n"))
+  (text = (text .replace_all "\r" "\\r"))
+  (["\"" text "\""] .join "")
+)
+
+(fn eval_prelude [run session]
+  (var run_id (gene_string run/id))
+  (var session_text (gene_string session))
+  #"\
+(import invoke_tool reset_tools from \"tools/registry\")
+(import register_fake_tools from \"tools/fake\")
+(import register_builtin_tools workspace_root from \"tools/builtin\")
+(import store_root from \"kernel/storage\")
+(reset_tools)
+(register_fake_tools)
+(register_builtin_tools)
+(var geneclaw {^run_id #{run_id} ^session #{session_text} ^workspace_root (workspace_root) ^store_root (store_root)})
+(fn tool [name args = {}] (invoke_tool geneclaw/run_id name args))
+(fn geneclaw_workspace [] geneclaw/workspace_root)
+(fn geneclaw_store [] geneclaw/store_root)
+"
+)
+
+(fn build_eval_source [run session prior code]
+  #"#{(eval_prelude run session)}
+#{prior}
+
+# Current GeneClaw eval input for #{run/id}
+#{code}
+"
+)
+
+(fn append_session_code [session run_id code]
+  (ensure_dir (eval_session_dir))
+  (var path (eval_session_path session))
+  (var existing (read_file_or_empty path))
+  (gene/io/write path #"#{existing}
+
+# GeneClaw eval #{run_id}
+#{code}
+")
+  path
+)
+
+(fn split_eval_output [output]
+  (var text ((output || "") .to_s))
+  (var lines (text .split "\n"))
+  (var last_index (lines/.size - 1))
+  (while ((last_index >= 0) && (((lines .get last_index) .trim) .empty))
+    (last_index -= 1)
+  )
+  (if (last_index < 0)
+    (return {^output "" ^result ""})
+  )
+  (var result ((lines .get last_index) .trim))
+  (var output_lines [])
+  (var index 0)
+  (while (index < last_index)
+    (output_lines .append (lines .get index))
+    (index += 1)
+  )
+  {^output (output_lines .join "\n") ^result result}
+)
+
+(fn eval_final_text [parts]
+  (var output (((parts/output || "") .to_s) .trim))
+  (var result (((parts/result || "") .to_s) .trim))
+  (if output/.empty
+    (return result)
+  )
+  (if result/.empty
+    (return output)
+  )
+  #"#{output}\n=> #{result}"
+)
+
+(fn gene_bin []
+  (($env .get "GENECLAW_GENE_BIN" "../../bin/gene") .trim)
+)
+
+(fn run_eval_process [source]
+  (system/run (gene_bin) "eval" "--print-last"
+    ^input source
+    ^stderr_to_stdout true
+    ^env {
+      ^GENECLAW_NEW_HOME (store_root)
+      ^GENECLAW_WORKSPACE_ROOT (workspace_root)
+    })
+)
+
+(fn $ns/run_code_eval_with_options [code session = "local" budgets = {} options = {}]
+  (var text (normalize_code_input code))
+  (var run (create_run text session budgets))
+  (transition_run run/id "running")
+  (ensure_dir (eval_session_dir))
+  (ensure_dir (eval_run_dir))
+  (var session_path (eval_session_path session))
+  (var prior (read_file_or_empty session_path))
+  (var source (build_eval_source run session prior text))
+  (var script_path (eval_run_script_path run/id))
+  (gene/io/write script_path source)
+  (append_event run/id "code.eval.started" {
+    ^session session
+    ^script_path script_path
+    ^session_path session_path
+    ^workspace_root (workspace_root)
+    ^store_root (store_root)
+  })
+  (var started_at gene/now/.call/.to_i)
+  (var process (run_eval_process source))
+  (reset_event_cache)
+  (var completed_at gene/now/.call/.to_i)
+  (var duration_ms (completed_at - started_at))
+  (var raw_output ((process/output || "") .to_s))
+  (if (process/exit_code == 0)
+    (var parts (split_eval_output raw_output))
+    (var final_text (eval_final_text parts))
+    (var updated_session_path (append_session_code session run/id text))
+    (append_event run/id "code.eval.completed" {
+      ^result parts/result
+      ^output parts/output
+      ^raw_output raw_output
+      ^exit_code process/exit_code
+      ^duration_ms duration_ms
+      ^session_path updated_session_path
+    })
+    (complete_run run/id final_text)
+   else
+    (append_event run/id "code.eval.failed" {
+      ^output raw_output
+      ^exit_code process/exit_code
+      ^duration_ms duration_ms
+    })
+    (fail_run run/id (if raw_output/.not_empty raw_output else #"eval failed with exit code #{process/exit_code}"))
+  )
+  (run_summary run/id)
+)
+
+(fn $ns/run_code_eval [code session = "local" budgets = {}]
+  (run_code_eval_with_options code session budgets {})
+)

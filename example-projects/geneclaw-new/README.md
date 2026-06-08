@@ -54,6 +54,7 @@ Run the smoke tests from this directory:
 ../../bin/gene run tests/test_event_replay.gene
 ../../bin/gene run tests/test_tool_codecs.gene
 ../../bin/gene run tests/test_tool_runtime.gene
+../../bin/gene run tests/test_code_eval.gene
 ../../bin/gene run tests/test_limits.gene
 ../../bin/gene run tests/test_storage_index.gene
 ../../bin/gene run tests/test_model_gateway.gene
@@ -79,6 +80,8 @@ Run the demo:
 ../../bin/gene run src/main.gene run --skill repo-review --workflow default "review the current diff"
 ../../bin/gene run src/main.gene run --profile fake "review the current diff"
 ../../bin/gene run src/main.gene run --provider openai --model gpt-5-mini "review the current diff"
+../../bin/gene run src/main.gene run "(+ 1 2)"
+../../bin/gene run src/main.gene run "= (+ 1 2)"
 ../../bin/gene run src/main.gene status run-1
 ../../bin/gene run src/main.gene events run-1
 ../../bin/gene run src/main.gene memory search diff
@@ -87,6 +90,13 @@ Run the demo:
 ```
 
 Events are stored under `$GENECLAW_NEW_HOME` or `/tmp/geneclaw-new` by default.
+
+Inputs whose trimmed text starts with `(`, or starts with `=` followed by code,
+are evaluated as Gene code instead of being sent to the agent loop. The leading
+`=` is stripped before evaluation and persistence. Evaluation runs in a
+per-session scratch context with persistent vars/functions, GeneClaw metadata in
+`geneclaw`, and a `(tool "name" {...})` helper for calling registered tools.
+Session state is stored under `$GENECLAW_NEW_HOME/eval/sessions`.
 
 Web tools are available as normal GeneClaw tools:
 

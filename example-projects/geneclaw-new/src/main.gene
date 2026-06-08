@@ -6,6 +6,7 @@
 (import register_fake_tools from "tools/fake")
 (import register_builtin_tools from "tools/builtin")
 (import run_agent_with_options from "agent_loop")
+(import code_input run_code_eval_with_options from "code_eval")
 (import memory_search from "memory/store")
 (import schedule_job scheduler_jobs run_due_jobs from "scheduler/jobs")
 (import start_tui from "channels/tui")
@@ -135,6 +136,10 @@
   (start_tui parsed/budgets parsed/options)
  else
   (var parsed (parse_run_options goal_start))
-  (var summary (run_agent_with_options parsed/goal "local" parsed/budgets parsed/options))
+  (var summary (if (code_input parsed/goal)
+    (run_code_eval_with_options parsed/goal "local" parsed/budgets parsed/options)
+   else
+    (run_agent_with_options parsed/goal "local" parsed/budgets parsed/options)
+  ))
   (print_summary summary)
 )
