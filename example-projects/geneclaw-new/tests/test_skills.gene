@@ -9,6 +9,14 @@
 (import load_skill skill_tool_names filter_tool_defs_for_skill provider_tool_specs_for_skill from "skills/loader")
 (import run_agent_with_options from "agent_loop")
 
+($env .set "GENECLAW_MODEL_LIVE" "false")
+($env .set "GENECLAW_PROVIDER" "")
+($env .set "GENECLAW_PROFILE" "")
+($env .set "GENECLAW_MODEL" "")
+($env .set "GENECLAW_DEFAULT_PROVIDER" "")
+($env .set "GENECLAW_DEFAULT_PROFILE" "")
+($env .set "GENECLAW_DEFAULT_MODEL" "")
+
 (set_store_root "/tmp/geneclaw-new-test-skills-store")
 (reset_runs)
 (reset_tools)

@@ -1,7 +1,8 @@
 # Model provider configuration helpers.
 
 (fn env_string [name default = ""]
-  ((try ($env .get name default) catch * default) .to_s)
+  (var value ((try ($env .get name default) catch * default) .to_s))
+  (if value/.empty default else value)
 )
 
 (fn env_int [name default]
@@ -11,7 +12,7 @@
   )
   (try
     raw/.to_i
-  catch *
+   catch *
     default
   )
 )
@@ -28,39 +29,39 @@
   (if (request is Map)
     (try
       (value = ((request .get "model" "") .to_s))
-    catch *
+     catch *
       (value = "")
     )
   )
   (if value/.not_empty
     (if (value != provider)
       value
-    else
+     else
       default_model
     )
-  else
+   else
     default_model
   )
 )
 
 (fn openai_config [request]
   {^provider "openai"
-   ^model (request_model "openai" request (env_string "OPENAI_MODEL" "gpt-5-mini"))
-   ^timeout_ms (env_int "OPENAI_TIMEOUT_MS" 60000)
-   ^api_key (env_string "OPENAI_API_KEY" "")
-   ^auth_token (env_string "OPENAI_AUTH_TOKEN" (env_string "OPENAI_OAUTH_TOKEN" ""))
-   ^account_id (env_string "OPENAI_ACCOUNT_ID" (env_string "CHATGPT_ACCOUNT_ID" ""))
-   ^base_url (env_string "OPENAI_BASE_URL" "")}
+    ^model (request_model "openai" request (env_string "OPENAI_MODEL" "gpt-5-mini"))
+    ^timeout_ms (env_int "OPENAI_TIMEOUT_MS" 60000)
+    ^api_key (env_string "OPENAI_API_KEY" "")
+    ^auth_token (env_string "OPENAI_AUTH_TOKEN" (env_string "OPENAI_OAUTH_TOKEN" ""))
+    ^account_id (env_string "OPENAI_ACCOUNT_ID" (env_string "CHATGPT_ACCOUNT_ID" ""))
+    ^base_url (env_string "OPENAI_BASE_URL" "")}
 )
 
 (fn anthropic_config [request]
   {^provider "anthropic"
-   ^model (request_model "anthropic" request (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
-   ^timeout_ms (env_int "ANTHROPIC_TIMEOUT_MS" 60000)
-   ^api_key (env_string "ANTHROPIC_API_KEY" "")
-   ^auth_token (env_string "ANTHROPIC_AUTH_TOKEN" (env_string "ANTHROPIC_OAUTH_TOKEN" ""))
-   ^account_id ""
-   ^base_url (env_string "ANTHROPIC_BASE_URL" "")}
+    ^model (request_model "anthropic" request (env_string "ANTHROPIC_MODEL" "claude-sonnet-4-6"))
+    ^timeout_ms (env_int "ANTHROPIC_TIMEOUT_MS" 60000)
+    ^api_key (env_string "ANTHROPIC_API_KEY" "")
+    ^auth_token (env_string "ANTHROPIC_AUTH_TOKEN" (env_string "ANTHROPIC_OAUTH_TOKEN" ""))
+    ^account_id ""
+    ^base_url (env_string "ANTHROPIC_BASE_URL" "")}
 )
 
 (fn $ns/model_live_enabled []
@@ -70,7 +71,7 @@
 (fn $ns/provider_config [provider request = {}]
   (if (provider == "anthropic")
     (anthropic_config request)
-  else
+   else
     (openai_config request)
   )
 )
@@ -82,9 +83,9 @@
   (var cfg (provider_config provider request))
   (if cfg/api_key/.not_empty
     true
-  elif cfg/auth_token/.not_empty
+   elif cfg/auth_token/.not_empty
     true
-  else
+   else
     false
   )
 )
@@ -112,14 +113,14 @@
   (var auth_mode "none")
   (if cfg/api_key/.not_empty
     (auth_mode = "api_key")
-  elif cfg/auth_token/.not_empty
+   elif cfg/auth_token/.not_empty
     (auth_mode = "auth_token")
   )
   {^provider provider
-   ^live_enabled (model_live_enabled)
-   ^configured (provider_has_credentials provider request)
-   ^model cfg/model
-   ^auth_mode auth_mode
-   ^base_url_configured cfg/base_url/.not_empty
-   ^timeout_ms cfg/timeout_ms}
+    ^live_enabled (model_live_enabled)
+    ^configured (provider_has_credentials provider request)
+    ^model cfg/model
+    ^auth_mode auth_mode
+    ^base_url_configured cfg/base_url/.not_empty
+    ^timeout_ms cfg/timeout_ms}
 )

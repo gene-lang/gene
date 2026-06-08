@@ -37,12 +37,6 @@
   (var tool_call_count 0)
   (var stop_loop false)
   (var provider (((run_options .get "provider" "") || "") .to_s))
-  (var requested_profile (((run_options .get "profile" "") || "") .to_s))
-  (if provider/.empty
-    (if requested_profile/.empty
-      (provider = "fake")
-    )
-  )
   (var skill (if ((run_options/skill || "") .not_empty) (load_skill run_options/skill) else nil))
   (var workflow (select_workflow skill (run_options/workflow || "")))
   (var workflow_state (start_workflow run/id workflow))
@@ -80,14 +74,14 @@
 
     (step_count += 1)
     (var available_tools (filter_tool_defs_for_skill (tool_defs) skill))
-    (start_workflow_step run/id workflow_state "model" "model" {^step step_count ^provider provider})
     (var request (build_model_request provider run (events_for run/id) available_tools {
-      ^profile (run_options/profile || "fake")
-      ^model (run_options/model || provider)
+      ^profile (run_options/profile || "")
+      ^model (run_options/model || "")
       ^skill (if (skill == nil) "" else skill/name)
       ^system (if (skill == nil) "" else skill/system)
       ^memory_text retrieved_memory/text
     }))
+    (start_workflow_step run/id workflow_state "model" "model" {^step step_count ^provider request/provider})
     (append_event run/id "model.request" {
       ^step step_count
       ^provider request/provider
@@ -113,7 +107,7 @@
       (fail_workflow run/id workflow_state model_error)
       (append_event run/id "model.error" {
         ^step step_count
-        ^provider provider
+        ^provider request/provider
         ^error model_error
         ^error_info error_info
       })

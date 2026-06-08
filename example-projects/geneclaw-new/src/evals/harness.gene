@@ -133,6 +133,7 @@
     {^name "rest daemon" ^command "../../bin/gene run tests/test_rest_daemon.gene"}
     {^name "tui" ^command "../../bin/gene run tests/test_tui.gene"}
     {^name "scheduler" ^command "../../bin/gene run tests/test_scheduler.gene"}
+    {^name "cli" ^command "../../bin/gene run tests/test_cli.gene"}
     {^name "evals" ^command "../../bin/gene run tests/test_evals.gene"}
   ]
 )

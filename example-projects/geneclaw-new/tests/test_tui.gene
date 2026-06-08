@@ -7,6 +7,14 @@
 (import run_agent from "agent_loop")
 (import tui_run_view tui_dashboard render_tui_run_view render_tui_dashboard from "channels/tui")
 
+($env .set "GENECLAW_MODEL_LIVE" "false")
+($env .set "GENECLAW_PROVIDER" "")
+($env .set "GENECLAW_PROFILE" "")
+($env .set "GENECLAW_MODEL" "")
+($env .set "GENECLAW_DEFAULT_PROVIDER" "")
+($env .set "GENECLAW_DEFAULT_PROFILE" "")
+($env .set "GENECLAW_DEFAULT_MODEL" "")
+
 (set_store_root "/tmp/geneclaw-new-test-tui-store")
 (reset_runs)
 (reset_tools)

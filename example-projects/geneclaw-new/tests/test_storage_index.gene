@@ -8,6 +8,14 @@
 (import rebuild_memory_index from "memory/store")
 (import indexed_events search_memory_index sqlite_index_path from "storage/sqlite_index")
 
+($env .set "GENECLAW_MODEL_LIVE" "false")
+($env .set "GENECLAW_PROVIDER" "")
+($env .set "GENECLAW_PROFILE" "")
+($env .set "GENECLAW_MODEL" "")
+($env .set "GENECLAW_DEFAULT_PROVIDER" "")
+($env .set "GENECLAW_DEFAULT_PROFILE" "")
+($env .set "GENECLAW_DEFAULT_MODEL" "")
+
 (set_store_root "/tmp/geneclaw-new-test-storage-index")
 (reset_runs)
 (reset_tools)

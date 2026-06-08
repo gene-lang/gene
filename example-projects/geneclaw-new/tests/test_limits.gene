@@ -9,6 +9,14 @@
 (import register_builtin_tools set_workspace_root from "tools/builtin")
 (import run_agent from "agent_loop")
 
+($env .set "GENECLAW_MODEL_LIVE" "false")
+($env .set "GENECLAW_PROVIDER" "")
+($env .set "GENECLAW_PROFILE" "")
+($env .set "GENECLAW_MODEL" "")
+($env .set "GENECLAW_DEFAULT_PROVIDER" "")
+($env .set "GENECLAW_DEFAULT_PROFILE" "")
+($env .set "GENECLAW_DEFAULT_MODEL" "")
+
 (set_store_root "/tmp/geneclaw-new-test-limits-store")
 (reset_runs)
 (reset_tools)

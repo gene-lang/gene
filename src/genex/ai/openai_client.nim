@@ -420,6 +420,32 @@ proc parseCodexResponsesSSE*(body: string): JsonNode =
   var completed_response: JsonNode = nil
   var failed_response: JsonNode = nil
   var stream_error: JsonNode = nil
+  var output_text = ""
+  var output_items = newJArray()
+
+  proc response_output_empty(response: JsonNode): bool =
+    if response == nil or response.kind != JObject or not response.hasKey("output"):
+      return true
+    result = response["output"].kind != JArray or response["output"].len == 0
+
+  proc attach_streamed_output(response: JsonNode) =
+    if response == nil or response.kind != JObject:
+      return
+    if output_text.len > 0 and not response.hasKey("output_text"):
+      response["output_text"] = %output_text
+    if response_output_empty(response):
+      if output_items.len > 0:
+        response["output"] = output_items
+      elif output_text.len > 0:
+        response["output"] = %*[
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {"type": "output_text", "text": output_text}
+            ]
+          }
+        ]
 
   proc flush_event() =
     if data_lines.len == 0:
@@ -448,6 +474,17 @@ proc parseCodexResponsesSSE*(body: string): JsonNode =
     of "response.completed":
       if payload.kind == JObject and payload.hasKey("response"):
         completed_response = payload["response"]
+    of "response.output_text.delta":
+      if payload.kind == JObject and payload.hasKey("delta") and payload["delta"].kind == JString:
+        output_text.add(payload["delta"].getStr())
+    of "response.output_text.done":
+      if payload.kind == JObject and payload.hasKey("text") and payload["text"].kind == JString:
+        let text = payload["text"].getStr()
+        if text.len > output_text.len:
+          output_text = text
+    of "response.output_item.done":
+      if payload.kind == JObject and payload.hasKey("item"):
+        output_items.add(payload["item"])
     of "response.failed":
       failed_response =
         if payload.kind == JObject and payload.hasKey("response"):
@@ -476,6 +513,7 @@ proc parseCodexResponsesSSE*(body: string): JsonNode =
   flush_event()
 
   if completed_response != nil:
+    attach_streamed_output(completed_response)
     return completed_response
 
   if failed_response != nil:

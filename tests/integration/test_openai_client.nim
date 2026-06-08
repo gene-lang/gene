@@ -101,6 +101,24 @@ data: {"type":"response.completed","response":{"id":"resp_1","object":"response"
     check response["output"][0]["type"].getStr() == "message"
     check response["output"][0]["content"][0]["text"].getStr() == "OK"
 
+  test "codex sse parser preserves streamed text when completed output is empty":
+    let response = parseCodexResponsesSSE("""
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"Hello"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":" there"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_delta","object":"response","created_at":1,"status":"completed","model":"gpt-5.4","output":[]}}
+
+""")
+    check response["output_text"].getStr() == "Hello there"
+    check response["output"].kind == JArray
+    check response["output"].len == 1
+    check response["output"][0]["type"].getStr() == "message"
+    check response["output"][0]["content"][0]["text"].getStr() == "Hello there"
+
   test "codex sse parser returns completed function call response":
     let response = parseCodexResponsesSSE("""
 event: response.completed

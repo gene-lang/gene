@@ -1,7 +1,15 @@
 # Runtime model profile resolution.
 
 (fn env_string [name default = ""]
-  ((try ($env .get name default) catch * default) .to_s)
+  (var value ((try ($env .get name default) catch * default) .to_s))
+  (if value/.empty default else value)
+)
+
+(fn truthy_env [name]
+  (var value (env_string name ""))
+  (value = value/.trim)
+  (value = value/.to_lower)
+  ((value == "1") || (value == "true") || (value == "yes") || (value == "on"))
 )
 
 (fn ensure_map [value]
@@ -29,6 +37,13 @@
 (fn default_profile_for_provider [provider]
   (var name (((provider || "") .to_s) .trim))
   (if name/.empty
+    (var configured (canonical_profile (env_string "GENECLAW_PROFILE" (env_string "GENECLAW_DEFAULT_PROFILE" ""))))
+    (if configured/.not_empty
+      (return configured)
+    )
+    (if (truthy_env "GENECLAW_MODEL_LIVE")
+      (return "standard")
+    )
     (return "fake")
   )
   (if (name == "fake")
@@ -41,6 +56,10 @@
 )
 
 (fn profile_default_provider [profile]
+  (var configured (env_string "GENECLAW_PROVIDER" (env_string "GENECLAW_DEFAULT_PROVIDER" "")))
+  (if configured/.not_empty
+    (return configured)
+  )
   (if (profile == "fake")
     "fake"
    elif (profile == "local")
@@ -93,6 +112,10 @@
 )
 
 (fn profile_default_model [profile provider]
+  (var configured (env_string "GENECLAW_MODEL" (env_string "GENECLAW_DEFAULT_MODEL" "")))
+  (if configured/.not_empty
+    (return configured)
+  )
   (if (provider == "fake")
     "fake"
    elif (provider == "local")

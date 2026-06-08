@@ -1,0 +1,51 @@
+#!/usr/bin/env gene run
+
+(var store_root "/tmp/geneclaw-new-test-cli-store")
+
+(system/shell #"rm -rf '#{store_root}'")
+
+(var first (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "hi"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false"}
+  ^stderr_to_stdout true))
+(assert (first/exit_code == 0))
+(assert (first/output .contains "run-1 completed"))
+(assert (first/output .contains "Done: echo: hi"))
+
+(var second (system/run
+  "../../bin/gene" "run" "src/main.gene" "run"
+  "--profile" "fake" "--steps" "4" "--tool-calls" "2" "hello cli"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false"}
+  ^stderr_to_stdout true))
+(assert (second/exit_code == 0))
+(assert (second/output .contains "run-2 completed"))
+(assert (second/output .contains "Done: echo: hello cli"))
+
+(var live_without_auth (system/run
+  "../../bin/gene" "run" "src/main.gene" "run" "env live"
+  ^env {
+    ^GENECLAW_NEW_HOME store_root
+    ^GENECLAW_MODEL_LIVE "true"
+    ^OPENAI_MODEL "gpt-env-default"
+    ^OPENAI_API_KEY ""
+    ^OPENAI_AUTH_TOKEN ""
+    ^OPENAI_OAUTH_TOKEN ""
+    ^ANTHROPIC_API_KEY ""
+    ^ANTHROPIC_AUTH_TOKEN ""
+    ^ANTHROPIC_OAUTH_TOKEN ""
+  }
+  ^stderr_to_stdout true))
+(assert (live_without_auth/exit_code == 0))
+(assert (live_without_auth/output .contains "run-3 failed"))
+(assert (live_without_auth/output .contains "openai live adapter requires"))
+
+(var live_events (system/run
+  "../../bin/gene" "run" "src/main.gene" "events" "run-3"
+  ^env {^GENECLAW_NEW_HOME store_root}
+  ^stderr_to_stdout true))
+(assert (live_events/exit_code == 0))
+(assert (live_events/output .contains "^provider \"openai\""))
+(assert (live_events/output .contains "^profile \"standard\""))
+(assert (live_events/output .contains "^model \"gpt-env-default\""))
+
+(println "ok")

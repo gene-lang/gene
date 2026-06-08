@@ -7,6 +7,14 @@
 (import register_builtin_tools from "tools/builtin")
 (import load_eval run_eval replay_assertions release_checklist from "evals/harness")
 
+($env .set "GENECLAW_MODEL_LIVE" "false")
+($env .set "GENECLAW_PROVIDER" "")
+($env .set "GENECLAW_PROFILE" "")
+($env .set "GENECLAW_MODEL" "")
+($env .set "GENECLAW_DEFAULT_PROVIDER" "")
+($env .set "GENECLAW_DEFAULT_PROFILE" "")
+($env .set "GENECLAW_DEFAULT_MODEL" "")
+
 (set_store_root "/tmp/geneclaw-new-test-evals-store")
 (reset_runs)
 (reset_tools)
@@ -29,7 +37,7 @@
 (assert (replayed/results/.size == eval_def/assertions/.size))
 
 (var checklist (release_checklist))
-(assert (checklist/.size >= 18))
+(assert (checklist/.size >= 19))
 (assert (checklist/0/command .contains "test_run_kernel"))
 (assert ((gene/serdes/serialize checklist) .contains "test_tool_codecs"))
 (assert ((gene/serdes/serialize checklist) .contains "test_limits"))
@@ -39,6 +47,7 @@
 (assert ((gene/serdes/serialize checklist) .contains "test_actor_runtime"))
 (assert ((gene/serdes/serialize checklist) .contains "test_rest_daemon"))
 (assert ((gene/serdes/serialize checklist) .contains "test_tui"))
+(assert ((gene/serdes/serialize checklist) .contains "test_cli"))
 (assert ((gene/serdes/serialize checklist) .contains "test_evals"))
 
 (println "ok")

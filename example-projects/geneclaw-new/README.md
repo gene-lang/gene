@@ -66,6 +66,7 @@ Run the smoke tests from this directory:
 ../../bin/gene run tests/test_rest_daemon.gene
 ../../bin/gene run tests/test_tui.gene
 ../../bin/gene run tests/test_scheduler.gene
+../../bin/gene run tests/test_cli.gene
 ../../bin/gene run tests/test_evals.gene
 ```
 
@@ -88,12 +89,19 @@ Run the demo:
 Events are stored under `$GENECLAW_NEW_HOME` or `/tmp/geneclaw-new` by default.
 
 Live model calls are disabled by default so local tests and demos stay offline.
-Enable them explicitly with `GENECLAW_MODEL_LIVE=true` plus provider credentials:
+Enable them explicitly by sourcing `.env` with `GENECLAW_MODEL_LIVE=true`
+plus provider credentials. With live mode on, a plain
+`../../bin/gene run src/main.gene run "..."` resolves to the standard live
+profile unless overridden by CLI flags.
 
 - OpenAI: `OPENAI_API_KEY` or `OPENAI_AUTH_TOKEN`, optional `OPENAI_MODEL`,
   `OPENAI_BASE_URL`, `OPENAI_ACCOUNT_ID`, `OPENAI_TIMEOUT_MS`
 - Anthropic: `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, optional
   `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_TIMEOUT_MS`
+
+Default CLI provider/profile/model can be set with `GENECLAW_PROVIDER`,
+`GENECLAW_PROFILE`, and `GENECLAW_MODEL`. CLI flags such as `--provider`,
+`--profile`, and `--model` still take precedence.
 
 Profile defaults can be overridden with `GENECLAW_FAST_MODEL`,
 `GENECLAW_STANDARD_MODEL`, `GENECLAW_FRONTIER_MODEL`,

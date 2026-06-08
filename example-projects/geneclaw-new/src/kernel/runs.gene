@@ -4,16 +4,16 @@
 (import normalize_budgets deadline_at_ms from "kernel/limits")
 
 (var RUNS {})
-(var RUN_SEQ 0)
 
 (fn next_run_id []
+  (var candidate_seq 1)
   (loop
-    (RUN_SEQ += 1)
-    (var run_id #"run-#{RUN_SEQ}")
+    (var run_id #"run-#{candidate_seq}")
     (var events (events_for run_id))
     (if (((RUNS .contains run_id) == false) && (events/.size == 0))
       (return run_id)
     )
+    (candidate_seq = (candidate_seq + 1))
   )
 )
 
@@ -86,14 +86,12 @@
 
 (fn $ns/reset_runs []
   (RUNS = {})
-  (RUN_SEQ = 0)
   (reset_events)
   true
 )
 
 (fn $ns/reset_run_cache []
   (RUNS = {})
-  (RUN_SEQ = 0)
   (reset_event_cache)
   true
 )
