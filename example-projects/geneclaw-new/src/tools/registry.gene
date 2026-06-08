@@ -7,6 +7,30 @@
 
 (var TOOLS {})
 
+(fn ensure_map [value]
+  (if (value is Map) value else {})
+)
+
+(fn append_tool_event [run_id event_type tool_name status result args call_id duration_ms = nil]
+  (var data {^tool tool_name})
+  (if (args != nil)
+    (data .set "args" args)
+  )
+  (if status/.not_empty
+    (data .set "status" status)
+  )
+  (if (result != nil)
+    (data .set "result" result)
+  )
+  (if call_id/.not_empty
+    (data .set "call_id" call_id)
+  )
+  (if (duration_ms != nil)
+    (data .set "duration_ms" duration_ms)
+  )
+  (append_event run_id event_type data)
+)
+
 (fn bound_text_field [run_id tool_name result key max_output_bytes]
   (var value (result .get key nil))
   (if (value is String)
@@ -73,19 +97,21 @@
   defs
 )
 
-(fn $ns/invoke_tool [run_id tool_name args = {}]
+(fn $ns/invoke_tool [run_id tool_name args = {} metadata = {}]
   (var tool (tool_def tool_name))
   (var tool_args (normalize_tool_args args))
-  (append_event run_id "tool.call" {^tool tool_name ^args tool_args})
+  (var event_metadata (ensure_map metadata))
+  (var call_id (((event_metadata .get "call_id" "") || "") .to_s))
+  (append_tool_event run_id "tool.call" tool_name "" nil tool_args call_id)
   (if (tool == nil)
     (var missing {^status "failed" ^error #"Unknown tool: #{tool_name}"})
-    (append_event run_id "tool.result" {^tool tool_name ^status "failed" ^result missing})
+    (append_tool_event run_id "tool.result" tool_name "failed" missing nil call_id)
     (return missing)
   )
 
   (var validation (validate_tool_args tool_name tool/input tool_args))
   (if (validation/ok == false)
-    (append_event run_id "tool.result" {^tool tool_name ^status "failed" ^result validation})
+    (append_tool_event run_id "tool.result" tool_name "failed" validation nil call_id)
     (return validation)
   )
 
@@ -94,16 +120,11 @@
     (var result (bound_tool_result run_id tool_name (normalize_tool_result (tool/handler tool_args)) tool_args))
     (var duration_ms (gene/now/.call/.to_i - started_at))
     (result .set "duration_ms" duration_ms)
-    (append_event run_id "tool.result" {
-      ^tool tool_name
-      ^status result/status
-      ^result result
-      ^duration_ms duration_ms
-    })
+    (append_tool_event run_id "tool.result" tool_name result/status result nil call_id duration_ms)
     result
   catch *
     (var failed {^status "failed" ^error $ex/message})
-    (append_event run_id "tool.result" {^tool tool_name ^status "failed" ^result failed})
+    (append_tool_event run_id "tool.result" tool_name "failed" failed nil call_id)
     failed
   )
 )

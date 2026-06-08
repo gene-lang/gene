@@ -69,6 +69,64 @@
   (lines .join "\n")
 )
 
+(fn env_text [name fallback = ""]
+  ((($env .get name fallback) || "") .to_s)
+)
+
+(fn env_mode [name fallback = ""]
+  (var value ((env_text name fallback) .trim))
+  value/.to_lower
+)
+
+(fn $ns/tui_color_enabled []
+  (var mode (env_mode "GENECLAW_TUI_COLOR" "auto"))
+  (if (["1" "true" "always" "on"] .contains mode)
+    (return true)
+  )
+  (if ((["0" "false" "never" "off"] .contains mode) || ((env_text "NO_COLOR") .not_empty))
+    (return false)
+  )
+  (stdout .isatty)
+)
+
+(fn $ns/tui_colorize [code text]
+  (var value ((text || "") .to_s))
+  (if_not (tui_color_enabled)
+    (return value)
+  )
+  #"\u001b[#{code}m#{value}\u001b[0m"
+)
+
+(fn $ns/tui_prompt_text [text]
+  (tui_colorize "36" text)
+)
+
+(fn $ns/tui_response_text [text]
+  (tui_colorize "32" text)
+)
+
+(fn tui_warning_text [text]
+  (tui_colorize "33" text)
+)
+
+(fn $ns/tui_program_text [text]
+  (tui_colorize "2" text)
+)
+
+(fn $ns/tui_child_output_text [text]
+  (var value ((text || "") .to_s))
+  (if ((value .contains " completed:") || (value .contains " completed"))
+    (return (tui_response_text value))
+  )
+  (if ((value .contains " failed:") || (value .contains " failed"))
+    (return (tui_colorize "31" value))
+  )
+  (if ((value .contains " cancelled") || (value .contains " interrupted") || (value .contains " timed_out"))
+    (return (tui_warning_text value))
+  )
+  (tui_program_text value)
+)
+
 (fn $ns/tui_exit_command [input]
   (var text (((input || "") .to_s) .trim))
   ((text == "/quit") || (text == "/exit"))
@@ -175,7 +233,7 @@
 (fn drain_process_output [proc output_lines]
   (var remaining (proc .read_available))
   (if ((remaining || "") .not_empty)
-    (stdout .write remaining)
+    (stdout .write (tui_child_output_text remaining))
     (flush stdout)
     (output_lines .append remaining)
   )
@@ -194,7 +252,7 @@
   (loop
     (var line (proc .read_line ^timeout 0.05))
     (if (line != nil)
-      (println line)
+      (println (tui_child_output_text line))
       (output_lines .append line)
     )
 
@@ -213,7 +271,7 @@
       (if ((run_number cancelled_run_id) <= 0)
         (cancelled_run_id = "")
       )
-      (println "run interrupted")
+      (println (tui_warning_text "run interrupted"))
       (final_status = "interrupted")
       (final_exit_code = interrupted_code)
       (final_run_id = cancelled_run_id)
@@ -237,14 +295,14 @@
   (genex/readline/install_sigint_handler)
   (genex/readline/clear_sigint)
   (var reader (new genex/readline/Reader))
-  (println #"GeneClaw TUI (#{(reader .backend)}). Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history.")
+  (println (tui_response_text #"GeneClaw TUI (#{(reader .backend)}). Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history."))
   (loop
-    (var event (reader .read_event "geneclaw> "))
+    (var event (reader .read_event (tui_prompt_text "geneclaw> ")))
     (if (event/status == "eof")
       (break)
     )
     (if (event/status == "interrupt")
-      (println "input cleared")
+      (println (tui_warning_text "input cleared"))
       (genex/readline/clear_sigint)
       (continue)
     )
@@ -258,7 +316,7 @@
     (tui_run_goal input budgets options)
   )
   (reader .close)
-  (println "bye")
+  (println (tui_response_text "bye"))
   true
 )
 

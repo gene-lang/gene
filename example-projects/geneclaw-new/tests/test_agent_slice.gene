@@ -1,11 +1,11 @@
 #!/usr/bin/env gene run
 
-(import reset_runs from "kernel/runs")
-(import events_for has_event_type last_event_of_type from "kernel/events")
+(import reset_runs create_run from "kernel/runs")
+(import append_event events_for has_event_type last_event_of_type from "kernel/events")
 (import set_store_root from "kernel/storage")
 (import reset_tools from "tools/registry")
 (import register_fake_tools from "tools/fake")
-(import run_agent from "agent_loop")
+(import already_completed_tool_calls deduped_final_content run_agent from "agent_loop")
 
 ($env .set "GENECLAW_MODEL_LIVE" "false")
 ($env .set "GENECLAW_PROVIDER" "")
@@ -45,5 +45,25 @@
 (assert (model_response/data/started_at_ms > 0))
 (assert (model_response/data/completed_at_ms >= model_response/data/started_at_ms))
 (assert (model_response/data/duration_ms == (model_response/data/completed_at_ms - model_response/data/started_at_ms)))
+
+(reset_tools)
+(var failed_tool_summary (run_agent "recover from missing tool" "cli" {^steps 3 ^tool_calls 2}))
+(assert (failed_tool_summary/state == "completed"))
+(assert (failed_tool_summary/final .contains "Unknown tool: fake.echo"))
+(var failed_tool_events (events_for failed_tool_summary/id))
+(var failed_tool_result (last_event_of_type failed_tool_events "tool.result"))
+(assert (failed_tool_result/data/status == "failed"))
+(assert (has_event_type failed_tool_events "workflow.completed"))
+
+(var duplicate_run (create_run "dedupe repeated tool call" "cli"))
+(append_event duplicate_run/id "tool.result" {
+  ^tool "shell.run"
+  ^call_id "call-dup"
+  ^status "ok"
+  ^result {^status "ok" ^output "listed tmp"}
+})
+(assert (already_completed_tool_calls duplicate_run/id [{^id "call-dup" ^name "shell.run" ^args {}}]))
+(assert ((deduped_final_content duplicate_run/id "") == "listed tmp"))
+(assert ((deduped_final_content duplicate_run/id "I will answer") == "listed tmp"))
 
 (println "ok")

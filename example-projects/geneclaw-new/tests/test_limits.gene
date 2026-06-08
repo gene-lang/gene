@@ -6,7 +6,7 @@
 (import normalize_budgets bound_inline_text output_limit_from_args deadline_exceeded from "kernel/limits")
 (import reset_tools invoke_tool from "tools/registry")
 (import register_fake_tools from "tools/fake")
-(import register_builtin_tools set_workspace_root from "tools/builtin")
+(import register_builtin_tools set_workspace_root workspace_root from "tools/builtin")
 (import run_agent from "agent_loop")
 
 ($env .set "GENECLAW_MODEL_LIVE" "false")
@@ -50,6 +50,7 @@
 (system/shell #"rm -rf '#{workspace}' && mkdir -p '#{workspace}/sub'")
 (gene/io/write #"#{workspace}/sub/file.txt" "abc")
 (set_workspace_root workspace)
+(assert ((workspace_root) == workspace))
 (reset_tools)
 (register_builtin_tools)
 
@@ -61,6 +62,12 @@
 (assert (shell_result/timeout_enforced == true))
 (assert (shell_result/timed_out == false))
 (assert (shell_result/output .contains "/sub"))
+(var absolute_cwd_result (invoke_tool tool_run/id "shell.run" {^cmd "pwd" ^cwd #"#{workspace}/sub" ^timeout_ms 5}))
+(assert (absolute_cwd_result/status == "ok"))
+(assert (absolute_cwd_result/output .contains "/sub"))
+(var home_cwd_result (invoke_tool tool_run/id "shell.run" {^cmd "pwd" ^cwd "$HOME" ^timeout_ms 5}))
+(assert (home_cwd_result/status == "ok"))
+(assert (home_cwd_result/output .contains ($env .get "HOME" "")))
 
 (var timeout_result (invoke_tool tool_run/id "shell.run" {^cmd "sleep 1" ^cwd "." ^timeout_ms 10}))
 (assert (timeout_result/status == "failed"))

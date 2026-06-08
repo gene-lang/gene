@@ -21,12 +21,85 @@
   ((tool_result/status || "ok") != "ok")
 )
 
-(fn text_or [value fallback]
-  (if (value == nil)
-    (return fallback)
+(fn $ns/already_completed_tool_calls [run_id tool_calls]
+  (if tool_calls/.empty
+    (return false)
   )
-  (var text (value .to_s))
-  (if text/.empty fallback else text)
+  (var completed {})
+  (var events (events_for run_id))
+  (var event_index 0)
+  (while (event_index < events/.size)
+    (var event (events .get event_index))
+    (if (event/type == "tool.result")
+      (var data (if (event/data is Map) event/data else {}))
+      (var call_id (((data .get "call_id" "") || "") .to_s))
+      (var status (((data .get "status" "") || "") .to_s))
+      (if (call_id/.not_empty && (status == "ok"))
+        (completed .set call_id true)
+      )
+    )
+    (event_index += 1)
+  )
+
+  (var call_index 0)
+  (while (call_index < tool_calls/.size)
+    (var tool_call (tool_calls .get call_index))
+    (var call_id (((tool_call/id || "") || "") .to_s))
+    (if (call_id/.empty || ((completed .contains call_id) == false))
+      (return false)
+    )
+    (call_index += 1)
+  )
+  true
+)
+
+(fn last_completed_tool_output [run_id]
+  (var output "")
+  (var events (events_for run_id))
+  (var event_index 0)
+  (while (event_index < events/.size)
+    (var event (events .get event_index))
+    (if (event/type == "tool.result")
+      (var data (if (event/data is Map) event/data else {}))
+      (var status (((data .get "status" "") || "") .to_s))
+      (var result (if (data/result is Map) data/result else {}))
+      (var value (((result .get "output" "") || "") .to_s))
+      (if ((status == "ok") && value/.not_empty)
+        (output = value)
+      )
+    )
+    (event_index += 1)
+  )
+  output
+)
+
+(fn $ns/deduped_final_content [run_id content]
+  (var text ((content || "") .to_s))
+  (var output (last_completed_tool_output run_id))
+  (if output/.not_empty output else text)
+)
+
+(fn $ns/volatile_filesystem_goal [goal]
+  (var text ((((goal || "") .to_s) .trim) .to_lower))
+  (if text/.empty
+    (return false)
+  )
+  (if ((text .contains "current dir") || (text .contains "current directory") || (text .contains "cwd") || (text == "pwd"))
+    (return true)
+  )
+  (if ((text .contains "list files") || (text .contains "list file") || (text .contains "show files") || (text .contains "files in"))
+    (return true)
+  )
+  false
+)
+
+(fn write_run_memory [run final_text]
+  (if (volatile_filesystem_goal run/goal)
+    (append_event run/id "memory.skipped" {^reason "volatile filesystem query"})
+   else
+    (extract_memory_from_run run {} final_text)
+    (append_event run/id "memory.written" {})
+  )
 )
 
 (fn $ns/run_agent_with_options [goal session budgets options]
@@ -49,13 +122,18 @@
       ^tool_count skill/tools/.size
     })
   )
-  (start_workflow_step run/id workflow_state "memory" "memory" {^limit 5})
-  (var retrieved_memory (memory_context run/goal run/session 5))
+  (var memory_skipped (volatile_filesystem_goal run/goal))
+  (start_workflow_step run/id workflow_state "memory" "memory" {^limit 5 ^skipped memory_skipped})
+  (var retrieved_memory {^count 0 ^text ""})
+  (if_not memory_skipped
+    (retrieved_memory = (memory_context run/goal run/session 5))
+  )
   (append_event run/id "memory.retrieved" {
     ^count retrieved_memory/count
     ^text retrieved_memory/text
+    ^skipped memory_skipped
   })
-  (complete_workflow_step run/id workflow_state {^count retrieved_memory/count})
+  (complete_workflow_step run/id workflow_state {^count retrieved_memory/count ^skipped memory_skipped})
 
   (loop
     (if (stop_loop || (terminal_run_state run/state))
@@ -135,13 +213,7 @@
     (if (response_kind == "final")
       (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count})
       (complete_run run/id response_content)
-      (var completed_summary (run_summary run/id))
-      (var memory_fact (extract_memory_from_run run completed_summary response_content))
-      (append_event run/id "memory.written" {
-        ^fact_id (memory_fact .get "id")
-        ^kind (memory_fact .get "kind")
-        ^text (memory_fact .get "text")
-      })
+      (write_run_memory run response_content)
       (complete_workflow_step run/id workflow_state {^state "completed"})
       (complete_workflow run/id workflow_state {^state "completed"})
       (break)
@@ -155,9 +227,19 @@
     )
 
     (var requested_tool_calls (response_tool_calls response))
+    (if (already_completed_tool_calls run/id requested_tool_calls)
+      (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count ^deduped_tool_calls requested_tool_calls/.size})
+      (var final_content (deduped_final_content run/id response_content))
+      (complete_run run/id final_content)
+      (write_run_memory run final_content)
+      (complete_workflow_step run/id workflow_state {^state "completed" ^deduped_tool_calls requested_tool_calls/.size})
+      (complete_workflow run/id workflow_state {^state "completed"})
+      (break)
+    )
     (var tool_index 0)
     (var tool_batch_failed false)
     (var tool_batch_error "")
+    (var tool_batch_failed_count 0)
     (start_workflow_step run/id workflow_state "tool_batch" "tools" {^step step_count ^tool_call_count requested_tool_calls/.size})
     (while (tool_index < requested_tool_calls/.size)
       (var tool_call (requested_tool_calls .get tool_index))
@@ -169,13 +251,9 @@
         (break)
       )
       (tool_call_count += 1)
-      (var result (invoke_tool run/id tool_call/name tool_call/args))
+      (var result (invoke_tool run/id tool_call/name tool_call/args {^call_id tool_call/id}))
       (if (run_failed_tool result)
-        (tool_batch_failed = true)
-        (tool_batch_error = (text_or result/error "tool failed"))
-        (fail_run run/id tool_batch_error)
-        (stop_loop = true)
-        (break)
+        (tool_batch_failed_count += 1)
       )
       (tool_index += 1)
     )
@@ -183,7 +261,7 @@
       (fail_workflow_step run/id workflow_state tool_batch_error)
       (fail_workflow run/id workflow_state tool_batch_error)
      else
-      (complete_workflow_step run/id workflow_state {^executed tool_index})
+      (complete_workflow_step run/id workflow_state {^executed tool_index ^failed tool_batch_failed_count})
     )
 
     (if stop_loop

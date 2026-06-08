@@ -2,10 +2,26 @@
 
 (import register_tool from "tools/registry")
 
-($ns/WORKSPACE_ROOT = ($env .get "GENECLAW_WORKSPACE_ROOT" ($env .get "PWD" ".")))
+(fn default_workspace_root []
+  (var value (((($env .get "GENECLAW_WORKSPACE_ROOT" "") || "") .to_s) .trim))
+  (if value/.not_empty
+    (return value)
+  )
+  (value = (((($env .get "GENECLAW_NEW_HOME" "") || "") .to_s) .trim))
+  (if value/.not_empty
+    (return value)
+  )
+  (((($env .get "PWD" ".") || ".") .to_s) .trim)
+)
+
+($ns/WORKSPACE_ROOT = (default_workspace_root))
 
 (fn $ns/set_workspace_root [path]
   (WORKSPACE_ROOT = (((path || ".") .to_s) .trim))
+  WORKSPACE_ROOT
+)
+
+(fn $ns/workspace_root []
   WORKSPACE_ROOT
 )
 
@@ -26,19 +42,41 @@
   #"#{WORKSPACE_ROOT}/#{path}"
 )
 
+(fn shell_cwd_path [cwd]
+  (var text (((cwd || ".") .to_s) .trim))
+  (if text/.empty
+    (return (full_path "."))
+  )
+  (if (text .starts_with "~")
+    (var home ($env .get "HOME" ""))
+    (var suffix (text .replace_all "~" ""))
+    (return #"#{home}#{suffix}")
+  )
+  (if ((text == "$HOME") || (text .starts_with "$HOME/"))
+    (var home ($env .get "HOME" ""))
+    (var suffix (text .replace_all "$HOME" ""))
+    (return #"#{home}#{suffix}")
+  )
+  (if ((text == "${HOME}") || (text .starts_with "${HOME}/"))
+    (var home ($env .get "HOME" ""))
+    (var suffix (text .replace_all "${HOME}" ""))
+    (return #"#{home}#{suffix}")
+  )
+  (if (text .starts_with "/")
+    (return text)
+  )
+  (full_path text)
+)
+
 (fn shell_run [args]
   (var cmd (((args/cmd || "") .to_s) .trim))
   (if cmd/.empty
     (return {^status "failed" ^error "Missing cmd"})
   )
   (var cwd (((args/cwd || ".") .to_s) .trim))
-  (var cwd_error (relative_path_error cwd))
-  (if cwd_error/.not_empty
-    (return {^status "failed" ^error cwd_error})
-  )
   (var timeout_ms (try ((args/timeout_ms || 0) .to_i) catch * 0))
   (try
-    (var cwd_path (full_path cwd))
+    (var cwd_path (shell_cwd_path cwd))
     (var result (if (timeout_ms > 0)
       (system/run "sh" "-lc" cmd ^cwd cwd_path ^timeout (timeout_ms / 1000.0) ^stderr_to_stdout true)
     else
@@ -118,7 +156,7 @@
 (fn $ns/register_builtin_tools []
   (register_tool
     "shell.run"
-    "Run a local shell command in the trusted operator environment."
+    "Run a local shell command in the trusted operator environment. The shell is macOS/POSIX; prefer portable commands and avoid GNU-only flags such as find -printf."
     {^type "object"
      ^required ["cmd"]
      ^properties {

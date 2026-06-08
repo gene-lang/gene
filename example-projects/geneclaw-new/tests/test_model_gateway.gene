@@ -1,7 +1,7 @@
 #!/usr/bin/env gene run
 
 (import reset_runs create_run from "kernel/runs")
-(import events_for has_event_type from "kernel/events")
+(import append_event events_for has_event_type from "kernel/events")
 (import set_store_root from "kernel/storage")
 (import reset_tools tool_defs from "tools/registry")
 (import register_fake_tools from "tools/fake")
@@ -77,7 +77,11 @@
 (assert (openai_payload/model == "gpt-test"))
 (assert (openai_payload/messages/0/role == "system"))
 (assert (openai_payload/messages/1/content == "gateway should call tools"))
-(assert (openai_payload/instructions == "You are GeneClaw."))
+(assert (openai_payload/instructions .contains "You are GeneClaw."))
+(assert (openai_payload/instructions .contains "default shell cwd"))
+(assert (openai_payload/instructions .contains "do not answer from memory alone"))
+(assert (openai_payload/instructions .contains "macOS/POSIX"))
+(assert (openai_payload/instructions .contains "trailing slash"))
 (assert (openai_payload/input/0/type == "message"))
 (assert (openai_payload/input/0/role == "user"))
 (assert (openai_payload/input/0/content == "gateway should call tools"))
@@ -90,6 +94,45 @@
 (assert (openai_codex_payload/tools/0/name == "fake_echo"))
 (assert (openai_codex_payload/tools/0/parameters/type == "object"))
 ($env .set "OPENAI_AUTH_TOKEN" "")
+
+(append_event run/id "model.response" {
+  ^step 1
+  ^kind "tool_calls"
+  ^content ""
+  ^tool_calls [{^id "call-1" ^name "fake.echo" ^args {^text "hello"}}]
+})
+(append_event run/id "tool.result" {
+  ^tool "fake.echo"
+  ^call_id "call-1"
+  ^status "ok"
+  ^result {^status "ok" ^value "hello"}
+})
+(var tool_history_request (build_model_request "openai" run (events_for run/id) (tool_defs) {^model "gpt-test"}))
+(var tool_history_openai_payload (build_provider_payload "openai" tool_history_request))
+(assert (tool_history_openai_payload/messages/.size == 2))
+(assert (tool_history_openai_payload/messages/1/role == "user"))
+(assert (tool_history_openai_payload/messages/1/content .contains "Previous tool results"))
+(assert (tool_history_openai_payload/messages/1/content .contains "fake.echo ok"))
+(assert (tool_history_openai_payload/messages/1/content .contains "hello"))
+(assert (tool_history_openai_payload/messages/1/content .contains "do not repeat"))
+(assert (tool_history_openai_payload/messages/1/content .contains "empty output"))
+(assert (tool_history_openai_payload/input/.size == 1))
+(assert (tool_history_openai_payload/input/0/content .contains "Previous tool results"))
+
+(var long_output "")
+(var long_index 0)
+(while (long_index < 6000)
+  (long_output = #"#{long_output}x")
+  (long_index += 1)
+)
+(append_event run/id "tool.result" {
+  ^tool "shell.run"
+  ^call_id "call-long"
+  ^status "ok"
+  ^result {^status "ok" ^output long_output}
+})
+(var compact_history_payload (build_provider_payload "openai" (build_model_request "openai" run (events_for run/id) (tool_defs) {^model "gpt-test"})))
+(assert (compact_history_payload/messages/1/content/.size < 7000))
 
 (var restored_calls (restore_tool_call_names [{^id "call-1" ^name "fake_echo" ^args {^text "hello"}}] openai_request/tool_name_map))
 (assert (restored_calls/0/name == "fake.echo"))
@@ -104,7 +147,8 @@
 
 (var openai_result (call_model "openai" openai_request))
 (assert (openai_result/ok == false))
-(assert (openai_result/payload/messages/1/content == "gateway should call tools"))
+(var openai_error_user_content ((openai_result/payload/messages/1/content || "") .to_s))
+(assert (openai_error_user_content .contains "gateway should call tools"))
 (assert (openai_result/status/live_enabled == false))
 (assert (openai_result/error .contains "GENECLAW_MODEL_LIVE"))
 (assert (openai_result/error_info/category == "config_error"))
@@ -123,7 +167,7 @@
 (var anthropic_result (call_model "anthropic" (build_model_request "anthropic" run (events_for run/id) (tool_defs) {^model "claude-test"})))
 (assert (anthropic_result/ok == false))
 (assert (anthropic_result/status/configured == false))
-(assert (anthropic_result/payload/messages/0/content/0/text == "gateway should call tools"))
+(assert (anthropic_result/payload/messages/0/content/0/text .contains "gateway should call tools"))
 (assert (anthropic_result/error .contains "GENECLAW_MODEL_LIVE"))
 (assert (anthropic_result/error_info/category == "config_error"))
 (assert (anthropic_result/started_at_ms > 0))

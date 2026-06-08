@@ -47,6 +47,7 @@ var callback_reader {.threadvar.}: ReplInputReader
 var callback_done {.threadvar.}: bool
 var callback_eof {.threadvar.}: bool
 var callback_input {.threadvar.}: string
+var callback_removed {.threadvar.}: bool
 
 proc c_free(mem: pointer) {.importc: "free", header: "<stdlib.h>".}
 
@@ -170,6 +171,11 @@ proc interrupt_active_readline*(): bool =
   true
 
 proc readline_callback_handler(line: cstring) {.cdecl.} =
+  let reader = callback_reader
+  if not reader.isNil and not reader.callback_remove_fn.isNil:
+    reader.callback_remove_fn()
+    callback_removed = true
+
   callback_done = true
   if line.isNil:
     callback_eof = true
@@ -179,7 +185,6 @@ proc readline_callback_handler(line: cstring) {.cdecl.} =
   callback_input = $line
   c_free(line)
 
-  let reader = callback_reader
   if not reader.isNil and not reader.add_history_fn.isNil:
     let trimmed = callback_input.strip()
     if should_record_repl_history_entry(trimmed, reader.last_history_entry):
@@ -293,10 +298,12 @@ proc read_event*(reader: ReplInputReader, prompt: string, input: var string,
   callback_done = false
   callback_eof = false
   callback_input = ""
+  callback_removed = false
   active_readline_reader = reader
   reader.callback_install_fn(prompt.cstring, readline_callback_handler)
   defer:
-    reader.callback_remove_fn()
+    if not callback_removed:
+      reader.callback_remove_fn()
     active_readline_reader = nil
     callback_reader = nil
 

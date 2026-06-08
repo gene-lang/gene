@@ -11,6 +11,27 @@
   #"#{(memory_dir)}/facts.gene.log"
 )
 
+($ns/MEMORY_FIELD_LIMIT = 1200)
+($ns/MEMORY_CONTEXT_LIMIT = 4000)
+
+(fn compact_text [value limit]
+  (var text ((value || "") .to_s))
+  (var max_size limit)
+  (if (max_size < 32)
+    (max_size = 32)
+  )
+  (if (text/.size <= max_size)
+    (return text)
+  )
+  (var end_index (max_size - 1))
+  (var clipped (text .substr 0 end_index))
+  #"#{clipped}...[truncated]"
+)
+
+(fn compact_fact_text [fact]
+  (compact_text (fact/text || fact/final || "") MEMORY_FIELD_LIMIT)
+)
+
 (fn ensure_memory_dir []
   (system/shell #"mkdir -p '#{(memory_dir)}'")
 )
@@ -86,8 +107,8 @@
   (var fact_run_id ((source .get "run_id" "") .to_s))
   (var fact_kind ((source .get "kind" "run_summary") .to_s))
   (var fact_goal ((source .get "goal" "") .to_s))
-  (var fact_final ((source .get "final" "") .to_s))
-  (var fact_text ((source .get "text" "") .to_s))
+  (var fact_final (compact_text ((source .get "final" "") .to_s) MEMORY_FIELD_LIMIT))
+  (var fact_text (compact_text ((source .get "text" "") .to_s) MEMORY_FIELD_LIMIT))
   (var created_at gene/now/.call/.to_i)
   (var normalized {
     ^id fact_id
@@ -122,13 +143,16 @@
 (fn $ns/memory_search [query session = "" limit = 5]
   (var facts (read_facts))
   (var results [])
-  (var index 0)
-  (while ((index < facts/.size) && (results/.size < limit))
+  (var index (facts/.size - 1))
+  (while (index >= 0)
+    (if (results/.size >= limit)
+      (break)
+    )
     (var fact (facts .get index))
     (if (fact_matches fact query session)
       (results .append fact)
     )
-    (index += 1)
+    (index -= 1)
   )
   results
 )
@@ -143,21 +167,36 @@
   (var index 0)
   (while (index < facts/.size)
     (var fact (facts .get index))
-    (lines .append #"- #{fact/text}")
+    (lines .append #"- #{(compact_fact_text fact)}")
     (index += 1)
   )
-  {^facts facts ^text (lines .join "\n") ^count facts/.size}
+  {^facts facts ^text (compact_text (lines .join "\n") MEMORY_CONTEXT_LIMIT) ^count facts/.size}
 )
 
 (fn $ns/extract_memory_from_run [run summary final_text]
-  (var text #"Run #{run/id}: #{run/goal} => #{final_text}")
+  (var compact_final ((final_text || "") .to_s))
+  (var final_end 0)
+  (var final_clipped "")
+  (if (compact_final/.size > MEMORY_FIELD_LIMIT)
+    (final_end = (MEMORY_FIELD_LIMIT - 1))
+    (final_clipped = (compact_final .substr 0 final_end))
+    (compact_final = #"#{final_clipped}...[truncated]")
+  )
+  (var text #"Run #{run/id}: #{run/goal} => #{compact_final}")
+  (var text_end 0)
+  (var text_clipped "")
+  (if (text/.size > MEMORY_FIELD_LIMIT)
+    (text_end = (MEMORY_FIELD_LIMIT - 1))
+    (text_clipped = (text .substr 0 text_end))
+    (text = #"#{text_clipped}...[truncated]")
+  )
   (var fact {
     ^id #"#{run/id}:summary"
     ^session run/session
     ^run_id run/id
     ^kind "run_summary"
     ^goal run/goal
-    ^final ((final_text || "") .to_s)
+    ^final compact_final
     ^text text
   })
   (memory_append_fact fact)

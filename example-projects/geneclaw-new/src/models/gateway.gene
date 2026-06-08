@@ -68,9 +68,47 @@
   (ensure_array (response/tool_calls || []))
 )
 
+(fn event_data [event]
+  (ensure_map (event/data || {}))
+)
+
+(fn json_text [value]
+  (if ((value is Map) || (value is Array))
+    value/.to_json
+   else
+    ((value || "") .to_s)
+  )
+)
+
+(fn tool_result_text [data]
+  (var text (json_text (data .get "result" {})))
+  (if (text/.size <= 3000)
+    (return text)
+  )
+  (var end_index 2999)
+  (var clipped (text .substr 0 end_index))
+  #"#{clipped}...[truncated]"
+)
+
 (fn text_or_default [value fallback]
   (var text (((value || "") .to_s) .trim))
   (if text/.empty fallback else text)
+)
+
+(fn default_workspace_text []
+  (var value (((($env .get "GENECLAW_WORKSPACE_ROOT" "") || "") .to_s) .trim))
+  (if value/.not_empty
+    (return value)
+  )
+  (value = (((($env .get "GENECLAW_NEW_HOME" "") || "") .to_s) .trim))
+  (if value/.not_empty
+    (return value)
+  )
+  (((($env .get "PWD" ".") || ".") .to_s) .trim)
+)
+
+(fn default_system_text []
+  #"You are GeneClaw. Use available tools to satisfy the current request. The default shell cwd and workspace root is #{(default_workspace_text)}. For questions about the current directory, current files, or fresh filesystem state, use this current workspace root or call a tool; do not answer from memory alone. The local shell runs in a trusted macOS/POSIX environment; prefer portable commands such as ls, pwd, cat, sed, and find -print, and avoid GNU-only flags such as find -printf. When listing a directory path that may be a symlink, use a trailing slash such as ls -la /tmp/ so the directory contents are listed. When tool output is available, answer from that output instead of asking the user to run the command."
 )
 
 (fn openai_responses_tool_specs [tools]
@@ -436,20 +474,61 @@
   }
 )
 
+(fn tool_history_text [events]
+  (var text "")
+  (var found false)
+  (var index 0)
+  (while (index < events/.size)
+    (var event (events .get index))
+    (if (event/type == "tool.result")
+      (var data (event_data event))
+      (var status (((data .get "status" "") || "") .to_s))
+      (var tool (((data .get "tool" "") || "") .to_s))
+      (var line #"#{tool} #{status}: #{(tool_result_text data)}")
+      (if found
+        (text = #"#{text}\n#{line}")
+       else
+        (text = line)
+        (found = true)
+      )
+    )
+    (index += 1)
+  )
+  (if_not found
+    (return "")
+  )
+  (var history #"Previous tool results:\n#{text}\nUse these results; do not repeat a completed tool call unless more information is required. If a tool result failed or has empty output, make a corrected tool call instead of finalizing without the requested information.")
+  (if (history/.size <= 5000)
+    (return history)
+  )
+  (var end_index 4999)
+  (var clipped (history .substr 0 end_index))
+  #"#{clipped}...[truncated]"
+)
+
 (fn request_user_text [request]
   (var memory_text ((request/memory_text || "") .to_s))
-  (if memory_text/.not_empty
-    #"Context:\n#{memory_text}\n\nCurrent request:\n#{request/goal}"
-   else
-    request/goal
+  (var history_text (tool_history_text (ensure_array request/events)))
+  (if (memory_text/.empty && history_text/.empty)
+    (return request/goal)
   )
+  (var parts [])
+  (if memory_text/.not_empty
+    (parts .append #"Context:\n#{memory_text}")
+  )
+  (parts .append #"Current request:\n#{request/goal}")
+  (if history_text/.not_empty
+    (parts .append history_text)
+  )
+  (parts .join "\n\n")
 )
 
 (fn $ns/build_openai_payload [request]
   (var cfg (provider_config "openai" request))
-  (var system_text (text_or_default request/system "You are GeneClaw."))
+  (var system_text (text_or_default request/system (default_system_text)))
   (var user_text (request_user_text request))
-  (var tools (if cfg/auth_token/.not_empty (openai_responses_tool_specs request/tools) else request/tools))
+  (var use_responses cfg/auth_token/.not_empty)
+  (var tools (if use_responses (openai_responses_tool_specs request/tools) else request/tools))
   {
     ^messages [
       {^role "system" ^content system_text}
@@ -466,7 +545,7 @@
 
 (fn $ns/build_anthropic_payload [request]
   (var cfg (provider_config "anthropic" request))
-  (var system_text (text_or_default request/system "You are GeneClaw."))
+  (var system_text (text_or_default request/system (default_system_text)))
   {
     ^system system_text
     ^messages [
