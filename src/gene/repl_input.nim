@@ -18,6 +18,10 @@ type
   HistoryInitProc = proc() {.cdecl.}
   ReadlineReplaceLineProc = proc(line: cstring, clear_undo: cint) {.cdecl.}
   ReadlineCrLfProc = proc(): cint {.cdecl.}
+  ReadlineCommandProc = proc(count: cint, key: cint): cint {.cdecl.}
+  ReadlineBindKeyseqProc = proc(keyseq: cstring, fn: ReadlineCommandProc): cint {.cdecl.}
+  ReadlineInsertTextProc = proc(text: cstring): cint {.cdecl.}
+  ReadlineRedisplayProc = proc(): cint {.cdecl.}
   ReadlineCallbackHandlerProc = proc(line: cstring) {.cdecl.}
   ReadlineCallbackInstallProc = proc(prompt: cstring, handler: ReadlineCallbackHandlerProc) {.cdecl.}
   ReadlineCallbackReadCharProc = proc() {.cdecl.}
@@ -36,6 +40,9 @@ type
     clear_history_fn: HistoryInitProc
     replace_line_fn: ReadlineReplaceLineProc
     crlf_fn: ReadlineCrLfProc
+    bind_keyseq_fn: ReadlineBindKeyseqProc
+    insert_text_fn: ReadlineInsertTextProc
+    redisplay_fn: ReadlineRedisplayProc
     callback_install_fn: ReadlineCallbackInstallProc
     callback_read_char_fn: ReadlineCallbackReadCharProc
     callback_remove_fn: ReadlineCallbackRemoveProc
@@ -56,6 +63,15 @@ proc should_use_readline_backend*(stdin_is_tty: bool, backend_available: bool): 
 
 proc should_record_repl_history_entry*(entry: string, last_entry: string): bool =
   entry.len > 0 and entry != last_entry
+
+proc shift_enter_keyseqs*(): seq[string] =
+  @[
+    "\x1B[13;2u",      # CSI-u / Kitty / modern terminals
+    "\x1B[13;2~",      # xterm-style modified Enter
+    "\x1B[27;2;13~",   # xterm modifyOtherKeys
+    "\x1B\r",           # iTerm2 manual mapping: Send Hex Code 0x1b 0x0d
+    "\x1B\n",           # LF variant of the same manual mapping
+  ]
 
 proc readline_candidates(): seq[string] =
   when defined(macosx) or defined(macos):
@@ -106,6 +122,23 @@ proc resolve_symbol(handles: openArray[LibHandle], name: cstring): pointer =
     if not result.isNil:
       return result
 
+proc readline_insert_newline(count: cint, key: cint): cint {.cdecl.} =
+  discard count
+  discard key
+  let reader = active_readline_reader
+  if reader.isNil or reader.insert_text_fn.isNil:
+    return 0
+  discard reader.insert_text_fn("\n".cstring)
+  if not reader.redisplay_fn.isNil:
+    discard reader.redisplay_fn()
+  0
+
+proc bind_multiline_keyseqs(reader: ReplInputReader) =
+  if reader.isNil or reader.bind_keyseq_fn.isNil or reader.insert_text_fn.isNil:
+    return
+  for keyseq in shift_enter_keyseqs():
+    discard reader.bind_keyseq_fn(keyseq.cstring, readline_insert_newline)
+
 proc try_enable_readline(reader: ReplInputReader): bool =
   reader.readline_lib = load_first_library(readline_candidates())
   if reader.readline_lib.isNil:
@@ -125,6 +158,9 @@ proc try_enable_readline(reader: ReplInputReader): bool =
   let clear_history_sym = resolve_symbol(handles, "clear_history")
   let replace_line_sym = resolve_symbol(handles, "rl_replace_line")
   let crlf_sym = resolve_symbol(handles, "rl_crlf")
+  let bind_keyseq_sym = resolve_symbol(handles, "rl_bind_keyseq")
+  let insert_text_sym = resolve_symbol(handles, "rl_insert_text")
+  let redisplay_sym = resolve_symbol(handles, "rl_redisplay")
   let callback_install_sym = resolve_symbol(handles, "rl_callback_handler_install")
   let callback_read_char_sym = resolve_symbol(handles, "rl_callback_read_char")
   let callback_remove_sym = resolve_symbol(handles, "rl_callback_handler_remove")
@@ -144,6 +180,12 @@ proc try_enable_readline(reader: ReplInputReader): bool =
     reader.replace_line_fn = cast[ReadlineReplaceLineProc](replace_line_sym)
   if not crlf_sym.isNil:
     reader.crlf_fn = cast[ReadlineCrLfProc](crlf_sym)
+  if not bind_keyseq_sym.isNil:
+    reader.bind_keyseq_fn = cast[ReadlineBindKeyseqProc](bind_keyseq_sym)
+  if not insert_text_sym.isNil:
+    reader.insert_text_fn = cast[ReadlineInsertTextProc](insert_text_sym)
+  if not redisplay_sym.isNil:
+    reader.redisplay_fn = cast[ReadlineRedisplayProc](redisplay_sym)
   if not callback_install_sym.isNil:
     reader.callback_install_fn = cast[ReadlineCallbackInstallProc](callback_install_sym)
   if not callback_read_char_sym.isNil:
@@ -154,6 +196,7 @@ proc try_enable_readline(reader: ReplInputReader): bool =
     reader.done_ptr = cast[ptr cint](done_sym)
   reader.using_history_fn()
   reader.clear_history_fn()
+  reader.bind_multiline_keyseqs()
   reader.backend = RibReadline
   return true
 

@@ -65,13 +65,29 @@
   STORE_ROOT
 )
 
-(fn $ns/clear_store []
+(fn safe_store_root []
   (var root (normalize_path STORE_ROOT ""))
   (if ((root == "/") || (root == ".") || (root == ".."))
     (throw #"Refusing to clear unsafe store root: #{root}")
   )
+  root
+)
+
+(fn clear_store_child [root name]
   (if root/.not_empty
-    (system/shell #"rm -rf '#{root}'")
+    (system/shell #"rm -rf '#{root}/#{name}'")
+  )
+)
+
+(fn $ns/clear_store []
+  (var root (safe_store_root))
+  (if root/.not_empty
+    (ensure_dir root)
+    (clear_store_child root "runs")
+    (clear_store_child root "memory")
+    (clear_store_child root "index")
+    (clear_store_child root "eval")
+    (clear_store_child root "scheduler")
   )
   true
 )

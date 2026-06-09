@@ -130,7 +130,29 @@
   ^stderr_to_stdout true))
 (assert (tui_exit/exit_code == 0))
 (assert (tui_exit/output .contains "GeneClaw TUI"))
+(assert (tui_exit/output .contains "/help shows commands"))
+(assert (tui_exit/output .contains "Shift-Enter inserts a newline"))
 (assert (tui_exit/output .contains "geneclaw 011>"))
 (assert (tui_exit/output .contains "bye"))
+
+(var tui_agent (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui" "--provider" "fake"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "hello tui\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_agent/exit_code == 0))
+(assert (tui_agent/output .contains "Done: echo: hello tui"))
+(assert ((tui_agent/output .contains "completed: Done: echo: hello tui") == false))
+
+(var tui_slash (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "/help\n/reset\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_slash/exit_code == 0))
+(assert (tui_slash/output .contains "Commands:"))
+(assert (tui_slash/output .contains "/reset"))
+(assert (tui_slash/output .contains "session reset"))
+(assert (tui_slash/output .contains "geneclaw 001>"))
 
 (println "ok")

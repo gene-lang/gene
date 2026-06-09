@@ -1,7 +1,7 @@
 # Terminal UI view-model helpers.
 
 (import genex/readline)
-(import replay_run cancel_run terminal_run_state from "kernel/runs")
+(import reset_runs replay_run cancel_run terminal_run_state from "kernel/runs")
 (import events_for from "kernel/events")
 (import stored_run_ids store_root from "kernel/storage")
 (import scheduler_jobs from "scheduler/jobs")
@@ -143,15 +143,24 @@
 
 (fn $ns/tui_child_display_text [goal line]
   (var value ((line || "") .to_s))
-  (if ((shell_input goal) || (code_input goal))
-    (var completed (run_summary_tail value " completed: "))
-    (if (completed != nil)
+  (var completed (run_summary_tail value " completed: "))
+  (if (completed != nil)
+    (if ((shell_input goal) || (code_input goal))
       (return (tui_program_text completed))
+     else
+      (return (tui_response_text completed))
     )
-    (var failed (run_summary_tail value " failed: "))
-    (if (failed != nil)
+  )
+  (var failed (run_summary_tail value " failed: "))
+  (if (failed != nil)
+    (if ((shell_input goal) || (code_input goal))
       (return (tui_program_text failed))
+     else
+      (return (tui_colorize "31" failed))
     )
+  )
+  (if ((shell_input goal) || (code_input goal))
+    (return (tui_program_text value))
   )
   (tui_child_output_text value)
 )
@@ -159,6 +168,54 @@
 (fn $ns/tui_exit_command [input]
   (var text (((input || "") .to_s) .trim))
   ((text == "/quit") || (text == "/exit"))
+)
+
+(fn $ns/tui_slash_command [input]
+  (var text (((input || "") .to_s) .trim))
+  (text .starts_with "/")
+)
+
+(fn $ns/tui_help_text []
+  ([
+    "Commands:"
+    "/help   show commands"
+    "/reset  reset runtime session data"
+    "/clear  clear the screen"
+    "/exit   exit GeneClaw"
+  ] .join "\n")
+)
+
+(fn clear_terminal []
+  (stdout .write "\u001b[2J\u001b[H")
+  (flush stdout)
+)
+
+(fn $ns/tui_handle_slash_command [input]
+  (var text (((input || "") .to_s) .trim))
+  (if (tui_exit_command text)
+    (return {^handled true ^exit true ^message ""})
+  )
+  (if (text == "/help")
+    (var message (tui_help_text))
+    (println (tui_program_text message))
+    (return {^handled true ^exit false ^message message})
+  )
+  (if (text == "/reset")
+    (reset_runs)
+    (var message "session reset")
+    (println (tui_response_text message))
+    (return {^handled true ^exit false ^message message})
+  )
+  (if (text == "/clear")
+    (clear_terminal)
+    (return {^handled true ^exit false ^message ""})
+  )
+  (if (tui_slash_command text)
+    (var message #"unknown command: #{text}")
+    (println (tui_warning_text message))
+    (return {^handled true ^exit false ^message message})
+  )
+  {^handled false ^exit false ^message ""}
 )
 
 (fn $ns/tui_shell_quote [value]
@@ -340,7 +397,7 @@
   (genex/readline/install_sigint_handler)
   (genex/readline/clear_sigint)
   (var reader (new genex/readline/Reader))
-  (println (tui_response_text #"GeneClaw TUI (#{(reader .backend)}). Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history."))
+  (println (tui_response_text #"GeneClaw TUI (#{(reader .backend)}). /help shows commands. Shift-Enter inserts a newline when supported. Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history."))
   (loop
     (var event (reader .read_event (tui_prompt_text (tui_prompt))))
     (if (event/status == "eof")
@@ -355,8 +412,12 @@
     (if input/.empty
       (continue)
     )
-    (if (tui_exit_command input)
-      (break)
+    (var slash_result (tui_handle_slash_command input))
+    (if slash_result/handled
+      (if slash_result/exit
+        (break)
+      )
+      (continue)
     )
     (tui_run_goal input budgets options)
   )

@@ -45,10 +45,13 @@ fi
 (
   cd "$PROJECT_ROOT"
   trap 'exit 0' INT TERM
+  mkdir -p "$GENECLAW_DAEMON_DIR"
   printf '%s geneclaw-new daemon starting\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GENECLAW_LOG_FILE"
   while :; do
+    mkdir -p "$GENECLAW_DAEMON_DIR"
     "$GENE_BIN" run src/main.gene schedule run-due >> "$GENECLAW_LOG_FILE" 2>&1 || {
       status="$?"
+      mkdir -p "$GENECLAW_DAEMON_DIR"
       printf '%s scheduler dispatch failed with exit code %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$status" >> "$GENECLAW_LOG_FILE"
     }
     sleep "$GENECLAW_DAEMON_INTERVAL_SECONDS" &

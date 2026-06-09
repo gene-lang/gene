@@ -155,3 +155,11 @@ suite "REPL":
     check should_use_readline_backend(true, true) == true
     check should_use_readline_backend(true, false) == false
     check should_use_readline_backend(false, true) == false
+
+  test "readline supports common Shift-Enter key sequences":
+    let keyseqs = shift_enter_keyseqs()
+    check "\x1B[13;2u" in keyseqs
+    check "\x1B[13;2~" in keyseqs
+    check "\x1B[27;2;13~" in keyseqs
+    check "\x1B\r" in keyseqs
+    check "\x1B\n" in keyseqs
