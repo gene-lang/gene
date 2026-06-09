@@ -1,8 +1,8 @@
 # Terminal UI view-model helpers.
 
 (import genex/readline)
-(import reset_runs replay_run cancel_run terminal_run_state from "kernel/runs")
-(import events_for from "kernel/events")
+(import reset_runs replay_run cancel_run create_run transition_run complete_run terminal_run_state from "kernel/runs")
+(import append_event events_for reset_event_cache from "kernel/events")
 (import stored_run_ids store_root from "kernel/storage")
 (import scheduler_jobs from "scheduler/jobs")
 (import memory_search from "memory/store")
@@ -211,7 +211,8 @@
     (return (tui_status_text #"Ran #{text}"))
   )
   (if (code_input text)
-    (return (tui_status_text "Evaluating Gene code"))
+    # (return (tui_status_text "Evaluating Gene code"))
+    (return "")
   )
   (tui_status_text "Working")
 )
@@ -230,6 +231,7 @@
   ([
     "Commands:"
     "/help   show commands"
+    "/repl   start an interactive Gene session"
     "/show-prompt <text>  show the model prompt without creating a run"
     "/reset  reset runtime session data"
     "/clear  clear the screen"
@@ -342,6 +344,11 @@
     (println (tui_program_text message))
     (return {^handled true ^exit false ^message message})
   )
+  (if (text == "/repl")
+    (var message "Gene REPL is available from the interactive TUI")
+    (println (tui_program_text message))
+    (return {^handled true ^exit false ^message message})
+  )
   (if (text == "/reset")
     (reset_runs)
     (var message "session reset")
@@ -445,6 +452,42 @@
   #"#{(pad_run_number (tui_next_run_number))}\u203a "
 )
 
+(fn $ns/tui_repl_prompt [run_id = ""]
+  (var text (((run_id || "") .to_s) .trim))
+  (var number (if text/.not_empty (run_number text) else (tui_next_run_number)))
+  #"#{(pad_run_number number)} REPL\u203a "
+)
+
+(fn $ns/tui_repl_command [input]
+  (var text (((input || "") .to_s) .trim))
+  (text == "/repl")
+)
+
+(fn $ns/tui_repl_help_text []
+  ([
+    "Gene REPL commands:"
+    "/help   show Gene REPL commands"
+    "/clear  clear the screen"
+    "/exit   return to GeneClaw"
+  ] .join "\n")
+)
+
+(fn $ns/tui_start_repl_run [budgets = {}]
+  (var run (create_run "/repl" "local" budgets))
+  (run = (transition_run run/id "running"))
+  (append_event run/id "tui.repl.started" {^session "local"})
+  run
+)
+
+(fn $ns/tui_repl_goal [input]
+  (var text (((input || "") .to_s) .trim))
+  (if (code_input text)
+    text
+   else
+    #"= #{text}"
+  )
+)
+
 (fn $ns/tui_new_run_id [before_ids after_ids]
   (var new_ids [])
   (var index 0)
@@ -486,7 +529,10 @@
 (fn $ns/tui_run_goal [goal budgets = {} options = {}]
   (var command (tui_run_shell_command goal budgets options))
   (var before_ids (stored_run_ids))
-  (println (tui_run_header_text goal))
+  (var header (tui_run_header_text goal))
+  (if header/.not_empty
+    (println header)
+  )
   (var proc (system/Process/start "sh" "-lc" #"exec #{command}" ^stderr_to_stdout true ^env {^GENECLAW_NEW_HOME (store_root)}))
   (var output_lines [])
   (var base_sigint (genex/readline/sigint_count))
@@ -536,6 +582,36 @@
   {^status final_status ^exit_code final_exit_code ^run_id final_run_id ^output output_lines}
 )
 
+(fn $ns/tui_repl_eval [input run_id budgets = {} options = {}]
+  (var goal (tui_repl_goal input))
+  (var parts [(tui_shell_quote (tui_gene_bin)) "run" "src/main.gene" "repl-eval" (tui_shell_quote run_id) (tui_shell_quote goal)])
+  (var command (parts .join " "))
+  (var header (tui_run_header_text goal))
+  (if header/.not_empty
+    (println header)
+  )
+  (var process (system/run "sh" "-lc" #"exec #{command}" ^stderr_to_stdout true ^env {^GENECLAW_NEW_HOME (store_root)}))
+  (reset_event_cache)
+  (var output (((process/output || "") || "") .to_s))
+  (var output_lines [])
+  (if output/.not_empty
+    (var lines (output .split "\n"))
+    (var index 0)
+    (while (index < lines/.size)
+      (var line (lines .get index))
+      (if line/.not_empty
+        (println (tui_child_display_text goal line))
+        (output_lines .append line)
+      )
+      (index += 1)
+    )
+  )
+  {^status (if (process/exit_code == 0) "completed" else "failed")
+   ^exit_code process/exit_code
+   ^run_id run_id
+   ^output output_lines}
+)
+
 (fn $ns/start_tui [budgets = {} options = {}]
   (genex/readline/install_sigint_handler)
   (genex/readline/clear_sigint)
@@ -560,6 +636,10 @@
     (if input/.empty
       (continue)
     )
+    (if (tui_repl_command input)
+      (tui_start_repl reader budgets options)
+      (continue)
+    )
     (var slash_result (tui_handle_slash_command input options))
     (if slash_result/handled
       (if slash_result/exit
@@ -571,6 +651,46 @@
   )
   (reader .close)
   (println (tui_response_text "bye"))
+  true
+)
+
+(fn $ns/tui_start_repl [reader budgets = {} options = {}]
+  (var run (tui_start_repl_run budgets))
+  (println (tui_program_text #"Gene REPL started, use Ctrl-D to exit."))
+  (loop
+    (var event (reader .read_event (tui_prompt_text (tui_repl_prompt run/id))))
+    (if (event/status == "eof")
+      (break)
+    )
+    (if (event/status == "interrupt")
+      (println (tui_warning_text "input cleared"))
+      (genex/readline/clear_sigint)
+      (continue)
+    )
+    (var input (((event/line || "") .to_s) .trim))
+    (if input/.empty
+      (continue)
+    )
+    (if (tui_exit_command input)
+      (break)
+    )
+    (if (input == "/help")
+      (println (tui_program_text (tui_repl_help_text)))
+      (continue)
+    )
+    (if (input == "/clear")
+      (clear_terminal)
+      (continue)
+    )
+    (if (tui_slash_command input)
+      (println (tui_warning_text #"\u2022 unknown Gene REPL command: #{input}"))
+      (continue)
+    )
+    (tui_repl_eval input run/id budgets options)
+  )
+  (append_event run/id "tui.repl.ended" {^session "local"})
+  (complete_run run/id "Gene REPL ended")
+  (println (tui_program_text "Gene REPL ended"))
   true
 )
 

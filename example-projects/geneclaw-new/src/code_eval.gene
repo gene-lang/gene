@@ -254,6 +254,62 @@
   (run_code_eval_with_options code session budgets {})
 )
 
+(fn $ns/run_code_eval_for_run [run_id code session = "local" budgets = {} options = {}]
+  (var target_run_id (((run_id || "") .to_s) .trim))
+  (if target_run_id/.empty
+    (throw "Missing REPL run id")
+  )
+  (var text (normalize_code_input code))
+  (var run {^id target_run_id})
+  (ensure_dir (eval_session_dir))
+  (ensure_dir (eval_run_dir))
+  (var session_path (eval_session_path session))
+  (var prior (read_file_or_empty session_path))
+  (var source (build_eval_source run session prior text))
+  (var output_marker (eval_output_marker run))
+  (var script_path (eval_run_script_path target_run_id))
+  (gene/io/write script_path source)
+  (append_event target_run_id "code.eval.started" {
+    ^session session
+    ^script_path script_path
+    ^session_path session_path
+    ^workspace_root (workspace_root)
+    ^store_root (store_root)
+    ^repl true
+  })
+  (var started_at gene/now/.call/.to_i)
+  (var process (run_eval_process source))
+  (reset_event_cache)
+  (var completed_at gene/now/.call/.to_i)
+  (var duration_ms (completed_at - started_at))
+  (var raw_output ((process/output || "") .to_s))
+  (var current_output (output_after_marker raw_output output_marker))
+  (if (process/exit_code == 0)
+    (var parts (split_eval_output current_output))
+    (var final_text (eval_final_text parts))
+    (var updated_session_path (append_session_code session target_run_id text))
+    (append_event target_run_id "code.eval.completed" {
+      ^result parts/result
+      ^output parts/output
+      ^raw_output current_output
+      ^exit_code process/exit_code
+      ^duration_ms duration_ms
+      ^session_path updated_session_path
+      ^repl true
+    })
+    {^id target_run_id ^run_id target_run_id ^state "completed" ^status "completed" ^session session ^final final_text ^exit_code process/exit_code}
+   else
+    (var failure_text (if current_output/.not_empty current_output else #"eval failed with exit code #{process/exit_code}"))
+    (append_event target_run_id "code.eval.failed" {
+      ^output current_output
+      ^exit_code process/exit_code
+      ^duration_ms duration_ms
+      ^repl true
+    })
+    {^id target_run_id ^run_id target_run_id ^state "failed" ^status "failed" ^session session ^final failure_text ^exit_code process/exit_code}
+  )
+)
+
 (fn gene_eval_tool [args]
   (var code (((args/code || "") .to_s) .trim))
   (if code/.empty

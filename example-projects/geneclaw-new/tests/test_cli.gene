@@ -215,4 +215,28 @@
 (assert (tui_plain_show_prompt/output .contains "0001\u203a "))
 (assert ((tui_plain_show_prompt/output .contains "0002\u203a ") == false))
 
+(var tui_repl (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "/repl\n(var cli_repl_x 6)\ncli_repl_x\n/exit\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_repl/exit_code == 0))
+(assert (tui_repl/output .contains "Gene REPL started (run-1)"))
+(assert (tui_repl/output .contains "gene 0001\u203a "))
+(assert (tui_repl/output .contains "Gene REPL ended"))
+(assert (tui_repl/output .contains "0002\u203a "))
+(assert ((tui_repl/output .contains "gene 0002\u203a ") == false))
+
+(var repl_events (system/run
+  "../../bin/gene" "run" "src/main.gene" "events" "run-1"
+  ^env {^GENECLAW_NEW_HOME store_root}
+  ^stderr_to_stdout true))
+(assert (repl_events/exit_code == 0))
+(assert (repl_events/output .contains "tui.repl.started"))
+(assert (repl_events/output .contains "code.eval.started"))
+(assert (repl_events/output .contains "code.eval.completed"))
+(assert (repl_events/output .contains "tui.repl.ended"))
+(assert (repl_events/output .contains "run.completed"))
+(assert ((repl_events/output .contains "^run_id \"run-2\"") == false))
+
 (println "ok")
