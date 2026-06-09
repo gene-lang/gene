@@ -6,7 +6,7 @@
 (import register_fake_tools from "tools/fake")
 (import register_builtin_tools from "tools/builtin")
 (import run_agent_with_options from "agent_loop")
-(import code_input run_code_eval_with_options from "code_eval")
+(import code_input run_code_eval_with_options register_code_eval_tools from "code_eval")
 (import shell_input run_shell_command_with_options from "shell_eval")
 (import memory_search from "memory/store")
 (import schedule_job scheduler_jobs run_due_jobs from "scheduler/jobs")
@@ -98,6 +98,7 @@
 (reset_tools)
 (register_fake_tools)
 (register_builtin_tools)
+(register_code_eval_tools)
 
 (var command (arg_at 0 "run"))
 (var goal_start 1)

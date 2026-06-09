@@ -5,6 +5,7 @@
 (import reset_tools tool_defs from "tools/registry")
 (import register_fake_tools from "tools/fake")
 (import register_builtin_tools from "tools/builtin")
+(import register_code_eval_tools from "code_eval")
 (import compile_loaded_skill compile_skill from "skills/compiler")
 
 (set_store_root "/tmp/geneclaw-new-test-skill-compiler-store")
@@ -12,6 +13,7 @@
 (reset_tools)
 (register_fake_tools)
 (register_builtin_tools)
+(register_code_eval_tools)
 
 (var compiled (compile_loaded_skill "repo-review" (tool_defs)))
 (assert (compiled/ok == true))
@@ -30,6 +32,22 @@
 (assert (compiled/docs/summary .contains "repo-review"))
 (assert (compiled/cache_key .contains "repo-review:0.1.0"))
 (assert (compiled/errors/.size == 0))
+
+(var gene_compiled (compile_loaded_skill "gene-coding" (tool_defs)))
+(assert (gene_compiled/ok == true))
+(assert (gene_compiled/skill/name == "gene-coding"))
+(assert (gene_compiled/tool_names/.size == 5))
+(assert (gene_compiled/tool_names .contains "gene.eval"))
+(assert (gene_compiled/tool_names .contains "shell.run"))
+(assert (gene_compiled/tool_names .contains "file.patch"))
+(assert (gene_compiled/provider_tools/openai/.size == 5))
+(assert (gene_compiled/provider_tools/anthropic/.size == 5))
+(assert (gene_compiled/workflows/0/name == "default"))
+(assert (gene_compiled/workflows/0/steps/.size == 4))
+(assert (gene_compiled/examples/.size == 2))
+(assert (gene_compiled/docs/summary .contains "gene-coding"))
+(assert (gene_compiled/cache_key .contains "gene-coding:0.1.0"))
+(assert (gene_compiled/errors/.size == 0))
 
 (var invalid_skill {
   ^name ""

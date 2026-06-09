@@ -129,7 +129,10 @@
 )
 
 (fn $ns/rest_skills []
-  (response 200 {^skills [(compile_loaded_skill "repo-review" (tool_defs))]})
+  (response 200 {^skills [
+    (compile_loaded_skill "repo-review" (tool_defs))
+    (compile_loaded_skill "gene-coding" (tool_defs))
+  ]})
 )
 
 (fn $ns/handle_rest [method path body = {}]

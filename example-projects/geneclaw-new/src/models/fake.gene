@@ -2,19 +2,42 @@
 
 (import has_event_type last_event_of_type from "kernel/events")
 
+(fn fake_can_use_gene_eval [run tool_names]
+  (var goal ((((run/goal || "") .to_s) .trim) .to_lower))
+  ((tool_names .contains "gene.eval") &&
+    (goal .contains "evaluate") &&
+    (goal .contains "gene code") &&
+    (goal .contains "inspect") &&
+    (goal .contains "context"))
+)
+
 (fn $ns/fake_model_step [run events tool_names]
   (if ((has_event_type events "tool.result") == false)
-    {
-      ^kind "tool_calls"
-      ^content "I will call the echo tool."
-      ^tool_calls [
-        {
-          ^id "fake-tool-call-1"
-          ^name "fake.echo"
-          ^args {^text run/goal}
-        }
-      ]
-    }
+    (if (fake_can_use_gene_eval run tool_names)
+      {
+        ^kind "tool_calls"
+        ^content "I will inspect the GeneClaw eval context."
+        ^tool_calls [
+          {
+            ^id "fake-gene-eval-call-1"
+            ^name "gene.eval"
+            ^args {^code "geneclaw/session" ^session "fake-inspect"}
+          }
+        ]
+      }
+     else
+      {
+        ^kind "tool_calls"
+        ^content "I will call the echo tool."
+        ^tool_calls [
+          {
+            ^id "fake-tool-call-1"
+            ^name "fake.echo"
+            ^args {^text run/goal}
+          }
+        ]
+      }
+    )
   else
     (var last_result_event (last_event_of_type events "tool.result"))
     (var summary (last_result_event/data/result/summary || last_result_event/data/result/error || "tool completed"))
@@ -25,4 +48,3 @@
     }
   )
 )
-

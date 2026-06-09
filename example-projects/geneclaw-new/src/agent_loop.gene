@@ -5,7 +5,7 @@
 (import deadline_exceeded from "kernel/limits")
 (import invoke_tool tool_defs from "tools/registry")
 (import build_model_request call_model from "models/gateway")
-(import load_skill filter_tool_defs_for_skill from "skills/loader")
+(import load_skill filter_tool_defs_for_skill infer_skill_name from "skills/loader")
 (import memory_context extract_memory_from_run from "memory/store")
 (import select_workflow start_workflow complete_workflow fail_workflow start_workflow_step complete_workflow_step fail_workflow_step from "workflows/engine")
 
@@ -97,6 +97,18 @@
     (index += 1)
   )
   ""
+)
+
+(fn gene_eval_final_content [tool_call result]
+  (var code (((tool_call/args/code || "") || "") .to_s))
+  (var output (tool_result_text_value result))
+  (if code/.empty
+    (return output)
+  )
+  (if output/.empty
+    (return #"Gene code:\n```gene\n#{code}\n```")
+  )
+  #"Gene code:\n```gene\n#{code}\n```\n\nResult:\n#{output}"
 )
 
 (fn compact_line_text [text limit]
@@ -249,7 +261,10 @@
   (var tool_call_count 0)
   (var stop_loop false)
   (var provider (((run_options .get "provider" "") || "") .to_s))
-  (var skill (if ((run_options/skill || "") .not_empty) (load_skill run_options/skill) else nil))
+  (var requested_skill (((run_options/skill || "") .to_s) .trim))
+  (var resolved_skill (if requested_skill/.not_empty requested_skill else (infer_skill_name goal)))
+  (var skill (if resolved_skill/.not_empty (load_skill resolved_skill) else nil))
+  (var skill_inferred (requested_skill/.empty && (skill != nil)))
   (var workflow (select_workflow skill (run_options/workflow || "")))
   (var workflow_state (start_workflow run/id workflow))
 
@@ -259,6 +274,7 @@
       ^version skill/version
       ^workflow_count skill/workflows/.size
       ^tool_count skill/tools/.size
+      ^inferred skill_inferred
     })
   )
   (var memory_skipped (volatile_filesystem_goal run/goal))
@@ -465,6 +481,7 @@
     (var tool_batch_failed false)
     (var tool_batch_error "")
     (var tool_batch_failed_count 0)
+    (var gene_eval_final "")
     (start_workflow_step run/id workflow_state "tool_batch" "tools" {^step step_count ^tool_call_count requested_tool_calls/.size})
     (while (tool_index < requested_tool_calls/.size)
       (var tool_call (requested_tool_calls .get tool_index))
@@ -479,6 +496,11 @@
       (var result (invoke_tool run/id tool_call/name tool_call/args {^call_id tool_call/id}))
       (if (run_failed_tool result)
         (tool_batch_failed_count += 1)
+       elif (tool_call/name == "gene.eval")
+        (var final_text (gene_eval_final_content tool_call result))
+        (if final_text/.not_empty
+          (gene_eval_final = final_text)
+        )
       )
       (tool_index += 1)
     )
@@ -490,6 +512,15 @@
     )
 
     (if stop_loop
+      (break)
+    )
+
+    (if gene_eval_final/.not_empty
+      (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count ^source "gene.eval"})
+      (complete_run run/id gene_eval_final)
+      (write_run_memory run gene_eval_final)
+      (complete_workflow_step run/id workflow_state {^state "completed" ^source "gene.eval"})
+      (complete_workflow run/id workflow_state {^state "completed" ^source "gene.eval"})
       (break)
     )
   )

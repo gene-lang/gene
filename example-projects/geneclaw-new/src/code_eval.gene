@@ -4,6 +4,7 @@
 (import create_run transition_run complete_run fail_run run_summary from "kernel/runs")
 (import store_root from "kernel/storage")
 (import workspace_root from "tools/builtin")
+(import register_tool from "tools/registry")
 
 (fn $ns/code_input [text]
   (var value (((text || "") .to_s) .trim))
@@ -251,4 +252,39 @@
 
 (fn $ns/run_code_eval [code session = "local" budgets = {}]
   (run_code_eval_with_options code session budgets {})
+)
+
+(fn gene_eval_tool [args]
+  (var code (((args/code || "") .to_s) .trim))
+  (if code/.empty
+    (return {^status "failed" ^error "Missing code"})
+  )
+  (var session ((((args/session || "tool") || "tool") .to_s) .trim))
+  (if session/.empty
+    (session = "tool")
+  )
+  (var summary (run_code_eval_with_options code session {} {}))
+  {
+    ^status (if (summary/state == "completed") "ok" else "failed")
+    ^run_id summary/id
+    ^state summary/state
+    ^session session
+    ^output summary/final
+  }
+)
+
+(fn $ns/register_code_eval_tools []
+  (register_tool
+    "gene.eval"
+    "Evaluate Gene code through GeneClaw's session-scoped eval context. This defines geneclaw, geneclaw_workspace, geneclaw_store, and tool."
+    {^type "object"
+     ^required ["code"]
+     ^properties {
+       ^code {^type "string"}
+       ^session {^type "string"}
+       ^max_output_bytes {^type "integer"}
+     }}
+    {^status "String" ^run_id "String" ^state "String" ^session "String" ^output "String"}
+    gene_eval_tool)
+  true
 )

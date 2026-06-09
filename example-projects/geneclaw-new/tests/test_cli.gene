@@ -48,36 +48,54 @@
 (assert (live_events/output .contains "^profile \"standard\""))
 (assert (live_events/output .contains "^model \"gpt-env-default\""))
 
+(var inferred_gene (system/run
+  "../../bin/gene" "run" "src/main.gene" "run"
+  "--provider" "fake" "I meant run gene to access context"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false"}
+  ^stderr_to_stdout true))
+(assert (inferred_gene/exit_code == 0))
+(assert (inferred_gene/output .contains "run-4 completed"))
+(assert (inferred_gene/output .contains "Done: echo: I meant run gene to access context"))
+
+(var inferred_gene_events (system/run
+  "../../bin/gene" "run" "src/main.gene" "events" "run-4"
+  ^env {^GENECLAW_NEW_HOME store_root}
+  ^stderr_to_stdout true))
+(assert (inferred_gene_events/exit_code == 0))
+(assert (inferred_gene_events/output .contains "^type \"skill.loaded\""))
+(assert (inferred_gene_events/output .contains "^name \"gene-coding\""))
+(assert (inferred_gene_events/output .contains "^inferred true"))
+
 (var eval_first (system/run
   "../../bin/gene" "run" "src/main.gene" "run" "(+ 1 2)"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
   ^stderr_to_stdout true))
 (assert (eval_first/exit_code == 0))
-(assert (eval_first/output .contains "run-4 completed: 3"))
+(assert (eval_first/output .contains "run-5 completed: 3"))
 
 (var eval_define (system/run
   "../../bin/gene" "run" "src/main.gene" "run" "(var cli_eval_x 8)"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
   ^stderr_to_stdout true))
 (assert (eval_define/exit_code == 0))
-(assert (eval_define/output .contains "run-5 completed"))
+(assert (eval_define/output .contains "run-6 completed"))
 
 (var eval_second (system/run
   "../../bin/gene" "run" "src/main.gene" "run" "(+ cli_eval_x 4)"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
   ^stderr_to_stdout true))
 (assert (eval_second/exit_code == 0))
-(assert (eval_second/output .contains "run-6 completed: 12"))
+(assert (eval_second/output .contains "run-7 completed: 12"))
 
 (var eval_equals (system/run
   "../../bin/gene" "run" "src/main.gene" "run" "= (+ cli_eval_x 5)"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
   ^stderr_to_stdout true))
 (assert (eval_equals/exit_code == 0))
-(assert (eval_equals/output .contains "run-7 completed: 13"))
+(assert (eval_equals/output .contains "run-8 completed: 13"))
 
 (var eval_events (system/run
-  "../../bin/gene" "run" "src/main.gene" "events" "run-7"
+  "../../bin/gene" "run" "src/main.gene" "events" "run-8"
   ^env {^GENECLAW_NEW_HOME store_root}
   ^stderr_to_stdout true))
 (assert (eval_events/exit_code == 0))
@@ -91,10 +109,10 @@
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false"}
   ^stderr_to_stdout true))
 (assert (shell_run/exit_code == 0))
-(assert (shell_run/output .contains "run-8 completed: SHELL-OK"))
+(assert (shell_run/output .contains "run-9 completed: SHELL-OK"))
 
 (var shell_events (system/run
-  "../../bin/gene" "run" "src/main.gene" "events" "run-8"
+  "../../bin/gene" "run" "src/main.gene" "events" "run-9"
   ^env {^GENECLAW_NEW_HOME store_root}
   ^stderr_to_stdout true))
 (assert (shell_events/exit_code == 0))
@@ -109,7 +127,7 @@
   ^input "!printf daemon\n/exit\n"
   ^stderr_to_stdout true))
 (assert (tui_shell/exit_code == 0))
-(assert (tui_shell/output .contains "0009\u203a "))
+(assert (tui_shell/output .contains "0010\u203a "))
 (assert (tui_shell/output .contains "Ran !printf daemon"))
 (assert (tui_shell/output .contains "daemon"))
 (assert ((tui_shell/output .contains "completed: daemon") == false))
@@ -121,7 +139,7 @@
   ^input "(var tui_code_a 1) (tui_code_a + 2)\n/exit\n"
   ^stderr_to_stdout true))
 (assert (tui_code/exit_code == 0))
-(assert (tui_code/output .contains "0010\u203a "))
+(assert (tui_code/output .contains "0011\u203a "))
 (assert (tui_code/output .contains "Evaluating Gene code"))
 (assert (tui_code/output .contains "3"))
 (assert ((tui_code/output .contains "completed: 3") == false))
@@ -136,7 +154,7 @@
 (assert (tui_exit/output .contains "GeneClaw TUI"))
 (assert (tui_exit/output .contains "/help shows commands"))
 (assert (tui_exit/output .contains "Shift-Enter inserts a newline"))
-(assert (tui_exit/output .contains "0011\u203a "))
+(assert (tui_exit/output .contains "0012\u203a "))
 (assert (tui_exit/output .contains "bye"))
 
 (var tui_agent (system/run
@@ -160,5 +178,41 @@
 (assert (tui_slash/output .contains "session reset"))
 (assert (tui_slash/output .contains "0001\u203a "))
 (assert ((tui_slash/output .contains "geneclaw 001>") == false))
+
+(var tui_show_prompt (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "/show-prompt write gene code to inspect the context\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_show_prompt/exit_code == 0))
+(assert (tui_show_prompt/output .contains "Prompt preview"))
+(assert (tui_show_prompt/output .contains "Text: write gene code to inspect the context"))
+(assert (tui_show_prompt/output .contains "Skill: gene-coding (inferred)"))
+(assert (tui_show_prompt/output .contains "gene.eval"))
+(assert (tui_show_prompt/output .contains "User:"))
+(assert (tui_show_prompt/output .contains "write gene code to inspect the context"))
+(assert (tui_show_prompt/output .contains "Tools:\n- gene.eval"))
+(assert (tui_show_prompt/output .contains "- gene.eval"))
+(assert (tui_show_prompt/output .contains "- shell.run"))
+(assert (tui_show_prompt/output .contains "0001\u203a "))
+(assert ((tui_show_prompt/output .contains "0002\u203a ") == false))
+
+(var tui_plain_show_prompt (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "/show-prompt test\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_plain_show_prompt/exit_code == 0))
+(assert (tui_plain_show_prompt/output .contains "Prompt preview"))
+(assert (tui_plain_show_prompt/output .contains "Text: test"))
+(assert (tui_plain_show_prompt/output .contains "Skill: (none)"))
+(assert (tui_plain_show_prompt/output .contains "System:"))
+(assert (tui_plain_show_prompt/output .contains "You are GeneClaw"))
+(assert (tui_plain_show_prompt/output .contains "User:"))
+(assert (tui_plain_show_prompt/output .contains "test"))
+(assert (tui_plain_show_prompt/output .contains "Tools:"))
+(assert (tui_plain_show_prompt/output .contains "- shell.run"))
+(assert (tui_plain_show_prompt/output .contains "0001\u203a "))
+(assert ((tui_plain_show_prompt/output .contains "0002\u203a ") == false))
 
 (println "ok")

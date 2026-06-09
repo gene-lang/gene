@@ -78,6 +78,61 @@
   )
 )
 
+(fn text_contains_any [text terms]
+  (var index 0)
+  (while (index < terms/.size)
+    (if (text .contains (terms .get index))
+      (return true)
+    )
+    (index += 1)
+  )
+  false
+)
+
+(fn $ns/infer_skill_name [goal]
+  (var text ((((goal || "") .to_s) .trim) .to_lower))
+  (if text/.empty
+    (return "")
+  )
+  (if ((text .contains "repo-review") || (text .contains "repo review") || (text .contains "review current diff") || (text .contains "review the current diff"))
+    (return "repo-review")
+  )
+  (var gene_context_terms [
+    "agent context"
+    "access context"
+    "eval context"
+    "geneclaw context"
+    "geneclaw/session"
+    "geneclaw_workspace"
+    "geneclaw_store"
+    "state/config"
+    "change config"
+    "runtime config"
+    "geneclaw_model"
+    "geneclaw_new_home"
+    "geneclaw_workspace_root"
+  ])
+  (if (text_contains_any text gene_context_terms)
+    (return "gene-coding")
+  )
+  (if ((text .contains "gene") && (text_contains_any text [
+    "run"
+    "code"
+    "eval"
+    "expression"
+    "snippet"
+    "context"
+    "config"
+    "workspace"
+    "state"
+    "write"
+    "teach"
+  ]))
+    (return "gene-coding")
+  )
+  ""
+)
+
 (fn $ns/skill_tool_names [skill]
   (var names [])
   (var tools (ensure_array (skill/tools || [])))
@@ -92,18 +147,16 @@
   names
 )
 
-(fn name_allowed [name names]
-  (if names/.empty
-    (return true)
-  )
+(fn tool_def_by_name [tool_defs name]
   (var index 0)
-  (while (index < names/.size)
-    (if ((names .get index) == name)
-      (return true)
+  (while (index < tool_defs/.size)
+    (var tool_def (tool_defs .get index))
+    (if (tool_def/name == name)
+      (return tool_def)
     )
     (index += 1)
   )
-  false
+  nil
 )
 
 (fn $ns/filter_tool_defs_for_skill [tool_defs skill]
@@ -111,11 +164,14 @@
     (return tool_defs)
   )
   (var names (skill_tool_names skill))
+  (if names/.empty
+    (return tool_defs)
+  )
   (var filtered [])
   (var index 0)
-  (while (index < tool_defs/.size)
-    (var tool_def (tool_defs .get index))
-    (if (name_allowed tool_def/name names)
+  (while (index < names/.size)
+    (var tool_def (tool_def_by_name tool_defs (names .get index)))
+    (if (tool_def != nil)
       (filtered .append tool_def)
     )
     (index += 1)

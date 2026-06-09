@@ -8,6 +8,9 @@
 (import memory_search from "memory/store")
 (import code_input from "code_eval")
 (import shell_input from "shell_eval")
+(import tool_defs from "tools/registry")
+(import load_skill filter_tool_defs_for_skill infer_skill_name from "skills/loader")
+(import build_model_request build_provider_payload from "models/gateway")
 
 (fn ensure_array [value]
   (if (value is Array) value else [])
@@ -148,6 +151,10 @@
   (tui_response_text (tui_prefix_lines "\u2022 " "  " text))
 )
 
+(fn tui_section_text [title text]
+  #"#{title}:\n#{((text || "") .to_s)}"
+)
+
 (fn $ns/tui_child_output_text [text]
   (var value ((text || "") .to_s))
   (if ((value .contains " completed:") || (value .contains " completed"))
@@ -223,6 +230,7 @@
   ([
     "Commands:"
     "/help   show commands"
+    "/show-prompt <text>  show the model prompt without creating a run"
     "/reset  reset runtime session data"
     "/clear  clear the screen"
     "/exit   exit GeneClaw"
@@ -234,13 +242,103 @@
   (flush stdout)
 )
 
-(fn $ns/tui_handle_slash_command [input]
+(fn preview_run_for [text]
+  {^id "preview" ^state "queued" ^session "tui" ^goal text ^budgets {} ^deadline_ms 0 ^deadline_at_ms 0 ^final ""}
+)
+
+(fn preview_skill_for [text options]
+  (var requested ((((options/skill || "") || "") .to_s) .trim))
+  (var name (if requested/.not_empty requested else (infer_skill_name text)))
+  (var skill (if name/.not_empty (load_skill name) else nil))
+  {^name (if (skill == nil) "" else skill/name) ^skill skill ^inferred (requested/.empty && (skill != nil))}
+)
+
+(fn payload_system_text [request payload]
+  (var text (((payload/instructions || payload/system || request/system || "") .to_s) .trim))
+  text
+)
+
+(fn payload_user_text [request payload]
+  (var messages (ensure_array (payload/messages || [])))
+  (if (messages/.size > 1)
+    (return (((messages/1/content || "") || "") .to_s))
+  )
+  (var input (ensure_array (payload/input || [])))
+  (if (input/.size > 0)
+    (return (((input/0/content || "") || "") .to_s))
+  )
+  ((request/goal || "") .to_s)
+)
+
+(fn preview_tool_lines [request]
+  (var names (ensure_array (request/tool_names || [])))
+  (if names/.empty
+    (return "(none)")
+  )
+  (var lines [])
+  (var index 0)
+  (while (index < names/.size)
+    (lines .append #"- #{(names .get index)}")
+    (index += 1)
+  )
+  (lines .join "\n")
+)
+
+(fn $ns/tui_prompt_preview [input options = {}]
+  (var text (((input || "") .to_s) .trim))
+  (if text/.empty
+    (return "usage: /show-prompt <text>")
+  )
+  (var opts (ensure_map options))
+  (var skill_info (preview_skill_for text opts))
+  (var skill (skill_info/skill || nil))
+  (var request (build_model_request (opts/provider || "") (preview_run_for text) [] (filter_tool_defs_for_skill (tool_defs) skill) {
+    ^profile (opts/profile || "")
+    ^model (opts/model || "")
+    ^skill (if (skill == nil) "" else skill/name)
+    ^system (if (skill == nil) "" else skill/system)
+  }))
+  (var payload (build_provider_payload request/provider request))
+  (if_not (payload/messages is Array)
+    (payload = (build_provider_payload "openai" request))
+  )
+  (var skill_line (if (skill == nil)
+    "Skill: (none)"
+   else
+    #"Skill: #{skill/name}#{(if skill_info/inferred " (inferred)" else "")}"
+  ))
+  ([
+    "Prompt preview"
+    #"Text: #{text}"
+    skill_line
+    #"Provider: #{request/provider}"
+    #"Profile: #{request/profile}"
+    #"Model: #{request/model}"
+    (tui_section_text "System" (payload_system_text request payload))
+    (tui_section_text "User" (payload_user_text request payload))
+    (tui_section_text "Tools" (preview_tool_lines request))
+  ] .join "\n")
+)
+
+(fn show_prompt_command_text [text]
+  (if (text .starts_with "/show-prompt")
+    (return ((text .substr 12) .trim))
+  )
+  ""
+)
+
+(fn $ns/tui_handle_slash_command [input options = {}]
   (var text (((input || "") .to_s) .trim))
   (if (tui_exit_command text)
     (return {^handled true ^exit true ^message ""})
   )
   (if (text == "/help")
     (var message (tui_help_text))
+    (println (tui_program_text message))
+    (return {^handled true ^exit false ^message message})
+  )
+  (if (text .starts_with "/show-prompt")
+    (var message (tui_prompt_preview (show_prompt_command_text text) options))
     (println (tui_program_text message))
     (return {^handled true ^exit false ^message message})
   )
@@ -462,7 +560,7 @@
     (if input/.empty
       (continue)
     )
-    (var slash_result (tui_handle_slash_command input))
+    (var slash_result (tui_handle_slash_command input options))
     (if slash_result/handled
       (if slash_result/exit
         (break)

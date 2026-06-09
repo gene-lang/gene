@@ -23,7 +23,7 @@ This version starts with the smallest useful vertical slice:
 - model stream delta normalization
 - `skill.gene` package loader
 - skill compiler manifests with validation, provider schemas, docs snippets, and cache keys
-- `repo-review` skill with tool/workflow/example declarations
+- `repo-review` and `gene-coding` skills with tool/workflow/example declarations
 - workflow graph/checkpoint engine with conditional edges and run-level step events
 - provider tool-spec generation from skill-allowed tools
 - durable run-summary memory facts
@@ -79,6 +79,8 @@ Run the demo:
 ../../bin/gene run src/main.gene run "review the current diff"
 ../../bin/gene run src/main.gene run --skill repo-review "review the current diff"
 ../../bin/gene run src/main.gene run --skill repo-review --workflow default "review the current diff"
+../../bin/gene run src/main.gene run --skill gene-coding "teach me how to write and run a Gene expression"
+../../bin/gene run src/main.gene run --skill gene-coding "run this Gene code: (+ 1 2)"
 ../../bin/gene run src/main.gene run --profile fake "review the current diff"
 ../../bin/gene run src/main.gene run --provider openai --model gpt-5-mini "review the current diff"
 ../../bin/gene run src/main.gene run "(+ 1 2)"
@@ -100,6 +102,29 @@ per-session scratch context with persistent vars/functions, GeneClaw metadata in
 `geneclaw`, and a `(tool "name" {...})` helper for calling registered tools.
 Session state is stored under `$GENECLAW_NEW_HOME/eval/sessions`.
 
+Inside GeneClaw eval code, the `geneclaw` map exposes the current agent context:
+`geneclaw/run_id`, `geneclaw/session`, `geneclaw/workspace_root`, and
+`geneclaw/store_root`. The helpers `(geneclaw_workspace)` and
+`(geneclaw_store)` return the workspace and store roots. Eval code can call
+registered tools with `(tool "name" {...})`, for example:
+
+```gene
+(geneclaw_workspace)
+(tool "shell.run" {^cmd "pwd"})
+(tool "file.read" {^path "README.md"})
+```
+
+The `gene-coding` skill gives the live model these same rules. It exposes a
+`gene.eval` tool for context-aware snippets, so requests that inspect
+`geneclaw`, `(geneclaw_workspace)`, `(geneclaw_store)`, or `(tool ...)` do not
+fall back to plain `gene eval`, which lacks GeneClaw context. Runtime
+configuration comes from environment variables such as `GENECLAW_NEW_HOME`,
+`GENECLAW_WORKSPACE_ROOT`, `GENECLAW_GENE_BIN`, `GENECLAW_MODEL_LIVE`,
+`GENECLAW_PROVIDER`, `GENECLAW_PROFILE`, and `GENECLAW_MODEL`; change persistent
+local config in the shell environment or `.env`.
+Plain agent requests that mention Gene code, eval, context, state, config, or
+workspace access infer `gene-coding` when no explicit `--skill` is set.
+
 Inputs whose trimmed text starts with `!` run as trusted local shell commands
 through `bash -lc` in the GeneClaw workspace root. The leading `!` is stripped
 before creating the run, so history and events store the command itself.
@@ -108,7 +133,8 @@ The TUI uses a Codex-style scrollback interface with a zero-padded prompt like
 `0001›`, muted run status lines, raw command output, and response-colored agent
 messages. It
 supports slash commands: `/help` lists commands, `/reset` clears runtime session
-data while preserving daemon files, `/clear` clears the screen, and `/exit`
+data while preserving daemon files, `/show-prompt <text>` prints the inferred
+model prompt without creating a run, `/clear` clears the screen, and `/exit`
 exits.
 
 Web tools are available as normal GeneClaw tools:

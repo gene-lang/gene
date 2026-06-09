@@ -5,15 +5,18 @@
 (import set_store_root from "kernel/storage")
 (import reset_tools invoke_tool from "tools/registry")
 (import register_builtin_tools set_workspace_root from "tools/builtin")
+(import register_code_eval_tools from "code_eval")
 
 (var workspace "/tmp/geneclaw-new-test-tool-runtime-workspace")
 (set_store_root "/tmp/geneclaw-new-test-tool-runtime-store")
+($env .set "GENECLAW_GENE_BIN" "../../bin/gene")
 (reset_runs)
 (reset_tools)
 (system/shell #"rm -rf '#{workspace}' && mkdir -p '#{workspace}'")
 (gene/io/write #"#{workspace}/sample.txt" "alpha\nbeta\n")
 (set_workspace_root workspace)
 (register_builtin_tools)
+(register_code_eval_tools)
 
 (var run (create_run "exercise tool runtime" "test"))
 
@@ -72,6 +75,11 @@
 (assert (shell_result/timeout_enforced == true))
 (assert (shell_result/timed_out == false))
 (assert (shell_result/output .contains "shell-ok"))
+
+(var gene_eval_result (invoke_tool run/id "gene.eval" {^code "geneclaw/session" ^session "tool-session"}))
+(assert (gene_eval_result/status == "ok"))
+(assert (gene_eval_result/state == "completed"))
+(assert (gene_eval_result/output .contains "tool-session"))
 
 (var diff "--- sample.txt\n+++ sample.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n")
 (var patch_result (invoke_tool run/id "file.patch" {^path "sample.txt" ^diff diff}))
