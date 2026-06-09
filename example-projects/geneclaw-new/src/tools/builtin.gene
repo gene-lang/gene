@@ -234,8 +234,13 @@
     (return {^status "failed" ^error path_error})
   )
   (try
-    (var result (system/shell #"rg '#{pattern}' '#{(full_path path)}' --max-count 50 2>&1 || true"))
-    {^status "ok" ^pattern pattern ^path path ^output (result/output || "")}
+    (var result (system/run "rg" pattern (full_path path) "--max-count" "50" ^stderr_to_stdout true))
+    (var exit_code (result/exit_code || 0))
+    (var output (result/output || ""))
+    (if (exit_code > 1)
+      (return {^status "failed" ^pattern pattern ^path path ^exit_code exit_code ^error output ^output output})
+    )
+    {^status "ok" ^pattern pattern ^path path ^exit_code exit_code ^output output}
   catch *
     {^status "failed" ^error #"search failed: #{$ex/message}"}
   )

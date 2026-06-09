@@ -11,9 +11,40 @@
     (goal .contains "context"))
 )
 
+(fn fake_can_use_mixed_gene_eval [run tool_names]
+  (var goal ((((run/goal || "") .to_s) .trim) .to_lower))
+  ((tool_names .contains "gene.eval") &&
+    (tool_names .contains "fake.echo") &&
+    (goal .contains "mixed") &&
+    (goal .contains "eval") &&
+    (goal .contains "tools"))
+)
+
+(fn fake_repeats_final_tool_call [run]
+  (var goal ((((run/goal || "") .to_s) .trim) .to_lower))
+  ((goal .contains "repeat") && (goal .contains "final") && (goal .contains "tool"))
+)
+
 (fn $ns/fake_model_step [run events tool_names]
   (if ((has_event_type events "tool.result") == false)
-    (if (fake_can_use_gene_eval run tool_names)
+    (if (fake_can_use_mixed_gene_eval run tool_names)
+      {
+        ^kind "tool_calls"
+        ^content "I will inspect context and call another tool."
+        ^tool_calls [
+          {
+            ^id "fake-mixed-gene-eval-call-1"
+            ^name "gene.eval"
+            ^args {^code "geneclaw/session" ^session "fake-mixed"}
+          }
+          {
+            ^id "fake-mixed-echo-call-1"
+            ^name "fake.echo"
+            ^args {^text "mixed ok"}
+          }
+        ]
+      }
+     elif (fake_can_use_gene_eval run tool_names)
       {
         ^kind "tool_calls"
         ^content "I will inspect the GeneClaw eval context."
@@ -22,6 +53,18 @@
             ^id "fake-gene-eval-call-1"
             ^name "gene.eval"
             ^args {^code "geneclaw/session" ^session "fake-inspect"}
+          }
+        ]
+      }
+     elif (fake_repeats_final_tool_call run)
+      {
+        ^kind "tool_calls"
+        ^content "I will call the echo tool."
+        ^tool_calls [
+          {
+            ^id "fake-repeat-final-call-1"
+            ^name "fake.echo"
+            ^args {^text run/goal}
           }
         ]
       }
@@ -39,6 +82,19 @@
       }
     )
   else
+    (if (fake_repeats_final_tool_call run)
+      (return {
+        ^kind "tool_calls"
+        ^content "bad repeated final content"
+        ^tool_calls [
+          {
+            ^id "fake-repeat-final-call-1"
+            ^name "fake.echo"
+            ^args {^text "repeat final"}
+          }
+        ]
+      })
+    )
     (var last_result_event (last_event_of_type events "tool.result"))
     (var summary (last_result_event/data/result/summary || last_result_event/data/result/error || "tool completed"))
     {

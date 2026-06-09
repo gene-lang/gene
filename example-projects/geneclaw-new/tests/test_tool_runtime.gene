@@ -37,6 +37,10 @@
 (assert (search_result/status == "ok"))
 (assert (search_result/output .contains "beta"))
 
+(var search_missing_path (invoke_tool run/id "search.rg" {^pattern "beta" ^path "missing"}))
+(assert (search_missing_path/status == "failed"))
+(assert (search_missing_path/error .contains "No such file"))
+
 (var absolute_search_result (invoke_tool run/id "search.rg" {^pattern "beta" ^path workspace}))
 (assert (absolute_search_result/status == "ok"))
 (assert (absolute_search_result/path == "."))

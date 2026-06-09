@@ -62,12 +62,13 @@
   (var event_index 0)
   (while (event_index < events/.size)
     (var event (events .get event_index))
+    (var call_id "")
     (if (event/type == "tool.result")
       (var data (if (event/data is Map) event/data else {}))
-      (var call_id (((data .get "call_id" "") || "") .to_s))
-      (if call_id/.not_empty
-        (attempted .set call_id true)
-      )
+      (call_id = (((data .get "call_id" "") || "") .to_s))
+    )
+    (if call_id/.not_empty
+      (attempted .set call_id true)
     )
     (event_index += 1)
   )
@@ -180,7 +181,7 @@
   (if lines/.empty
     (return "Those tool calls already ran, but no final answer was generated.")
   )
-  #"Those tool calls already ran and did not return enough information to answer.\n\nTool results:\n- #{(lines .join "\n- ")}"
+  #"The model repeated tool calls that were already attempted. Using recorded tool results:\n\nTool results:\n- #{(lines .join "\n- ")}"
 )
 
 (fn $ns/repeated_tool_call_final_content [run_id content]
@@ -221,7 +222,7 @@
   (var fallback_text (if fallback_lines/.empty
     "Those tool calls already ran, but no final answer was generated."
    else
-    #"Those tool calls already ran and did not return enough information to answer.\n\nTool results:\n- #{(fallback_lines .join "\n- ")}"
+    #"The model repeated tool calls that were already attempted. Using recorded tool results:\n\nTool results:\n- #{(fallback_lines .join "\n- ")}"
   ))
   (var final_text (deduped_final_content run_id text))
   (if final_text/.not_empty
@@ -383,7 +384,7 @@
 
     (var requested_tool_calls (response_tool_calls response))
     (if (already_attempted_tool_calls run/id requested_tool_calls)
-      (var repeated_final response_content)
+      (var repeated_final (if (response_kind == "final") response_content else ""))
       (if repeated_final/.empty
         (var final_instruction "Produce a final answer from the previous tool results. Do not call tools; no tools are available for this finalization step.")
         (var final_system (if (skill == nil)
@@ -446,14 +447,14 @@
           })
           (var final_response_kind ((final_response .get "kind" "") .to_s))
           (var final_response_content ((final_response .get "content" "") .to_s))
-          (if final_response_content/.not_empty
+          (if ((final_response_kind == "final") && final_response_content/.not_empty)
             (repeated_final = final_response_content)
           )
           (complete_workflow_step run/id workflow_state {^kind final_response_kind ^duration_ms (final_response .get "duration_ms" 0)})
         )
       )
       (if repeated_final/.empty
-        (repeated_final = (repeated_tool_call_final_content run/id response_content))
+        (repeated_final = (repeated_tool_call_fallback_content run/id))
       )
       (if repeated_final/.not_empty
         (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count ^deduped_tool_calls requested_tool_calls/.size ^attempted true})
@@ -515,7 +516,7 @@
       (break)
     )
 
-    (if gene_eval_final/.not_empty
+    (if (gene_eval_final/.not_empty && (requested_tool_calls/.size == 1))
       (start_workflow_step run/id workflow_state "finalize" "final" {^step step_count ^source "gene.eval"})
       (complete_run run/id gene_eval_final)
       (write_run_memory run gene_eval_final)

@@ -5,6 +5,7 @@
 (import set_store_root from "kernel/storage")
 (import reset_tools from "tools/registry")
 (import register_fake_tools from "tools/fake")
+(import register_code_eval_tools from "code_eval")
 (import already_attempted_tool_calls already_completed_tool_calls deduped_final_content repeated_tool_call_fallback_content repeated_tool_call_final_content run_agent from "agent_loop")
 
 ($env .set "GENECLAW_MODEL_LIVE" "false")
@@ -14,11 +15,13 @@
 ($env .set "GENECLAW_DEFAULT_PROVIDER" "")
 ($env .set "GENECLAW_DEFAULT_PROFILE" "")
 ($env .set "GENECLAW_DEFAULT_MODEL" "")
+($env .set "GENECLAW_GENE_BIN" "../../bin/gene")
 
 (set_store_root "/tmp/geneclaw-new-test-agent-slice")
 (reset_runs)
 (reset_tools)
 (register_fake_tools)
+(register_code_eval_tools)
 
 (var summary (run_agent "review the current diff" "cli" {^steps 4 ^tool_calls 2}))
 (assert (summary/id == "run-1"))
@@ -45,6 +48,20 @@
 (assert (model_response/data/started_at_ms > 0))
 (assert (model_response/data/completed_at_ms >= model_response/data/started_at_ms))
 (assert (model_response/data/duration_ms == (model_response/data/completed_at_ms - model_response/data/started_at_ms)))
+
+(var mixed_summary (run_agent "mixed eval tools" "cli" {^steps 4 ^tool_calls 4}))
+(assert (mixed_summary/state == "completed"))
+(assert (mixed_summary/final .contains "Done: echo: mixed ok"))
+(assert ((mixed_summary/final .contains "Gene code:") == false))
+(var mixed_events (events_for mixed_summary/id))
+(assert (has_event_type mixed_events "tool.result"))
+(assert (has_event_type mixed_events "model.response"))
+
+(var repeat_final_summary (run_agent "repeat final tool" "cli" {^steps 4 ^tool_calls 3}))
+(assert (repeat_final_summary/state == "completed"))
+(assert (repeat_final_summary/final .contains "Tool results:"))
+(assert (repeat_final_summary/final .contains "fake.echo returned repeat final tool"))
+(assert ((repeat_final_summary/final .contains "bad repeated final content") == false))
 
 (reset_tools)
 (var failed_tool_summary (run_agent "recover from missing tool" "cli" {^steps 3 ^tool_calls 2}))
@@ -112,7 +129,7 @@
   ^result {^status "ok" ^output ""}
 })
 (var empty_fallback (repeated_tool_call_fallback_content empty_run/id))
-(assert (empty_fallback .contains "did not return enough information"))
+(assert (empty_fallback .contains "Using recorded tool results"))
 (assert (empty_fallback .contains "search.rg returned no output"))
 (assert (empty_fallback .contains "shell.run returned no output"))
 (assert ((repeated_tool_call_final_content empty_run/id "") == empty_fallback))
