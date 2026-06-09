@@ -56,6 +56,8 @@ proc reset_frame*(self: Frame) {.inline.} =
   self.stack_max = 0
   self.call_bases.reset()
   self.collection_bases.reset()
+  if self.loop_bases.len > 0:
+    self.loop_bases.setLen(0)
 
 proc free*(self: var Frame) =
   {.push checks: off, optimization: speed.}
@@ -88,6 +90,8 @@ proc new_frame*(): Frame {.inline.} =
   result.stack_max = 0
   result.call_bases.init()
   result.collection_bases.init()
+  if result.loop_bases.len > 0:
+    result.loop_bases.setLen(0)
   {.pop.}
 
 proc new_frame*(ns: Namespace): Frame {.inline.} =
@@ -160,6 +164,11 @@ proc pop*(self: var Frame): Value {.inline.} =
   cast[ptr uint64](addr self.stack[self.stack_index])[] = 0
   self.stack_type_ids[self.stack_index] = NO_TYPE_ID
   {.pop.}
+
+proc truncate_stack*(self: Frame, base: uint16) {.inline.} =
+  var frame = self
+  while frame.stack_index > base:
+    discard frame.pop()
 
 template pop2*(self: var Frame, to: var Value) =
   {.push boundChecks: off, overflowChecks: off.}

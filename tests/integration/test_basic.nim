@@ -219,6 +219,26 @@ test_vm """
   )
 """, 1
 
+test_vm """
+  (var i 0)
+  (loop
+    (var line nil)
+    (i += 1)
+    (if (i >= 400)
+      (break i)
+    )
+  )
+""", 400
+
+test_vm """
+  (var i 0)
+  (while (i < 400)
+    (i += 1)
+    (continue)
+  )
+  i
+""", 400
+
 test_vm "`(1 + 2)", proc(r: Value) =
   check r.gene.type == 1
   check r.gene.children[0] == "+".to_symbol_value()

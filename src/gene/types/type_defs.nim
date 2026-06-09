@@ -1333,6 +1333,11 @@ type
   CallBaseStack* = object
     data*: seq[uint16]
 
+  LoopBase* = object
+    start_pc*: int32
+    end_pc*: int32
+    stack_base*: uint16
+
   FrameObj* = object
     ref_count*: int
     kind*: FrameKind
@@ -1349,6 +1354,7 @@ type
     stack_max*: uint16  # Track highest stack position for GC cleanup
     call_bases*: CallBaseStack
     collection_bases*: CallBaseStack
+    loop_bases*: seq[LoopBase]
     from_exec_function*: bool  # Set when frame is created by exec_function
     is_generator*: bool  # Set when executing in generator context
 

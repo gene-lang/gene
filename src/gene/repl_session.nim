@@ -22,6 +22,8 @@ proc exec_repl_compiled(vm: ptr VirtualMachine, compiled: CompilationUnit, scope
   repl_frame.stack_index = 0
   repl_frame.call_bases.reset()
   repl_frame.collection_bases.reset()
+  if repl_frame.loop_bases.len > 0:
+    repl_frame.loop_bases.setLen(0)
   vm.frame = repl_frame
   vm.cu = compiled
   return vm.exec()

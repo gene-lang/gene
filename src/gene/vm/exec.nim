@@ -32,6 +32,62 @@ proc require_published_body_for_call_pc(self: ptr VirtualMachine, f: Function, p
 
   result = require_published_body(f)
 
+proc matching_loop_end_pc(cu: CompilationUnit, start_pc: int): int =
+  var depth = 0
+  for pc in (start_pc + 1)..<cu.instructions.len:
+    case cu.instructions[pc].kind
+    of IkLoopStart:
+      depth.inc()
+    of IkLoopEnd:
+      if depth == 0:
+        return pc
+      depth.dec()
+    else:
+      discard
+  not_allowed("Loop end not found for pc " & $start_pc)
+
+proc enter_loop(self: ptr VirtualMachine, start_pc: int32) {.inline.} =
+  var frame = self.frame
+  if frame.loop_bases.len > 0 and frame.loop_bases[^1].start_pc == start_pc:
+    frame.truncate_stack(frame.loop_bases[^1].stack_base)
+    return
+
+  frame.loop_bases.add(LoopBase(
+    start_pc: start_pc,
+    end_pc: matching_loop_end_pc(self.cu, start_pc.int).int32,
+    stack_base: frame.stack_index
+  ))
+
+proc leave_loop_end(self: ptr VirtualMachine, end_pc: int32) {.inline.} =
+  var frame = self.frame
+  if frame.loop_bases.len == 0 or frame.loop_bases[^1].end_pc != end_pc:
+    return
+
+  let ctx = frame.loop_bases[^1]
+  frame.loop_bases.setLen(frame.loop_bases.len - 1)
+  frame.truncate_stack(ctx.stack_base)
+
+proc continue_loop(self: ptr VirtualMachine, start_pc: int32): bool {.inline.} =
+  var frame = self.frame
+  for i in countdown(frame.loop_bases.len - 1, 0):
+    if frame.loop_bases[i].start_pc == start_pc:
+      frame.loop_bases.setLen(i + 1)
+      frame.truncate_stack(frame.loop_bases[i].stack_base)
+      return true
+  false
+
+proc break_loop(self: ptr VirtualMachine, end_pc: int32): bool {.inline.} =
+  var frame = self.frame
+  for i in countdown(frame.loop_bases.len - 1, 0):
+    if frame.loop_bases[i].end_pc == end_pc:
+      let break_value = if frame.stack_index > 0: frame.pop() else: NIL
+      let stack_base = frame.loop_bases[i].stack_base
+      frame.loop_bases.setLen(i)
+      frame.truncate_stack(stack_base)
+      frame.push(break_value)
+      return true
+  false
+
 template guard_deep_frozen_write(target: Value, op_name: static[string]) =
   if target.deep_frozen:
     raise_frozen_write(op_name, target)
@@ -2343,8 +2399,11 @@ proc exec*(self: ptr VirtualMachine): Value =
           continue
         {.pop.}
 
-      of IkLoopStart, IkLoopEnd:
-        discard
+      of IkLoopStart:
+        self.enter_loop(self.pc.int32)
+
+      of IkLoopEnd:
+        self.leave_loop_end(self.pc.int32)
 
       of IkContinue:
         {.push checks: off}
@@ -2369,6 +2428,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             not_allowed("continue used outside of a loop")
         else:
           # Normal continue - jump to the start label
+          discard self.continue_loop(label.int32)
           if label < self.pc:
             self.poll_event_loop()
           self.pc = label
@@ -2399,6 +2459,7 @@ proc exec*(self: ptr VirtualMachine): Value =
             not_allowed("break used outside of a loop")
         else:
           # Normal break - jump to the end label
+          discard self.break_loop(label.int32)
           if label < self.pc:
             self.poll_event_loop()
           self.pc = label
