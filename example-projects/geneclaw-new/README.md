@@ -104,9 +104,12 @@ Inputs whose trimmed text starts with `!` run as trusted local shell commands
 through `bash -lc` in the GeneClaw workspace root. The leading `!` is stripped
 before creating the run, so history and events store the command itself.
 
-The TUI supports slash commands: `/help` lists commands, `/reset` clears runtime
-session data while preserving daemon files, `/clear` clears the screen, and
-`/exit` exits.
+The TUI uses a Codex-style scrollback interface with a zero-padded prompt like
+`0001›`, muted run status lines, raw command output, and response-colored agent
+messages. It
+supports slash commands: `/help` lists commands, `/reset` clears runtime session
+data while preserving daemon files, `/clear` clears the screen, and `/exit`
+exits.
 
 Web tools are available as normal GeneClaw tools:
 

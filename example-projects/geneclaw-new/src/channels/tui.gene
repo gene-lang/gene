@@ -115,6 +115,39 @@
   (tui_colorize "90" text)
 )
 
+(fn tui_prefix_lines [first_prefix rest_prefix text]
+  (var value ((text || "") .to_s))
+  (var lines (value .split "\n"))
+  (var result [])
+  (var index 0)
+  (while (index < lines/.size)
+    (var line (lines .get index))
+    (if (index == 0)
+      (result .append #"#{first_prefix}#{line}")
+     else
+      (result .append #"#{rest_prefix}#{line}")
+    )
+    (index += 1)
+  )
+  (result .join "\n")
+)
+
+(fn tui_status_text [text]
+  (tui_program_text #"\u2022 #{text}")
+)
+
+(fn tui_output_text [text]
+  (tui_program_text text)
+)
+
+(fn tui_error_text [text]
+  (tui_colorize "31" (tui_prefix_lines "\u2022 " "  " text))
+)
+
+(fn tui_assistant_text [text]
+  (tui_response_text (tui_prefix_lines "\u2022 " "  " text))
+)
+
 (fn $ns/tui_child_output_text [text]
   (var value ((text || "") .to_s))
   (if ((value .contains " completed:") || (value .contains " completed"))
@@ -146,23 +179,34 @@
   (var completed (run_summary_tail value " completed: "))
   (if (completed != nil)
     (if ((shell_input goal) || (code_input goal))
-      (return (tui_program_text completed))
+      (return (tui_output_text completed))
      else
-      (return (tui_response_text completed))
+      (return (tui_assistant_text completed))
     )
   )
   (var failed (run_summary_tail value " failed: "))
   (if (failed != nil)
     (if ((shell_input goal) || (code_input goal))
-      (return (tui_program_text failed))
+      (return (tui_output_text failed))
      else
-      (return (tui_colorize "31" failed))
+      (return (tui_error_text failed))
     )
   )
   (if ((shell_input goal) || (code_input goal))
-    (return (tui_program_text value))
+    (return (tui_output_text value))
   )
   (tui_child_output_text value)
+)
+
+(fn tui_run_header_text [goal]
+  (var text (((goal || "") .to_s) .trim))
+  (if (shell_input text)
+    (return (tui_status_text #"Ran #{text}"))
+  )
+  (if (code_input text)
+    (return (tui_status_text "Evaluating Gene code"))
+  )
+  (tui_status_text "Working")
 )
 
 (fn $ns/tui_exit_command [input]
@@ -203,7 +247,7 @@
   (if (text == "/reset")
     (reset_runs)
     (var message "session reset")
-    (println (tui_response_text message))
+    (println (tui_assistant_text message))
     (return {^handled true ^exit false ^message message})
   )
   (if (text == "/clear")
@@ -212,7 +256,7 @@
   )
   (if (tui_slash_command text)
     (var message #"unknown command: #{text}")
-    (println (tui_warning_text message))
+    (println (tui_warning_text #"\u2022 #{message}"))
     (return {^handled true ^exit false ^message message})
   )
   {^handled false ^exit false ^message ""}
@@ -289,7 +333,7 @@
 
 (fn pad_run_number [number]
   (var text (try number/.to_s catch * "0"))
-  (while (text/.size < 3)
+  (while (text/.size < 4)
     (text = #"0#{text}")
   )
   text
@@ -300,7 +344,7 @@
 )
 
 (fn $ns/tui_prompt []
-  #"geneclaw #{(pad_run_number (tui_next_run_number))}> "
+  #"#{(pad_run_number (tui_next_run_number))}\u203a "
 )
 
 (fn $ns/tui_new_run_id [before_ids after_ids]
@@ -344,6 +388,7 @@
 (fn $ns/tui_run_goal [goal budgets = {} options = {}]
   (var command (tui_run_shell_command goal budgets options))
   (var before_ids (stored_run_ids))
+  (println (tui_run_header_text goal))
   (var proc (system/Process/start "sh" "-lc" #"exec #{command}" ^stderr_to_stdout true ^env {^GENECLAW_NEW_HOME (store_root)}))
   (var output_lines [])
   (var base_sigint (genex/readline/sigint_count))
@@ -397,9 +442,14 @@
   (genex/readline/install_sigint_handler)
   (genex/readline/clear_sigint)
   (var reader (new genex/readline/Reader))
-  (println (tui_response_text #"GeneClaw TUI (#{(reader .backend)}). /help shows commands. Shift-Enter inserts a newline when supported. Ctrl-D, /quit or /exit to exit. Ctrl-R searches input history."))
+  (var backend (reader .backend))
+  (var plain_pipe_input ((backend == "plain") && ((stdin .isatty) == false)))
+  (println (tui_program_text #"GeneClaw TUI (#{backend}) \u2022 /help shows commands \u2022 Shift-Enter inserts a newline \u2022 Ctrl-C interrupts \u2022 Ctrl-D exits"))
   (loop
     (var event (reader .read_event (tui_prompt_text (tui_prompt))))
+    (if (plain_pipe_input && (event/status != "eof"))
+      (println "")
+    )
     (if (event/status == "eof")
       (break)
     )

@@ -109,9 +109,11 @@
   ^input "!printf daemon\n/exit\n"
   ^stderr_to_stdout true))
 (assert (tui_shell/exit_code == 0))
-(assert (tui_shell/output .contains "geneclaw 009>"))
+(assert (tui_shell/output .contains "0009\u203a "))
+(assert (tui_shell/output .contains "Ran !printf daemon"))
 (assert (tui_shell/output .contains "daemon"))
 (assert ((tui_shell/output .contains "completed: daemon") == false))
+(assert ((tui_shell/output .contains "\u2514 daemon") == false))
 
 (var tui_code (system/run
   "../../bin/gene" "run" "src/main.gene" "tui"
@@ -119,9 +121,11 @@
   ^input "(var tui_code_a 1) (tui_code_a + 2)\n/exit\n"
   ^stderr_to_stdout true))
 (assert (tui_code/exit_code == 0))
-(assert (tui_code/output .contains "geneclaw 010>"))
+(assert (tui_code/output .contains "0010\u203a "))
+(assert (tui_code/output .contains "Evaluating Gene code"))
 (assert (tui_code/output .contains "3"))
 (assert ((tui_code/output .contains "completed: 3") == false))
+(assert ((tui_code/output .contains "\u2514 3") == false))
 
 (var tui_exit (system/run
   "../../bin/gene" "run" "src/main.gene" "tui"
@@ -132,7 +136,7 @@
 (assert (tui_exit/output .contains "GeneClaw TUI"))
 (assert (tui_exit/output .contains "/help shows commands"))
 (assert (tui_exit/output .contains "Shift-Enter inserts a newline"))
-(assert (tui_exit/output .contains "geneclaw 011>"))
+(assert (tui_exit/output .contains "0011\u203a "))
 (assert (tui_exit/output .contains "bye"))
 
 (var tui_agent (system/run
@@ -141,6 +145,7 @@
   ^input "hello tui\n/exit\n"
   ^stderr_to_stdout true))
 (assert (tui_agent/exit_code == 0))
+(assert (tui_agent/output .contains "Working"))
 (assert (tui_agent/output .contains "Done: echo: hello tui"))
 (assert ((tui_agent/output .contains "completed: Done: echo: hello tui") == false))
 
@@ -153,6 +158,7 @@
 (assert (tui_slash/output .contains "Commands:"))
 (assert (tui_slash/output .contains "/reset"))
 (assert (tui_slash/output .contains "session reset"))
-(assert (tui_slash/output .contains "geneclaw 001>"))
+(assert (tui_slash/output .contains "0001\u203a "))
+(assert ((tui_slash/output .contains "geneclaw 001>") == false))
 
 (println "ok")
