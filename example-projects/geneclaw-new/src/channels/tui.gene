@@ -211,8 +211,7 @@
     (return (tui_status_text #"Ran #{text}"))
   )
   (if (code_input text)
-    # (return (tui_status_text "Evaluating Gene code"))
-    (return "")
+    (return (tui_status_text "Evaluating Gene code"))
   )
   (tui_status_text "Working")
 )
@@ -455,7 +454,7 @@
 (fn $ns/tui_repl_prompt [run_id = ""]
   (var text (((run_id || "") .to_s) .trim))
   (var number (if text/.not_empty (run_number text) else (tui_next_run_number)))
-  #"#{(pad_run_number number)} REPL\u203a "
+  #"gene #{(pad_run_number number)}\u203a "
 )
 
 (fn $ns/tui_repl_command [input]
@@ -539,6 +538,7 @@
   (var final_status "")
   (var final_exit_code nil)
   (var final_run_id "")
+  (var capture_completed_run_id false)
 
   (loop
     (var line (proc .read_line ^timeout 0.05))
@@ -575,9 +575,12 @@
       (var exit_code (proc .wait ^timeout 0))
       (final_status = (if (exit_code == 0) "completed" else "failed"))
       (final_exit_code = exit_code)
-      (final_run_id = (tui_new_run_id before_ids (stored_run_ids)))
+      (capture_completed_run_id = true)
       (break)
     )
+  )
+  (if capture_completed_run_id
+    (final_run_id = (tui_new_run_id before_ids (stored_run_ids)))
   )
   {^status final_status ^exit_code final_exit_code ^run_id final_run_id ^output output_lines}
 )
@@ -656,7 +659,7 @@
 
 (fn $ns/tui_start_repl [reader budgets = {} options = {}]
   (var run (tui_start_repl_run budgets))
-  (println (tui_program_text #"Gene REPL started, use Ctrl-D to exit."))
+  (println (tui_program_text #"Gene REPL started (#{run/id})"))
   (loop
     (var event (reader .read_event (tui_prompt_text (tui_repl_prompt run/id))))
     (if (event/status == "eof")

@@ -167,6 +167,16 @@
 (assert (tui_agent/output .contains "Done: echo: hello tui"))
 (assert ((tui_agent/output .contains "completed: Done: echo: hello tui") == false))
 
+(var tui_gene_eval_agent (system/run
+  "../../bin/gene" "run" "src/main.gene" "tui" "--provider" "fake"
+  ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
+  ^input "evaluate gene code to inspect context\n/exit\n"
+  ^stderr_to_stdout true))
+(assert (tui_gene_eval_agent/exit_code == 0))
+(assert (tui_gene_eval_agent/output .contains "Gene code:"))
+(assert (tui_gene_eval_agent/output .contains "Result:"))
+(assert ((tui_gene_eval_agent/output .contains "IkVarResolveInherited") == false))
+
 (var tui_slash (system/run
   "../../bin/gene" "run" "src/main.gene" "tui"
   ^env {^GENECLAW_NEW_HOME store_root ^GENECLAW_MODEL_LIVE "false" ^GENECLAW_GENE_BIN "../../bin/gene"}
