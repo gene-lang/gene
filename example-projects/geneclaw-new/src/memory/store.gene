@@ -8,6 +8,10 @@
 )
 
 (fn facts_path []
+  #"#{(memory_dir)}/facts.gdat"
+)
+
+(fn legacy_facts_path []
   #"#{(memory_dir)}/facts.gene.log"
 )
 
@@ -48,6 +52,12 @@
 (fn read_facts []
   (var facts [])
   (var path (facts_path))
+  (if_not (file_exists path)
+    (var legacy_path (legacy_facts_path))
+    (if (file_exists legacy_path)
+      (path = legacy_path)
+    )
+  )
   (if_not (file_exists path)
     (return facts)
   )

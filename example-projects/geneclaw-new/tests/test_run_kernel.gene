@@ -2,7 +2,7 @@
 
 (import reset_runs create_run transition_run complete_run run_summary from "kernel/runs")
 (import events_for event_count has_event_type last_event_of_type from "kernel/events")
-(import set_store_root from "kernel/storage")
+(import set_store_root store_root from "kernel/storage")
 
 (set_store_root "/tmp/geneclaw-new-test-run-kernel")
 (reset_runs)
@@ -22,6 +22,12 @@
 (assert (run/state == "completed"))
 (assert (run/final == "done"))
 (assert (has_event_type (events_for run/id) "run.completed"))
+(var event_path #"#{(store_root)}/runs/#{run/id}/events.gdat")
+(var legacy_event_path #"#{(store_root)}/runs/#{run/id}/events.gene.log")
+(var event_probe (system/shell #"test -f '#{event_path}'"))
+(var legacy_event_probe (system/shell #"test -f '#{legacy_event_path}'"))
+(assert (event_probe/exit_code == 0))
+(assert (legacy_event_probe/exit_code != 0))
 
 (var completed (last_event_of_type (events_for run/id) "run.completed"))
 (assert (completed/data/detail/final == "done"))

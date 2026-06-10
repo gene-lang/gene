@@ -36,6 +36,10 @@
 )
 
 (fn event_log_path [run_id]
+  #"#{(run_dir run_id)}/events.gdat"
+)
+
+(fn legacy_event_log_path [run_id]
   #"#{(run_dir run_id)}/events.gene.log"
 )
 
@@ -104,6 +108,12 @@
 
 (fn $ns/read_event_records [run_id]
   (var path (event_log_path run_id))
+  (if_not (file_exists path)
+    (var legacy_path (legacy_event_log_path run_id))
+    (if (file_exists legacy_path)
+      (path = legacy_path)
+    )
+  )
   (var records [])
   (if_not (file_exists path)
     (return records)

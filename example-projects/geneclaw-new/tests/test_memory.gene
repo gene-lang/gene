@@ -32,6 +32,12 @@
 (assert (facts/.size == 1))
 (assert (facts/0/text .contains "remember bananas"))
 (assert (facts/0/final .contains "echo: remember bananas"))
+(var facts_path #"#{(store_root)}/memory/facts.gdat")
+(var legacy_facts_path #"#{(store_root)}/memory/facts.gene.log")
+(var facts_probe (system/shell #"test -f '#{facts_path}'"))
+(var legacy_facts_probe (system/shell #"test -f '#{legacy_facts_path}'"))
+(assert (facts_probe/exit_code == 0))
+(assert (legacy_facts_probe/exit_code != 0))
 
 (assert ((rebuild_memory_index) >= 1))
 (var indexed (search_memory_index (store_root) "bananas" "cli" 5))
